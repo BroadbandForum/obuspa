@@ -9,16 +9,16 @@ This document supports two target audiences:
 ## Document conventions
 When referring to source code functions, this document will often use 'XXX' to represent a set of possible function names.
 For example,  DEVICE_XXX_Init() refers to a set of functions:
- DEVICE_STOMP_Init()
- DEVICE_MTP_Init()
- DEVICE_CONTROLLER_Init()
- etc
+ * DEVICE_STOMP_Init()
+ * DEVICE_MTP_Init()
+ * DEVICE_CONTROLLER_Init()
+ * etc
 
 
 ## Building OB-USP-AGENT
-1. Install dependencies (Curl, OpenSSL, Sqlite, C-Ares, z-lib) using package manager:
+1. Install dependencies (Curl, OpenSSL, Sqlite, C-Ares, z-lib, autotools) using package manager:
 ```
-$ sudo apt-get install libssl-dev libcurl4-openssl-dev libsqlite3-dev libc-ares-dev libz-dev
+$ sudo apt-get install libssl-dev libcurl4-openssl-dev libsqlite3-dev libc-ares-dev libz-dev autoconf automake libtool
 ```
 
 2. Install libcoap from source:
@@ -33,11 +33,10 @@ $ sudo make install
 ```
 
 3. IMPORTANT: Modify the DEFAULT_WAN_IFNAME define in src/vendor/vendor_defs.h, if you intend to run on
-a device which does not have a network interface named "eth0".
+a device which does not have a network interface named "eth0", or you wish to connect over a different interface to the USP controller.
 
-4. Install ob_uspagent from source:
+4. Install OB-USP-AGENT from source:
 ```
-$ cd ob_uspagent
 $ autoreconf --force --install
 $ ./configure
 $ make
@@ -48,8 +47,8 @@ $ sudo make install
 ## Running OB-USP-AGENT for the first time
 Before OB-USP-AGENT starts, it needs a database containing the settings of the USP controller to contact.
 This is known as the 'factory reset database'.
-This database may be created using 'ob_uspagent -c dbset' commands (see next section), or may be created programatically by
-ob_uspagent when it first runs (if no database file exists). To start with, use the latter option, as many parameters
+This database may be created using 'obuspa -c dbset' commands (see next section), or may be created programatically by
+obuspa when it first runs (if no database file exists). To start with, use the latter option, as many parameters
 in the factory reset database have boiler plate values.
 
 To specify the data model parameters and values used to create the factory reset database, modify the 
@@ -58,7 +57,7 @@ the controller to connect to.
 
 Then to run OB-USP-AGENT with protocol trace, and full trace logging to stdout:
 ```
-$ ob_uspagent -p -v 4
+$ obuspa -p -v 4
 ```
 
 If OB-USP-AGENT successfully connected to your STOMP server you should see trace like the following on stdout:
@@ -93,13 +92,13 @@ If OB-USP-AGENT successfully connected to your STOMP server you should see trace
 
 If OB-USP-AGENT failed to connect, review the settings in your factory reset database and the STOMP server.
 If you subsequently change the settings in vendor_factory_reset_example.c, then you must delete the database,
-in order that the database is re-created the next time you run ob_uspagent.
+in order that the database is re-created the next time you run obuspa.
 To delete the database in the default location:
 ```
 $ rm /tmp/usp.db
 ```
 
-Alternatively you can use the 'ob_uspagent -c dbset' command (see next section) to alter parameters
+Alternatively you can use the 'obuspa -c dbset' command (see next section) to alter parameters
 in the database, and try again.
 
 OB-USP_AGENT also supports an basic implementation of CoAP MTP. As with STOMP MTP, this is enabled
@@ -112,45 +111,45 @@ querying the data model and setting values in the database. The CLI mode is spec
 
 * To see a list of arguments use:
 ```
-$ ob_uspagent --help
+$ obuspa --help
 ```
 
 * To see a list of commands supported in CLI mode use:
 ```
-$ ob_uspagent -c help
+$ obuspa -c help
 ```
 
 * To see the currently implemented USP data model use:
 ```
-$ ob_uspagent -c show datamodel
+$ obuspa -c show datamodel
 ```
 
 * To see all data model parameters stored in the database:
 ```
-$ ob_uspagent -c show database
+$ obuspa -c show database
 ```
 
 * To set the value of a data model parameter in the database use:
 ```
-$ ob_uspagent -c dbset "parameter" "value"
+$ obuspa -c dbset "parameter" "value"
 ```
 IMPORTANT: This command must only be run when there is no daemon instance of OB-USP-AGENT running,
 as it directly alters the value in the database without notifying a running daemon of the change.
 
 * To set the value of a data model parameter when the daemon is running use:
 ```
-$ ob_uspagent -c set "parameter" "value"
+$ obuspa -c set "parameter" "value"
 ```
 
 * To query the value of a parameter when the daemon is running use:
 ```
-$ ob_uspagent -c get "parameter"
+$ obuspa -c get "parameter"
 ```
 
 The "parameter" may contain USP search expressions and partial paths.
 For example, to query the value of all parameters in the DeviceInfo object when the daemon is running use:
 ```
-$ ob_uspagent -c get "Device.DeviceInfo."
+$ obuspa -c get "Device.DeviceInfo."
 ```
 
 The CLI mode also supports adding and deleting instances of data model objects and running USP commands.

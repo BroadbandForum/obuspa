@@ -1,4 +1,5 @@
-AM_CPPFLAGS = -Isrc/core \
+AM_CPPFLAGS = -Isrc \
+              -Isrc/core \
               -Isrc/protobuf-c \
               -Isrc/vendor \
               -Isrc/libjson/ccan/json \
@@ -11,10 +12,10 @@ AM_CPPFLAGS = -Isrc/core \
 # as necessary.
 AM_CFLAGS = -Wall -Wfatal-errors -D _GNU_SOURCE
 
-bin_PROGRAMS = ob_uspagent
+bin_PROGRAMS = obuspa
 
 
-ob_uspagent_SOURCES = src/core/main.c \
+obuspa_SOURCES = src/core/main.c \
                     src/core/mtp_exec.c \
                     src/core/dm_exec.c \
                     src/core/bdc_exec.c \
@@ -79,9 +80,9 @@ ob_uspagent_SOURCES = src/core/main.c \
 					src/core/usp_coap.c \
                     src/core/uri.c
 
-ob_uspagent_CPPFLAGS = $(openssl_CFLAGS) $(sqlite3_CFLAGS) $(libcurl_CFLAGS) $(libcares_CFLAGS) $(zlib_CFLAGS)
-ob_uspagent_CPPFLAGS += -DENABLE_COAP
-ob_uspagent_CPPFLAGS +=  $(AM_CPPFLAGS) \
+obuspa_CPPFLAGS = $(openssl_CFLAGS) $(sqlite3_CFLAGS) $(libcurl_CFLAGS) $(libcares_CFLAGS) $(zlib_CFLAGS)
+obuspa_CPPFLAGS += -DENABLE_COAP
+obuspa_CPPFLAGS +=  $(AM_CPPFLAGS) \
                       -Werror \
                       -Werror=unused-value \
                       -Werror=format \
@@ -91,17 +92,14 @@ ob_uspagent_CPPFLAGS +=  $(AM_CPPFLAGS) \
 # NOTE: In order for GCC to check for uninitialised variables, you need to turn optimisation on i.e. "-O2"
 
 # Turn on rdynamic linker flags so that backtrace_symbols() call works
-ob_uspagent_LDFLAGS = -rdynamic
+obuspa_LDFLAGS = -rdynamic
 
-ob_uspagent_LDADD = -lm -ldl -lpthread -lrt
-ob_uspagent_LDADD += $(openssl_LIBS) $(sqlite3_LIBS) $(libcurl_LIBS) $(libcares_LIBS) $(zlib_LIBS)
+obuspa_LDADD = -lm -ldl -lpthread -lrt
+obuspa_LDADD += $(openssl_LIBS) $(sqlite3_LIBS) $(libcurl_LIBS) $(libcares_LIBS) $(zlib_LIBS)
 
 # Unfortunately libcoap cannot use the autotools magic environment variables, so add support manually
-ob_uspagent_LDADD += -lcoap-1
-ob_uspagent_LDFLAGS += -Wl,-rpath=/usr/local/lib
+obuspa_LDADD += -lcoap-1
+obuspa_LDFLAGS += -Wl,-rpath=/usr/local/lib
 
 # Import vendor makefile
 include src/vendor/vendor.am
-
-
-# vim:ts=8:sw=8:noet

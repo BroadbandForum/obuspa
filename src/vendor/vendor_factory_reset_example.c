@@ -1,5 +1,6 @@
 /*
  *
+ * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
  * 
  * Redistribution and use in source and binary forms, with or without
@@ -52,8 +53,8 @@
 static const kv_pair_t factory_reset_parameters[] =
 {
     // The following parameters will definitely need modifying
-    { "Device.LocalAgent.Controller.1.EndpointID", "usp-controller.com" },
-    { "Device.STOMP.Connection.1.Host", "self::usp-controller.com" },
+    { "Device.LocalAgent.Controller.1.EndpointID", "self::usp-controller.com" },
+    { "Device.STOMP.Connection.1.Host", "usp-controller.com" },
     { "Device.STOMP.Connection.1.Username", "username" },
     { "Device.STOMP.Connection.1.Password", "password" },
 

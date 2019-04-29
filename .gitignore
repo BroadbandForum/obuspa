@@ -1,0 +1,24 @@
+# autoconf artifacts
+Makefile
+Makefile.in
+*/aclocal.m4
+autom4te.cache/*
+compile
+config.guess
+config.sub
+config.log
+config.status
+libtool
+obuspa
+configure
+depcomp
+include/config.h.in~
+install-sh
+ltmain.sh
+m4/
+missing
+ylwrap
+*.Po
+*.o
+*.m4
+.dirstamp
