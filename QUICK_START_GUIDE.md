@@ -290,12 +290,3 @@ The following core vendor hooks are most likely to need overriding:
 * get_agent_cert_cb - called by OB-USP-AGENT core to get the SSL client certificate associated with this device
 
 Certificates provided to the get_trust_store_cb() and get_agent_cert_cb() must be in DER (binary) form.
-
-
-
-
-
-
-
-
-

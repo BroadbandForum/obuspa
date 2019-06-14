@@ -1,9 +1,9 @@
-AM_CPPFLAGS = -Isrc \
-              -Isrc/core \
-              -Isrc/protobuf-c \
-              -Isrc/vendor \
-              -Isrc/libjson/ccan/json \
-              -Isrc/include
+AM_CPPFLAGS = -I$(top_srcdir)/src \
+              -I$(top_srcdir)/src/core \
+              -I$(top_srcdir)/src/protobuf-c \
+              -I$(top_srcdir)/src/vendor \
+              -I$(top_srcdir)/src/libjson/ccan/json \
+              -I$(top_srcdir)/src/include
 
 # Enable warnings, treat warnings as errors, and stop compilation at
 # first error.  Define _GNU_SOURCE to pickup GNU version of strerror_r() and dladdr()

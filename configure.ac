@@ -14,12 +14,12 @@ AM_PROG_CC_C_O
 
 # Checks for libraries.
 # This also defines autotools magic variables for use in the .am files
-# NOTE: We cannot do this for libcoap, as the library name has a dash ('-') in it, preventing bash enviroment variables containing it
 PKG_CHECK_MODULES([openssl], [openssl])
 PKG_CHECK_MODULES([sqlite3], [sqlite3])
 PKG_CHECK_MODULES([libcurl], [libcurl])
 PKG_CHECK_MODULES([libcares], [libcares])
 PKG_CHECK_MODULES([zlib], [zlib])
+PKG_CHECK_MODULES([libcoap], [libcoap-1])
 
 # Generate Makefiles
 AC_CONFIG_FILES([Makefile])

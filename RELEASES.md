@@ -59,5 +59,8 @@ This release contains the following features:
    * Device.STOMP.
    * Device.STOMP.Connection.{i}.
 
-
+## Release 1.0.1
+  * configure now checks for libcoap availability
+  * Out of tree builds are now supported
+  * Added contibuting guidelines
 
