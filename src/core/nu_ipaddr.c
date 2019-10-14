@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2007-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2007-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -206,6 +206,10 @@ nu_ipaddr_to_sockaddr(const nu_ipaddr_t *addr, int port, struct sockaddr_storage
         sin6->sin6_family = family;
         sin6->sin6_port = htons(port);
         err = nu_ipaddr_to_in6addr(addr, &sin6->sin6_addr);
+        if (err != USP_ERR_OK) {
+            return err;
+        }
+        
         if (len_p != NULL) {
             *len_p = sizeof(struct sockaddr_in6);
         }
@@ -214,12 +218,16 @@ nu_ipaddr_to_sockaddr(const nu_ipaddr_t *addr, int port, struct sockaddr_storage
         sin->sin_family = family;
         sin->sin_port = htons(port);
         err = nu_ipaddr_to_inaddr(addr, &sin->sin_addr);
+        if (err != USP_ERR_OK) {
+            return err;
+        }
+
         if (len_p != NULL) {
             *len_p = sizeof(struct sockaddr_in);
         }
     }
 
-    return err;
+    return USP_ERR_OK;
 }
 
 
@@ -361,7 +369,6 @@ nu_ipaddr_from_str(const char *str, nu_ipaddr_t *addr)
 	/* attempt to parse using what we've learned */
 	err = inet_pton(family, begin, inptr);      // returns 1 on success
 	if (err <= 0) {
-        USP_ERR_SetMessage("%s: Unable to convert IP address from string", __FUNCTION__);
 		return USP_ERR_INTERNAL_ERROR;
 	}
 
@@ -414,6 +421,11 @@ nu_ipaddr_from_sockaddr_storage(const struct sockaddr_storage *p, nu_ipaddr_t *a
         // IPv4
         sin4 = (struct sockaddr_in *)p;
         err = nu_ipaddr_from_inaddr(&sin4->sin_addr, addr);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
 	    if (port != NULL)
 	    {
 	        *port = ntohs(sin4->sin_port);
@@ -424,6 +436,11 @@ nu_ipaddr_from_sockaddr_storage(const struct sockaddr_storage *p, nu_ipaddr_t *a
         // IPv6
         sin6 = (struct sockaddr_in6 *)p;
         err = nu_ipaddr_from_in6addr(&sin6->sin6_addr, addr);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+        
 	    if (port != NULL)
 	    {
 	        *port = ntohs(sin6->sin6_port);
@@ -431,10 +448,10 @@ nu_ipaddr_from_sockaddr_storage(const struct sockaddr_storage *p, nu_ipaddr_t *a
     }
     else
     {
-        err = USP_ERR_INTERNAL_ERROR;
+        return USP_ERR_INTERNAL_ERROR;
     }
 
-    return err;
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -703,7 +720,7 @@ exit:
 int nu_ipaddr_get_interface_addr_from_sock_fd(int sock_fd, char *buf, int bufsiz)
 {
     int err;
-    struct sockaddr_storage sa;
+    struct sockaddr_storage sa = {0};
     socklen_t sa_len;
     nu_ipaddr_t if_addr;
 
@@ -838,11 +855,12 @@ exit:
 **
 ** \param   dev - name of interface to get IP Address of
 ** \param   expected_addr - expected IP address of interface
+** \param   has_addr - pointer to variable in which to return whether the network interface has any IP address
 **
 ** \return  true if the IP address of the interface has changed, false otherwise
 **
 **************************************************************************/
-int nu_ipaddr_has_interface_addr_changed(char *dev, char *expected_addr)
+int nu_ipaddr_has_interface_addr_changed(char *dev, char *expected_addr, bool *has_addr)
 {
     struct ifaddrs *ifaddr_list;
     struct ifaddrs *iterator;
@@ -854,6 +872,7 @@ int nu_ipaddr_has_interface_addr_changed(char *dev, char *expected_addr)
     bool result;
 
     // Exit if unable to get a linked list containing the IP Addresses of all network interfaces on the current system
+    *has_addr = false;
     err = getifaddrs(&ifaddr_list);
     if (err != 0)
     {
@@ -909,6 +928,9 @@ int nu_ipaddr_has_interface_addr_changed(char *dev, char *expected_addr)
         {
             continue;
         }
+
+        // If the code gets here, then the interface has an IP address
+        *has_addr = true;
 
         // Exit the loop if we've found our expected IP address for this interface - the IP address of the interface has not changed
         if (strcmp(buf, expected_addr)==0)
@@ -997,6 +1019,46 @@ int nu_ipaddr_get_ip_supported_families(bool *ipv4_supported, bool *ipv6_support
 
 /*********************************************************************//**
 **
+** nu_ipaddr_is_valid_interface
+**
+** Determines whether the given interface name is present on the device
+**
+** \param   dev - name of interface to check
+**
+** \return  true if the interface exists, false, otherwise
+**
+**************************************************************************/
+bool nu_ipaddr_is_valid_interface(const char *dev)
+{
+    struct ifaddrs *ifaddr_list;
+    struct ifaddrs *iterator;
+    int err;
+    bool is_found = false;
+
+    // Exit if unable to get a linked list containing the IP Addresses of all network interfaces on the current system
+    err = getifaddrs(&ifaddr_list);
+    if (err != 0)
+    {
+        return false;
+    }
+
+    // Iterate over all results in the linked list
+    for (iterator=ifaddr_list;   iterator!=NULL;   iterator=iterator->ifa_next)
+    {
+        // Exit the loop, if a match is found
+        if (strcmp(iterator->ifa_name, dev) == 0)
+        {
+            is_found = true;
+            break;
+        }
+    }
+
+    freeifaddrs(ifaddr_list);
+    return is_found;
+}
+
+/*********************************************************************//**
+**
 **  tw_ulib_diags_family_to_protocol_version
 **
 **  Returns the string representing the protocol version to use for DNS lookups of hostname
@@ -1004,7 +1066,7 @@ int nu_ipaddr_get_ip_supported_families(bool *ipv4_supported, bool *ipv6_support
 **
 ** \param   address_family - address family to convert to a protocol version string
 **          
-** \return  EOK if successful, EINVAL if failed to convert
+** \return  String form of specified IP address family
 **
 **************************************************************************/
 char *tw_ulib_diags_family_to_protocol_version(int address_family)
@@ -1185,6 +1247,7 @@ exit:
     return err;
 }
 
+#ifdef CONNECT_ONLY_OVER_WAN_INTERFACE
 /*********************************************************************//**
 **
 ** tw_ulib_dev_get_live_wan_address
@@ -1218,6 +1281,7 @@ int tw_ulib_dev_get_live_wan_address(char *buf, size_t bufsiz)
 
     return USP_ERR_OK;
 }
+#endif
 
 /*********************************************************************//**
 **
@@ -1245,6 +1309,20 @@ int tw_ulib_get_dev_ipaddr(const char *dev, char *addr, size_t asiz, bool prefer
     int preferred_family;
     char *str;
     bool found_a_result = false;
+
+    // Exit if interface is 'any', this denotes listen on all network interfaces
+    if (strcmp(dev, "any")==0)
+    {
+        if (prefer_ipv6)
+        {
+            USP_STRNCPY(addr, "[::]", asiz);
+        }
+        else
+        {
+            USP_STRNCPY(addr, "0.0.0.0", asiz);
+        }
+        return USP_ERR_OK;
+    }
 
     // Set the default IP Address returned
     *addr = '\0';

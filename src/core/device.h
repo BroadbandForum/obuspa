@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -83,7 +83,36 @@ typedef struct
 } reboot_info_t;
 
 //------------------------------------------------------------------------------
+// Structure specifying the destination that a response to a USP message must be sent
+typedef struct
+{
+    bool is_reply_to_specified; // Set if reply_to was specified in the received MTP frame
+    mtp_protocol_t protocol;    // Protocol on which the USP message was received
+
+    // Following member variables only set if reply_to was specified and USP message was received over STOMP
+    char *stomp_dest;
+    int stomp_instance;
+
+    // Following member variables only set if reply_to was specified and USP message was received over CoAP
+    char *coap_host;
+    int coap_port;
+    char *coap_resource;
+    bool coap_encryption;
+    bool coap_reset_session_hint;       // Set if an existing DTLS session with this host should be reset. 
+                                        // If we know that the USP request came in on a new DTLS session, then it is likely 
+                                        // that the USP response must be sent back on a new DTLS session also. Wihout this, 
+                                        // the CoAP retry mechanism will cause the DTLS session to restart, but it is a while
+                                        // before the retry is triggered, so this hint speeds up communications
+} mtp_reply_to_t;
+
+//------------------------------------------------------------------------------
+// Typedef for SSL verify callback
+typedef int ssl_verify_callback_t(int preverify_ok, X509_STORE_CTX *x509_ctx);
+
+//------------------------------------------------------------------------------
 // Data model components API
+int DEVICE_TIME_Init(void);
+int DEVICE_TIME_Start(void);
 int DEVICE_LOCAL_AGENT_Init(void);
 int DEVICE_LOCAL_AGENT_SetDefaults(void);
 int DEVICE_LOCAL_AGENT_Start(void);
@@ -98,7 +127,7 @@ int DEVICE_CONTROLLER_Init(void);
 int DEVICE_CONTROLLER_Start(void);
 void DEVICE_CONTROLLER_Stop(void);
 int DEVICE_CONTROLLER_FindInstanceByEndpointId(char *endpoint_id);
-int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *stomp_dest, int stomp_instance);
+int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, mtp_reply_to_t *mtp_reply_to);
 char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance);
 int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_role);
 int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_role_t *combined_role);
@@ -136,10 +165,13 @@ void DEVICE_SUBSCRIPTION_Dump(void);
 int DEVICE_SECURITY_Init(void);
 int DEVICE_SECURITY_Start(void);
 void DEVICE_SECURITY_Stop(void);
-SSL_CTX *DEVICE_SECURITY_GetSSLContext(void);
 int DEVICE_SECURITY_GetControllerTrust(STACK_OF(X509) *cert_chain, ctrust_role_t *role, char **allowed_controllers);
 bool DEVICE_SECURITY_IsClientCertAvailable(void);
-CURLcode DEVICE_SECURITY_LoadBulkDataTrustStore(CURL *curl, void *curl_sslctx, void *parm);
+SSL_CTX *DEVICE_SECURITY_CreateSSLContext(const SSL_METHOD *method, int verify_mode, ssl_verify_callback_t verify_callback);
+int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify_callback_t verify_callback);
+void DEVICE_SECURITY_GetClientCertStatus(bool *available, bool *matches_endpoint);
+int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
+int DEVICE_SECURITY_BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
 int DEVICE_CTRUST_Init(void);
 int DEVICE_CTRUST_Start(void);
 void DEVICE_CTRUST_Stop(void);
@@ -158,7 +190,7 @@ int DEVICE_REQUEST_PersistOperationArgs(int instance, kv_vector_t *args, char *p
 int DEVICE_BULKDATA_Init(void);
 int DEVICE_BULKDATA_Start(void);
 void DEVICE_BULKDATA_Stop(void);
-void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bool transfer_result);
+void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
 #ifndef REMOVE_SELF_TEST_DIAG_EXAMPLE
 int DEVICE_SELF_TEST_Init(void);
 #endif
@@ -175,6 +207,7 @@ extern char *device_req_root;
 //-----------------------------------------------------------------------------------------------
 // Global variables set by command line
 extern char *auth_cert_file;
+extern char *usp_trust_store_file;
 
 //-----------------------------------------------------------------------------------------------
 /*

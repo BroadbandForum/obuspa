@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -121,27 +121,27 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_ValueChange(char *path, char *value, char 
 **
 ** \param   usp - pointer to parsed USP message structure. This is always freed by the caller (not this function)
 ** \param   controller_endpoint - endpoint which sent this message
-** \param   stomp_dest - STOMP destination to send the reply to (or NULL if none setup in received message)
-** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table) to send the reply to
+** \param   mrt - details of where response to this USP message should be sent
+**                         NOTE: Controller might not populate the 'reply-to' field for notify response messages
 **
 ** \return  None - This code must handle any errors by sending back error messages
 **
 **************************************************************************/
-void MSG_HANDLER_HandleNotifyResp(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance)
+void MSG_HANDLER_HandleNotifyResp(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt)
 {
     Usp__Msg *resp = NULL;
 
     // Exit if message is invalid or failed to parse
     // This code checks the parsed message enums and pointers for expectations and validity
-    if ((usp->header == NULL) || 
-        (usp->body == NULL) || (usp->body->msg_body_case != USP__BODY__MSG_BODY_RESPONSE) ||
+    USP_ASSERT(usp->header != NULL);
+    if ((usp->body == NULL) || (usp->body->msg_body_case != USP__BODY__MSG_BODY_RESPONSE) ||
         (usp->body->response == NULL) || (usp->body->response->resp_type_case != USP__RESPONSE__RESP_TYPE_NOTIFY_RESP) ||
         (usp->body->response->notify_resp == NULL) || 
         (usp->header->msg_id == NULL) || (usp->body->response->notify_resp->subscription_id == NULL))
     {
         USP_ERR_SetMessage("%s: Incoming message is invalid or inconsistent", __FUNCTION__);
         resp = ERROR_RESP_CreateSingle(usp->header->msg_id, USP_ERR_MESSAGE_NOT_UNDERSTOOD, resp, NULL);
-        MSG_HANDLER_QueueMessage(controller_endpoint, resp, NULL, INVALID);
+        MSG_HANDLER_QueueMessage(controller_endpoint, resp, mrt);
         usp__msg__free_unpacked(resp, pbuf_allocator);
         return;
     }

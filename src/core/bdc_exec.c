@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -116,10 +116,11 @@ void FreeBdcExecMsgContents(bdc_exec_msg_t *msg);
 size_t bulkdata_curl_null_sink(void *buffer, size_t size, size_t nmemb, void *userp);
 void PerformSendingReports(void);
 void HandleBdcTransferComplete(CURL *curl_ctx, CURLcode curl_res);
-bool CalcBdcTransferResult(CURL *curl_ctx, CURLcode curl_res, int profile_id);
+bdc_transfer_result_t CalcBdcTransferResult(CURL *curl_ctx, CURLcode curl_res, int profile_id);
 bdc_connection_t *FindFreeBdcConnection(void);
 bdc_connection_t *FindBdcConnectionByCurlCtx(CURL *curl_ctx);
 void FreeBdcConnection(bdc_connection_t *bc);
+CURLcode LoadBulkDataTrustStore(CURL *curl, void *curl_sslctx, void *parm);
 
 /*********************************************************************//**
 **
@@ -150,7 +151,7 @@ int BDC_EXEC_Init(void)
     err = socketpair(AF_UNIX, SOCK_DGRAM, 0, bdc_mq_sockets);
     if (err != 0)
     {
-        USP_ERR_ERRNO("socketpair", err);
+        USP_ERR_ERRNO("socketpair", errno);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -206,7 +207,7 @@ int BDC_EXEC_PostReportToSend(int profile_id, char *full_url, char *query_string
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
 
         // Free all buffers whose ownership has passed to BDC exec
         FreeBdcExecMsgContents(&msg);
@@ -317,7 +318,7 @@ void UpdateBdcSockSet(socket_set_t *set)
     // If given an infinite timeout, just change it to 1 hour
     if (timeout == -1)
     {
-        timeout = 3600*1000;
+        timeout = MAX_SOCKET_TIMEOUT;
     }
 
     // Set the timeout that curl wants
@@ -325,8 +326,7 @@ void UpdateBdcSockSet(socket_set_t *set)
 
 exit:
     // Add the message queue receiving socket to the socket set
-    #define SECONDS 1000 // in ms
-    SOCKET_SET_AddSocketToReceiveFrom(mq_rx_socket, 3600*SECONDS, set);
+    SOCKET_SET_AddSocketToReceiveFrom(mq_rx_socket, MAX_SOCKET_TIMEOUT, set);
 }
 
 /*********************************************************************//**
@@ -457,9 +457,10 @@ int StartSendingReport(bdc_connection_t *bc)
     curl_easy_setopt(curl_ctx, CURLOPT_SSL_VERIFYHOST, 2);
     curl_easy_setopt(curl_ctx, CURLOPT_CAINFO, NULL);
     curl_easy_setopt(curl_ctx, CURLOPT_CAPATH, NULL);
-    curl_easy_setopt(curl_ctx, CURLOPT_SSL_CTX_FUNCTION, *DEVICE_SECURITY_LoadBulkDataTrustStore);
+    curl_easy_setopt(curl_ctx, CURLOPT_SSL_CTX_FUNCTION, *LoadBulkDataTrustStore);
     curl_easy_setopt(curl_ctx, CURLOPT_CONNECTTIMEOUT, BULKDATA_CONNECT_TIMEOUT);
     curl_easy_setopt(curl_ctx, CURLOPT_TIMEOUT, BULKDATA_TOTAL_TIMEOUT);
+    curl_easy_setopt(curl_ctx, CURLOPT_FORBID_REUSE, 1);
 
     // Set the list of headers
     bc->headers = NULL;
@@ -492,7 +493,7 @@ int StartSendingReport(bdc_connection_t *bc)
 //------------------------------------
 // The following code may be uncommented to change the code to do an easy perform instead of a multi-perform
 //CURLcode e = curl_easy_perform(curl_ctx);
-//bool transfer_result = CalcBdcTransferResult(curl_ctx, e, bc->profile_id);
+//bdc_transfer_result_t transfer_result = CalcBdcTransferResult(curl_ctx, e, bc->profile_id);
 //DM_EXEC_NotifyBdcTransferResult(bc->profile_id, transfer_result);
 //FreeBdcConnection(bc);
 //curl_easy_cleanup(curl_ctx);
@@ -513,10 +514,9 @@ int StartSendingReport(bdc_connection_t *bc)
 
     // Update the count of easy handles in the multi-handle
     num_transfers_in_progress++;
-
-    // Kick off the transfer
     bc->curl_ctx = curl_ctx;
-    PerformSendingReports();
+
+    // NOTE: We do not have to call PerformSendingReports() here, as it will be called in BDC_EXEC_Main() anyway
 
     return USP_ERR_OK;
 }
@@ -583,7 +583,7 @@ void PerformSendingReports(void)
 **************************************************************************/
 void HandleBdcTransferComplete(CURL *curl_ctx, CURLcode curl_res)
 {
-    bool transfer_result;
+    bdc_transfer_result_t transfer_result;
     bdc_connection_t *bc;
     int profile_id;         // Save the profile_id, so that we can notify the data model at the end of this function
 
@@ -617,26 +617,67 @@ void HandleBdcTransferComplete(CURL *curl_ctx, CURLcode curl_res)
 **
 **  CalcBdcTransferResult
 **
-**  Handles a transfer completing by cleaning up the curl easy handle, freeing memory and
-**  notifying the DM_EXEC thread that the transfer has completed
+**  Calculates the result code of the transfer - either success, or cause of failure
 **
 ** \param   curl_ctx - curl easy handle for transfer that completed
 ** \param   curl_res - curl result code for the transfer
 ** \param   profile_id - Instance number of profile in Device.Bulkdata.Profile.{i}
 **          
-** \return  None
+** \return  result code of the transfer
 **
 **************************************************************************/
-bool CalcBdcTransferResult(CURL *curl_ctx, CURLcode curl_res, int profile_id)
+bdc_transfer_result_t CalcBdcTransferResult(CURL *curl_ctx, CURLcode curl_res, int profile_id)
 {
     CURLcode res;
     long lval;
+    bdc_transfer_result_t transfer_result;
+
+    switch(curl_res)
+    {
+        case CURLE_OK:
+            transfer_result = kBDCTransferResult_Success;
+            break;
+
+        case CURLE_COULDNT_RESOLVE_PROXY:   // 5 
+        case CURLE_COULDNT_RESOLVE_HOST:    // 6 
+            transfer_result = kBDCTransferResult_Failure_DNS;
+            break;
+        
+#if (LIBCURL_VERSION_NUM < 0x073E00)
+        // In Curl version 7.62.0 onwards, CURLE_SSL_CACERT is the same as CURLE_PEER_FAILED_VERIFICATION, so don't include it twice
+        case CURLE_SSL_CACERT:              // 60 - problem with the CA cert (path?) 
+#endif
+        case CURLE_SSL_CONNECT_ERROR:       // 35 - wrong when connecting with SSL 
+        case CURLE_PEER_FAILED_VERIFICATION: // 51 - peer's certificate or fingerprint wasn't verified fine 
+        case CURLE_SSL_CERTPROBLEM:         // 58 - problem with the local certificate 
+        case CURLE_SSL_CIPHER:              // 59 - couldn't use specified cipher 
+            transfer_result =  kBDCTransferResult_Failure_Auth;
+            break;
+
+        case CURLE_COULDNT_CONNECT:         // 7 
+            transfer_result = kBDCTransferResult_Failure_Connect;
+            break;
+
+        case CURLE_SEND_ERROR:              // 55 - failed sending network data 
+        case CURLE_RECV_ERROR:              // 56 - failure in receiving network data 
+        case CURLE_AGAIN:                   // 81 - socket is not ready for send/recv, wait till it's ready and try again 
+            transfer_result =  kBDCTransferResult_Failure_ReadWrite;
+            break;
+
+        case CURLE_OPERATION_TIMEDOUT:      // 28 - the timeout time was reached 
+            transfer_result =  kBDCTransferResult_Failure_Timeout;
+            break;
+
+        default:
+            transfer_result =  kBDCTransferResult_Failure_Other;
+            break;
+    }
 
     // Exit if an error occurred during the transfer
     if (curl_res != CURLE_OK)
     {
         USP_LOG_Error("BULK DATA: report sending failed for profile_id=%d (curl_res=%d, %s)", profile_id, curl_res, curl_easy_strerror(curl_res));
-        return false;
+        return transfer_result;
     }
 
     // Check server response for success (status 2xx)
@@ -645,7 +686,7 @@ bool CalcBdcTransferResult(CURL *curl_ctx, CURLcode curl_res, int profile_id)
     if (res != CURLE_OK)
     {
         USP_LOG_Error("%s: could not retrieve CURLINFO_RESPONSE_CODE: %s", __FUNCTION__, curl_easy_strerror(curl_res));
-        return false;
+        return kBDCTransferResult_Failure_Other;
     }
     USP_LOG_Info("BULK DATA: Server Response Code=%ld (%s) for profile_id=%d", lval, ((lval < 200) || (lval > 299)) ? "FAILURE" : "SUCCESS", profile_id);
 
@@ -653,11 +694,12 @@ bool CalcBdcTransferResult(CURL *curl_ctx, CURLcode curl_res, int profile_id)
     if ((lval < 200) || (lval > 299))
     {
         USP_LOG_Warning("BULK DATA: upload failed with server response code %ld for profile_id=%d", lval, profile_id);
-        return false;
+        transfer_result = (lval == 401) ? kBDCTransferResult_Failure_Auth :  kBDCTransferResult_Failure_Other;
+        return transfer_result;
     }
 
     // If the code gets here, then the report was successfully sent
-    return true;
+    return kBDCTransferResult_Success;
 }
 
 /*********************************************************************//**
@@ -801,5 +843,44 @@ void FreeBdcExecMsgContents(bdc_exec_msg_t *msg)
     {
         free(msg->report);
     }
+}
+
+/*********************************************************************//**
+**
+** LoadBulkDataTrustStore
+**
+** Callback from curl to install our trust store certificates into curl's SSL context
+**
+** \param   curl - pointer to curl context
+** \param   curl_sslctx - pointer to curl's SSL context
+** \param   userptr - pointer to user data (unused)
+**          
+** \return  CURLE_OK if successful
+**
+**************************************************************************/
+CURLcode LoadBulkDataTrustStore(CURL *curl, void *curl_sslctx, void *parm)
+{
+    SSL_CTX *curl_ssl_ctx;
+    X509_STORE *curl_trust_store;
+    int err;
+
+    // Exit if unable to obtain curl's trust store
+    curl_ssl_ctx = (SSL_CTX *) curl_sslctx;
+    curl_trust_store = SSL_CTX_get_cert_store(curl_ssl_ctx);
+    if (curl_trust_store == NULL)
+    {
+        USP_LOG_Error("%s: SSL_CTX_get_cert_store() failed", __FUNCTION__);
+        return CURLE_ABORTED_BY_CALLBACK;
+    }
+
+    // Exit if unable to load the trust store and client cert into curl's SSL context
+    err = DEVICE_SECURITY_LoadTrustStore(curl_ssl_ctx, SSL_VERIFY_PEER, DEVICE_SECURITY_BulkDataTrustCertVerifyCallback);
+    if (err != USP_ERR_OK)
+    {
+        return CURLE_ABORTED_BY_CALLBACK;
+    }
+
+    // If the code gets here, then the trust certs and client certs were loaded successfully
+    return CURLE_OK;
 }
 

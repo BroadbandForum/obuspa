@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -83,9 +83,47 @@
 // General definitions used in code
 #define EMPTY_BODY ""
 
-#define SECONDS 1000            // Number of milliseconds in a second
-
 #define BBF_STOMP_CONTENT_TYPE  "application/vnd.bbf.usp.msg"
+//------------------------------------------------------------------------------
+// State of a STOMP connection
+typedef enum
+{
+    kStompState_Idle,                       // Not yet connected
+    kStompState_SendingStompFrame,          // TCP connected to the STOMP server and currently sending the initial STOMP frame
+    kStompState_AwaitingConnectedFrame,     // Awaiting the response to the STOMP frame, the CONNECTED frame
+    kStompState_SendingSubscribeFrame,      // Sending the subscribe frame, to subscribe to this Agent's queue
+    kStompState_Running,                    // Normal steady state: Connection is ready to send and receive USP messages
+    kStompState_Retrying,                   // An error has occurred. We have dropped the TCP connection and will attempt a reconnect at some time in the future
+
+    kStompState_Max
+} stomp_state_t;
+
+//------------------------------------------------------------------------------------
+// Array used by debug to print out the current STOMP connection state
+char *state_names[kStompState_Max] =
+{
+    "Idle",                     // kStompState_Idle
+    "SendingStompFrame",        // kStompState_SendingStompFrame
+    "AwaitingConnectedFrame",   // kStompState_AwaitingConnectedFrame
+    "SendingSubscribeFrame",    // kStompState_SendingSubscribeFrame
+    "Running",                  // kStompState_Running
+    "Retrying"                  // kStompState_Retrying
+};
+
+//------------------------------------------------------------------------------
+// Table to convert from cause of STOMP failure to the value used by Device.STOMP.Connection{i}.Status
+enum_entry_t stomp_failure_strings[] = 
+{
+    { kStompFailure_None, "No Error" },
+    { kStompFailure_ServerDNS, "ServerNotPresent" },
+    { kStompFailure_Authentication, "Error_AuthenticationFailure" },
+    { kStompFailure_Connect, "ServerNotPresent" },
+    { kStompFailure_ReadWrite, "ServerNotPresent" },
+    { kStompFailure_Timeout, "ServerNotPresent"},
+    { kStompFailure_Misconfigured, "Error_Misconfigured"},
+    { kStompFailure_OtherError, "Error"},
+};
+
 //------------------------------------------------------------------------------
 // Parameters for each stomp connection
 typedef struct
@@ -122,9 +160,13 @@ typedef struct
 
     char *subscribe_dest;   // STOMP destination to subscribe to (received from the STOMP server in the CONNECTED frame).
                             // This overrides Device.LocalAgent.MTP.{i}.STOMP.Destination.
-    int heartbeat_period;   // Negotiated number of seconds between sending out heartbeats (if no other message has been sent in the meantime)
-                            // Or zero if heartbeats should not be sent
-    time_t next_heartbeat_time;  // Absolute time at which next heartbeat should be sent, or INVALID_TIME if heartbeats are not being sent
+    int agent_heartbeat_period;   // Negotiated number of seconds between sending out heartbeats (if no other message has been sent in the meantime)
+                                  // Or zero if heartbeats should not be sent
+    int server_heartbeat_period;   // Negotiated number of seconds between receiving heartbeats (if no other message has been sent in the meantime)
+                                  // Or zero if heartbeats are not expected to be received from the server
+    time_t next_heartbeat_time;  // Absolute time at which next agent heartbeat should be sent, or INVALID_TIME if heartbeats are not being sent
+
+    time_t last_received_time; // Last time at which a heartbeat or a USP message was received from the server, or INVALID_TIME if nothing received yet (eg connection is in retrying state)
 
     unsigned char *rxframe;   // pointer to buffer, used to concatenate message fragments until a complete message has been received
     int rxframe_msglen;       // number of message bytes copied into rxframe
@@ -145,22 +187,12 @@ typedef struct
     char mgmt_ip_addr[NU_IPADDRSTRLEN]; // IP address of device's source address providing this STOMP connection
     char mgmt_if_name[IFNAMSIZ];        // Name of network interface providing this STOMP connection
 
+
 } stomp_connection_t;
 
 //------------------------------------------------------------------------------
 // Array of enabled (ie active) STOMP connections
 static stomp_connection_t stomp_connections[MAX_STOMP_CONNECTIONS];
-
-//------------------------------------------------------------------------------
-// Table to convert from cause of STOMP failure to the value used by Device.STOMP.Connection{i}.Status
-enum_entry_t stomp_failure_strings[] = 
-{
-    { kStompFailure_None, "No Error" },
-    { kStompFailure_ServerNotPresent, "ServerNotPresent" },
-    { kStompFailure_Authentication, "Error_AuthenticationFailure" },
-    { kStompFailure_Misconfigured, "Error_Misconfigured"},
-    { kStompFailure_OtherError, "Error"},
-};
 
 //------------------------------------------------------------------------------
 // USP Message to send in queue
@@ -175,31 +207,19 @@ typedef struct
 } stomp_send_item_t;
 
 //------------------------------------------------------------------------------
-// Flag set to true if a client certificate has been set to use with authentication over SSL
-static bool client_cert_available = false;
-
-//------------------------------------------------------------------------------
 // Variables associated with determining whether the Management IP address has changed (used by UpdateMgmtInterface)
 static time_t next_mgmt_if_poll_time = 0;   // Absolute time at which to next poll for IP address change
 #ifdef CONNECT_ONLY_OVER_WAN_INTERFACE
-static char last_mgmt_ip_addr[NU_IPADDRSTRLEN] = { 0 };
+char last_mgmt_ip_addr[NU_IPADDRSTRLEN] = { 0 };
 #endif
+
+//------------------------------------------------------------------------------------
+// The SSL context for STOMP (created for use with TLS)
+SSL_CTX *stomp_ssl_ctx = NULL;
 
 //------------------------------------------------------------------------------------
 // Mutex used to protect access to this component
 static pthread_mutex_t stomp_access_mutex;
-
-//------------------------------------------------------------------------------------
-// Array used by debug to print out the current STOMP connection state
-char *state_names[kStompState_Max] =
-{
-    "Idle",                     // kStompState_Idle
-    "SendingStompFrame",        // kStompState_SendingStompFrame
-    "AwaitingConnectedFrame",   // kStompState_AwaitingConnectedFrame
-    "SendingSubscribeFrame",    // kStompState_SendingSubscribeFrame
-    "Running",                  // kStompState_Running
-    "Retrying"                  // kStompState_Retrying
-};
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -240,10 +260,10 @@ stomp_connection_t *FindUnusedStompConn(void);
 void CopyStompConnParamsToNext(stomp_connection_t *sc, stomp_conn_params_t *sp, char *stomp_queue);
 void CopyStompConnParamsFromNext(stomp_connection_t *sc);
 char *AllocateStringIfChanged(char *cur_str, char *new_str);
+void LogNoPasswordWarning(stomp_connection_t *sc);
 void EscapeStompHeader(char *src, char *dest, int dest_len);
 void HandleStompSourceIPAddrChanges(void);
-void LogStompErrSSL(const char *func_name, char *failure_string, int ret, int err);
-
+bool IsUspRecordInStompQueue(stomp_connection_t *sc, unsigned char *pbuf, int pbuf_len);
 
 /*********************************************************************//**
 **
@@ -305,6 +325,12 @@ void STOMP_Destroy(void)
             STOMP_DisableConnection(sc->instance, PURGE_QUEUED_MESSAGES);
         }
     }
+
+    // Free the OpenSSL context
+    if (stomp_ssl_ctx != NULL)
+    {
+        SSL_CTX_free(stomp_ssl_ctx);
+    }
 }
 
 /*********************************************************************//**
@@ -320,14 +346,27 @@ void STOMP_Destroy(void)
 **************************************************************************/
 int STOMP_Start(void)
 {
+    int err;
+
     OS_UTILS_LockMutex(&stomp_access_mutex);
 
     // Store the initial IP address for the management interface
     UpdateMgmtInterface();
 
-    OS_UTILS_UnlockMutex(&stomp_access_mutex);
+    // Create the SSL context with trust store and client cert loaded
+    stomp_ssl_ctx = DEVICE_SECURITY_CreateSSLContext(SSLv23_client_method(), SSL_VERIFY_PEER, DEVICE_SECURITY_TrustCertVerifyCallback);
+    if (stomp_ssl_ctx == NULL)
+    {
+        err = USP_ERR_INTERNAL_ERROR;
+        goto exit;
+    }
 
-    return USP_ERR_OK;
+    // If code gets here then it was successful
+    err = USP_ERR_OK;
+
+exit:
+    OS_UTILS_UnlockMutex(&stomp_access_mutex);
+    return err;
 }
 
 /*********************************************************************//**
@@ -347,6 +386,8 @@ void STOMP_UpdateAllSockSet(socket_set_t *set)
     stomp_connection_t *sc;
     bool responses_sent;
     int timeout;
+    time_t cur_time;
+    time_t expected_heartbeat_time;
 
     OS_UTILS_LockMutex(&stomp_access_mutex);
 
@@ -383,14 +424,35 @@ void STOMP_UpdateAllSockSet(socket_set_t *set)
                 if (responses_sent)
                 {
                     USP_LOG_Info("Connection parameters changed. Reconnecting to (host=%s, port=%d)", sc->host, sc->port);
+
                     StopStompConnection(sc, PURGE_QUEUED_MESSAGES);  // NOTE: All messages in queue should already have been removed
                     sc->schedule_reconnect = kScheduledAction_Off;
                     StartStompConnection(sc);
                 }
                 else
                 {
-                    // Ensure that this function will be called at least once every second until the reconnect has happened
+                    // Ensure that this function will be called at least once every second until all responses have been sent
                     SOCKET_SET_UpdateTimeout(1*SECONDS, set);
+                }
+            }
+
+            // Handle STOMP server heartbeat timeouts
+            if ((sc->server_heartbeat_period != 0) && (sc->last_received_time != INVALID_TIME))
+            {
+                // If a STOMP server heartbeat timeout has occurred...
+                cur_time = time(NULL);
+                expected_heartbeat_time = sc->last_received_time + sc->server_heartbeat_period + STOMP_SERVER_HEARTBEAT_GRACE_PERIOD;
+                if (cur_time >= expected_heartbeat_time)
+                {
+                    // Cause a retry to occur
+                    USP_LOG_Error("ERROR: STOMP server heartbeat not received (cur_time=%d, last_received_time=%d)", (int)cur_time, (int)sc->last_received_time);
+                    HandleStompSocketError(sc, kStompFailure_Timeout);
+                }
+                else
+                {
+                    // Otherwise, update timeout, so that it at least occurs when the STOMP server heartbeat timeout would fire
+                    timeout = (int)(expected_heartbeat_time - cur_time);
+                    SOCKET_SET_UpdateTimeout(timeout*SECONDS, set);
                 }
             }
 
@@ -515,7 +577,8 @@ int STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, ch
     stomp_connection_t *sc;
     stomp_send_item_t *send_item;
     int err;
-    
+    bool is_duplicate;
+
     OS_UTILS_LockMutex(&stomp_access_mutex);
 
     // Exit if MTP thread has exited
@@ -534,8 +597,14 @@ int STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, ch
         goto exit;
     }
 
-    // 2DO RH: Do not add this message to the queue, if it is already present in the queue
+    // Do not add this message to the queue, if it is already present in the queue
     // This situation could occur if a notify is being retried to be sent, but is already held up in the queue pending sending
+    is_duplicate = IsUspRecordInStompQueue(sc, pbuf, pbuf_len);
+    if (is_duplicate)
+    {
+        err = USP_ERR_OK;
+        goto exit;
+    }
 
     send_item = USP_MALLOC(sizeof(stomp_send_item_t));
     send_item->usp_msg_type = usp_msg_type;
@@ -589,6 +658,7 @@ int STOMP_EnableConnection(stomp_conn_params_t *sp, char *stomp_queue)
     }
 
     // Create this STOMP connection, if not already started
+    // NOTE: If the code is correct, then the STOMP connection for the specified instance should never exist when this function is called
     sc = FindStompConnByInst(sp->instance);
     if (sc == NULL)
     {
@@ -605,9 +675,11 @@ int STOMP_EnableConnection(stomp_conn_params_t *sp, char *stomp_queue)
 
     // Copy across the connection parameters to use when starting the connection
     CopyStompConnParamsToNext(sc, sp, stomp_queue);
+
+
     sc->retry_count = 0;
     sc->failure_code = kStompFailure_None;
-    
+
     StartStompConnection(sc);
     err = USP_ERR_OK;
 
@@ -653,6 +725,7 @@ int STOMP_DisableConnection(int instance, bool purge_queued_messages)
     }
 
     // Exit if unable to find this connection
+    // NOTE: This could occur if the connection has already been disabled
     sc = FindStompConnByInst(instance);
     if (sc == NULL)
     {
@@ -693,6 +766,7 @@ int STOMP_DisableConnection(int instance, bool purge_queued_messages)
     np->incoming_heartbeat_period = 0;
     np->outgoing_heartbeat_period = 0;
     memset(&np->retry, 0, sizeof(np->retry));
+
 
     // Mark this slot as not in use
     sc->instance = INVALID;
@@ -748,6 +822,7 @@ void STOMP_ScheduleReconnect(stomp_conn_params_t *sp, char *stomp_queue)
     // Copy across the connection parameters to use after the reconnect
     CopyStompConnParamsToNext(sc, sp, stomp_queue);
 
+
     // Signal a reconnect
     sc->schedule_reconnect = kScheduledAction_Signalled;
 
@@ -801,22 +876,6 @@ void STOMP_ActivateScheduledActions(void)
     }
 
     OS_UTILS_UnlockMutex(&stomp_access_mutex);
-}
-
-/*********************************************************************//**
-**
-** STOMP_NotifyClientCertAvailable
-**
-** Called by DEVICE_SECURITY, if a client certificate is to be used by SSL
-**
-** \param   None
-**
-** \return  None
-**
-**************************************************************************/
-void STOMP_NotifyClientCertAvailable(void)
-{
-    client_cert_available = true;
 }
 
 /*********************************************************************//**
@@ -884,7 +943,7 @@ mtp_status_t STOMP_GetMtpStatus(int instance)
     }
 
     // Exit if unable to find the specified STOMP connection
-    // NOTE: This could occur if the connection was disabled, or the connection reference was incorrect
+    // NOTE: This could occur if Device.STOMP.Connection.{i} is disabled
     sc = FindStompConnByInst(instance);
     if (sc == NULL)
     {
@@ -937,7 +996,7 @@ char *STOMP_GetConnectionStatus(int instance, time_t *last_change_date)
     }
 
     // Exit if unable to find the specified STOMP connection
-    // NOTE: This could occur if the connection was disabled, or the connection reference was incorrect
+    // NOTE: This could occur if Device.STOMP.Connection.{i} is disabled
     sc = FindStompConnByInst(instance);
     if (sc == NULL)
     {
@@ -979,6 +1038,7 @@ exit:
     return status;
 }
 
+
 /*********************************************************************//**
 **
 ** STOMP_GetDestinationFromServer
@@ -1008,7 +1068,6 @@ void STOMP_GetDestinationFromServer(int instance, char *buf, int len)
     }
 
     // Exit if unable to find the specified STOMP connection
-    // NOTE: This could occur if the connection was disabled, or the connection reference was incorrect
     sc = FindStompConnByInst(instance);
     if (sc == NULL)
     {
@@ -1084,6 +1143,7 @@ void StartStompConnection(stomp_connection_t *sc)
     err = nu_ipaddr_from_str(last_mgmt_ip_addr, &local_mgmt_addr);
     if (err != USP_ERR_OK)
     {
+        USP_LOG_Error("%s: Unable to convert IP address (%s)", __FUNCTION__, last_mgmt_ip_addr);
         goto exit;
     }
 #else
@@ -1095,7 +1155,7 @@ void StartStompConnection(stomp_connection_t *sc)
     err = tw_ulib_diags_lookup_host(sc->host, AF_UNSPEC, prefer_ipv6, &local_mgmt_addr, &dst);
     if (err != USP_ERR_OK)
     {
-        stomp_err = kStompFailure_ServerNotPresent;
+        stomp_err = kStompFailure_ServerDNS;
         goto exit;
     }
 
@@ -1139,7 +1199,6 @@ void StartStompConnection(stomp_connection_t *sc)
     if (err == -1)
     {
         USP_ERR_ERRNO("bind", errno);
-        err = USP_ERR_INTERNAL_ERROR;
         goto exit;
     }
 }
@@ -1160,7 +1219,7 @@ void StartStompConnection(stomp_connection_t *sc)
     if ((err == -1) && (errno != EINPROGRESS))
     {
         USP_ERR_ERRNO("connect", errno);
-        stomp_err = kStompFailure_ServerNotPresent;
+        stomp_err = kStompFailure_Connect;
         goto exit;
     }
 
@@ -1175,7 +1234,7 @@ void StartStompConnection(stomp_connection_t *sc)
     if (num_sockets == 0)
     {
         USP_LOG_Error("%s: connect timed out", __FUNCTION__);
-        stomp_err = kStompFailure_ServerNotPresent;
+        stomp_err = kStompFailure_Connect;
         goto exit;
     }
 
@@ -1184,7 +1243,7 @@ void StartStompConnection(stomp_connection_t *sc)
     if (err == -1)
     {
         USP_ERR_ERRNO("getsockopt", errno);
-        stomp_err = kStompFailure_ServerNotPresent;
+        stomp_err = kStompFailure_Connect;
         goto exit;
     }
 
@@ -1192,18 +1251,24 @@ void StartStompConnection(stomp_connection_t *sc)
     if (so_err != 0)
     {
         USP_LOG_Error("%s: async connect failed", __FUNCTION__);
-        stomp_err = kStompFailure_ServerNotPresent;
+        stomp_err = kStompFailure_Connect;
         goto exit;
     }
 
-    // Perform the SSL handshake (if required)
+    // Perform the SSL handshake (if required), determining the role to use when processing USP messages
     if (sc->enable_encryption)
     {
         err = PerformStompSslConnect(sc);
         if (err != USP_ERR_OK)
         {
+            stomp_err = kStompFailure_Authentication;
             goto exit;
         }
+    }
+    else
+    {
+        // If encryption is off, then use the Non SSL role
+        sc->role = ROLE_NON_SSL;
     }
 
     // Update the address used to connect to the controller
@@ -1263,6 +1328,7 @@ void StopStompConnection(stomp_connection_t *sc, bool purge_queued_messages)
 
     USP_LOG_Info("Disconnecting from (host=%s, port=%d)", sc->host, sc->port);
 
+
     // Free the SSL connection and any saved certificate chain
     if (sc->enable_encryption)
     {
@@ -1291,8 +1357,10 @@ void StopStompConnection(stomp_connection_t *sc, bool purge_queued_messages)
     USP_SAFE_FREE(sc->allowed_controllers);
     sc->role = ROLE_DEFAULT;
     USP_SAFE_FREE(sc->subscribe_dest);
-    sc->heartbeat_period = 0;
+    sc->agent_heartbeat_period = 0;
+    sc->server_heartbeat_period = 0;
     sc->next_heartbeat_time = INVALID_TIME;
+    sc->last_received_time = INVALID_TIME;
     sc->mgmt_ip_addr[0] = '\0';
     sc->mgmt_if_name[0] = '\0';
 
@@ -1355,8 +1423,10 @@ void InitStompConnection(stomp_connection_t *sc)
     sc->subscribe_dest = NULL;
     sc->allowed_controllers = NULL;
 
-    sc->heartbeat_period = 0;
+    sc->agent_heartbeat_period = 0;
+    sc->server_heartbeat_period = 0;
     sc->next_heartbeat_time = INVALID_TIME;
+    sc->last_received_time = INVALID_TIME;
 
     sc->rxframe = NULL;
     sc->rxframe_msglen = 0;
@@ -1375,9 +1445,6 @@ void InitStompConnection(stomp_connection_t *sc)
         sc->last_status_change = cur_time;
     }
 
-    // Set default role, if not determined from SSL certs
-    sc->role = ROLE_NON_SSL;
-    sc->allowed_controllers = NULL;
 }
 
 /*********************************************************************//**
@@ -1395,7 +1462,6 @@ int PerformStompSslConnect(stomp_connection_t *sc)
 {
     int sock_opt;
     int err;
-    SSL_CTX *ssl_context;
     X509 *server_cert;
 
     // Exit if unable to get current socket options
@@ -1417,8 +1483,7 @@ int PerformStompSslConnect(stomp_connection_t *sc)
     }
 
     // Exit if unable to create a new SSL connection
-    ssl_context = DEVICE_SECURITY_GetSSLContext();
-    sc->ssl = SSL_new(ssl_context); 
+    sc->ssl = SSL_new(stomp_ssl_ctx); 
     if (sc->ssl == NULL)
     {
         USP_LOG_Error("%s: SSL_new() failed", __FUNCTION__);
@@ -1444,6 +1509,8 @@ int PerformStompSslConnect(stomp_connection_t *sc)
     // These fail the cert if the STOMP server hostname doesn't match the SubjectAltName (SAN) in the cert
     // If SAN is not present, the cert is failed if hostname doesn't match the CommonName (CN) in the cert
     // If neither SAN, nor CN are present in the cert, then the cert will automatically be failed by the verify object set
+    // For wildcarded hostnames in the cert, the '*' must be a subdomain (eg *.foo.com, *.foo.bar.com, but not *.com)
+    // and Partial Wildcards eg f*oo.bar.com are not allowed ('*' must represent a full subdomain)
     X509_VERIFY_PARAM_set_hostflags(verify_object, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
     X509_VERIFY_PARAM_set1_host(verify_object, sc->host, strlen(sc->host));
 }
@@ -1462,7 +1529,7 @@ int PerformStompSslConnect(stomp_connection_t *sc)
     if (err != 1)
     {
         int ssl_err = SSL_get_error(sc->ssl, err);
-        LogStompErrSSL(__FUNCTION__, "SSL_connect() failed", err, ssl_err);
+        USP_LOG_ErrorSSL(__FUNCTION__, "SSL_connect() failed", err, ssl_err);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -1471,7 +1538,7 @@ int PerformStompSslConnect(stomp_connection_t *sc)
     server_cert = SSL_get_peer_certificate(sc->ssl);
     if (server_cert == NULL)
     {
-        USP_LOG_Error("%s: SSL_connect() failed", __FUNCTION__);
+        USP_LOG_Error("%s: SSL_get_peer_certificate() failed", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -1532,8 +1599,8 @@ void UpdateStompConnectionSockSet(stomp_connection_t *sc, socket_set_t *set)
         cur_time = time(NULL);
         if (cur_time >= sc->stomp_handshake_timeout)
         {
-            USP_LOG_Error("STOMP timed out (in state=%s) whilst performing initial STOMP handshake to (host=%s, port=%d)", state_names[sc->state], sc->host, sc->port);
-            HandleStompSocketError(sc, kStompFailure_ServerNotPresent);
+            USP_LOG_Error("%s: STOMP timed out (in state=%s) whilst performing initial STOMP handshake to (host=%s, port=%d)", __FUNCTION__, state_names[sc->state], sc->host, sc->port);
+            HandleStompSocketError(sc, kStompFailure_Timeout);
         }
     }
 
@@ -1581,7 +1648,7 @@ void UpdateStompConnectionSockSet(stomp_connection_t *sc, socket_set_t *set)
             if ((sc->txframe == NULL) && (queued_msg != NULL))
             {
                 // Exit if an error occurred when starting to send the message
-                // NOTE: This function only fals if unable to get agent or controller queue name
+                // NOTE: This function only fails if unable to get agent or controller queue name
                 err = StartSendingFrame_SEND(sc, queued_msg->controller_queue, queued_msg->agent_queue, queued_msg->usp_msg_type, queued_msg->pbuf, queued_msg->pbuf_len);
                 if (err != USP_ERR_OK)
                 {
@@ -1780,7 +1847,7 @@ void UpdateAgentHeartbeat(stomp_connection_t *sc)
     if (num_bytes_sent < 0)
     {
         USP_LOG_Error("%s: STOMP Server write error (host %s, port %d). Retrying.", __FUNCTION__, sc->host, sc->port);
-        HandleStompSocketError(sc, kStompFailure_OtherError);
+        HandleStompSocketError(sc, kStompFailure_ReadWrite);
         return;
     }
 
@@ -1789,7 +1856,7 @@ void UpdateAgentHeartbeat(stomp_connection_t *sc)
     if (num_bytes_sent == 0)
     {
         USP_LOG_Error("%s: STOMP Server disconnected (host %s, port %d). Retrying.", __FUNCTION__, sc->host, sc->port);
-        HandleStompSocketError(sc, kStompFailure_ServerNotPresent);
+        HandleStompSocketError(sc, kStompFailure_ReadWrite);
         return;
     }
 
@@ -1827,7 +1894,7 @@ int TransmitStompMessage(stomp_connection_t *sc)
     {
         // The USP Record has not been removed from the send queue, and so will be re-sent after connection to the STOMP server has been re-established
         USP_LOG_Error("%s: STOMP Server write error (host %s, port %d). Retrying.", __FUNCTION__, sc->host, sc->port);
-        HandleStompSocketError(sc, kStompFailure_OtherError);
+        HandleStompSocketError(sc, kStompFailure_ReadWrite);
         return USP_ERR_OK;
     }
 
@@ -1835,7 +1902,7 @@ int TransmitStompMessage(stomp_connection_t *sc)
     if (num_bytes_sent == 0)
     {
         USP_LOG_Error("%s: STOMP Server disconnected (host %s, port %d). Retrying.", __FUNCTION__, sc->host, sc->port);
-        HandleStompSocketError(sc, kStompFailure_ServerNotPresent);
+        HandleStompSocketError(sc, kStompFailure_ReadWrite);
         return USP_ERR_OK;
     }
 
@@ -1878,7 +1945,7 @@ int TransmitStompMessage(stomp_connection_t *sc)
 
         case kStompState_SendingSubscribeFrame:
             sc->state = kStompState_Running;
-            sc->failure_code = kStompFailure_None;
+            sc->failure_code = kStompFailure_None;  // The reason this is set here is that we don't want to change the previous Connection.{i}.Status until it becomes successful
             sc->last_status_change = time(NULL);
             sc->retry_count = 0;        // Since successful, reset the retry count
 
@@ -1930,7 +1997,7 @@ void ReceiveStompMessage(stomp_connection_t *sc)
         if (num_bytes < 0)
         {
             USP_LOG_Error("%s: STOMP Server read error (host %s, port %d). Retrying.", __FUNCTION__, sc->host, sc->port);
-            HandleStompSocketError(sc, kStompFailure_OtherError);
+            HandleStompSocketError(sc, kStompFailure_ReadWrite);
             return;
         }
     
@@ -1938,7 +2005,7 @@ void ReceiveStompMessage(stomp_connection_t *sc)
         if (num_bytes == 0)
         {
             USP_LOG_Error("%s: STOMP Server disconnected (host %s, port %d). Retrying.", __FUNCTION__, sc->host, sc->port);
-            HandleStompSocketError(sc, kStompFailure_ServerNotPresent);
+            HandleStompSocketError(sc, kStompFailure_ReadWrite);
             return;
         }
 
@@ -1965,7 +2032,7 @@ void ReceiveStompMessage(stomp_connection_t *sc)
                 if (num_bytes < 0)
                 {
                     USP_LOG_Error("%s: STOMP Server read error (host %s, port %d). Retrying.", __FUNCTION__, sc->host, sc->port);
-                    HandleStompSocketError(sc, kStompFailure_OtherError);
+                    HandleStompSocketError(sc, kStompFailure_ReadWrite);
                     return;
                 }
     
@@ -1987,7 +2054,7 @@ void ReceiveStompMessage(stomp_connection_t *sc)
             case SSL_ERROR_ZERO_RETURN:
                 // Exit if the STOMP server has gone down
                 USP_LOG_Error("%s: STOMP Server disconnected (host %s, port %d). Retrying.", __FUNCTION__, sc->host, sc->port);
-                HandleStompSocketError(sc, kStompFailure_ServerNotPresent);
+                HandleStompSocketError(sc, kStompFailure_ReadWrite);
                 return;
                 break;
             
@@ -2001,7 +2068,7 @@ void ReceiveStompMessage(stomp_connection_t *sc)
             case SSL_ERROR_SYSCALL:
                 // Exit if any other error occurred
                 USP_LOG_Error("%s: SSL error %d occurred on (host %s, port %d). Retrying.", __FUNCTION__, ssl_err, sc->host, sc->port);
-                HandleStompSocketError(sc, kStompFailure_OtherError);
+                HandleStompSocketError(sc, kStompFailure_ReadWrite);
                 return;
                 break;
         }
@@ -2044,6 +2111,9 @@ int ReceiveStompMessageInner(stomp_connection_t *sc, unsigned char *buf, int num
     {
         return USP_ERR_OK;
     }
+
+    // Log the time at which the last message fragment was received (this is an alternative to receiving the STOMP server heartbeat)
+    sc->last_received_time = time(NULL);
 
     // Increase size of rx buffer, if required
     new_len = sc->rxframe_msglen + num_bytes;
@@ -2143,7 +2213,7 @@ int StompWrite(stomp_connection_t *sc, unsigned char *buf, int bytes_to_attempt)
 
         // Determine whether to retry this call until the write has occurred - this is needed if a renegotiation occurs
         err = SSL_get_error(sc->ssl, num_bytes_sent);
-        LogStompErrSSL(__FUNCTION__, "SSL_write() failed", num_bytes_sent, err);
+        USP_LOG_ErrorSSL(__FUNCTION__, "SSL_write() failed", num_bytes_sent, err);
         usleep(SSL_RETRY_SLEEP);
         retry_count++;
 
@@ -2293,6 +2363,7 @@ void RemoveReceivedHeartBeats(stomp_connection_t *sc)
     {
         USP_LOG_Debug("Received %d heartbeats at time %d", heartbeat_bytes, (int)time(NULL));
         RemoveMessageFromRxBuf(sc, heartbeat_bytes);
+        sc->last_received_time = time(NULL);  // NOTE: Not strictly necessary as it will already have been set in ReceiveStompMessageInner()
     }
 }    
 
@@ -2528,8 +2599,8 @@ void HandleRxMsg_RunningState(stomp_connection_t *sc, int msg_size)
     char reply_to_dest[256];
     char content_type[64];
     bool is_present;
-    char *stomp_dest = NULL;
     char time_buf[MAX_ISO8601_LEN];
+    mtp_reply_to_t mtp_reply_to = {0};
 
     // Exit if this is not the expected MESSAGE frame
     if (IsFrame("MESSAGE", sc->rxframe, msg_size) == false)
@@ -2540,11 +2611,14 @@ void HandleRxMsg_RunningState(stomp_connection_t *sc, int msg_size)
         return;
     }
 
-    // Override the STOMP destination to use, if the 'reply-to-dest:' header is present
+    // Fill In the mtp_reply_to_t structure, based on whether we have a 'reply-to' field or not
+    mtp_reply_to.protocol = kMtpProtocol_STOMP;
     is_present = GetStompHeaderValue("reply-to-dest:", sc->rxframe, msg_size, reply_to_dest, sizeof(reply_to_dest));
-    if (is_present)
+    if ((is_present) && (reply_to_dest[0] != '\0'))
     {
-        stomp_dest = reply_to_dest;
+        mtp_reply_to.is_reply_to_specified = true;
+        mtp_reply_to.stomp_dest = reply_to_dest;
+        mtp_reply_to.stomp_instance = sc->instance;
     }
 
     // Check the content-type
@@ -2591,8 +2665,7 @@ void HandleRxMsg_RunningState(stomp_connection_t *sc, int msg_size)
     USP_PROTOCOL("%s", &sc->rxframe[offset]);
 
     // Send the USP Record to the data model thread for processing
-    DM_EXEC_PostUspRecord(pbuf, pbuf_len, sc->role, sc->allowed_controllers, stomp_dest, sc->instance);
-    
+    DM_EXEC_PostUspRecord(pbuf, pbuf_len, sc->role, sc->allowed_controllers, &mtp_reply_to);
 }
 
 /*********************************************************************//**
@@ -2700,17 +2773,32 @@ void ParseConnectedFrame(stomp_connection_t *sc, unsigned char *msg, int msg_len
         num_parsed = sscanf(buf, "%d,%d", &sx, &sy);
         if (num_parsed == 2)
         {
+            // Handle negotiated agent heartbeat period
             if ((sc->enable_heartbeats == false) || (sc->outgoing_heartbeat_period == 0) || (sy == 0))
             {
                 // Case of outgoing heartbeats disabled (either by our data model, or the STOMP server)
-                sc->heartbeat_period = 0;
+                sc->agent_heartbeat_period = 0;
             }
             else
             {
                 // Case of outgoing heartbeats enabled
                 // Convert outgoing heartbeat period to nearest second (rounded down)
                 period_ms = MAX(sc->outgoing_heartbeat_period, sy);
-                sc->heartbeat_period = (period_ms >= 1000) ? period_ms/1000 : 1;
+                sc->agent_heartbeat_period = (period_ms >= 1000) ? period_ms/1000 : 1;
+            }
+
+            // Handle negotiated server heartbeat period
+            if ((sc->enable_heartbeats == false) || (sc->incoming_heartbeat_period == 0) || (sx == 0))
+            {
+                // Case of incoming heartbeats disabled (either by our data model, or the STOMP server)
+                sc->server_heartbeat_period = 0;
+            }
+            else
+            {
+                // Case of incoming heartbeats enabled
+                // Convert incoming heartbeat period to nearest second (rounded down)
+                period_ms = MAX(sc->incoming_heartbeat_period, sx);
+                sc->server_heartbeat_period = (period_ms >= 1000) ? period_ms/1000 : 1;
             }
         }
         else
@@ -2803,14 +2891,14 @@ void HandleStompSocketError(stomp_connection_t *sc, stomp_failure_t failure_code
 {
     unsigned wait_time;
 
+
+    // Save cause of failure
     // Update the time at which an error occured, if it is a different error than last time (or the first time the error has occurred)
     if (sc->failure_code != failure_code)
     {
         sc->last_status_change = time(NULL);
+        sc->failure_code = failure_code;
     }
-
-    // Save cause of failure
-    sc->failure_code = failure_code;
 
     // Undo transient state associated with the connection
     USP_LOG_Error("Error on STOMP connection to (host %s, port %d). Closing connection.", sc->host, sc->port);
@@ -2858,6 +2946,12 @@ unsigned CalculateStompRetryWaitTime(unsigned retry_count, double interval, doub
         retry_count = 1;
     }
 
+    // Limit retry count to avoid overflows in range calculation
+    if (retry_count > 10)
+    {
+        retry_count = 10;
+    }
+
     range = interval * pow(multiplier/1000, retry_count-1);
 
     return rand_r(&mtp_thread_random_seed) % range;
@@ -2883,7 +2977,7 @@ int StartSendingFrame_STOMP(stomp_connection_t *sc)
     char debug_pw_args[256];
     char escaped_endpoint_id[256];
     char *endpoint_id;
-
+ 
     // Write the heartbeat header arguments into a buffer (if enabled)
     heartbeat_args[0] = '\0';
     if (sc->enable_heartbeats)
@@ -2904,11 +2998,8 @@ int StartSendingFrame_STOMP(stomp_connection_t *sc)
     }
     else
     {
-        // Print a warning if no client authentication method is set
-        if ((sc->enable_encryption==false) || (client_cert_available==false))
-        {
-            USP_LOG_Error("%s: WARNING: No client authentication method set for connection to (host=%s, port=%d)", __FUNCTION__, sc->host, sc->port);
-        }
+        // Print a warning if no STOMP password is set, and a client certificate cannot alternatively be used for authentication
+        LogNoPasswordWarning(sc);
     }
 
     #define STOMP_FRAME_FORMAT  "STOMP\n" \
@@ -3008,6 +3099,7 @@ int StartSendingFrame_SUBSCRIBE(stomp_connection_t *sc)
     sc->txframe_sent_count = 0;
     sc->txframe_contains_usp_record = false;
 
+
     return USP_ERR_OK;
 }
 
@@ -3103,6 +3195,57 @@ int StartSendingFrame_SEND(stomp_connection_t *sc, char *controller_queue, char 
     sc->txframe_contains_usp_record = true;
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** LogNoPasswordWarning
+**
+** Called in the case of no STOMP password setyup to log a warning, if no client cert is setup for authentication instead
+**
+** \param   sc - pointer to STOMP connection
+**
+** \return  None
+**
+**************************************************************************/
+void LogNoPasswordWarning(stomp_connection_t *sc)
+{
+    bool available;
+    bool matches_endpoint;
+
+    DEVICE_SECURITY_GetClientCertStatus(&available, &matches_endpoint);
+
+    // Exit if we are using a client cert to authenticate instead
+    if ((sc->enable_encryption==true) && (available == true) && (matches_endpoint==true))
+    {
+        USP_LOG_Info("Using Client Certificate with SubjectAltName==EndpointID to authenticate (No username/password set)");
+        return;
+    }
+
+    USP_LOG_Warning("%s: WARNING: No username/password set for connection to (host=%s, port=%d)", __FUNCTION__, sc->host, sc->port);
+
+    // Exit if no encryption is enabled
+    if (sc->enable_encryption==false)
+    {
+        USP_LOG_Warning("%s: WARNING: No TLS set for connection to (host=%s, port=%d)", __FUNCTION__, sc->host, sc->port);
+        return;
+    }
+
+    // Exit if no client certificate being used
+    if (available == false)
+    {
+        USP_LOG_Warning("%s: WARNING: No client certificate set for connection to (host=%s, port=%d)", __FUNCTION__, sc->host, sc->port);
+        return;
+    }
+
+    // Exit if client certificate does not match the endpoint ID
+    if (matches_endpoint == false)
+    {
+        USP_LOG_Warning("%s: WARNING: Client certificate does not contain Device's EndpointID in SubjectAltName", __FUNCTION__);
+        return;
+    }
+
+    // NOTE: The code should never get here, as we've already tested for all cases.
 }
 
 /*********************************************************************//**
@@ -3206,9 +3349,9 @@ char *AddrInfoToStr(struct addrinfo *addr, char *buf, int len)
 **
 ** UpdateNextHeartbeatTime
 **
-** Called whenever any data has been successfully sent to, or received from the STOMP server,
+** Called whenever any data has been successfully sent to the STOMP server,
 ** to update the time at which we next need to send out a heartbeat to the STOMP server
-** Heartbeats are only sent if not communications occur in the meantime
+** Agent Heartbeats will only be sent if the agent does not send anything else in the meantime
 **
 ** \param   sc - pointer to STOMP connection
 **
@@ -3222,10 +3365,10 @@ void UpdateNextHeartbeatTime(stomp_connection_t *sc)
     cur_time = time(NULL);
 
     // Update the next time to perform a heartbeat
-    if (sc->heartbeat_period != 0)
+    if (sc->agent_heartbeat_period != 0)
     {
         // Outgoing heartbeats enabled
-        sc->next_heartbeat_time = cur_time + sc->heartbeat_period;
+        sc->next_heartbeat_time = cur_time + sc->agent_heartbeat_period;
     }
     else
     {
@@ -3350,6 +3493,7 @@ void HandleStompSourceIPAddrChanges(void)
     int i;
     stomp_connection_t *sc;
     bool has_changed;
+    bool has_addr = false;
 
     // Iterate over all STOMP connections, restarting any whose IP address has changed
     // NOTE: If the STOMP connection failed, then it will be retried by the retry mechanism.
@@ -3359,7 +3503,7 @@ void HandleStompSourceIPAddrChanges(void)
         sc = &stomp_connections[i];
         if ((sc->instance != INVALID) && (sc->mgmt_if_name[0] != '\0') && (sc->mgmt_ip_addr[0] != '\0'))
         {
-            has_changed = nu_ipaddr_has_interface_addr_changed(sc->mgmt_if_name, sc->mgmt_ip_addr);
+            has_changed = nu_ipaddr_has_interface_addr_changed(sc->mgmt_if_name, sc->mgmt_ip_addr, &has_addr);
             if (has_changed)
             {
                 // Stop, then restart the STOMP connection
@@ -3443,6 +3587,7 @@ void CopyStompConnParamsFromNext(stomp_connection_t *sc)
     sc->retry.initial_interval = np->retry.initial_interval;
     sc->retry.interval_multiplier = np->retry.interval_multiplier;
     sc->retry.max_interval = np->retry.max_interval;
+
 }
 
 /*********************************************************************//**
@@ -3486,6 +3631,7 @@ char *AllocateStringIfChanged(char *cur_str, char *new_str)
 ** FindStompConnByInst
 **
 ** Finds a STOMP connection by it's data model instance number
+** NOTE: It isssible for this function to return NULL under normal circumstances if the connection is disabled
 **
 ** \param   instance - instance number of the STOMP connection in the data model
 **
@@ -3546,29 +3692,37 @@ stomp_connection_t *FindUnusedStompConn(void)
 
 /*********************************************************************//**
 **
-** LogStompErrSSL
+** IsUspRecordInStompQueue
 **
-** Logs the cause of the SSL error
+** Determines whether the specified USP record is already queued, waiting to be sent
+** This is used to avoid duplicate records being placed in the queue, which could occur under notification retry conditions
 **
-** \param   func_name - name of the function in which the error occurred
-** \param   failure_string - operation being performed when the error occurred
-** \param   ret - value returned from SSL_read() or SSL_write()
-** \param   err - error
+** \param   sc - stomp connection which has USP records queued to send
+** \param   pbuf - pointer to buffer containing USP Record to match against
+** \param   pbuf_len - length of buffer containing USP Record to match against
 **
-** \return  USP_ERR_OK if no error occurred
+** \return  true if the message is already queued
 **
 **************************************************************************/
-void LogStompErrSSL(const char *func_name, char *failure_string, int ret, int err)
+bool IsUspRecordInStompQueue(stomp_connection_t *sc, unsigned char *pbuf, int pbuf_len)
 {
-    char ssl_str[128] = {0};  // OpenSSL requires at least 120 bytes in this buffer
-    char errno_str[128] = {0};
-    long ssl_errno;
-    char *str;
+    stomp_send_item_t *queued_msg;
 
-    str = strerror_r(errno, errno_str, sizeof(errno_str));
-    ssl_errno = ERR_get_error();
-    ERR_error_string_n(ssl_errno, ssl_str, sizeof(ssl_str));
-    USP_LOG_Warning("%s: %s: SSL ret=%d, error=%d, errno=%d (%s), ssl err=%s", 
-              func_name, failure_string, ret, err, errno, str, ssl_str);
+    // Iterate over USP Records in the STOMP queue
+    queued_msg = (stomp_send_item_t *) sc->usp_record_send_queue.head;
+    while (queued_msg != NULL)
+    {
+        // Exit if the USP record is already in the queue
+        if ((queued_msg->pbuf_len == pbuf_len) && (memcmp(queued_msg->pbuf, pbuf, pbuf_len)==0))
+        {
+             return true;
+        }
+
+        // Move to next message in the queue
+        queued_msg = (stomp_send_item_t *) queued_msg->link.next;
+    }
+ 
+    // If the code gets here, then the USP record is not in the queue
+    return false;
 }
 

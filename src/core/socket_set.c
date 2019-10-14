@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -152,6 +152,9 @@ int SOCKET_SET_Select(socket_set_t *set)
     // Exit if an error occurred
     if (num_sockets == -1)
     {
+        // Ensure that no sockets are indicated as ready to read/write in this case, otherwise the code may attempt to read a socket and block
+        SOCKET_SET_Clear(set);
+
         // If select aborted due to a signal, then just ignore the interruption, and get the caller to retry
         if (errno == EINTR)
         {

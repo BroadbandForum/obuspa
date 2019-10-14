@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -263,7 +263,8 @@ void KV_VECTOR_Destroy(kv_vector_t *kvv)
     kv_pair_t *pair;
 
     // Exit if vector is already empty
-    if ((kvv == NULL) || (kvv->vector == NULL))
+    USP_ASSERT(kvv != NULL);
+    if (kvv->vector == NULL)
     {
         goto exit;
     }
@@ -361,8 +362,7 @@ int KV_VECTOR_FindKey(kv_vector_t *kvv, char *key, int start_index)
 **
 ** KV_VECTOR_Get
 **
-** Returns a pointer to the value associated with the specified key or 'unknown'
-** This function is typically used by debug
+** Returns a pointer to the value associated with the specified key or the specified default value
 **
 ** \param   kvv - pointer to key-value pair vector structure
 ** \param   key - pointer to name of key to get the value of

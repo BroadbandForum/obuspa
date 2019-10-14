@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -229,15 +229,14 @@ int CLI_SERVER_Init(void)
 **************************************************************************/
 void CLI_SERVER_UpdateSocketSet(socket_set_t *set)
 {
-    #define SECONDS 1000
     if (cli_listen_sock != INVALID)
     {
-        SOCKET_SET_AddSocketToReceiveFrom(cli_listen_sock, 3600*SECONDS, set);
+        SOCKET_SET_AddSocketToReceiveFrom(cli_listen_sock, MAX_SOCKET_TIMEOUT, set);
     }
 
     if (cli_server_sock != INVALID)
     {
-        SOCKET_SET_AddSocketToReceiveFrom(cli_server_sock, 3600*SECONDS, set);
+        SOCKET_SET_AddSocketToReceiveFrom(cli_server_sock, MAX_SOCKET_TIMEOUT, set);
     }
 }
 
@@ -272,6 +271,9 @@ void CLI_SERVER_ProcessSocketActivity(socket_set_t *set)
                 // If an error occurred, just log it
                 USP_ERR_ERRNO("accept", errno);
             }
+
+            // Exit to allow cli_server_sock to be added to the socket set, before attempting to read it
+            return;
         }
     }
 

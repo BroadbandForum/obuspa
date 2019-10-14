@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -89,9 +89,9 @@ static enum_entry_t usp_msg_types[] = {
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
-int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
+int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
 bool IsValidUspRecord(UspRecord__Record *rec);
-void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, bool rxed_over_stomp);
+void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_protocol_t protocol);
 
 
 /*********************************************************************//**
@@ -104,13 +104,12 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, bool rx
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   role - Role allowed for this message
 ** \param   allowed_controllers - URN pattern containing the endpoint_id of allowed controllers
-** \param   stomp_dest - STOMP destination to send the reply to (or NULL if none setup in received message)
-** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table) to send the reply to
+** \param   mrt - details of where response to this USP message should be sent
 **
 ** \return  USP_ERR_OK if successful, anything else causes the caller to terminate the connection to the controller, and retry
 **
 **************************************************************************/
-int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, char *stomp_dest, int stomp_instance)
+int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt)
 {
     int err;
     UspRecord__Record *rec;
@@ -135,7 +134,7 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_rol
     PROTO_TRACE_ProtobufMessage(&rec->base);
 
     // Process the encapsulated USP message
-    err = MSG_HANDLER_HandleBinaryMessage(rec->no_session_context->payload.data, rec->no_session_context->payload.len, role, allowed_controllers, rec->from_id, stomp_dest, stomp_instance);
+    err = MSG_HANDLER_HandleBinaryMessage(rec->no_session_context->payload.data, rec->no_session_context->payload.len, role, allowed_controllers, rec->from_id, mrt);
 
 exit:
     // Free the unpacked USP record
@@ -155,17 +154,15 @@ exit:
 ** \param   role - Role allowed for this message
 ** \param   allowed_controllers - URN containing the endpoint_id of allowed controllers
 ** \param   controller_endpoint - endpoint which sent this message
-** \param   stomp_dest - STOMP destination to send the reply to (or NULL if none setup in received message)
-** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table) to send the reply to or INVALID if message was not received over STOMP
+** \param   mrt - details of where response to this USP message should be sent
 **
 ** \return  USP_ERR_OK if successful, anything else causes the caller to terminate the connection to the controller, and retry
 **
 **************************************************************************/
-int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, char *controller_endpoint, char *stomp_dest, int stomp_instance)
+int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, char *controller_endpoint, mtp_reply_to_t *mrt)
 {
     int err;
     Usp__Msg *usp;
-    bool rxed_over_stomp;
 
     // Exit if unable to unpack the USP message
     usp = usp__msg__unpack(pbuf_allocator, pbuf_len, pbuf);
@@ -176,14 +173,13 @@ int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_ro
     }
 
     // Set the role that the controller should use when handling this message
-    rxed_over_stomp = (stomp_instance != INVALID);
-    CacheControllerRoleForCurMsg(controller_endpoint, role, rxed_over_stomp);
+    CacheControllerRoleForCurMsg(controller_endpoint, role, mrt->protocol);
 
     // Print USP message in human readable form
     PROTO_TRACE_ProtobufMessage(&usp->base);
 
     // Exit if unable to process the message
-    err = HandleUspMessage(usp, controller_endpoint, stomp_dest, stomp_instance);
+    err = HandleUspMessage(usp, controller_endpoint, mrt);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -290,19 +286,18 @@ void MSG_HANDLER_LogMessageToSend(Usp__Header__MsgType usp_msg_type, unsigned ch
 **
 ** \param   usp - pointer to parsed USP message structure. This is always freed by the caller (not this function)
 ** \param   controller_endpoint - endpoint which sent this message
-** \param   stomp_dest - STOMP destination to send the reply to (or NULL if none setup in received message)
-** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table) to send the reply to
+** \param   mrt - details of where response to this USP message should be sent
 **
 ** \return  None - This code must handle any errors by sending back error messages
 **
 **************************************************************************/
-void MSG_HANDLER_HandleUnknownMsgType(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance)
+void MSG_HANDLER_HandleUnknownMsgType(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt)
 {
     Usp__Msg *resp = NULL;
 
     USP_ERR_SetMessage("%s: Cannot handle USP message type %d", __FUNCTION__, usp->header->msg_type);
     resp = ERROR_RESP_CreateSingle(usp->header->msg_id, USP_ERR_MESSAGE_NOT_UNDERSTOOD, resp, NULL);
-    MSG_HANDLER_QueueMessage(controller_endpoint, resp, stomp_dest, stomp_instance);
+    MSG_HANDLER_QueueMessage(controller_endpoint, resp, mrt);
     usp__msg__free_unpacked(resp, pbuf_allocator);
 }
 
@@ -314,13 +309,12 @@ void MSG_HANDLER_HandleUnknownMsgType(Usp__Msg *usp, char *controller_endpoint, 
 ** 
 ** \param   endpoint_id - controller to send the message to
 ** \param   usp - pointer to protobuf-c structure describing the USP message to send
-** \param   stomp_dest - STOMP destination to send the reply to (or NULL if none setup in received message)
-** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table) to send the reply to
+** \param   mrt - details of where this USP response message should be sent
 ** 
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, char *stomp_dest, int stomp_instance)
+int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *mrt)
 {
     unsigned char *pbuf;
     int pbuf_len;
@@ -341,7 +335,7 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, char *stomp_dest,
     USP_ASSERT(size == pbuf_len);          // If these are not equal, then we may have had a buffer overrun, so terminate
 
     // Encapsulate this message in a USP record, then queue the record, to send to a controller
-    err = MSG_HANDLER_QueueUspRecord(usp->header->msg_type, endpoint_id, pbuf, pbuf_len, stomp_dest, stomp_instance);
+    err = MSG_HANDLER_QueueUspRecord(usp->header->msg_type, endpoint_id, pbuf, pbuf_len, mrt);
 
     // Free the serialized USP message
     USP_FREE(pbuf);
@@ -361,14 +355,12 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, char *stomp_dest,
 ** \param   pbuf - pointer to buffer containing serialized USP message
 **                 NOTE: Ownership of the serialized USP message stays with the caller
 ** \param   pbuf_len - length of protobuf encoded USP message
-** \param   stomp_dest - STOMP destination set in 'reply-to-dest:' header, to which this message is a response
-**                       Note: If set to NULL, the STOMP destination is looked up, based on controller endpoint_id
-** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table) to send the reply to
+** \param   mrt - details of where this USP response message should be sent
 ** 
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *stomp_dest, int stomp_instance)
+int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, mtp_reply_to_t *mrt)
 {
     UspRecord__Record rec;
     UspRecord__NoSessionContextRecord ctx;
@@ -409,7 +401,7 @@ int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint
 
     // Exit if unable to queue the message, to send to a controller
     // NOTE: If successful, ownership of the buffer passes to the MTP layer. If not successful, buffer is freed here
-    err = DEVICE_CONTROLLER_QueueBinaryMessage(usp_msg_type, endpoint_id, buf, len, stomp_dest, stomp_instance);
+    err = DEVICE_CONTROLLER_QueueBinaryMessage(usp_msg_type, endpoint_id, buf, len, mrt);
     if (err != USP_ERR_OK)
     {
         USP_FREE(buf);
@@ -514,13 +506,12 @@ char *MSG_HANDLER_UspMsgTypeToString(int msg_type)
 **
 ** \param   usp - pointer to parsed USP message structure. This is always freed by the caller (not this function)
 ** \param   controller_endpoint - endpoint which sent this message
-** \param   stomp_dest - STOMP destination to send the reply to (or NULL if none setup in received message)
-** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table) to send the reply to
+** \param   mrt - details of where response to this USP message should be sent
 **
 ** \return  USP_ERR_OK if successful, anything else causes the caller to terminate the connection to the controller, and retry
 **
 **************************************************************************/
-int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance)
+int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt)
 {
     char buf[MAX_ISO8601_LEN];
 
@@ -550,43 +541,43 @@ int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest,
     switch(usp->header->msg_type)
     {
         case USP__HEADER__MSG_TYPE__GET:
-            MSG_HANDLER_HandleGet(usp, controller_endpoint, stomp_dest, stomp_instance);
+            MSG_HANDLER_HandleGet(usp, controller_endpoint, mrt);
             break;
 
         case USP__HEADER__MSG_TYPE__SET:
-            MSG_HANDLER_HandleSet(usp, controller_endpoint, stomp_dest, stomp_instance);
+            MSG_HANDLER_HandleSet(usp, controller_endpoint, mrt);
             break;
     
         case USP__HEADER__MSG_TYPE__ADD:
-            MSG_HANDLER_HandleAdd(usp, controller_endpoint, stomp_dest, stomp_instance);
+            MSG_HANDLER_HandleAdd(usp, controller_endpoint, mrt);
             break;
     
         case USP__HEADER__MSG_TYPE__DELETE:
-            MSG_HANDLER_HandleDelete(usp, controller_endpoint, stomp_dest, stomp_instance);
+            MSG_HANDLER_HandleDelete(usp, controller_endpoint, mrt);
             break;
 
         case USP__HEADER__MSG_TYPE__OPERATE:
-            MSG_HANDLER_HandleOperate(usp, controller_endpoint, stomp_dest, stomp_instance);
+            MSG_HANDLER_HandleOperate(usp, controller_endpoint, mrt);
             break;
 
         case USP__HEADER__MSG_TYPE__NOTIFY_RESP:
-            MSG_HANDLER_HandleNotifyResp(usp, controller_endpoint, stomp_dest, stomp_instance);
+            MSG_HANDLER_HandleNotifyResp(usp, controller_endpoint, mrt);
             break;
 
         case USP__HEADER__MSG_TYPE__GET_SUPPORTED_PROTO:
-            MSG_HANDLER_HandleGetSupportedProtocol(usp, controller_endpoint, stomp_dest, stomp_instance);
+            MSG_HANDLER_HandleGetSupportedProtocol(usp, controller_endpoint, mrt);
             break;
 
         case USP__HEADER__MSG_TYPE__GET_INSTANCES:
-            MSG_HANDLER_HandleGetInstances(usp, controller_endpoint, stomp_dest, stomp_instance);
+            MSG_HANDLER_HandleGetInstances(usp, controller_endpoint, mrt);
             break;
 
         case USP__HEADER__MSG_TYPE__GET_SUPPORTED_DM:
-            MSG_HANDLER_HandleGetSupportedDM(usp, controller_endpoint, stomp_dest, stomp_instance);
+            MSG_HANDLER_HandleGetSupportedDM(usp, controller_endpoint, mrt);
             break;
 
         default:
-            MSG_HANDLER_HandleUnknownMsgType(usp, controller_endpoint, stomp_dest, stomp_instance);
+            MSG_HANDLER_HandleUnknownMsgType(usp, controller_endpoint, mrt);
             break;
     }
 
@@ -684,12 +675,12 @@ bool IsValidUspRecord(UspRecord__Record *rec)
 **
 ** \param   endpoint_id - endpoint_id of the controller that has sent the current message being processed
 ** \param   role - Role allowed for this message from the MTP
-** \param   rxed_over_stomp - set if the message was received over STOMP
+** \param   protocol - protocol that the message was received on
 **
 ** \return  None - if the controller is not recognised, then it will be granted an appropriately low set of permissions
 **
 **************************************************************************/
-void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, bool rxed_over_stomp)
+void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_protocol_t protocol)
 {
     int err;
 
@@ -703,15 +694,26 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, bool rx
         return;
     }
 
-    if (rxed_over_stomp)
+    switch(protocol)
     {
-        // If the message was received over STOMP, then the role to use for this controller 
-        // will have been set when the STOMP handshake completed
-    }
-    else
-    {
-        // If the message was not received over STOMP, then use the role that came from the MTP
-        cur_msg_combined_role.inherited = role;
+        case kMtpProtocol_STOMP:
+            // If the message was received over STOMP, then the inherited role will have been saved in DEVICE_CONTROLLER
+            // when the STOMP handshake completed and will already equal the role passed with the USP message
+            USP_ASSERT(cur_msg_combined_role.inherited == role);
+            break;
+
+#ifdef ENABLE_COAP
+        case kMtpProtocol_CoAP:
+            // If the message was not received over STOMP, then the inherited role won't have been saved in DEVICE_CONTROLLER,
+            // so override with the role that was passed with the USP message
+            USP_ASSERT(cur_msg_combined_role.inherited == ROLE_DEFAULT);
+            cur_msg_combined_role.inherited = role;
+            break;
+#endif
+
+        default:
+            TERMINATE_BAD_CASE(protocol);
+            break;
     }
 }
 

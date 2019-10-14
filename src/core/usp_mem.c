@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -82,6 +82,7 @@ typedef struct
 //------------------------------------------------------------------------------------
 // Variables associated with collecting memory info for debugging purposes
 bool collect_memory_info = false;
+bool print_leak_report = false;
 int baseline_memory_usage = INVALID;
 
 static minfo_t *minfo = NULL;
@@ -247,6 +248,9 @@ void USP_MEM_Free(const char *func, int line, void *ptr)
     // Free the memory
     free(ptr);
 
+#ifndef __clang_analyzer__
+    // Clang static analyser goes wrong here because the ptr in meminfo is just an address used as a key; ptr is not owned by meminfo
+
     // Collect memory info, if enabled
     if (collect_memory_info)
     {
@@ -263,6 +267,7 @@ void USP_MEM_Free(const char *func, int line, void *ptr)
         }
         OS_UTILS_UnlockMutex(&mem_access_mutex);
     }
+#endif
 }
 
 /*********************************************************************//**
@@ -291,6 +296,9 @@ void *USP_MEM_Realloc(const char *func, int line, void *ptr, int size)
         USP_ERR_Terminate("%s (%d): realloc(%d bytes) failed", func, line, size);
     }
 
+#ifndef __clang_analyzer__
+    // Clang static analyser goes wrong here because the ptr in meminfo is just an address used as a key; ptr is not owned by meminfo
+
     // Collect memory info, if enabled
     if (collect_memory_info)
     {
@@ -312,6 +320,7 @@ void *USP_MEM_Realloc(const char *func, int line, void *ptr, int size)
         }
         OS_UTILS_UnlockMutex(&mem_access_mutex);
     }
+#endif
 
     return new_ptr;
 }
@@ -401,7 +410,7 @@ void USP_MEM_StartCollection(void)
 
     // From now on, all current allocations will be logged in the minfo array
     collect_memory_info = true;
-
+    print_leak_report = true;
 
     // Store initial static memory usage after data model has been registered
     baseline_memory_usage = mallinfo().uordblks;
@@ -524,7 +533,7 @@ void USP_MEM_PrintLeakReport(void)
     int count = 0;
 
     // Exit if not collecting memory info
-    if (collect_memory_info==false)
+    if (print_leak_report==false)
     {
         return;
     }
@@ -560,7 +569,7 @@ int USP_MEM_PrintAll(void)
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
 
     // Exit if not collecting memory info
-    if (collect_memory_info==false)
+    if (print_leak_report==false)
     {
         return 0;
     }

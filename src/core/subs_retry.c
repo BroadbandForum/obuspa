@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -329,6 +329,7 @@ void SubsRetryExec(int id)
     subs_retry_t *sr;
     time_t cur_time;
     char buf[MAX_ISO8601_LEN];
+    mtp_reply_to_t mtp_reply_to = {0};  // Ensures mtp_reply_to.is_reply_to_specified=false
     
     cur_time = time(NULL);
     USP_ASSERT(cur_time >= first_retry_time);
@@ -350,7 +351,7 @@ void SubsRetryExec(int id)
             if (cur_time >= sr->next_retry_time)
             {
                 // Try resending the saved serialized USP message
-                MSG_HANDLER_QueueUspRecord(USP__HEADER__MSG_TYPE__NOTIFY, sr->dest_endpoint, sr->pbuf, sr->pbuf_len, NULL, INVALID);
+                MSG_HANDLER_QueueUspRecord(USP__HEADER__MSG_TYPE__NOTIFY, sr->dest_endpoint, sr->pbuf, sr->pbuf_len, &mtp_reply_to);
 
                 // Calculate next time until this message is retried
                 sr->retry_count++;

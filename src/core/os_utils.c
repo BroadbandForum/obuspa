@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -127,11 +127,12 @@ void OS_UTILS_SetDataModelThread(void)
 ** If not called from the data model thread, then it sets an error message
 **
 ** \param   caller - name of calling function (used for debug)
+** \param   print_warning - log a warning that the caller is being called from a non data model thread
 **
 ** \return  true if this function is being called from the data model thread
 **
 **************************************************************************/
-bool OS_UTILS_IsDataModelThread(const char *caller)
+bool OS_UTILS_IsDataModelThread(const char *caller, bool print_warning)
 {
     pthread_t this_thread;
 
@@ -139,7 +140,10 @@ bool OS_UTILS_IsDataModelThread(const char *caller)
     this_thread = pthread_self();
     if ( ! pthread_equal(this_thread, usp_core_thread))
     {
-        USP_LOG_Error("WARNING: Calling %s from non-data model thread", caller);
+        if (print_warning)
+        {
+            USP_LOG_Error("WARNING: Calling %s from non-data model thread", caller);
+        }
         return false;
     }
 

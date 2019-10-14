@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2017-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2017-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -96,6 +96,7 @@ int NotifyChange_RetryMaxInterval(dm_req_t *req, char *value);
 int EnableStompConnection(stomp_conn_params_t *sp);
 void ScheduleStompReconnect(stomp_conn_params_t *sp);
 
+
 /*********************************************************************//**
 **
 ** DEVICE_STOMP_Init
@@ -151,6 +152,7 @@ int DEVICE_STOMP_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_STOMP_CONN_ROOT ".{i}.ServerRetryInitialInterval", "60", Validate_RetryInitialInterval, NotifyChange_RetryInitialInterval, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_STOMP_CONN_ROOT ".{i}.ServerRetryIntervalMultiplier", "2000", Validate_RetryIntervalMultiplier, NotifyChange_RetryIntervalMultiplier, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_STOMP_CONN_ROOT ".{i}.ServerRetryMaxInterval", "30720", Validate_RetryMaxInterval, NotifyChange_RetryMaxInterval, DM_UINT);
+
 
     // Register unique keys for tables
     char *unique_keys[] = { "Host", "Username", "VirtualHost" };
@@ -218,6 +220,13 @@ int DEVICE_STOMP_Start(void)
         }
     }
 
+    // Exit if unable to create the SSL context to be used by STOMP
+    err = STOMP_Start();
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     err = USP_ERR_OK;
 
 exit:
@@ -269,9 +278,6 @@ int DEVICE_STOMP_StartAllConnections(void)
     int i;
     stomp_conn_params_t *sp;
     int err;
-
-    // Store the initial IP address for the WAN interface
-    STOMP_Start();
 
     // Iterate over all STOMP connections, starting the ones that are enabled    
     for (i=0; i<MAX_STOMP_CONNECTIONS; i++)
@@ -627,6 +633,7 @@ int Get_StompIsEncrypted(dm_req_t *req, char *buf, int len)
     return USP_ERR_OK;
 }
 
+
 /*********************************************************************//**
 **
 ** Validate_HeartbeatPeriod
@@ -895,14 +902,14 @@ int NotifyChange_StompPassword(dm_req_t *req, char *value)
     sp = FindStompParamsByInstance(inst1);
     USP_ASSERT(sp != NULL);
 
-    // Override a blank password in the database with that provided by a core vendor hook, for the first STOMP connection only
-    if ((*value == '\0') && (inst1 == 1))
+    // Override a blank password in the database with that provided by a core vendor hook
+    if (*value == '\0')
     {
         get_mtp_password_cb = vendor_hook_callbacks.get_mtp_password_cb;
         if (get_mtp_password_cb != NULL)
         {
             // Exit if vendor hook failed
-            err = get_mtp_password_cb(buf, sizeof(buf));
+            err = get_mtp_password_cb(inst1, buf, sizeof(buf));
             if (err != USP_ERR_OK)
             {
                 return err;
@@ -1238,8 +1245,8 @@ int ProcessStompConnAdded(int instance)
         goto exit;
     }
 
-    // Override a blank password in the database with that provided by a core vendor hook, for the first STOMP connection only
-    if ((sp->password[0] == '\0') && (instance == 1))
+    // Override a blank password in the database with that provided by a core vendor hook
+    if (sp->password[0] == '\0')
     {
         char buf[MAX_DM_SHORT_VALUE_LEN];
         dm_vendor_get_mtp_password_cb_t   get_mtp_password_cb;
@@ -1248,7 +1255,7 @@ int ProcessStompConnAdded(int instance)
         if (get_mtp_password_cb != NULL)
         {
             // Exit if vendor hook failed
-            err = get_mtp_password_cb(buf, sizeof(buf));
+            err = get_mtp_password_cb(instance, buf, sizeof(buf));
             if (err != USP_ERR_OK)
             {
                 goto exit;
@@ -1384,7 +1391,7 @@ void DestroyStompConn(stomp_conn_params_t *sp)
     // Disable the lower level connection (if previously enabled)
     if (sp->enable)
     {
-        STOMP_DisableConnection(sp->instance, true);
+        STOMP_DisableConnection(sp->instance, PURGE_QUEUED_MESSAGES);
     }
 
     // Free and DeInitialise the slot

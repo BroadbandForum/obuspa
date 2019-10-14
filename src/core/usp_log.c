@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -47,6 +47,7 @@
 #include <syslog.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <openssl/err.h>
 
 #include <execinfo.h>
 
@@ -172,9 +173,9 @@ void USP_LOG_Callstack(void)
 
 /*********************************************************************//**
 **
-** USP_LOG_HexBufferLong
+** USP_LOG_HexBuffer
 **
-** Logs the contents of the specified buffer, with each byte being on it's own line of debug
+** Logs the contents of the specified buffer
 **
 ** \param   title - pointer to string to print before the buffer contents
 ** \param   buf - pointer to buffer to print out
@@ -183,7 +184,7 @@ void USP_LOG_Callstack(void)
 ** \return  None
 **
 **************************************************************************/
-void USP_LOG_HexBufferLong(char *title, unsigned char *buf, int len)
+void USP_LOG_HexBuffer(char *title, unsigned char *buf, int len)
 {
     int i;
     int residual;
@@ -292,6 +293,34 @@ void USP_LOG_HexBufferLong(char *title, unsigned char *buf, int len)
                           buf[j+8], buf[j+9], buf[j+10], buf[j+11], buf[j+12], buf[j+13], buf[j+14] );
             break;
     }
+}
+
+/*********************************************************************//**
+**
+** USP_LOG_ErrorSSL
+**
+** Logs the cause of the SSL error
+**
+** \param   func_name - name of the function in which the error occurred
+** \param   failure_string - operation being performed when the error occurred
+** \param   ret - value returned from SSL_read() or SSL_write()
+** \param   err - error
+**
+** \return  USP_ERR_OK if no error occurred
+**
+**************************************************************************/
+void USP_LOG_ErrorSSL(const char *func_name, char *failure_string, int ret, int err)
+{
+    char ssl_str[128] = {0};  // OpenSSL requires at least 120 bytes in this buffer
+    char errno_str[128] = {0};
+    long ssl_errno;
+    char *str;
+
+    str = USP_ERR_ToString(errno, errno_str, sizeof(errno_str));
+    ssl_errno = ERR_get_error();
+    ERR_error_string_n(ssl_errno, ssl_str, sizeof(ssl_str));
+    USP_LOG_Warning("%s: %s: SSL ret=%d, error=%d, errno=%d (%s), ssl err=%s", 
+              func_name, failure_string, ret, err, errno, str, ssl_str);
 }
 
 /*********************************************************************//**

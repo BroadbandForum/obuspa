@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -57,7 +57,8 @@
 #define MAX_AGENT_MTPS (MAX_CONTROLLERS)  // Maximum number of MTPs that an agent may have in the DB (Device.LocalAgent.MTP.{i})
 #define MAX_STOMP_CONNECTIONS (MAX_CONTROLLERS)  // Maximum number of STOMP connections that an agent may have in the DB (Device.STOMP.Connection.{i})
 #define MAX_COAP_CONNECTIONS (MAX_CONTROLLERS)  // Maximum number of CoAP connections that an agent may have in the DB (Device.LocalAgent.Controller.{i}.MTP.{i}.CoAP)
-#define MAX_COAP_SERVERS 2          // Maximum number of interfaces which an agent listens for CoAP messages on
+#define MAX_COAP_SERVERS 5          // Maximum number of interfaces which an agent listens for CoAP messages on
+#define MAX_COAP_CLIENTS (MAX_CONTROLLERS)  // Maximum number of CoAP controllers which an agent sends to
 #define MAX_FIRMWARE_IMAGES 2       // Maximum number of firmware images that the CPE can hold in flash at any one time
 #define MAX_ACTIVATE_TIME_WINDOWS 5 // Maximum number of time windows allowed in the Activate() command's input arguments
 
@@ -112,7 +113,7 @@
 // These defines are only used if USP Agent core implements DeviceInfo (see REMOVE_DEVICE_INFO above)
 // These defines MUST be modified by the vendor
 #define VENDOR_PRODUCT_CLASS "USP Agent"   // Configures the value of Device.DeviceInfo.ProductClass
-#define VENDOR_MANUFACTURER  "Manufacturer"       // Configures the value of Device.DeviceInfo.Manufacturer
+#define VENDOR_MANUFACTURER  "Manufacturer"   // Configures the value of Device.DeviceInfo.Manufacturer
 #define VENDOR_MODEL_NAME    "USP Agent"   // Configures the value of Device.DeviceInfo.ModelName
 
 // URI of data model implemented by USP Agent
@@ -121,7 +122,7 @@
 // Name of interface on which the WAN is connected.
 // This interface is used to get the serial number of the agent (as MAC address) for the endpoint_id string
 // It is also the interface used for all USP communications
-// This may be overridden by an environment variable. See nu_macaddr_wan_ifname().
+// This may be overridden using the '-i' option or by an environment variable. See nu_macaddr_wan_ifname().
 #define DEFAULT_WAN_IFNAME "eth0"
 
 // Key used to obfuscate (using XOR) all secure data model parameters stored in the USP Agent database (eg passwords)
@@ -130,8 +131,16 @@
 // Timeout (in seconds) when performing a connect to a STOMP broker
 #define STOMP_CONNECT_TIMEOUT 30
 
+// Number of seconds after a STOMP server heartbeat was expected, before retrying the connection
+#define STOMP_SERVER_HEARTBEAT_GRACE_PERIOD 10
+
 // Delay before starting USP Agent as a daemon. Used as a workaround in cases where other services (eg DNS) are not ready at the time USP Agent is started
 #define DAEMON_START_DELAY_MS   0
+
+// Comma separated list of network interface names on which CoAP should listen for USP messages
+// An empty list or "any" indicates to listen on all interfaces
+// This may be overridden using the '-i' option (only one interface name is supported, if using '-i')
+#define COAP_LISTEN_INTERFACES    "eth0"  /*"lo, enp0s9"*/
 
 //-----------------------------------------------------------------------------------------
 // Defines for Bulk Data Collection
@@ -161,7 +170,6 @@ typedef enum
 // Definitions of roles used
 #define ROLE_NON_SSL       kCTrustRole_FullAccess  // Role to use, if SSL is not being used
 #define ROLE_DEFAULT       kCTrustRole_FullAccess  // Default Role to use for controllers until determined from MTP certificate
-#define ROLE_COAP          kCTrustRole_FullAccess  // Role to use for all CoAP communications
 
 
 

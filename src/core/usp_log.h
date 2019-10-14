@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -68,10 +68,11 @@ typedef enum
 void USP_LOG_Init(void);
 int USP_LOG_SetFile(char *file);
 void USP_LOG_Callstack(void);
-void USP_LOG_HexBufferLong(char *title, unsigned char *buf, int len);
+void USP_LOG_HexBuffer(char *title, unsigned char *buf, int len);
 void USP_LOG_String(log_type_t log_type, char *str);
 void USP_LOG_Printf(log_type_t log_type, char *fmt, ...) __attribute__((format(printf, 2, 3)));
 void USP_LOG_Puts(log_type_t log_type, char *str);
+void USP_LOG_ErrorSSL(const char *func_name, char *failure_string, int ret, int err);
 
 //------------------------------------------------------------------------------------
 // Macros used for normal debug logging

@@ -1,4 +1,30 @@
 # Release History
+## Release 2.0.0
+  * CoAP
+     * New USP optimized implementation
+     * DTLS support
+     * Robustness improvements
+     * Specification of CoAP server network interface
+     * reply-to URI query option support
+  * New command line arguments
+     * Trust store certificates file (-t)
+     * Factory reset parameters text file (-r)
+     * Network interface for USP communications (-i)
+  * Data Model improvements
+     * Device.Time.LocalTimezone added
+     * Bulk Data Collection client certificate support
+  * Bug fixes
+     * Session Retry wait interval calculation should not overflow
+     * Agent should not generate an error if trying to delete an instance which is already deleted
+     * An empty subscription ReferenceList should not cause a crash
+     * UINT32 parameter limit validation should not fail for 32 bit architectures
+     * Error message for path containing back-to-back instance searches should not be confusing
+
+## Release 1.0.1
+  * configure now checks for libcoap availability
+  * Out of tree builds are now supported
+  * Added contibuting guidelines
+
 ## Release 1.0.0
 This release contains the following features:
 * MTPs
@@ -58,9 +84,4 @@ This release contains the following features:
    * Device.BulkData.Profile.{i}.HTTP.RequestURIParameter.{i}.
    * Device.STOMP.
    * Device.STOMP.Connection.{i}.
-
-## Release 1.0.1
-  * configure now checks for libcoap availability
-  * Out of tree builds are now supported
-  * Added contibuting guidelines
 

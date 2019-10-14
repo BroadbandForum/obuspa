@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2018-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2018-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -198,6 +198,7 @@ unsigned GenerateSeed(void)
     fclose(fp);
     if (num_elem != 1)
     {
+        USP_LOG_Warning("%s: WARNING: Unable to read /dev/urandom", __FUNCTION__);
         goto fallback;
     }
 
@@ -206,11 +207,13 @@ unsigned GenerateSeed(void)
 
 fallback:
     // The code gets here if it failed to read from /dev/urandom
-    // Exit if unable to get MAC address
+    // Attempt to get MAC address (as something which is unique per STB)
     err = nu_macaddr_wan_macaddr(buf);
     if (err != USP_ERR_OK)
     {
-        return err;
+        // If unable to get the MAC address of the WAN interface, then just use a fixed string.
+        // NOTE: In this case, the seed will not be random in a population after a power outage
+        memset(buf, '0', sizeof(buf));
     }
 
     // Get the current time and combine it's low order byte with the (non-OUI portion of) MAC address to form a seed

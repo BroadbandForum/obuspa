@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2017-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2017-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -66,13 +66,31 @@
 char *auth_cert_file = NULL;
 
 //------------------------------------------------------------------------------
+// String, set by '-t' command line option to specify a file containing trust store certificates
+char *usp_trust_store_file = NULL;
+
+//------------------------------------------------------------------------------
 // Location of the Device.Security.Certificate table within the data model
 #define DEVICE_CERT_ROOT "Device.Security.Certificate"
 static const char device_cert_root[] = DEVICE_CERT_ROOT;
 
 //------------------------------------------------------------------------------
-// SSL context, holding the trust store
-static SSL_CTX *ssl_ctx = NULL;       // Context to hold the trust store
+// Client certificate and associated private key obtained either from the get_agent_cert vendor hook, or from a file (specified by the '--authcert' option)
+// NOTE: If the client cert is obtained via the load_agent_cert vendor hook, then the client cert will not be cached here.
+static X509 *agent_cert = NULL;
+static EVP_PKEY *agent_pkey = NULL;
+
+//------------------------------------------------------------------------------
+// Structure containing parsed information about the agent certificate
+typedef struct
+{
+    bool is_loaded;
+    bool is_san_equal_endpoint_id;
+    char *serial_number;
+    char *issuer;
+} client_cert_t;
+
+static client_cert_t client_cert;
 
 //------------------------------------------------------------------------------
 // Vector holding information about each trusted certificate
@@ -95,6 +113,13 @@ static trust_cert_t *trust_certs = NULL;
 static int num_trust_certs = 0;
 
 //------------------------------------------------------------------------------
+// Array holding trust store certificates, parsed from a file that was specified by the '-t' command line option
+// This overrides any certificates specified by the get_trust_store_cb vendor hook
+#define MAX_CERTS_IN_TRUST_STORE_FILE 16
+trust_store_t trust_store_from_file[MAX_CERTS_IN_TRUST_STORE_FILE];
+int num_trust_store_from_file_certs = 0;
+
+//------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int GetTrustCert_Count(dm_req_t *req, char *buf, int len);
 int GetTrustCert_LastModif(dm_req_t *req, char *buf, int len);
@@ -106,13 +131,16 @@ int GetTrustCert_Subject(dm_req_t *req, char *buf, int len);
 int GetTrustCert_SubjectAlt(dm_req_t *req, char *buf, int len);
 int GetTrustCert_SignatureAlgorithm(dm_req_t *req, char *buf, int len);
 trust_cert_t *FindTrustCertByReq(dm_req_t *req);
-int TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
-int BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
-int LoadTrustStore(SSL_CTX *ctx);
-int LoadTrustCert(X509_STORE *ssl_store, const unsigned char *cert_data, int cert_len, ctrust_role_t role);
+int LoadTrustStore(void);
+int LoadTrustCert(const unsigned char *cert_data, int cert_len, ctrust_role_t role);
 int LoadClientCert(SSL_CTX *ctx);
-int LoadClientCertFromFile(SSL_CTX *ctx, char *cert_file);
+int GetClientCert(X509 **p_cert, EVP_PKEY **p_pkey);
+int GetClientCertFromFile(char *cert_file, X509 **p_cert, EVP_PKEY **p_pkey);
+int GetClientCertFromMemory(X509 **p_cert, EVP_PKEY **p_pkey);
+int AddClientCert(SSL_CTX *ctx);
 int AddTrustCert(X509 *cert, ctrust_role_t role);
+int ParseCert_Subject(X509 *cert, char **p_subject);
+int ParseCert_Issuer(X509 *cert, char **p_issuer);
 int ParseCert_LastModif(X509 *cert, time_t *last_modif);
 int ParseCert_SerialNumber(X509 *cert, char **p_serial_number);
 int ParseCert_NotBefore(X509 *cert, time_t *not_before);
@@ -126,6 +154,9 @@ bool IsSystemTimeReliable(void);
 void LogCertChain(STACK_OF(X509) *cert_chain);
 void LogTrustCerts(void);
 void LogCert_DER(X509 *cert);
+const trust_store_t *GetTrustStoreFromFile(int *num_trusted_certs);
+const trust_store_t *Read_TrustStoreFromFile(int *num_trusted_certs);
+void Free_TrustStoreFromFile(void);
 
 /*********************************************************************//**
 **
@@ -169,6 +200,11 @@ int DEVICE_SECURITY_Init(void)
     SSL_library_init();                 // Initialises lib SSL
     SSL_load_error_strings();
 
+    // Initialise client certificate structure
+    memset(&client_cert, 0, sizeof(client_cert));
+    client_cert.is_san_equal_endpoint_id = false;
+    client_cert.is_loaded = false;
+
     // If the code gets here, then registration was successful
     return USP_ERR_OK;
 }
@@ -187,28 +223,24 @@ int DEVICE_SECURITY_Init(void)
 int DEVICE_SECURITY_Start(void)
 {
     int err;
+    SSL_CTX *temp_ssl_ctx = NULL;   // Temporary SSL context: required because the load_agent_cert vendor hook only loads into an SSL context
     load_agent_cert_cb_t load_agent_cert_cb;
 
-    // Exit if unable to create an SSL context
-    // NOTE: SSLv23_client_method() ensures we negotiate the highest protocol available (ie upto TLSv1.2)
-    ssl_ctx = SSL_CTX_new(SSLv23_client_method());
-    if (ssl_ctx == NULL)
-    {
-        USP_ERR_SetMessage("%s: SSL_CTX_new failed", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Explicitly disallow SSLv2, as it is insecure. See https://arxiv.org/pdf/1407.2168.pdf
-    // NOTE: Even without this, SSLv2 ciphers don't seem to appear in the cipher list. Just added in case someone is using an older version of OpenSSL.
-    SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2);
-//    SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION);
-
     // Exit if failed to load certificate trust store
-    err = LoadTrustStore(ssl_ctx);
+    err = LoadTrustStore();
     if (err != USP_ERR_OK)
     {
-        SSL_CTX_free(ssl_ctx);
-        return USP_ERR_INTERNAL_ERROR;
+        goto exit;
+    }
+
+    // Exit if unable to create a temporary SSL context.
+    // This is necessary because the load_agent_cert vendor hook only loads into an SSL context
+    temp_ssl_ctx = SSL_CTX_new(SSLv23_client_method());
+    if (temp_ssl_ctx == NULL)
+    {
+        USP_ERR_SetMessage("%s: SSL_CTX_new failed", __FUNCTION__);
+        err = USP_ERR_INTERNAL_ERROR;
+        goto exit;
     }
 
     // Determine which function to call to load the client cert
@@ -217,19 +249,37 @@ int DEVICE_SECURITY_Start(void)
     {
         load_agent_cert_cb = LoadClientCert;  // Fallback to a function which calls the get_agent_cert vendor hook
     }
-
-    // Exit if failed to load client certificate for this Agent
-    err = load_agent_cert_cb(ssl_ctx);
-    if (err != USP_ERR_OK)
+    else
     {
-        SSL_CTX_free(ssl_ctx);
-        return USP_ERR_INTERNAL_ERROR;
+        USP_LOG_Info("%s: Obtaining a device certificate from load_agent_cert vendor hook", __FUNCTION__);
     }
 
-    // Set the verify callback to use for each certificate
-    SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, TrustCertVerifyCallback);
+    // Exit if failed whilst loading a client certificate for this Agent
+    err = load_agent_cert_cb(temp_ssl_ctx);
+    if (err != USP_ERR_OK)
+    {
+        USP_LOG_Error("%s: load_agent_cert_cb() failed", __FUNCTION__);
+        goto exit;
+    }
 
-    return USP_ERR_OK;
+    // Exit if unable to add the client cert into the data model (if one has been loaded)
+    err = AddClientCert(temp_ssl_ctx);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // The trust store and client cert has been successfully cached in this module
+    err = USP_ERR_OK;
+
+exit:
+    // Free the temporary SSL Context
+    if (temp_ssl_ctx != NULL)
+    {
+        SSL_CTX_free(temp_ssl_ctx);
+    }
+
+    return err;
 }
 
 /*********************************************************************//**
@@ -261,28 +311,28 @@ void DEVICE_SECURITY_Stop(void)
     }
     USP_SAFE_FREE(trust_certs);
 
-    // Free the OpenSSL context
-    SSL_CTX_free(ssl_ctx);
+    // Free the client certificate
+    if (agent_cert != NULL)
+    {
+        X509_free(agent_cert);
+    }
+
+    if (agent_pkey != NULL)
+    {
+        EVP_PKEY_free(agent_pkey);
+    }
+
+    if (client_cert.is_loaded)
+    {
+        OPENSSL_free(client_cert.serial_number);
+        OPENSSL_free(client_cert.issuer);
+    }
+
+    // Free all DER format trust store certificates read from a file specified by the '-t' command line option
+    Free_TrustStoreFromFile();
 
     // No explicit cleanup of OpenSSL is required.
     // Cleanup routines are now NoOps which have been deprecated. See OpenSSL Changes between 1.0.2h and 1.1.0  [25 Aug 2016]
-}
-
-/*********************************************************************//**
-**
-** DEVICE_SECURITY_GetSSLContext
-**
-** Returns the SSL context (containing amongst other things, the trust store)
-** NOTE: This function is thread-safe since the pointer to the context is created at startup and the pointer is not changed afterwards
-**
-** \param   None
-**
-** \return  Pointer to SSL context to use.
-**
-**************************************************************************/
-SSL_CTX *DEVICE_SECURITY_GetSSLContext(void)
-{
-    return ssl_ctx;
 }
 
 /*********************************************************************//**
@@ -382,188 +432,155 @@ int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, ctrust_role_t 
 
 /*********************************************************************//**
 **
-**  DEVICE_SECURITY_LoadBulkDataTrustStore
+**  DEVICE_SECURITY_CreateSSLContext
 **
-**  Callback from curl to install our trust store certificates into curl's SSL context
-**  This is called by Bulk Data Collection
+**  Function to create an SSL context capable of performing the given method
+**  The SSL context will be loaded with the trust store certs, client cert and verify callback
 **
-** \param   curl - pointer to curl context
-** \param   curl_sslctx - pointer to curl's SSL context
-** \param   userptr - pointer to user data (unused)
+** \param   method - Type of SSL to use (eg TLS or DTLS)
+** \param   verify_mode - whether SSL should verify the peer (SSL_VERIFY_PEER), and whether to only perform verification once (SSL_VERIFY_CLIENT_ONCE - for DTLS servers)
+** \param   verify_callback - Function to call when verifying certificates from the server
 **          
-** \return  CURLE_OK if successful
+** \return  pointer to created SSL context, or NULL if an error occurred
 **
 **************************************************************************/
-CURLcode DEVICE_SECURITY_LoadBulkDataTrustStore(CURL *curl, void *curl_sslctx, void *parm)
+SSL_CTX *DEVICE_SECURITY_CreateSSLContext(const SSL_METHOD *method, int verify_mode, ssl_verify_callback_t verify_callback)
 {
-    SSL_CTX *curl_ssl_ctx;
-    X509_STORE *curl_trust_store;
+    int err;
+    SSL_CTX *ssl_ctx;
+
+    // Exit if unable to create an SSL context
+    ssl_ctx = SSL_CTX_new(method);
+    if (ssl_ctx == NULL)
+    {
+        USP_ERR_SetMessage("%s: SSL_CTX_new failed", __FUNCTION__);
+        goto exit;
+    }
+
+    // Explicitly disallow SSLv2, as it is insecure. See https://arxiv.org/pdf/1407.2168.pdf
+    // NOTE: Even without this, SSLv2 ciphers don't seem to appear in the cipher list. Just added in case someone is using an older version of OpenSSL.
+    SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2);
+    // SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION);
+
+    // Exit if unable to load our trust store and client cert into the SSL context's trust store
+    err = DEVICE_SECURITY_LoadTrustStore(ssl_ctx, verify_mode, verify_callback);
+    if (err != USP_ERR_OK)
+    {
+        SSL_CTX_free(ssl_ctx);
+        ssl_ctx = NULL;
+        goto exit;
+    }
+
+exit:
+    return ssl_ctx;
+}
+
+/*********************************************************************//**
+**
+**  DEVICE_SECURITY_LoadTrustStore
+**
+**  Loads the trust store certificates and client cert into the specified SSL context
+**
+** \param   ssl_ctx - pointer to SSL context to add trust store certs to
+** \param   verify_mode - whether SSL should verify the peer (SSL_VERIFY_PEER), and whether to only perform verification once (SSL_VERIFY_CLIENT_ONCE - for DTLS servers)
+** \param   verify_callback - Function to call when verifying certificates from the server
+**          
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify_callback_t verify_callback)
+{
+    X509_STORE *trust_store;
+    load_agent_cert_cb_t load_agent_cert_cb;
     trust_cert_t *tc;
     int i;
     int err;
 
-    // Exit if unable to obtain curl's trust store
-    curl_ssl_ctx = (SSL_CTX *) curl_sslctx;
-    curl_trust_store = SSL_CTX_get_cert_store(curl_ssl_ctx);
-    if (curl_trust_store == NULL)
+    // Exit if unable to obtain the SSL context's trust store object
+    trust_store = SSL_CTX_get_cert_store(ssl_ctx);
+    if (trust_store == NULL)
     {
         USP_LOG_Error("%s: SSL_CTX_get_cert_store() failed", __FUNCTION__);
-        return CURLE_ABORTED_BY_CALLBACK;
+        return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Add all certificates in our trust store to curl's trust store
+    // Add all certificates in our trust store to the SSL context's trust store
     for (i=0; i<num_trust_certs; i++)
     {
         tc = &trust_certs[i];
-        err = X509_STORE_add_cert(curl_trust_store, tc->cert);
+        err = X509_STORE_add_cert(trust_store, tc->cert);
         if (err == 0)
         {
             USP_LOG_Error("%s: X509_STORE_add_cert() failed", __FUNCTION__);
-            return CURLE_ABORTED_BY_CALLBACK;
+            return USP_ERR_INTERNAL_ERROR;
         }
     }
 
     // Set the verify callback to use for each certificate
-    SSL_CTX_set_verify(curl_ssl_ctx, SSL_VERIFY_PEER, BulkDataTrustCertVerifyCallback);
+    SSL_CTX_set_verify(ssl_ctx, verify_mode, verify_callback);
 
-    return CURLE_OK;
-}
-
-/*********************************************************************//**
-**
-** LoadClientCert
-**
-** Called to load the client certificate authenticating this agent
-**
-** \param   ctx - pointer to SSL context to load the certificate into
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int LoadClientCert(SSL_CTX *ctx)
-{
-    int err;
-    const unsigned char *in;
-    EVP_PKEY *pkey;
-    agent_cert_info_t info = {0};
-    get_agent_cert_cb_t get_agent_cert_cb;
-
-    // If the client cert file to use is specified on the command line, this overrides all other methods of configuring the client cert
-    // NOTE: The string compare test is present in order to allow an invocation of USP Agent to specify no auth cert file using -a "null". Useful, if the -a option is always used in all invocations.
-    if ((auth_cert_file != NULL) && (*auth_cert_file != '\0') && (strcmp(auth_cert_file, "null") != 0))
+    // Load the client cert using the load_agent_cert vendor hook (if registered)
+    load_agent_cert_cb = vendor_hook_callbacks.load_agent_cert_cb;
+    if (load_agent_cert_cb != NULL)
     {
-        // Exit if unable to load the client cert and private key from a PEM formattted file
-        err = LoadClientCertFromFile(ctx, auth_cert_file);
+        err = load_agent_cert_cb(ssl_ctx);
         if (err != USP_ERR_OK)
         {
-            return err;
+            USP_LOG_Error("%s: load_agent_cert_cb() failed", __FUNCTION__);
+            return USP_ERR_INTERNAL_ERROR;
         }
-
-        // Client certificate and private key was loaded successfully from a file
         goto exit;
     }
 
-    // Determine function to call to get the client cert
-    get_agent_cert_cb = vendor_hook_callbacks.get_agent_cert_cb;
-    if (get_agent_cert_cb == NULL)
+    // Otherwise load the cached client cert
+    if ((agent_cert != NULL) && (agent_pkey != NULL))
     {
-        USP_LOG_Info("%s: Not using a device certificate for connections", __FUNCTION__);
-        return USP_ERR_OK;
-    }
-
-    // Obtain the agent certificate and key from the vendor
-    err = get_agent_cert_cb(&info);
-    if (err != USP_ERR_OK)
-    {
-        USP_ERR_SetMessage("%s: get_agent_cert_cb() failed", __FUNCTION__);
-        return err;
-    }
-
-    // Exit if no client cert was provided. In this case no client cert will be presented to the broker
-    if ((info.cert_data == NULL) || (info.cert_len == 0) || (info.key_data == NULL) || (info.key_len == 0))
-    {
-        USP_LOG_Info("%s: Not using a device certificate for connections", __FUNCTION__);
-        return USP_ERR_OK;
-    }
-    USP_LOG_Info("%s: Using a device certificate for connections", __FUNCTION__);
+        // Exit if unable to add this agent's certificate
+        err = SSL_CTX_use_certificate(ssl_ctx, agent_cert);
+        if (err != 1)
+        {
+            USP_LOG_Error("%s: SSL_CTX_use_certificate() failed", __FUNCTION__);
+            return USP_ERR_INTERNAL_ERROR;
+        }
     
-    // Exit if unable to add this agent's certificate
-    err = SSL_CTX_use_certificate_ASN1(ctx, info.cert_len, info.cert_data);
-    if (err != 1)
-    {
-        USP_ERR_SetMessage("%s: SSL_CTX_use_certificate_ASN1() failed", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
+        // Exit if unable to add the private key
+        err = SSL_CTX_use_PrivateKey(ssl_ctx, agent_pkey);
+        if (err != 1)
+        {
+            USP_LOG_Error("%s: SSL_CTX_use_PrivateKey() failed", __FUNCTION__);
+            return USP_ERR_INTERNAL_ERROR;
+        }
     }
-
-    // Exit if unable to read the private key into an EVP_PKEY internal data structure
-    // NOTE: The following code is used rather than calling SSL_CTX_use_PrivateKey_ASN1() directly, as we don't know the format of the private key (RSA or DSA)
-    // This code is effectively the same as SSL_CTX_use_PrivateKey_ASN1(), but we call d2i_AutoPrivateKey() instead of d2i_PrivateKey().
-    // d2i_AutoPrivateKey() determines whether the supplied key is RSA or DSA.
-    in = info.key_data;
-    pkey = d2i_AutoPrivateKey(NULL, &in, info.key_len);
-    if (pkey == NULL)
-    {
-        USP_ERR_SetMessage("%s: d2i_AutoPrivateKey() failed", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Exit if unable to add the private key
-    err = SSL_CTX_use_PrivateKey(ctx, pkey);
-    if (err != 1)
-    {
-        USP_ERR_SetMessage("%s: SSL_CTX_use_PrivateKey() failed", __FUNCTION__);
-        EVP_PKEY_free(pkey);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    EVP_PKEY_free(pkey);
 
 exit:
-    // If the code gets here, then a client certificate has been successfully set
-    STOMP_NotifyClientCertAvailable();
-
     return USP_ERR_OK;
 }
 
-
 /*********************************************************************//**
 **
-** LoadClientCertFromFile
+**  DEVICE_SECURITY_CanClientCertAuthenticate
 **
-** Loads a client certificate and associated private key from a file containing both in PEM format
+**  Called from STOMP MTP to determine whether a client certificate is loaded
+**  and contains authentication information (SAN=EndpointID)
+**  This function is only called by STOMP MTP in order to log the correct debug message
+**  This function is threadsafe as the variables accessed are immutable since startup
 **
-** \param   ctx - pointer to SSL context to load the certificate into
-** \param   cert_file - filesystem path to the file containing the PEM formatted cert data concatenated with the PEM formatted private key
-**
-** \return  USP_ERR_OK if successful
+** \param   available - pointer to variable in which to return whether a client certificate has been loaded
+** \param   matches_endpoint - pointer to variable in which to return whether the SubjectAltName field in the client cert matches the EndpointID of the device
+**                             i.e. whether the client cert is suitable for authentication purposes
+**          
+** \return  true if a client cert has been loaded and SAN=EndpointID
 **
 **************************************************************************/
-int LoadClientCertFromFile(SSL_CTX *ctx, char *cert_file)
+void DEVICE_SECURITY_GetClientCertStatus(bool *available, bool *matches_endpoint)
 {
-    int result;
-
-    // Exit if unable to load the client certificate from the PEM format file
-    result = SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM);
-    if (result != 1)
-    {
-        USP_ERR_SetMessage("%s: SSL_CTX_use_certificate_file() failed when reading client certificate from %s", __FUNCTION__, cert_file);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Exit if unable to load the private key from the PEM format file
-    result = SSL_CTX_use_PrivateKey_file(ctx, cert_file, SSL_FILETYPE_PEM);
-    if (result != 1)
-    {
-        USP_ERR_SetMessage("%s: SSL_CTX_use_PrivateKey_file() failed when reading private key from %s", __FUNCTION__, cert_file);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    return USP_ERR_OK;
+    *available = client_cert.is_loaded;
+    *matches_endpoint = client_cert.is_san_equal_endpoint_id;
 }
 
 /*********************************************************************//**
 **
-** TrustCertVerifyCallback
+** DEVICE_SECURITY_TrustCertVerifyCallback
 **
 ** Called back from OpenSSL for each certificate in the received server certificate chain of trust
 ** This function saves the certificate chain into the STOMP connection structure
@@ -576,7 +593,7 @@ int LoadClientCertFromFile(SSL_CTX *ctx, char *cert_file)
 **          0 if certificate chain should not be trusted, and connection dropped
 **
 **************************************************************************/
-int TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
+int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
 {
     int cert_err;
     bool is_reliable;
@@ -594,11 +611,10 @@ int TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
 
     // Get the pointer to variable in which to save the certificate chain)
     p_cert_chain = (STACK_OF(X509) **)SSL_get_app_data(ssl);
-    USP_ASSERT(p_cert_chain != NULL);
 
     // Save the certificate chain back into the STOMP connection if not done so already
     // (This function is called for each certificate in the chain, so it might have been done already)
-    if (*p_cert_chain == NULL)
+    if ((p_cert_chain != NULL) && (*p_cert_chain == NULL))
     {
         cert_chain = X509_STORE_CTX_get1_chain(x509_ctx);
         if (cert_chain == NULL)
@@ -628,7 +644,10 @@ int TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
         err_depth = X509_STORE_CTX_get_error_depth(x509_ctx);
         USP_LOG_Error("%s: OpenSSL error: %s (err_code=%d) at depth=%d", __FUNCTION__, err_string, cert_err, err_depth);
 
-        LogCertChain(*p_cert_chain);
+        if (p_cert_chain != NULL)
+        {
+            LogCertChain(*p_cert_chain);
+        }
         LogTrustCerts();
         return 0;
     }
@@ -655,7 +674,7 @@ int TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
 
 /*********************************************************************//**
 **
-** BulkDataTrustCertVerifyCallback
+** DEVICE_SECURITY_BulkDataTrustCertVerifyCallback
 **
 ** Called back from OpenSSL for each certificate in the received server certificate chain of trust
 ** This function is used to ignore certificate validation errors caused by system time being incorrect
@@ -669,7 +688,7 @@ int TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
 **          0 if certificate chain should not be trusted, and connection dropped
 **
 **************************************************************************/
-int BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
+int DEVICE_SECURITY_BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
 {
     int cert_err;
     bool is_reliable;
@@ -737,6 +756,253 @@ int BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
 
 /*********************************************************************//**
 **
+** LoadClientCert
+**
+** Called to load the client certificate authenticating this agent
+**
+** \param   ctx - pointer to SSL context to load the certificate into
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int LoadClientCert(SSL_CTX *ctx)
+{
+    int err;
+    X509 *cert = NULL;
+    EVP_PKEY *pkey = NULL;
+
+    // Exit if an error occurred whilst trying to get the client cert
+    err = GetClientCert(&cert, &pkey);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if no cert was obtained. NOTE: This is not an error
+    if ((cert == NULL) || (pkey == NULL))
+    {
+        USP_LOG_Info("%s: Not using a device certificate for connections", __FUNCTION__);
+        return USP_ERR_OK;
+    }
+
+    // Exit if unable to add this agent's certificate
+    err = SSL_CTX_use_certificate(ctx, cert);
+    if (err != 1)
+    {
+        USP_ERR_SetMessage("%s: SSL_CTX_use_certificate() failed", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if unable to add the private key
+    err = SSL_CTX_use_PrivateKey(ctx, pkey);
+    if (err != 1)
+    {
+        USP_ERR_SetMessage("%s: SSL_CTX_use_PrivateKey() failed", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Cache the client certificate and private key, to be used by DEVICE_SECURITY_LoadTrustStore()
+    agent_cert = cert;
+    agent_pkey = pkey;
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** GetClientCert
+**
+** Called to get the client certificate authenticating this agent
+**
+** \param   p_cert - pointer to variable in which to return a pointer to the client cert
+** \param   p_pkey - pointer to variable in which to return a pointer to the client cert's private key
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int GetClientCert(X509 **p_cert, EVP_PKEY **p_pkey)
+{
+    int err;
+
+    // If the client cert file to use is specified on the command line, this overrides all other methods of configuring the client cert
+    // NOTE: The string compare test is present in order to allow an invocation of USP Agent to specify no auth cert file using -a "null". Useful, if the -a option is always used in all invocations.
+    if ((auth_cert_file != NULL) && (*auth_cert_file != '\0') && (strcmp(auth_cert_file, "null") != 0))
+    {
+        err = GetClientCertFromFile(auth_cert_file, p_cert, p_pkey);
+        return err;
+    }
+
+    // Otherwise, attempt to read the client cert from an in-memory buffer provided by the get_agent_cert vendor hook
+    err = GetClientCertFromMemory(p_cert, p_pkey);
+    return err;
+}
+
+/*********************************************************************//**
+**
+** GetClientCertFromFile
+**
+** Gets a client certificate and associated private key from a file containing both in PEM format
+**
+** \param   cert_file - filesystem path to the file containing the PEM formatted cert data concatenated with the PEM formatted private key
+** \param   p_cert - pointer to variable in which to return a pointer to the client cert
+** \param   p_pkey - pointer to variable in which to return a pointer to the client cert's private key
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int GetClientCertFromFile(char *cert_file, X509 **p_cert, EVP_PKEY **p_pkey)
+{
+    int result;
+    BIO *bio = NULL;
+    X509 *cert = NULL;
+    EVP_PKEY *pkey = NULL;
+    int err = USP_ERR_INTERNAL_ERROR;
+
+    // Exit if unable to create a bio to read from the cert file
+    bio = BIO_new(BIO_s_file());
+    if (bio == NULL)
+    {
+        USP_ERR_SetMessage("%s: BIO_new() failed", __FUNCTION__);
+        goto exit;
+    }
+
+    // Exit if unable to set the file to read from
+    result = BIO_read_filename(bio, cert_file);
+    if (result <= 0)
+    {
+        USP_ERR_SetMessage("%s: BIO_read_filename(%s) failed", __FUNCTION__, cert_file);
+        goto exit;
+    }
+
+    // Exit if unable to parse an X509 structure from the file
+    cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+    if (cert == NULL)
+    {
+        USP_ERR_SetMessage("%s: PEM_read_bio_X509(%s) failed", __FUNCTION__, cert_file);
+        goto exit;
+    }
+
+    // Exit if unable to reset the bio, to go back to the beginning of the file
+    result = BIO_reset(bio);
+    if (result != 0)
+    {
+        USP_ERR_SetMessage("%s: BIO_reset() failed", __FUNCTION__);
+        goto exit;
+    }
+
+    // Exit if unable to parse a EVP_PKEY (private key) structure from the file
+    pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+    if (pkey == NULL)
+    {
+        USP_ERR_SetMessage("%s: PEM_read_bio_PrivateKey(%s) failed", __FUNCTION__, cert_file);
+        goto exit;
+    }
+
+    // If the code gets here, then it was successful
+    *p_cert = cert;
+    *p_pkey = pkey;
+    err = USP_ERR_OK;
+
+exit:
+    // Clean up, if an error occurred
+    if (err != USP_ERR_OK)
+    {
+        if (cert != NULL)
+        {
+            X509_free(cert);
+        }
+
+        if (pkey != NULL)
+        {
+            EVP_PKEY_free(pkey);
+        }
+    }
+
+    if (bio != NULL)
+    {
+        BIO_free(bio);
+    }
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** GetClientCertFromMemory
+**
+** Gets a client certificate and associated private key from a buffer supplied by the get_agent_cert vendor hook
+** The buffer containing the cert is in binary DER format
+**
+** \param   p_cert - pointer to variable in which to return a pointer to the client cert
+** \param   p_pkey - pointer to variable in which to return a pointer to the client cert's private key
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int GetClientCertFromMemory(X509 **p_cert, EVP_PKEY **p_pkey)
+{
+    int err;
+    const unsigned char *in;
+    X509 *cert;
+    EVP_PKEY *pkey;
+    agent_cert_info_t info = {0};
+    get_agent_cert_cb_t get_agent_cert_cb;
+
+    // Setup default return values
+    *p_cert = NULL;
+    *p_pkey = NULL;
+
+    // Determine function to call to get the client cert
+    get_agent_cert_cb = vendor_hook_callbacks.get_agent_cert_cb;
+    if (get_agent_cert_cb == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Obtain the agent certificate and key from the vendor
+    err = get_agent_cert_cb(&info);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: get_agent_cert_cb() failed", __FUNCTION__);
+        return err;
+    }
+
+    // Exit if no client cert was provided. In this case no client cert will be presented to the broker
+    // NOTE: This condition is handled gracefully by the caller.
+    if ((info.cert_data == NULL) || (info.cert_len == 0) || (info.key_data == NULL) || (info.key_len == 0))
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if unable to convert the buffer into an X509 structure
+    const unsigned char *cert_data = info.cert_data;
+    cert = d2i_X509(NULL, &cert_data, (long)info.cert_len);
+    if (cert == NULL)
+    {
+        USP_ERR_SetMessage("%s: d2i_X509() failed", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if unable to read the private key into an EVP_PKEY internal data structure
+    // d2i_AutoPrivateKey() determines whether the supplied key is RSA or DSA.
+    in = info.key_data;
+    pkey = d2i_AutoPrivateKey(NULL, &in, info.key_len);
+    if (pkey == NULL)
+    {
+        USP_ERR_SetMessage("%s: d2i_AutoPrivateKey() failed", __FUNCTION__);
+        X509_free(cert);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // If the code gets here, the client certificate was extracted successfully
+    *p_cert = cert;
+    *p_pkey = pkey;
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** LogCertChain
 **
 ** Logs the Subject and Issuer of each certificate in a certificate chain
@@ -759,7 +1025,7 @@ void LogCertChain(STACK_OF_X509 *cert_chain)
 
     // Iterate over all certs in the chain, printing their subject and issuer
     num_certs = sk_X509_num(cert_chain);
-    USP_LOG_Info("\nCertificate Chain: STOMP broker cert at position [0], Root cert at position [%d]", num_certs-1);
+    USP_LOG_Info("\nCertificate Chain: Peer cert at position [0], Root cert at position [%d]", num_certs-1);
     for (i=0; i<num_certs; i++)
     {
         cert = (X509*) sk_X509_value(cert_chain, i);
@@ -819,9 +1085,68 @@ void LogCert_DER(X509 *cert)
     unsigned char *buf = NULL;
 
     len = i2d_X509(cert, &buf);
-    USP_LOG_HexBufferLong("cert", buf, len);
+    USP_LOG_HexBuffer("cert", buf, len);
     OPENSSL_free(buf);
 
+}
+
+/*********************************************************************//**
+**
+** AddClientCert
+**
+** Determines if a client cert has been loaded, and if so parses it
+**
+** \param   ctx - pointer to SSL context in which the client cert might have been loaded
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int AddClientCert(SSL_CTX *ctx)
+{
+    int err;
+    X509 *cert;
+    char *subject_alt = NULL;
+    char *endpoint_id;
+
+    // Exit if no client cert has been installed (this is not an error).
+    // NOTE: We have to get it from the SSL context, because it could have been installed using the load_agent_cert vendor hook
+    cert = SSL_CTX_get0_certificate(ctx);
+    if (cert == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Parse the certificate
+    err = USP_ERR_OK;
+    err |= ParseCert_SerialNumber(cert, &client_cert.serial_number);
+    err |= ParseCert_Issuer(cert, &client_cert.issuer);
+    err |= ParseCert_SubjectAlt(cert, &subject_alt);
+    if (err != USP_ERR_OK)
+    {
+        USP_LOG_Error("%s: Failed to parse client certificate", __FUNCTION__);
+        USP_SAFE_FREE(subject_alt);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+    USP_ASSERT(subject_alt != NULL);
+
+    // Determine whether the SubjectAltName field in the certificate matches the URN form of the agent's endpoint_id    
+    #define URN_PREFIX "urn:bbf:usp:id:"
+    #define URN_PREFIX_LEN (sizeof(URN_PREFIX)-1)    // Minus 1 to not include the NULL terminator
+    endpoint_id = DEVICE_LOCAL_AGENT_GetEndpointID();
+    if ((strlen(subject_alt) > URN_PREFIX_LEN) &&
+        (strncmp(subject_alt, URN_PREFIX, URN_PREFIX_LEN)==0) &&
+        (strcmp(&subject_alt[URN_PREFIX_LEN], endpoint_id)==0))
+    {
+        client_cert.is_san_equal_endpoint_id = true;
+    }
+ 
+    USP_LOG_Info("%s: Using a device certificate for connections (SubjectAltName=%s)", __FUNCTION__, subject_alt);
+    USP_SAFE_FREE(subject_alt);
+
+    // Mark the client certificate as loaded
+    client_cert.is_loaded = true;
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -1057,7 +1382,7 @@ trust_cert_t *FindTrustCertByReq(dm_req_t *req)
 **
 ** AddTrustCert
 **
-** Adds the specified tructed certificate into a vector, along with its parsed details
+** Adds the specified trusted certificate into a vector, along with its parsed details
 ** NOTE: Ownership of the certificate structure passes to this function
 ** NOTE: This function does not attempt to clean up or free memory if an error occurs.
 **       (the caller will abort USP Agent in this case).
@@ -1086,12 +1411,10 @@ int AddTrustCert(X509 *cert, ctrust_role_t role)
     // Add this certificate into the vector
     tc->cert = cert;
 
-    // Extract Subject and Issuer of the certificate
-    tc->subject = X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0);
-    tc->issuer = X509_NAME_oneline(X509_get_issuer_name(cert), NULL, 0);
-
-    // Now extract the other details of the specified certificate
+    // Extract the details of the specified certificate
     err = USP_ERR_OK;
+    err |= ParseCert_Subject(cert, &tc->subject);
+    err |= ParseCert_Issuer(cert, &tc->issuer);
     err |= ParseCert_LastModif(cert, &tc->last_modif);
     err |= ParseCert_SerialNumber(cert, &tc->serial_number);
     err |= ParseCert_NotBefore(cert, &tc->not_before);
@@ -1121,6 +1444,44 @@ int AddTrustCert(X509 *cert, ctrust_role_t role)
         return err;
     }
 
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** ParseCert_Subject
+**
+** Extracts the Subject field of the specified cert
+**
+** \param   cert - pointer to the certificate structure to extract the details of
+** \param   p_subject - pointer to variable in which to return the pointer to a 
+**                      dynamically allocated string containing the value
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ParseCert_Subject(X509 *cert, char **p_subject)
+{
+    *p_subject = X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0);
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** ParseCert_Issuer
+**
+** Extracts the Issuer field of the specified cert
+**
+** \param   cert - pointer to the certificate structure to extract the details of
+** \param   p_issuer - pointer to variable in which to return the pointer to a 
+**                     dynamically allocated string containing the value
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ParseCert_Issuer(X509 *cert, char **p_issuer)
+{
+    *p_issuer = X509_NAME_oneline(X509_get_issuer_name(cert), NULL, 0);
     return USP_ERR_OK;
 }
 
@@ -1319,17 +1680,27 @@ time_t Asn1Time_To_UnixTime(ASN1_TIME *cert_time)
     struct tm tm;
     time_t t;
     int i;
+    int len;
 
-    // Exit if the ASN1 string does not match the format we're expecting (ie "YYMMDDHHMMSSZ")
     s = (char *) cert_time->data;
-    if ((strlen(s) != 13) || (s[12] != 'Z'))
+    len = strlen(s);
+
+    // Exit if the string does not match one of the lengths we are expecting
+    if ((len != 13) && (len != 15))
     {
-        USP_ERR_SetMessage("%s: ASN1 string ('%s') does not match expected format", __FUNCTION__, s);
+        USP_ERR_SetMessage("%s: ASN1 string ('%s') does not match expected format (wrong length)", __FUNCTION__, s);
+        return INVALID_TIME;
+    }
+
+    // Exit if the string is not terminated by 'Z'
+    if (s[len-1] != 'Z')
+    {
+        USP_ERR_SetMessage("%s: ASN1 string ('%s') does not match expected format (not terminated in 'Z')", __FUNCTION__, s);
         return INVALID_TIME;
     }
 
     // Exit if one of the digits is not numeric
-    for (i=0; i<12; i++)
+    for (i=0; i < len-1; i++)
     {
         if ((s[i] < '0') || (s[i] > '9'))
         {
@@ -1339,24 +1710,40 @@ time_t Asn1Time_To_UnixTime(ASN1_TIME *cert_time)
     }
 
     // Calculate year since 1900, correcting for years after the millenium
-    #define TO_DIGIT(x) (x - '0')
     memset(&tm, 0, sizeof(tm));
-    tm.tm_year = 10*TO_DIGIT(s[0]) + TO_DIGIT(s[1]);
-    if (tm.tm_year < 70)
+    #define TO_DIGIT(x) (x - '0')
+    if (len == 13)
     {
-        tm.tm_year += 100;
+        // ASN1 string is of the format "YYMMDDHHMMSSZ"
+        tm.tm_year = 10*TO_DIGIT(s[0]) + TO_DIGIT(s[1]);
+        if (tm.tm_year < 70)
+        {
+            tm.tm_year += 100;
+        }
+        s += 2; // Skip to month characters
+    }
+    else
+    {
+        // ASN1 string is of the format "YYYYMMDDHHMMSSZ"
+        tm.tm_year = 1000*TO_DIGIT(s[0]) + 100*TO_DIGIT(s[1]) + 10*TO_DIGIT(s[2]) + TO_DIGIT(s[3]) - 1900;
+        if (tm.tm_year < 70)
+        {
+            USP_ERR_SetMessage("%s: ASN1 string ('%s') contains invalid year", __FUNCTION__, s);
+            return INVALID_TIME;
+        }
+
+        s += 4; // Skip to month characters
     }
 
     // Fill in other fields
-    tm.tm_mon  = 10*TO_DIGIT(s[2]) + TO_DIGIT(s[3]) - 1; // Month 0-11
-    tm.tm_mday = 10*TO_DIGIT(s[4]) + TO_DIGIT(s[5]);     // Day of month 1-31
-    tm.tm_hour = 10*TO_DIGIT(s[6]) + TO_DIGIT(s[7]); ;   // Hour 0-23
-    tm.tm_min  = 10*TO_DIGIT(s[8]) + TO_DIGIT(s[9]);     // Minute 0-59
-    tm.tm_sec  = 10*TO_DIGIT(s[10]) + TO_DIGIT(s[11]);   // Second 0-59
-
+    tm.tm_mon  = 10*TO_DIGIT(s[0]) + TO_DIGIT(s[1]) - 1; // Month 0-11
+    tm.tm_mday = 10*TO_DIGIT(s[2]) + TO_DIGIT(s[3]);     // Day of month 1-31
+    tm.tm_hour = 10*TO_DIGIT(s[4]) + TO_DIGIT(s[5]); ;   // Hour 0-23
+    tm.tm_min  = 10*TO_DIGIT(s[6]) + TO_DIGIT(s[7]);     // Minute 0-59
+    tm.tm_sec  = 10*TO_DIGIT(s[8]) + TO_DIGIT(s[9]);   // Second 0-59
 
     // Exit if unable to convert the time
-    t = timegm(&tm);
+    t = mktime(&tm);
     if (t == INVALID_TIME)
     {
         USP_ERR_SetMessage("%s: timegm() failed for ASN1 string ('%s')", __FUNCTION__, s);
@@ -1720,6 +2107,111 @@ int FindMatchingTrustCert(unsigned hash)
 }
 
 
+/*********************************************************************//**
+**
+** Read_TrustStoreFromFile
+**
+** Reads DER formatted certificates from the file specified by the '-t' command line option into a trust_store_t structure
+**
+** \param   num_trusted_certs - pointer to variable in which to return the number of certificates returned
+**
+** \return  Pointer to an array containing the certificates, or NULL if an error occurred
+**
+**************************************************************************/
+const trust_store_t *Read_TrustStoreFromFile(int *num_trusted_certs)
+{
+    trust_store_t *tc;
+    FILE *fp;
+    X509 *cert;
+    int num_certs;
+
+    // Exit if unable to open the file containing the trust store certs in PEM format
+    fp = fopen(usp_trust_store_file, "r");
+    if (fp == NULL)
+    {
+        USP_LOG_Error("%s: Unable to open %s", __FUNCTION__, usp_trust_store_file);
+        return NULL;
+    }
+
+    // Zero out the array which we'll return the certificates in
+    memset(trust_store_from_file, 0, sizeof(trust_store_from_file));
+    num_certs = 0;
+
+    // Iterate over all certs in the file
+    cert = PEM_read_X509(fp, NULL, NULL, NULL);
+    while (cert != NULL)
+    {
+        // Convert the X509 structure to DER form. NOTE: OpenSSL allocates memory for the DER form
+        tc = &trust_store_from_file[num_certs];
+        tc->cert_data = NULL;
+        tc->cert_len = i2d_X509(cert, (unsigned char **) &tc->cert_data);
+        tc->role = kCTrustRole_FullAccess;
+
+        // Free the cert, now we have it in DER form
+        X509_free(cert);
+
+        // Exit if the conversion to DER form failed
+        if ((tc->cert_len < 0) || (tc->cert_data == NULL))
+        {
+            USP_LOG_Error("%s: i2d_X509() failed", __FUNCTION__);
+            Free_TrustStoreFromFile();
+            fclose(fp);
+            return NULL;
+        }
+
+        // Read the next cert. If no more certs in the file, then the pointer returned will be NULL
+        cert = PEM_read_X509(fp, NULL, NULL, NULL);
+
+        // Exit if there is another cert in the file, but we don't have space for it in trust_store_from_file[]
+        num_certs++;
+        if ((cert != NULL) && (num_certs == MAX_CERTS_IN_TRUST_STORE_FILE))
+        {
+            USP_LOG_Error("%s: Too many certificates in %s. Increase MAX_CERTS_IN_TRUST_STORE_FILE from %d", __FUNCTION__, usp_trust_store_file, MAX_CERTS_IN_TRUST_STORE_FILE);
+            Free_TrustStoreFromFile();
+            fclose(fp);
+            return NULL;
+        }
+    }
+
+    // Close the file and store the number of certificates extracted
+    fclose(fp);
+    *num_trusted_certs = num_certs;
+    num_trust_store_from_file_certs = num_certs;
+
+    // Exit if no certificates were found in the file
+    if (num_certs == 0)
+    {
+        USP_LOG_Error("%s: No certificates found in %s", __FUNCTION__, usp_trust_store_file);
+        return NULL;
+    }
+
+    return (const trust_store_t *)trust_store_from_file;
+}
+
+/*********************************************************************//**
+**
+** Free_TrustStoreFromFile
+**
+** Frees all memory associated with trust_store_from_file[]
+** (the trust store loaded from the file specified by the '-t' command line option)
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void Free_TrustStoreFromFile(void)
+{
+    int i;
+    trust_store_t *tc;
+
+    // Iterate over all DER formatted certificates in the array, freeing them
+    for (i=0; i<num_trust_store_from_file_certs; i++)
+    {
+        tc = &trust_store_from_file[i];
+        OPENSSL_free((unsigned char *)tc->cert_data);
+    }
+}
 
 /*********************************************************************//**
 **
@@ -1732,27 +2224,25 @@ int FindMatchingTrustCert(unsigned hash)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int LoadTrustStore(SSL_CTX *ctx)
+int LoadTrustStore(void)
 {
     int i;
     int err;
-    X509_STORE *ssl_store;
     const trust_store_t *trusted_certs;
     const trust_store_t *tc;
     int num_trusted_certs;
     get_trust_store_cb_t get_trust_store_cb;
 
-    // Exit if unable to get the trust store that we want to add the trusted certificates to 
-    ssl_store = SSL_CTX_get_cert_store(ctx);
-    if (ssl_store == NULL)
-    {
-        USP_ERR_SetMessage("%s: SSL_CTX_get_cert_store() failed", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
     // Determine function to call to get the trust store
-    get_trust_store_cb = vendor_hook_callbacks.get_trust_store_cb;
-    if (get_trust_store_cb == NULL)
+    if (usp_trust_store_file != NULL)
+    {
+        get_trust_store_cb = Read_TrustStoreFromFile;
+    }
+    else if (vendor_hook_callbacks.get_trust_store_cb != NULL)
+    {
+        get_trust_store_cb = vendor_hook_callbacks.get_trust_store_cb;
+    }
+    else
     {
         return USP_ERR_OK;
     }
@@ -1765,11 +2255,11 @@ int LoadTrustStore(SSL_CTX *ctx)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Iterate over all trusted certificates, adding them to the SSL context's trust store
+    // Iterate over all trusted certificates, adding them to our trust store
     for (i=0; i<num_trusted_certs; i++)
     {
         tc = &trusted_certs[i];
-        err = LoadTrustCert(ssl_store, tc->cert_data, tc->cert_len, tc->role);
+        err = LoadTrustCert(tc->cert_data, tc->cert_len, tc->role);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -1786,7 +2276,6 @@ int LoadTrustStore(SSL_CTX *ctx)
 **
 ** Called to add a certificate to the trusted root certificate store
 **
-** \param   ssl_store - pointer to SSL Trust store to load the cert into
 ** \param   cert_data - pointer to binary DER format certificate data
 ** \param   cert_len - number of bytes in the DER format certificate data
 ** \param   role - controller trust role associated with the certificate
@@ -1794,7 +2283,7 @@ int LoadTrustStore(SSL_CTX *ctx)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int LoadTrustCert(X509_STORE *ssl_store, const unsigned char *cert_data, int cert_len, ctrust_role_t role)
+int LoadTrustCert(const unsigned char *cert_data, int cert_len, ctrust_role_t role)
 {
     int err;
     const unsigned char *in;
@@ -1809,14 +2298,6 @@ int LoadTrustCert(X509_STORE *ssl_store, const unsigned char *cert_data, int cer
         return USP_ERR_INTERNAL_ERROR;
     }
     
-    // Exit if unable to add the certificate to the SSL context's trust store
-    err = X509_STORE_add_cert(ssl_store, ssl_cert);
-    if (err == 0)
-    {
-        USP_ERR_SetMessage("%s: X509_STORE_add_cert() failed", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
     // Exit if unable to add the certificate's details to our vector
     // NOTE: Ownership of the ssl_cert passes to our vector, so no need to free it in this function
     err = AddTrustCert(ssl_cert, role);

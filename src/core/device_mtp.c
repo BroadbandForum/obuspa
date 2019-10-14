@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -51,6 +51,7 @@
 #include "mtp_exec.h"
 #include "device.h"
 #include "text_utils.h"
+#include "nu_macaddr.h"
 
 #ifdef ENABLE_COAP
 #include "usp_coap.h"
@@ -74,8 +75,7 @@ typedef struct
     char *stomp_agent_queue;    // name of the queue on the above STOMP connection, on which this agent listens
 
 #ifdef ENABLE_COAP
-    unsigned coap_port;         // port on which this agent listens for CoAP messages
-    char *coap_path;            // path representing this agent
+    coap_config_t  coap;     // Configuration settings for CoAP server
 #endif
 } agent_mtp_t;
 
@@ -112,10 +112,6 @@ int Validate_AgentMtpStompReference(dm_req_t *req, char *value);
 int Validate_AgentMtpStompDestination(dm_req_t *req, char *value);
 int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value);
 int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value);
-#ifdef ENABLE_COAP
-int NotifyChange_AgentMtpCoAPPort(dm_req_t *req, char *value);
-int NotifyChange_AgentMtpCoAPPath(dm_req_t *req, char *value);
-#endif
 int NotifyChange_AgentMtpStompReference(dm_req_t *req, char *value);
 int NotifyChange_AgentMtpStompDestination(dm_req_t *req, char *value);
 int Get_MtpStatus(dm_req_t *req, char *buf, int len);
@@ -124,6 +120,17 @@ int ProcessAgentMtpAdded(int instance);
 agent_mtp_t *FindUnusedAgentMtp(void);
 void DestroyAgentMtp(agent_mtp_t *mtp);
 agent_mtp_t *FindAgentMtpByInstance(int instance);
+
+#ifdef ENABLE_COAP
+//------------------------------------------------------------------------------
+// Typedef used to call either COAP_StartServer() or COAP_StopServer()
+typedef int (*control_coapserver_t)(int instance, char *interface, coap_config_t *config);
+
+int NotifyChange_AgentMtpCoAPPort(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpCoAPPath(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpCoAPEncryption(dm_req_t *req, char *value);
+int ControlCoapServer(agent_mtp_t *mtp, control_coapserver_t control_coapserver);
+#endif
 
 /*********************************************************************//**
 **
@@ -164,6 +171,7 @@ int DEVICE_MTP_Init(void)
 #ifdef ENABLE_COAP
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.CoAP.Port", "5683", DM_ACCESS_ValidatePort, NotifyChange_AgentMtpCoAPPort, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.CoAP.Path", "", NULL, NotifyChange_AgentMtpCoAPPath, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.CoAP.EnableEncryption", "true", NULL, NotifyChange_AgentMtpCoAPEncryption, DM_BOOL);
 #endif
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_AGENT_MTP_ROOT ".{i}.Status", Get_MtpStatus, DM_STRING);
 
@@ -513,7 +521,7 @@ int Notify_AgentMtpDeleted(dm_req_t *req)
 
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
-            COAP_StopServer(mtp->instance);
+            ControlCoapServer(mtp, COAP_StopServer);
             break;
 #endif
         default:
@@ -581,13 +589,13 @@ int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value)
         return USP_ERR_OK;
     }
 
-    // Store the new value
-    mtp->enable = val_bool;
-
     // Update the protocol based on the change
     switch(mtp->protocol)
     {
         case kMtpProtocol_STOMP:
+            // Store the new value
+            mtp->enable = val_bool;
+
             // Always schedule a reconnect for the affected STOMP connection instance
             // If this MTP has been disabled, then the reconnect will fail unless another MTP specifies the agent queue to subscribe to
             if (mtp->stomp_connection_instance != INVALID)
@@ -598,24 +606,33 @@ int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value)
  
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
+{            
             // Enable or disable the CoAP server based on the new value
-            if (mtp->enable)
+            int err;
+            if (val_bool)
             {
-                int err;
-                err = COAP_StartServer(mtp->instance, AF_INET, "0.0.0.0", mtp->coap_port, mtp->coap_path);
-                if (err != USP_ERR_OK)
-                {
-                    return err;
-                }
+                // CoAP Server has been enabled
+                mtp->enable = val_bool;
+                err = ControlCoapServer(mtp, COAP_StartServer);
             }
             else
             {
-                COAP_StopServer(mtp->instance);
+                // CoAP Server has been disabled
+                err = ControlCoapServer(mtp, COAP_StopServer);
+                mtp->enable = val_bool;
             }
+
+            // Exit if an error occurred when starting or stopping the CoAPserver
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
+}
             break;
- #endif
+#endif
  
         default:
+            TERMINATE_BAD_CASE(mtp->protocol);
             break;
     }
 
@@ -637,48 +654,57 @@ int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value)
 int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value)
 {
     agent_mtp_t *mtp;
-    mtp_protocol_t old_protocol;    
+    mtp_protocol_t new_protocol;
 
     // Determine MTP to be updated
     mtp = FindAgentMtpByInstance(inst1);
     USP_ASSERT(mtp != NULL);
 
-    // Set the new value
-    old_protocol = mtp->protocol;
-    mtp->protocol = TEXT_UTILS_StringToEnum(value, mtp_protocols, NUM_ELEM(mtp_protocols));
-    USP_ASSERT(mtp->protocol != INVALID);    // The enumeration has already been validated
+    // Calculate the new ptotocol
+    new_protocol = TEXT_UTILS_StringToEnum(value, mtp_protocols, NUM_ELEM(mtp_protocols));
+    USP_ASSERT(new_protocol != INVALID);    // The enumeration has already been validated
 
-    // Exit if this MTP is not enabled, nothing more to do
-    if (mtp->enable == false)
+    // Exit if the value has not changed
+    if (mtp->protocol == new_protocol)
     {
         return USP_ERR_OK;
     }
 
-    // Exit if the value has not changed
-    if (mtp->protocol == old_protocol)
+    // Exit if this MTP is not enabled, nothing more to do, other than cache the changed value
+    if (mtp->enable == false)
     {
+        mtp->protocol = new_protocol;
         return USP_ERR_OK;
     }
 
     // If the code gets here, then the protocol has changed from STOMP to CoAP, or vice versa
-    // So schedule the affected STOMP connection to reconnect (because it might have lost or gained a agent queue to subscribe to)
+
+#ifdef ENABLE_COAP
+    // If the existing protocol is CoAP, stop its server
+    if (mtp->protocol == kMtpProtocol_CoAP)
+    {
+        int err = ControlCoapServer(mtp, COAP_StopServer);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+    }
+#endif
+
+    // Cache the changed value
+    mtp->protocol = new_protocol;
+
+    // Schedule the affected STOMP connection to reconnect (because it might have lost or gained a agent queue to subscribe to)
     if ((mtp->enable) && (mtp->stomp_connection_instance != INVALID))
     {
         DEVICE_STOMP_ScheduleReconnect(mtp->stomp_connection_instance);
     }
 
 #ifdef ENABLE_COAP
-    // If the last protocol was CoAP, stop it's server
-    if ((old_protocol == kMtpProtocol_CoAP) && (mtp->enable))
+    // If the new protocol is CoAP, start its server
+    if (new_protocol == kMtpProtocol_CoAP)
     {
-        COAP_StopServer(mtp->instance);
-    }
-
-    // If the new protocol is CoAP, start it's server
-    if ((mtp->protocol == kMtpProtocol_CoAP) && (mtp->enable))
-    {
-        int err;
-        err = COAP_StartServer(mtp->instance, AF_INET, "0.0.0.0", mtp->coap_port, mtp->coap_path);
+        int err = ControlCoapServer(mtp, COAP_StartServer);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -704,31 +730,34 @@ int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value)
 **************************************************************************/
 int NotifyChange_AgentMtpCoAPPort(dm_req_t *req, char *value)
 {
-    int err;
     agent_mtp_t *mtp;
+    int err;
 
     // Find the mtp server associated with this change
     mtp = FindAgentMtpByInstance(inst1);
     USP_ASSERT(mtp != NULL);
 
     // Exit if port has not changed
-    if (val_uint == mtp->coap_port)
+    if (val_uint == mtp->coap.port)
     {
         return USP_ERR_OK;
     }
 
-    // Store the new port
-    mtp->coap_port = val_uint;
-
-    // Restart the CoAP server, if enabled
-    if ((mtp->protocol == kMtpProtocol_CoAP) && (mtp->enable))
+    // Exit if failed to stop the existing CoAP server
+    err = ControlCoapServer(mtp, COAP_StopServer);
+    if (err != USP_ERR_OK)
     {
-        COAP_StopServer(inst1);
-        err = COAP_StartServer(mtp->instance, AF_INET, "0.0.0.0", mtp->coap_port, mtp->coap_path);
-        if (err != USP_ERR_OK)
-        {
-            return err;
-        }
+        return err;
+    }
+    
+    // Store the new port
+    mtp->coap.port = val_uint;
+
+    // Exit if failed to start the CoAP server on the new port
+    err = ControlCoapServer(mtp, COAP_StartServer);
+    if (err != USP_ERR_OK)
+    {
+        return err;
     }
 
     return USP_ERR_OK;
@@ -755,23 +784,147 @@ int NotifyChange_AgentMtpCoAPPath(dm_req_t *req, char *value)
     mtp = FindAgentMtpByInstance(inst1);
     USP_ASSERT(mtp != NULL);
 
-    // Propagate the changed path
-    USP_SAFE_FREE(mtp->coap_path);
-    mtp->coap_path = USP_STRDUP(value);
-
-    // Restart the CoAP server, if enabled
-    if ((mtp->protocol == kMtpProtocol_CoAP) && (mtp->enable))
+    // Exit if resource has not changed
+    if (strcmp(value, mtp->coap.resource)==0)
     {
-        COAP_StopServer(inst1);
-        err = COAP_StartServer(mtp->instance, AF_INET, "0.0.0.0", mtp->coap_port, mtp->coap_path);
-        if (err != USP_ERR_OK)
-        {
-            return err;
-        }
+        return USP_ERR_OK;
+    }
+
+    // Exit if failed to stop the existing CoAP server
+    err = ControlCoapServer(mtp, COAP_StopServer);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+    
+    // Store the changed resource
+    USP_SAFE_FREE(mtp->coap.resource);
+    mtp->coap.resource = USP_STRDUP(value);
+
+    // Exit if failed to start the CoAP server with the new resource
+    err = ControlCoapServer(mtp, COAP_StartServer);
+    if (err != USP_ERR_OK)
+    {
+        return err;
     }
 
     return USP_ERR_OK;
 }
+
+/*********************************************************************//**
+**
+** NotifyChange_AgentMtpCoAPEncryption
+**
+** Function called when Device.LocalAgent.MTP.{i}.CoAP.EnableEncryption is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_AgentMtpCoAPEncryption(dm_req_t *req, char *value)
+{
+    int err;
+    agent_mtp_t *mtp;
+
+    // Find the mtp server associated with this change
+    mtp = FindAgentMtpByInstance(inst1);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if encryption has not changed
+    if (val_bool == mtp->coap.enable_encryption)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if failed to stop the existing CoAP server
+    err = ControlCoapServer(mtp, COAP_StopServer);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+    
+    // Store the changed encryption status
+    mtp->coap.enable_encryption = val_bool;
+
+    // Exit if failed to start the CoAP server with the new encryption
+    err = ControlCoapServer(mtp, COAP_StartServer);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** ControlCoapServer
+**
+** Starts or stops the specified CoAP server on all specified network interfaces
+**
+** \param   mtp - pointer to structure containing the CoAP server config settings
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ControlCoapServer(agent_mtp_t *mtp, control_coapserver_t control_coapserver)
+{
+    int i;
+    int err;
+    str_vector_t sv;
+    char *interfaces_to_use = COAP_LISTEN_INTERFACES;
+
+    // Exit if this MTP is not configured to use CoAP or is disabled
+    // NOTE: It is still possible to change the CoAP parameters in the data model, even if the MTP is switched to STOMP
+    if ((mtp->protocol != kMtpProtocol_CoAP) || (mtp->enable == false))
+    {
+        return USP_ERR_OK;
+    }
+
+    // Override the compile time interface with the one specified by the '-i' command line option (if present)
+    if (usp_interface != NULL)
+    {
+        interfaces_to_use = usp_interface;
+    }
+
+    // Split the comma separated list into each individual network interface
+    TEXT_UTILS_SplitString(interfaces_to_use, &sv, ",");
+    
+    // Exit if there are not enough coap server slots for the number of network interfaces required
+    if (sv.num_entries > MAX_COAP_SERVERS)
+    {
+        USP_ERR_SetMessage("%s: CoAP servers required on more network interfaces (%s) than slots (%d)", __FUNCTION__, interfaces_to_use, MAX_COAP_SERVERS);
+        err = USP_ERR_RESOURCES_EXCEEDED;
+        goto exit;
+    }
+
+    // If the list was blank, then listen on all interfaces
+    if (sv.num_entries == 0)
+    {
+        STR_VECTOR_Add(&sv, "any");
+    }
+
+    // Start or Stop CoAP servers on all specified network interfaces
+    for (i=0; i < sv.num_entries; i++)
+    {
+        err = control_coapserver(mtp->instance, sv.vector[i], &mtp->coap);
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
+    }
+
+    // If the code gets here, then all servers were started successfully
+    err = USP_ERR_OK;
+
+exit:
+    STR_VECTOR_Destroy(&sv);
+    return err;
+}
+
+
 #endif // ENABLE_COAP
 
 /*********************************************************************//**
@@ -1033,7 +1186,7 @@ int ProcessAgentMtpAdded(int instance)
 #ifdef ENABLE_COAP
     // Exit if unable to get the listening port to use for CoAP
     USP_SNPRINTF(path, sizeof(path), "%s.%d.CoAP.Port", device_agent_mtp_root, instance);
-    err = DM_ACCESS_GetUnsigned(path, &mtp->coap_port);
+    err = DM_ACCESS_GetUnsigned(path, &mtp->coap.port);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -1041,16 +1194,24 @@ int ProcessAgentMtpAdded(int instance)
 
     // Exit if unable to get the name of the agent's CoAP resource name path
     USP_SNPRINTF(path, sizeof(path), "%s.%d.CoAP.Path", device_agent_mtp_root, instance);
-    err = DM_ACCESS_GetString(path, &mtp->coap_path);
+    err = DM_ACCESS_GetString(path, &mtp->coap.resource);
     if (err != USP_ERR_OK)
     {
         goto exit;
     }
 
-    // Exit if the protocol was CoAP and unable to start a CoAP server
-    if ((mtp->protocol == kMtpProtocol_CoAP) && (mtp->enable))
+    // Exit if unable to get whether to use an encrypted CoAP connection or not
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.CoAP.EnableEncryption", device_agent_mtp_root, instance);
+    err = DM_ACCESS_GetBool(path, &mtp->coap.enable_encryption);
+    if (err != USP_ERR_OK)
     {
-        err = COAP_StartServer(mtp->instance, AF_INET, "0.0.0.0", mtp->coap_port, mtp->coap_path);
+        goto exit;
+    }
+
+    // Exit if the protocol was CoAP and unable to start the CoAP servers
+    if (mtp->protocol == kMtpProtocol_CoAP)
+    {
+        err = ControlCoapServer(mtp, COAP_StartServer);
         if (err != USP_ERR_OK)
         {
             goto exit;
@@ -1128,8 +1289,8 @@ void DestroyAgentMtp(agent_mtp_t *mtp)
 
     USP_SAFE_FREE(mtp->stomp_agent_queue);
 #ifdef ENABLE_COAP
-    USP_SAFE_FREE(mtp->coap_path);
-    mtp->coap_port = 0;
+    USP_SAFE_FREE(mtp->coap.resource);
+    mtp->coap.port = 0;
 #endif
     
 }

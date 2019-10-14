@@ -1,3 +1,5 @@
+// Copyright 2017 CommScope, Inc.
+
 /*
  * Copyright (c) 2008-2015, Dave Benson and the protobuf-c authors.
  * All rights reserved.
@@ -45,10 +47,10 @@
  * \todo Use size_t consistently.
  */
 
-// Copyright 2017 ARRIS Enterprises, LLC
+// Copyright 2017 CommScope, Inc
 // Following line is a modification to get the code to compile without warnings
 #include <stdio.h>	/* for printf */
-// End of ARRIS modifications
+// End of CommScope modifications
 #include <stdlib.h>	/* for malloc, free */
 #include <string.h>	/* for strcmp, strlen, memcpy, memmove, memset */
 

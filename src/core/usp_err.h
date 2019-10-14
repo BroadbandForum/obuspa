@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -51,6 +51,7 @@
 void USP_ERR_Init(void);
 void USP_ERR_SetMessage_Sql(const char *func, int line, const char *sqlfunc, void *db_handle);
 void USP_ERR_SetMessage_SqlParam(const char *func, int line, const char *sqlfunc, void *db_handle);
+char *USP_ERR_ToString(int err, char *buf, int len);
 void USP_ERR_SetMessage_Errno(const char *func, int line, const char *failed_func, int err);
 void USP_ERR_ClearMessage(void);
 void USP_ERR_ReplaceEmptyMessage(char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -63,10 +64,19 @@ char *USP_ERR_GetMessage(void);
 #define USP_ERR_ERRNO(failed_func, err)  USP_ERR_SetMessage_Errno(__FUNCTION__, __LINE__, failed_func, err)
 
 //------------------------------------------------------------------------------------
+// Macro to only apply the analyzer_noreturn compiler attribute when using CLang static analyser
+// because otherwise GCC complains about it being an unknown attribute
+#ifdef __clang_analyzer__
+#define _attribute_analyzer_noreturn  __attribute__((analyzer_noreturn))
+#else
+#define _attribute_analyzer_noreturn
+#endif
+
+//------------------------------------------------------------------------------------
 // Functions to exit USP Agent because an error has occurred
-void USP_ERR_Terminate(char *fmt, ...) __attribute__((format(printf, 1, 2)));
-void USP_ERR_Terminate_BadCase(const char *func, int line, int value);
-void USP_ERR_Terminate_OnAssert(const char *func, int line, char *statement);
+void USP_ERR_Terminate(char *fmt, ...) __attribute__((format(printf, 1, 2))) _attribute_analyzer_noreturn;
+void USP_ERR_Terminate_BadCase(const char *func, int line, int value)        _attribute_analyzer_noreturn;
+void USP_ERR_Terminate_OnAssert(const char *func, int line, char *statement) _attribute_analyzer_noreturn;
 
 //------------------------------------------------------------------------------------
 // Helper macros, so that the code does not have to provide (__FUNCTION__, __LINE__) to the underlying function

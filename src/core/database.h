@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,6 +46,10 @@
 #define OBFUSCATED_VALUE 0x00000001
 
 //------------------------------------------------------------------------------
+// String, set by '-r' command line option to specify a text file containing the factory reset database parameters
+extern char *factory_reset_text_file;
+
+//------------------------------------------------------------------------------
 // API
 int DATABASE_Init(char *db_file);
 int DATABASE_Start(void);
@@ -57,7 +61,7 @@ int DATABASE_DeleteParameter(char *path, dm_hash_t hash, char *instances);
 int DATABASE_StartTransaction(void);
 int DATABASE_CommitTransaction(void);
 int DATABASE_AbortTransaction(void);
-int DATABASE_Dump(void);
+void DATABASE_Dump(void);
 int DATABASE_ReadDataModelInstanceNumbers(bool remove_unknown_params);
 
 #endif

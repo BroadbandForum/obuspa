@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,10 +44,15 @@
 #include <pthread.h>
 
 //-------------------------------------------------------------------------
+// Defines for 'print_warning' argument for OS_UTILS_IsDataModelThread()
+#define PRINT_WARNING true
+#define DONT_PRINT_WARNING false
+
+//-------------------------------------------------------------------------
 // API functions
 int OS_UTILS_CreateThread(void *(* start_routine)(void *), void *args);
 void OS_UTILS_SetDataModelThread(void);
-bool OS_UTILS_IsDataModelThread(const char *caller);
+bool OS_UTILS_IsDataModelThread(const char *caller, bool print_warning);
 int OS_UTILS_InitMutex(pthread_mutex_t *mutex);
 void OS_UTILS_LockMutex(pthread_mutex_t *mutex);
 void OS_UTILS_UnlockMutex(pthread_mutex_t *mutex);

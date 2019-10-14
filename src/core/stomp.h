@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -50,31 +50,6 @@
 #include "usp-msg.pb-c.h"
 
 //------------------------------------------------------------------------------
-// State of a STOMP connection
-typedef enum
-{
-    kStompState_Idle,                       // Not yet connected
-    kStompState_SendingStompFrame,          // TCP connected to the STOMP server and currently sending the initial STOMP frame
-    kStompState_AwaitingConnectedFrame,     // Awaiting the response to the STOMP frame, the CONNECTED frame
-    kStompState_SendingSubscribeFrame,      // Sending the subscribe frame, to subscribe to this Agent's queue
-    kStompState_Running,                    // Normal steady state: Connection is ready to send and receive USP messages
-    kStompState_Retrying,                   // An error has occurred. We have dropped the TCP connection and will attempt a reconnect at some time in the future
-
-    kStompState_Max
-} stomp_state_t;
-
-//------------------------------------------------------------------------------
-// Last cause of STOMP connection failure
-typedef enum
-{
-    kStompFailure_None,                     // No failure. Cleared to this after successfully connecting, and also at creation.
-    kStompFailure_ServerNotPresent,         // Failed to resolve the hostname or failed to connect
-    kStompFailure_Authentication,           // Authentication with STOMP server failed
-    kStompFailure_Misconfigured,            // Agent or controller queue name not setup, or entry disabled
-    kStompFailure_OtherError                // Failed to transmit/receive or internal error
-} stomp_failure_t;
-
-//------------------------------------------------------------------------------
 // Structure containing the parameters controlling STOMP retries
 typedef struct
 {
@@ -114,11 +89,11 @@ int STOMP_EnableConnection(stomp_conn_params_t *sp, char *stomp_queue);
 int STOMP_DisableConnection(int instance, bool purge_queued_messages);
 void STOMP_ScheduleReconnect(stomp_conn_params_t *sp, char *stomp_queue);
 void STOMP_ActivateScheduledActions(void);
-void STOMP_NotifyClientCertAvailable(void);
 mtp_status_t STOMP_GetMtpStatus(int instance);
 char *STOMP_GetConnectionStatus(int instance, time_t *last_change_date);
 void STOMP_UpdateRetryParams(int instance, stomp_retry_params_t *retry_params);
 void STOMP_GetDestinationFromServer(int instance, char *buf, int len);
+
 
 // Readability definitions for 'purge_queued_messages' argument of STOMP_StopConnection()
 #define PURGE_QUEUED_MESSAGES true

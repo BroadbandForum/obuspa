@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2007-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2007-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -94,12 +94,16 @@ bool nu_ipaddr_is_zero(const nu_ipaddr_t *addrp);
 int nu_ipaddr_get_interface_addr_from_dest_addr(nu_ipaddr_t *dest, nu_ipaddr_t *if_addr);
 int nu_ipaddr_get_interface_addr_from_sock_fd(int sock_fd, char *buf, int bufsiz);
 int nu_ipaddr_get_interface_name_from_src_addr(char *src_addr, char *name, int name_len);
-int nu_ipaddr_has_interface_addr_changed(char *dev, char *expected_addr);
+int nu_ipaddr_has_interface_addr_changed(char *dev, char *expected_addr, bool *has_addr);
 int nu_ipaddr_get_ip_supported_families(bool *ipv4_supported, bool *ipv6_supported);
+bool nu_ipaddr_is_valid_interface(const char *dev);
 char *tw_ulib_diags_family_to_protocol_version(int address_family);
 
 int tw_ulib_diags_lookup_host(const char *host, int acs_family_pref, bool prefer_ipv6, nu_ipaddr_t *acs_ipaddr_to_bind_to, nu_ipaddr_t *dst);
-int tw_ulib_dev_get_live_wan_address(char *buf, size_t bufsiz);
+int tw_ulib_get_dev_ipaddr(const char *dev, char *addr, size_t asiz, bool prefer_ipv6);
 
+#ifdef CONNECT_ONLY_OVER_WAN_INTERFACE
+int tw_ulib_dev_get_live_wan_address(char *buf, size_t bufsiz);
+#endif
 
 #endif

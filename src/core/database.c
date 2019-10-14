@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -88,8 +88,12 @@ char database_filename[128];
 #define SQLITE_ZERO_TERMINATED (-1) 
 
 //--------------------------------------------------------------------
-// Set if a programmatic factory reset should potentially be performed in DATABASE_Start()
-static bool schedule_programmatic_factory_reset = false;
+// Set if a factory reset initialisation of the database should potentially be performed in DATABASE_Start()
+static bool schedule_factory_reset_init = false;
+
+//--------------------------------------------------------------------
+// String, set by '-r' command line option to specify a text file containing the factory reset database parameters
+char *factory_reset_text_file = NULL;
 
 //--------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -98,6 +102,7 @@ int OpenUspDatabase(char *db_file);
 void ObfuscatedCopy(unsigned char *dest, unsigned char *src, int len);
 int CopyFactoryResetDatabase(char *reset_file, char *db_file);
 int ResetFactoryParameters(void);
+int ResetFactoryParametersFromFile(char *file);
 void LogSQLStatement(char *op, char *path, sqlite3_stmt *stmt);
 
 /*********************************************************************//**
@@ -136,8 +141,8 @@ int DATABASE_Init(char *db_file)
             }
         }
 
-        // Signal that programmatic factory reset should be called later (if defined)
-        schedule_programmatic_factory_reset = true;
+        // Signal that factory reset initialisation should be performed later (when the data model has been fully registered)
+        schedule_factory_reset_init = true;
     }
     else
     {
@@ -169,20 +174,32 @@ int DATABASE_Init(char *db_file)
 **************************************************************************/
 int DATABASE_Start(void)
 {
-#ifdef INCLUDE_PROGRAMMATIC_FACTORY_RESET
     int err;
 
-    // Perform a programmatic factory reset, if it was scheduled
-    if (schedule_programmatic_factory_reset)
+    // Initialise the database with it's factory reset parameters (if required)
+    if (schedule_factory_reset_init)
     {
+#ifdef INCLUDE_PROGRAMMATIC_FACTORY_RESET
+        // Initialise using the programmatic method
         err = ResetFactoryParameters();
         if (err != USP_ERR_OK)
         {
             return err;
         }
-        schedule_programmatic_factory_reset = false;
-    }
 #endif
+
+        // Initialise using the factory reset text file
+        if (factory_reset_text_file != NULL)
+        {
+            err = ResetFactoryParametersFromFile(factory_reset_text_file);
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
+        }
+
+        schedule_factory_reset_init = false;
+    }
 
     return USP_ERR_OK;
 }
@@ -271,6 +288,16 @@ void DATABASE_PerformFactoryReset_ControllerInitiated(void)
     }
 #endif
 
+    // Exit if unable to setup the parameters specified in the factory reset text file
+    if (factory_reset_text_file != NULL)
+    {
+        err = ResetFactoryParametersFromFile(factory_reset_text_file);
+        if (err != USP_ERR_OK)
+        {
+            return;
+        }
+    }
+
     // Finally set the reboot cause to "RemoteFactoryReset"
     err = DATA_MODEL_SetParameterInDatabase(reboot_cause_path, "RemoteFactoryReset");
     if (err != USP_ERR_OK)
@@ -341,7 +368,7 @@ int DATABASE_GetParameterValue(char *path, dm_hash_t hash, char *instances, char
     int result = USP_ERR_INTERNAL_ERROR;        // Assume an error
 
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -454,7 +481,7 @@ int DATABASE_SetParameterValue(char *path, dm_hash_t hash, char *instances, char
     int len;
 
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -542,7 +569,7 @@ int DATABASE_DeleteParameter(char *path, dm_hash_t hash, char *instances)
     int result = USP_ERR_INTERNAL_ERROR;        // Assume an error
 
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -606,7 +633,7 @@ int DATABASE_StartTransaction(void)
     int err;
     
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -637,7 +664,7 @@ int DATABASE_CommitTransaction(void)
     int err;
     
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -666,7 +693,7 @@ int DATABASE_CommitTransaction(void)
 int DATABASE_AbortTransaction(void)
 {
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -694,6 +721,7 @@ int DATABASE_AbortTransaction(void)
 int DATABASE_ReadDataModelInstanceNumbers(bool remove_unknown_params)
 {
     sqlite3_stmt *stmt;
+    int sql_err;
     int err;
     int result = USP_ERR_INTERNAL_ERROR;        // Assume an error
     char *instances;
@@ -701,25 +729,25 @@ int DATABASE_ReadDataModelInstanceNumbers(bool remove_unknown_params)
 
     // Exit if unable to prepare the SQL statement
     #define SELECT_ALL_INST_STR   "select hash,instances from data_model;"
-    err = sqlite3_prepare_v2(db_handle, SELECT_ALL_INST_STR, SQLITE_ZERO_TERMINATED, &stmt, NULL);
-    if (err != SQLITE_OK)
+    sql_err = sqlite3_prepare_v2(db_handle, SELECT_ALL_INST_STR, SQLITE_ZERO_TERMINATED, &stmt, NULL);
+    if (sql_err != SQLITE_OK)
     {
         USP_ERR_SQL(db_handle,"sqlite3_prepare_v2");
         return USP_ERR_INTERNAL_ERROR;
     }
 
     // Iterate over all rows
-    err = SQLITE_ROW;
-    while (err == SQLITE_ROW)
+    sql_err = SQLITE_ROW;
+    while (sql_err == SQLITE_ROW)
     {
-        err = sqlite3_step(stmt);
-        if (err == SQLITE_DONE)
+        sql_err = sqlite3_step(stmt);
+        if (sql_err == SQLITE_DONE)
         {
             // Exit loop if we have processed all rows
             result = USP_ERR_OK;
             break;
         }
-        else if (err != SQLITE_ROW)
+        else if (sql_err != SQLITE_ROW)
         {
             // An error occurred
             USP_ERR_SQL(db_handle,"sqlite3_step");
@@ -735,8 +763,8 @@ int DATABASE_ReadDataModelInstanceNumbers(bool remove_unknown_params)
         // Add the object instances (if this parameter has any instances) to the data model
         // NOTE: DATA_MODEL_AddParameterInstances() is called even if we know that the object has no instances,
         //       as we use the return code to delete the parameter if it does not exist in the schema
-        result = DATA_MODEL_AddParameterInstances(hash, instances);
-        if ((result != USP_ERR_OK) && (remove_unknown_params))
+        err = DATA_MODEL_AddParameterInstances(hash, instances);
+        if ((err != USP_ERR_OK) && (remove_unknown_params))
         {
             // Remove this parameter from the database. It is no longer in the data model schema.
             USP_LOG_Warning("Removing unknown parameter (hash=%d, instances='%s') from the database", hash, instances);
@@ -745,9 +773,8 @@ int DATABASE_ReadDataModelInstanceNumbers(bool remove_unknown_params)
     }
 
     // Always reset the statement in preparation for next time, even if an error occurred
-    result = USP_ERR_OK;
-    err = sqlite3_finalize(stmt);
-    if (err != SQLITE_OK)
+    sql_err = sqlite3_finalize(stmt);
+    if (sql_err != SQLITE_OK)
     {
         USP_ERR_SQL(db_handle,"sqlite3_finalize");
         result = USP_ERR_INTERNAL_ERROR;
@@ -767,11 +794,11 @@ int DATABASE_ReadDataModelInstanceNumbers(bool remove_unknown_params)
 ** \return  None
 **
 **************************************************************************/
-int DATABASE_Dump(void)
+void DATABASE_Dump(void)
 {
     sqlite3_stmt *stmt;
     int err;
-    int result = USP_ERR_INTERNAL_ERROR;        // Assume an error
+    int result;
     char path[MAX_DM_PATH];
     char *instances;
     char *value;
@@ -783,7 +810,7 @@ int DATABASE_Dump(void)
     if (err != SQLITE_OK)
     {
         USP_ERR_SQL(db_handle,"sqlite3_prepare_v2");
-        return USP_ERR_INTERNAL_ERROR;
+        return;
     }
 
     // Iterate over all rows
@@ -794,14 +821,12 @@ int DATABASE_Dump(void)
         if (err == SQLITE_DONE)
         {
             // Exit loop if we have processed all rows
-            result = USP_ERR_OK;
             break;
         }
         else if (err != SQLITE_ROW)
         {
             // An error occurred
             USP_ERR_SQL(db_handle,"sqlite3_step");
-            result = USP_ERR_INTERNAL_ERROR;
             break;
         }
 
@@ -818,15 +843,11 @@ int DATABASE_Dump(void)
     }
 
     // Always reset the statement in preparation for next time, even if an error occurred
-    result = USP_ERR_OK;
     err = sqlite3_finalize(stmt);
     if (err != SQLITE_OK)
     {
         USP_ERR_SQL(db_handle,"sqlite3_finalize");
-        result = USP_ERR_INTERNAL_ERROR;
     }
-    
-    return result;
 }
 
 /*********************************************************************//**
@@ -909,7 +930,7 @@ int CopyFactoryResetDatabase(char *reset_file, char *db_file)
     src = fopen(reset_file, "r");
     if (src == NULL)
     {
-        USP_LOG_Error("%s: Failed to open factory reset database %s for reading: %s", __FUNCTION__, reset_file, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Failed to open factory reset database %s for reading: %s", __FUNCTION__, reset_file, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         err = USP_ERR_INTERNAL_ERROR;
         goto exit;
     }
@@ -918,7 +939,7 @@ int CopyFactoryResetDatabase(char *reset_file, char *db_file)
     dest = fopen(db_file, "w");
     if (src == NULL)
     {
-        USP_LOG_Error("%s: Failed to open destination database %s for writing: %s", __FUNCTION__, db_file, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Failed to open destination database %s for writing: %s", __FUNCTION__, db_file, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         err = USP_ERR_INTERNAL_ERROR;
         goto exit;
     }
@@ -1020,6 +1041,71 @@ exit:
     return err;
 }
 #endif // INCLUDE_PROGRAMMATIC_FACTORY_RESET
+
+/*********************************************************************//**
+**
+** ResetFactoryParametersFromFile
+**
+** Sets the data model parameters specified in the file
+**
+** \param   file - name of file containing parameters to set
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ResetFactoryParametersFromFile(char *file)
+{
+    FILE *fp;
+    char *result;
+    char buf[MAX_DM_PATH + MAX_DM_VALUE_LEN + 4]; // Plus 4 to allow for separator, line ending characters and NULL terminator
+    int err;
+    char *key;
+    char *value;
+    int line_number = 1;
+
+    // Exit if unable to open the file containing factory reset parameters
+    fp = fopen(file, "r");
+    if (fp == NULL)
+    {
+        USP_LOG_Error("%s: Failed to open factory reset file (%s)", __FUNCTION__, file);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Iterate over all lines in the file
+    result = fgets(buf, sizeof(buf), fp);
+    while (result != NULL)
+    {
+        // Exit if an error occurred when parsing this line
+        err = TEXT_UTILS_KeyValueFromString(buf, &key, &value);
+        if (err != USP_ERR_OK)
+        {
+            USP_LOG_Error("%s: Syntax error in %s at line %d", __FUNCTION__, file, line_number);
+            goto exit;
+        }
+
+        // Set the parameter (if the line was not blank or a comment)
+        if ((key != NULL) & (value != NULL))
+        {
+            err = DATA_MODEL_SetParameterInDatabase(key, value);
+            if (err != USP_ERR_OK)
+            {
+                USP_LOG_Error("%s: Failed to set parameter at line %d of %s", __FUNCTION__, line_number, file);
+                goto exit;
+            }
+        }
+        
+        // Get the next line
+        line_number++;
+        result = fgets(buf, sizeof(buf), fp);
+    }
+
+    // If the code gets here, then all parameters in the file have been set successfully
+    err = USP_ERR_OK;
+
+exit:
+    fclose(fp);
+    return err;
+}
 
 /*********************************************************************//**
 **

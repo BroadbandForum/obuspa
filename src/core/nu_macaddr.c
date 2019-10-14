@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2007-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2007-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -54,6 +54,10 @@
 #include "usp_api.h"
 #include "text_utils.h"
 
+//------------------------------------------------------------------------------
+// String, set by '-i' command line option to specify the network interface to be used by USP communications
+char *usp_interface = NULL;
+
 /*********************************************************************//**
 **
 ** nu_macaddr_wan_ifname
@@ -71,6 +75,12 @@
 char *nu_macaddr_wan_ifname(void)
 {
     char *e;
+
+    // Exit if the network interface was specified by the '-i command line option when invoking this executable
+    if (usp_interface != NULL)
+    {
+        return usp_interface;
+    }
 
     // Exit if an environment variable is used to override the interface name
     // NOTE: This may be used with docker or with embedded systems still using the 'eth0' style naming convention

@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -138,7 +138,7 @@ int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, resolve_op_t o
     {
         // Path does not end in '.'
         // Exit if the path should end in '.'
-        if ((op==kResolveOp_Del) || (op==kResolveOp_Instances))
+        if ((op==kResolveOp_Add) || (op==kResolveOp_Del) || (op==kResolveOp_Instances))
         {
             USP_ERR_SetMessage("%s: Path must end in '.'", __FUNCTION__);
             return USP_ERR_INVALID_PATH_SYNTAX;
@@ -520,6 +520,14 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
         return USP_ERR_INVALID_PATH_SYNTAX;
     }
     
+    // Exit if unable to find the end of the unique key
+    p = strchr(unresolved, ']');
+    if (p == NULL)
+    {
+        USP_ERR_SetMessage("%s: Unterminated Unique Key (%s) in search path", __FUNCTION__, unresolved);
+        return USP_ERR_INVALID_PATH_SYNTAX;
+    }
+
     // Initialise vectors used by this function
     STR_VECTOR_Init(&key_expressions);
     EXPR_VECTOR_Init(&keys);
@@ -535,15 +543,6 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     if (iv.num_entries == 0)
     {
         err = USP_ERR_OK;
-        goto exit;
-    }
-
-    // Exit if unable to find the end of the unique key
-    p = strchr(unresolved, ']');
-    if (p == NULL)
-    {
-        USP_ERR_SetMessage("%s: Unterminated Unique Key (%s) in search path", __FUNCTION__, unresolved);
-        err = USP_ERR_INVALID_PATH_SYNTAX;
         goto exit;
     }
 
@@ -1229,7 +1228,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
             {
                 if (flags & PP_IS_MULTI_INSTANCE_OBJECT)
                 {
-                    USP_ERR_SetMessage("%s: Path (%s) should not contain instance number of object", __FUNCTION__, path);
+                    USP_ERR_SetMessage("%s: Path (%s) should not end in an instance number", __FUNCTION__, path);
                     err = USP_ERR_CREATION_FAILURE;
                 }
                 else
@@ -1365,6 +1364,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
     switch(state->op)
     {
         case kResolveOp_Get:
+        case kResolveOp_Del:
         case kResolveOp_SubsValChange:
         case kResolveOp_SubsAdd:
         case kResolveOp_SubsDel:
@@ -1372,7 +1372,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_SubsEvent:
         case kResolveOp_GetBulkData:
             // It is not an error for instance numbers to not be instantiated for a get parameter value
-            // or a subscription reference list
+            // or a delete or a subscription reference list
             // Both are forgiving, so just exit here, without adding the path to the vector
             if ((flags & PP_INSTANCE_NUMBERS_EXIST)==0)
             {
@@ -1382,7 +1382,6 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
 
         case kResolveOp_Set:
         case kResolveOp_Add:
-        case kResolveOp_Del:
         case kResolveOp_Instances:
         case kResolveOp_Oper:
         case kResolveOp_Event:

@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -67,6 +67,7 @@
 #include "usp_coap.h"
 #include "stomp.h"
 #include "retry_wait.h"
+#include "nu_macaddr.h"
 
 #ifdef ENABLE_HIDL
 #include "hidl_server.h"
@@ -89,12 +90,15 @@ static struct option long_options[] =
     {"command",    no_argument,       NULL, 'c'},    // The rest of the command line is a command to invoke on the active USP Agent.
                                                      // Using this option turns this executable into just a CLI for the active USP Agent.
     {"authcert",   no_argument,       NULL, 'a'},    // Specifies the location of a file containing the client certificate to use authenticating this device
+    {"truststore", required_argument, NULL, 't'},    // Specifies the location of a file containing the trust store certificates to use
+    {"resetfile",  required_argument, NULL, 'r'},    // Specifies the location of a text file containing factory reset parameters
+    {"interface",  required_argument, NULL, 'i'},    // Specifies the networking interface to use for communications
 
     {0, 0, 0, 0}
 };
 
 // In the string argument, the colons (after the option) mean that those options require arguments
-static char short_options[] = "hl:f:v:a:mepc";
+static char short_options[] = "hl:f:v:a:t:r:i:mepc";
 
 //--------------------------------------------------------------------------------------
 // Variables set by command line arguments
@@ -193,6 +197,27 @@ int main(int argc, char *argv[])
                 auth_cert_file = optarg;
                 break;
 
+            case 't':
+                // Set the location of the file containing trust store certificates
+                usp_trust_store_file = optarg;
+                break;
+
+            case 'r':
+                // Set the location of the text file containing the factory reset parameters
+                factory_reset_text_file = optarg;
+                break;
+
+            case 'i':
+                // Set the networking interface to use for USP communication
+                if (nu_ipaddr_is_valid_interface(optarg) != true)
+                {
+                    usp_log_level = kLogLevel_Error;
+                    USP_LOG_Error("ERROR: Network interface '%s' does not exist or has no IP address", optarg);
+                    goto exit;
+                }
+                usp_interface = optarg;
+                break;
+
             case 'v':
                 // Verbosity level
                 err = TEXT_UTILS_StringToUnsigned(optarg, &usp_log_level);
@@ -217,7 +242,9 @@ int main(int argc, char *argv[])
                 break;
                 
             case '?':
-                // No need to do anything here, getopt_long() prints an error message by default
+                usp_log_level = kLogLevel_Error;
+                USP_LOG_Error("ERROR: Missing option value");
+                goto exit;
                 break;
         }
     }
@@ -395,13 +422,16 @@ void MAIN_Stop(void)
 **************************************************************************/
 void PrintUsage(void)
 {
-    printf("USAGE: ob_uspagent options\n");
+    printf("USAGE: obuspa options\n");
     printf("--help (-h)       Displays this help\n");
     printf("--log (-l)        Sets the destination for debug logging. Default is 'stdout'. Can also use 'syslog' or a filename\n");
-    printf("--dbfile (-f)     Sets the path of the file to store the database in\n");
+    printf("--dbfile (-f)     Sets the path of the file to store the database in (default=%s)\n", DEFAULT_DATABASE_FILE);
     printf("--verbose (-v)    Sets the debug verbosity log level: 0=Off, 1=Error(default), 2=Warning, 3=Info\n");
     printf("--prototrace (-p) Enables trace logging of the USP protocol messages\n");
     printf("--authcert (-a)   Sets the path of the PEM formatted file containing a client certificate and private key to authenticate this device with\n");
+    printf("--truststore (-t) Sets the path of the PEM formatted file containing trust store certificates\n");
+    printf("--resetfile (-r)  Sets the path of the text file containing factory reset parameters\n");
+    printf("--interface (-i)  Sets the name of the networking interface to use for USP communication\n");
     printf("--meminfo (-m)    Collects and prints information useful to debugging memory leaks\n");
     printf("--error (-e)      Enables printing of the callstack whenever an error is detected\n");
     printf("--command (-c)    Sends a CLI command to the running USP Agent and prints the response\n");

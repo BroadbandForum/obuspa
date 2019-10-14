@@ -19,7 +19,6 @@ PKG_CHECK_MODULES([sqlite3], [sqlite3])
 PKG_CHECK_MODULES([libcurl], [libcurl])
 PKG_CHECK_MODULES([libcares], [libcares])
 PKG_CHECK_MODULES([zlib], [zlib])
-PKG_CHECK_MODULES([libcoap], [libcoap-1])
 
 # Generate Makefiles
 AC_CONFIG_FILES([Makefile])

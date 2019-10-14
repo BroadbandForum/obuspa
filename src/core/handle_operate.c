@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -68,13 +68,12 @@ void AddOperRes_ReqOutputArgs(Usp__OperateResp *oper_resp, char *path, kv_vector
 **
 ** \param   usp - pointer to parsed USP message structure. This is always freed by the caller (not this function)
 ** \param   controller_endpoint - endpoint which sent this message
-** \param   stomp_dest - STOMP destination to send the reply to (or NULL if none setup in received message)
-** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table) to send the reply to
+** \param   mrt - details of where response to this USP message should be sent
 **
 ** \return  None - This code must handle any errors by sending back error messages
 **
 **************************************************************************/
-void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance)
+void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt)
 {
     int i;
     int err;
@@ -96,8 +95,8 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, char *s
 
     // Exit if message is invalid or failed to parse
     // This code checks the parsed message enums and pointers for expectations and validity
-    if ((usp->header == NULL) || 
-        (usp->body == NULL) || (usp->body->msg_body_case != USP__BODY__MSG_BODY_REQUEST) ||
+    USP_ASSERT(usp->header != NULL);
+    if ((usp->body == NULL) || (usp->body->msg_body_case != USP__BODY__MSG_BODY_REQUEST) ||
         (usp->body->request == NULL) || (usp->body->request->req_type_case != USP__REQUEST__REQ_TYPE_OPERATE) ||
         (usp->body->request->operate == NULL) )
     {
@@ -117,7 +116,6 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, char *s
 
     // Copy the operate arguments into a key value vector.
     // This is necessary to handle the freeing of this vector in a consistent way - whether it is constructed here, or after a power cycle retry
-    KV_VECTOR_Init(&input_args);
     for (i=0; i < oper->n_input_args; i++)
     {
         // Exit if key-value pair is not present in USP input message
@@ -197,7 +195,7 @@ exit:
     // Send the response (if required)
     if ((oper != NULL) && (oper->send_resp) && (resp != NULL))
     {
-        MSG_HANDLER_QueueMessage(controller_endpoint, resp, stomp_dest, stomp_instance);
+        MSG_HANDLER_QueueMessage(controller_endpoint, resp, mrt);
     }
 
     // Free the response structure

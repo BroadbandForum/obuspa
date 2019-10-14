@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -93,7 +93,7 @@ typedef union
     bool value_bool;
     int value_int;
     unsigned value_uint;
-    unsigned long value_ulong;
+    unsigned long long value_ulong;
 } dm_val_union_t;
 
 //-------------------------------------------------------------------------
@@ -112,6 +112,33 @@ typedef struct
     dm_req_instances_t *inst;   // Pointer to instances information for the parameter or object
     dm_val_union_t val_union;   // When performing a Set Parameter Value, stores the new value converted to it's native type
 } dm_req_t;
+
+//------------------------------------------------------------------------------
+// Last cause of STOMP connection failure
+typedef enum
+{
+    kStompFailure_None,                     // No failure. Connection may have been disabled/re-enabled, or connection params changed, or Agent's IP address changed, or Agent switched connection interface
+    kStompFailure_ServerDNS,                // Failed to resolve the hostname
+    kStompFailure_Authentication,           // Authentication with STOMP server failed (either password or SSL handshake failed).
+    kStompFailure_Connect,                  // Failed to connect or network unreachable (CPE has no WAN IP address)
+    kStompFailure_ReadWrite,                // Failed whilst sending/receiving
+    kStompFailure_Timeout,                  // Failed due to STOMP handshake or server heartbeat timeout
+    kStompFailure_Misconfigured,            // Agent or controller queue name not setup, or entry disabled
+    kStompFailure_OtherError                // STOMP protocol error or internal error
+} stomp_failure_t;
+
+//------------------------------------------------------------------------------
+// Enumeration for result of a BulkData Collection HTTP Post
+typedef enum
+{
+    kBDCTransferResult_Success,
+    kBDCTransferResult_Failure_DNS,         // DNS failed to lookup the BDC server
+    kBDCTransferResult_Failure_Auth,        // Authentication failure - either password or SSL
+    kBDCTransferResult_Failure_Connect,     // Failed to connect to the BDC server or network unreachable (CPE has no WAN IP address)
+    kBDCTransferResult_Failure_ReadWrite,   // Failed whilst reading or writing to the BDC server
+    kBDCTransferResult_Failure_Timeout,     // Timeout waiting for response from BDC server
+    kBDCTransferResult_Failure_Other        // Other failures - typically protocol errors or unsuccessful HTTP response codes returned
+} bdc_transfer_result_t;
 
 //------------------------------------------------------------------------------------
 // Convenience defines which alias variables within the dm_req_t structure
@@ -146,6 +173,7 @@ typedef enum
 
 //------------------------------------------------------------------------------
 // Enumeration for SHA algorithm types used by Device.DeviceInfo.FirmwareImage.{i}.Download() operation
+// NOTE: If this enumeration is changed, please also update sha_alg_strings[]
 typedef enum
 {
     kShaAlg_NoneSpecified,
@@ -278,18 +306,6 @@ typedef int (*dm_vendor_abort_trans_cb_t)(void);
 // This must match the software version of the active firmware image
 typedef int (*get_active_software_version_cb_t)(char *buf, int len);
 
-// Vendor hooks associated with firmware upgrades
-typedef int (*get_preferred_firmware_image_cb_t)(int *slot);
-typedef int (*set_preferred_firmware_image_cb_t)(int slot);
-typedef int (*get_active_firmware_image_cb_t)(int *slot);
-typedef int (*set_firmware_image_available_cb_t)(int slot, bool enable);
-typedef int (*get_firmware_image_available_cb_t)(int slot, bool *enable);
-typedef int (*get_firmware_image_name_cb_t)(int slot, char *buf, int len);
-typedef int (*get_firmware_image_version_cb_t)(int slot, char *buf, int len);
-typedef int (*get_firmware_image_status_cb_t)(int slot, firmware_status_t *status);
-typedef int (*get_firmware_image_failure_log_cb_t)(int slot, char *buf, int len);
-typedef int (*perform_download_cb_t)(download_input_cond_t *cond, char *fault_string, int fault_string_len);
-typedef bool (*obtain_reboot_permission_cb_t)(int timeout, activate_mode_t mode, char *user_message, int max_retries);
 
 // Vendor hooks associated with certificates and controller trust
 typedef int (*register_controller_trust_cb_t)(void);
@@ -297,10 +313,11 @@ typedef bool (*is_system_time_reliable_cb_t)(void);
 typedef const trust_store_t *(*get_trust_store_cb_t)(int *num_trusted_certs);
 typedef int (*get_agent_cert_cb_t)(agent_cert_info_t *info);
 
+
 // Miscellaneous vendor hooks
 typedef int (*get_hardware_version_cb_t)(char *buf, int len);
 typedef unsigned long long (*stats_collection_enable_cb_t)(bool enable, char *interface_name);
-typedef int (*dm_vendor_get_mtp_password_cb_t)(char *buf, int len);
+typedef int (*dm_vendor_get_mtp_password_cb_t)(int instance, char *buf, int len);
 typedef int (*load_agent_cert_cb_t)(SSL_CTX *ctx);
 typedef void (*log_message_cb_t)(char *buf);
 
@@ -392,9 +409,17 @@ int USP_SIGNAL_ObjectDeleted(char *path);
 
 //------------------------------------------------------------------------------
 // Functions for argument list data structure
+kv_vector_t * USP_ARG_Create(void);
 void USP_ARG_Init(kv_vector_t *kvv);
 void USP_ARG_Add(kv_vector_t *kvv, char *key, char *value);
+void USP_ARG_AddUnsigned(kv_vector_t *kvv, char *key, unsigned value);
+void USP_ARG_AddBool(kv_vector_t *kvv, char *key, bool value);
+void USP_ARG_AddDateTime(kv_vector_t *kvv, char *key, time_t value);
 char *USP_ARG_Get(kv_vector_t *kvv, char *key, char *default_value);
+int USP_ARG_GetUnsigned(kv_vector_t *kvv, char *key, unsigned default_value, unsigned *value);
+int USP_ARG_GetUnsignedWithinRange(kv_vector_t *kvv, char *key, unsigned default_value, unsigned min, unsigned max, unsigned *value);
+int USP_ARG_GetBool(kv_vector_t *kvv, char *key, bool default_value, bool *value);
+int USP_ARG_GetDateTime(kv_vector_t *kvv, char *key, char *default_value, time_t *value);
 void USP_ARG_Destroy(kv_vector_t *kvv);
 
 //------------------------------------------------------------------------------

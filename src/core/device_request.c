@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2017-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2017-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -233,7 +233,7 @@ void DEVICE_REQUEST_OperationComplete(int instance, int err_code, char *err_msg,
         err = KV_VECTOR_ValidateArguments(output_args, &info->output_args);
         if (err != USP_ERR_OK)
         {
-            USP_LOG_Warning("%s: Output arguments names do not match those registered. Please check code.", __FUNCTION__);
+            USP_LOG_Warning("%s: Output argument names do not match those registered (%s). Please check code.", __FUNCTION__, command);
         }
     }
 #endif
@@ -602,7 +602,7 @@ int ReadOperationArgs(int instance, kv_vector_t *args, char *prefix)
         }
 
         // Add the argument to the return vector
-        KV_VECTOR_Add(args, key, value);
+        USP_ARG_Add(args, key, value);
     }
 
     return USP_ERR_OK;

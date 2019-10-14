@@ -47,6 +47,7 @@ obuspa_SOURCES = src/core/main.c \
                     src/core/device_ctrust.c \
                     src/core/device_bulkdata.c \
                     src/core/device_selftest_example.c \
+                    src/core/device_time.c \
                     src/core/uptime.c \
                     src/core/rfc1123.c \
                     src/core/database.c \
@@ -97,8 +98,6 @@ obuspa_LDFLAGS = -rdynamic
 obuspa_LDADD = -lm -ldl -lpthread -lrt
 obuspa_LDADD += $(openssl_LIBS) $(sqlite3_LIBS) $(libcurl_LIBS) $(libcares_LIBS) $(zlib_LIBS)
 
-# Unfortunately libcoap cannot use the autotools magic environment variables, so add support manually
-obuspa_LDADD += -lcoap-1
 obuspa_LDFLAGS += -Wl,-rpath=/usr/local/lib
 
 # Import vendor makefile

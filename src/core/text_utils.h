@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,7 +49,7 @@
 int TEXT_UTILS_CalcHash(char *s);
 int TEXT_UTILS_StringToUnsigned(char *str, unsigned *value);
 int TEXT_UTILS_StringToInteger(char *str, int *value);
-int TEXT_UTILS_StringToUnsignedLong(char *str, unsigned long *value);
+int TEXT_UTILS_StringToUnsignedLongLong(char *str, unsigned long long *value);
 int TEXT_UTILS_StringToBool(char *str, bool *value);
 char *TEXT_UTILS_BoolToString(bool value);
 int TEXT_UTILS_StringToEnum(char *str, const enum_entry_t *enums, int num_enums);
@@ -60,6 +60,7 @@ int TEXT_UTILS_StringToIpAddr(char *str, nu_ipaddr_t *ip_addr);
 char *TEXT_UTILS_SplitPath(char *path, char *buf, int len);
 char *TEXT_UTILS_SplitPathAtSeparator(char *path, char *buf, int len, int separator_split);
 void TEXT_UTILS_SplitString(char *str, str_vector_t *sv, char *separator);
+void TEXT_UTILS_StrncpyLen(char *dst, int dst_len, char *src, int src_len);
 char *TEXT_UTILS_StrStr(char *haystack, char *needle);
 int TEXT_UTILS_NullStringCompare(char *str1, char *str2);
 char *TEXT_UTILS_UnescapeString(char *buf);
@@ -71,6 +72,7 @@ int TEXT_UTILS_ToJSONFormat(char *buf, int len);
 void TEXT_UTILS_PathToSchemaForm(char *path, char *buf, int len);
 int TEXT_UTILS_CountConsecutiveDigits(char *s);
 char *TEXT_UTILS_StrDupWithTrailingDot(char *path);
+int TEXT_UTILS_KeyValueFromString(char *buf, char **key, char **value);
 
 #endif
 

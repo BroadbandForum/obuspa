@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -95,11 +95,11 @@ int TEXT_UTILS_CalcHash(char *s)
 **************************************************************************/
 int TEXT_UTILS_StringToUnsigned(char *str, unsigned *value)
 {
-    unsigned long lvalue;
+    unsigned long long lvalue;
     int err;
 
     // Exit if unable to convert to an unsigned number
-    err = TEXT_UTILS_StringToUnsignedLong(str, &lvalue);
+    err = TEXT_UTILS_StringToUnsignedLongLong(str, &lvalue);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -146,9 +146,9 @@ int TEXT_UTILS_StringToInteger(char *str, int *value)
 
 /*********************************************************************//**
 **
-** TEXT_UTILS_StringToUnsignedLong
+** TEXT_UTILS_StringToUnsignedLongLong
 **
-** Converts a string to an unsigned long integer (64 bit)
+** Converts a string to an unsigned long long integer (64 bit)
 **
 ** \param   str - string containing value to convert
 ** \param   value - pointer to variable to return converted value in
@@ -157,11 +157,11 @@ int TEXT_UTILS_StringToInteger(char *str, int *value)
 **          USP_ERR_INVALID_TYPE if unable to convert the string
 **
 **************************************************************************/
-int TEXT_UTILS_StringToUnsignedLong(char *str, unsigned long *value)
+int TEXT_UTILS_StringToUnsignedLongLong(char *str, unsigned long long *value)
 {
     char *endptr = NULL;
 
-    // Exit if string contains a negative number (unfortunately sccanf(%u) still happily converts these)
+    // Exit if string contains a negative number
     if (strchr(str, '-') != NULL)
     {
         USP_ERR_SetMessage("%s: '%s' is not a valid unsigned number", __FUNCTION__, str);
@@ -169,8 +169,9 @@ int TEXT_UTILS_StringToUnsignedLong(char *str, unsigned long *value)
     }
 
     // Exit if unable to convert
-    *value = strtoul(str, &endptr, 10);
-    if ((endptr == NULL) || (*endptr != '\0'))
+    errno = 0;
+    *value = strtoull(str, &endptr, 10);
+    if ((endptr == NULL) || (*endptr != '\0') || (errno != 0))
     {
         USP_ERR_SetMessage("%s: '%s' is not a valid unsigned number", __FUNCTION__, str);
         return USP_ERR_INVALID_TYPE;
@@ -422,6 +423,7 @@ int TEXT_UTILS_StringToIpAddr(char *str, nu_ipaddr_t *ip_addr)
     err = nu_ipaddr_from_str(str, ip_addr);
     if (err != USP_ERR_OK)
     {
+        USP_ERR_SetMessage("%s: Unable to convert IP address (%s)", __FUNCTION__, str);
         return USP_ERR_INVALID_TYPE;
     }
 
@@ -448,14 +450,24 @@ void TEXT_UTILS_SplitString(char *str, str_vector_t *sv, char *separator)
     char *end;
     char *trimmed;
     int sep_len;
+    char buf[MAX_DM_VALUE_LEN];
 
     // Initialise the string vector to an empty list
     STR_VECTOR_Init(sv);
 
+    // Exit if the input string is empty - nothing to do
+    if (*str == '\0')
+    {
+        return;
+    }
+
+    // Copy into a local buffer, as we will be making inline changes to the string
+    USP_STRNCPY(buf, str, sizeof(buf));
+
     // Iterate over all strings delimited by the separator
     // 2DO RH: This function can be made to ignore separators present in the string within quotes by creating a special version of strstr
     sep_len = strlen(separator);
-    start = str;
+    start = buf;
     end = TEXT_UTILS_StrStr(start, separator);
     while (end != NULL)
     {
@@ -484,10 +496,37 @@ void TEXT_UTILS_SplitString(char *str, str_vector_t *sv, char *separator)
 
 /*********************************************************************//**
 **
+** TEXT_UTILS_StrncpyLen
+**
+** Performs a strncpy() of a source string whose length is specified (rather than being NULL terminated)
+**
+** \param   dst - pointer to buffer to copy source string into
+** \param   dst_len - length of the destination buffer
+** \param   src - pointer to buffer containing string to copy
+** \param   src_len - length of the source buffer
+**
+** \return  None
+**
+**************************************************************************/
+void TEXT_UTILS_StrncpyLen(char *dst, int dst_len, char *src, int src_len)
+{
+    // Deal with case of truncating src string to fit in destination buffer
+    if (dst_len < src_len + 1)      // Plus 1 to include NULL terminator
+    {
+        src_len = dst_len - 1;      // Minus 1 to include NULL terminator
+    }
+
+    // Copy the src string into the destination buffer and NULL terminate it
+    memcpy(dst, src, src_len);
+    dst[src_len] = '\0';
+}
+
+/*********************************************************************//**
+**
 ** TEXT_UTILS_StrStr
 **
 ** Finds the first occurrence of the string 'needle' in the string 'haystack'
-** NOTE: This differes from the standard library implementation of ststr() in that it skips sub strings
+** NOTE: This differs from the standard library implementation of ststr() in that it skips sub strings
 **       enclosed in quotes, embedded in haystack. Thus quoted substrings within haystack may contain 'needle'
 **       This is useful for eg ServerSelection diagnostics driven from USP Agent CLI, as HostList also
 **       contains the separator character (',')
@@ -640,6 +679,106 @@ char *TEXT_UTILS_SplitPathAtSeparator(char *path, char *buf, int len, int separa
 
 /*********************************************************************//**
 **
+** TEXT_UTILS_KeyValueFromString
+**
+** Parses a line (read from a file) that contains two strings (a key and a value) separated by whitespace
+** NOTE: The key and value are contained in the line buffer. The line buffer is modified by this function.
+**
+** \param   buf - pointer to buffer containing the line read from the file
+** \param   key - pointer to variable in which to return a pointer to the key
+** \param   value - pointer to variable in which to return a pointer to the value
+**
+** \return  USP_ERR_OK if no error occurred.
+**          NOTE: Even if no error occurred, key and value may be returned as NULL, if the line is empty or a comment
+**
+**************************************************************************/
+int TEXT_UTILS_KeyValueFromString(char *buf, char **key, char **value)
+{
+    char *p;
+    int len;
+    int key_len;
+    
+    // Set default return parameters
+    *key = NULL;
+    *value = NULL;
+    
+    // Exit if this line is a comment - nothing more to do
+    if (buf[0] == '#')
+    {
+        return USP_ERR_OK;
+    }
+
+    // Truncate string at newline
+    p = strchr(buf, '\n');
+    if (p != NULL)
+    {
+        *p = '\0';
+    }
+    
+    // Truncate string at carriage return
+    p = strchr(buf, '\r');
+    if (p != NULL)
+    {
+        *p = '\0';
+    }
+    
+    // Skip leading whitespace
+    #define WHITESPACE_CHARS " \t"
+    len = strspn(buf, WHITESPACE_CHARS);
+    if (len != 0)
+    {
+        buf += len;
+    }
+
+    // Find extent of key
+    key_len = strcspn(buf, WHITESPACE_CHARS);
+    if (key_len == 0)
+    {
+        // Skip empty lines
+        return USP_ERR_OK;
+    }
+
+
+    // Exit if no value has been specified
+    p = TEXT_UTILS_TrimBuffer(&buf[key_len]);
+    if (*p == '\0')
+    {
+        USP_LOG_Error("%s: No value specified for line '%s'", __FUNCTION__, buf);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if value was enclosed in speech marks at one end, but not the other
+    #define SPEECH_MARK '\"'
+    len = strlen(p);
+    if ((*p == SPEECH_MARK) && (p[len-1]) != SPEECH_MARK)
+    {
+        USP_LOG_Error("%s: Expected \" at end of parameter value (%s)", __FUNCTION__, p);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    if ((*p != SPEECH_MARK) && (p[len-1]) == SPEECH_MARK)
+    {
+        USP_LOG_Error("%s: Expected \" at start of parameter value (%s)", __FUNCTION__, p);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Trim value of speech marks (if present)
+    if (*p == SPEECH_MARK)
+    {
+        p[len-1] = '\0';
+        p++;
+    }
+
+    // Null terminate the key string and setup return values
+    buf[key_len] = '\0';
+    *key = buf;
+    *value = p;
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** TEXT_UTILS_NullStringCompare
 **
 ** Compares two strings, treating string pointers which are NULL as equal
@@ -680,8 +819,7 @@ int TEXT_UTILS_NullStringCompare(char *str1, char *str2)
 **
 ** \param   buf - pointer to buffer containing string to trim
 **
-** \return  USP_ERR_OK if validated successfully
-**          USP_ERR_INVALID_TYPE if string value does not represent an unsigned integer
+** \return  pointer to string in buffer
 **
 **************************************************************************/
 char *TEXT_UTILS_TrimBuffer(char *buf)
@@ -1259,7 +1397,7 @@ void TestStrStr(void)
 
 //------------------------------------------------------------------------------------------
 // Code to test the TEXT_UTILS_PathToSchemaForm() function
-#if 1
+#if 0
 char *schema_form_test_cases[] =
 {
     // Test case                    // Expected value
@@ -1293,3 +1431,93 @@ void Test_ToSchemaForm(void)
     printf("Number of failures=%d\n", count);
 }
 #endif
+
+//------------------------------------------------------------------------------------------
+// Code to test the TEXT_UTILS_KeyValueFromString() function
+#if 0
+char *to_key_value_test_cases[] =
+{
+    // Test case                            // Expected key     // Expected value
+    "my.key \"  my value \"   \t",          "my.key",           "  my value ",
+    "my.key \"\"   \t",                     "my.key",           "",
+    "my.key \"stuff",                       NULL,               NULL,
+    "my.key stuff\"",                       NULL,               NULL,
+    "my.key  \"stuff\"  ",                  "my.key",           "stuff",
+    "my.key    \t",                         NULL,               NULL,
+    "my.key",                               NULL,               NULL,
+    "mykey myvalue\n",                      "mykey",            "myvalue",
+    "    \t  mykey   myvalue\n",            "mykey",            "myvalue",
+    "my.key  \t  my very long value\r\n",   "my.key",           "my very long value",
+    "# Ignore this line\r",                 NULL,               NULL,
+    "",                                     NULL,               NULL,
+    "\n",                                   NULL,               NULL,
+    "\r\n",                                 NULL,               NULL,
+    "  \t  ",                               NULL,               NULL,
+};
+
+void Test_ToKeyValue(void)
+{
+    int i;
+    int err;
+    char *key;
+    char *value;
+    int count = 0;
+    char buf[256];
+
+    for (i=0; i < NUM_ELEM(to_key_value_test_cases); i+=3)
+    {
+        printf("[%d] '%s'\n", i/3, to_key_value_test_cases[i]);
+        USP_STRNCPY(buf, to_key_value_test_cases[i], sizeof(buf));
+
+        err = TEXT_UTILS_KeyValueFromString(buf, &key, &value);
+
+        // Check that returned key is correct
+        if (to_key_value_test_cases[i+1] != NULL)
+        {
+            if (strcmp(key, to_key_value_test_cases[i+1]) != 0)
+            {
+                printf("FAIL: [%d] Test case result is wrong for key (got '%s', expected '%s')\n", i/3, key, to_key_value_test_cases[i+1]);
+                count++;
+            }
+        }
+        else
+        {
+            if (key != NULL)
+            {
+                printf("FAIL: [%d] Test case result is wrong for key (got '%s', expected NULL)\n", i/3, key);
+                count++;
+            }
+        }
+   
+        // Check that returned value is correct
+        if (to_key_value_test_cases[i+2] != NULL)
+        {
+            if (strcmp(value, to_key_value_test_cases[i+2]) != 0)
+            {
+                printf("FAIL: [%d] Test case result is wrong for value (got '%s', expected '%s')\n", i/3, value, to_key_value_test_cases[i+2]);
+                count++;
+            }
+        }
+        else
+        {
+            if (value != NULL)
+            {
+                printf("FAIL: [%d] Test case result is wrong for value (got '%s', expected NULL)\n", i/3, value);
+                count++;
+            }
+        }
+   
+        if (err != USP_ERR_OK)
+        {
+            if ((key != NULL) || (value != NULL))
+            {
+                printf("FAIL: [%d] Test case returned err=%d, but key=%p, value=%p (expected NULL)", i/3, err, key, value);
+                count++;
+            }
+        }
+    }
+    printf("Number of failures=%d\n", count);
+}
+#endif
+
+

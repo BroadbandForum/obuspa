@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -123,8 +123,7 @@ typedef struct
     int pbuf_len;
     ctrust_role_t role;
     char *allowed_controllers;
-    char *stomp_dest;
-    int stomp_instance;
+    mtp_reply_to_t mtp_reply_to;    // destination to send the USP message response to
 } process_usp_record_msg_t;
 
 // Notify controller trust role for all controllers connected to the specified STOMP connection
@@ -157,7 +156,7 @@ typedef struct
 typedef struct
 {
     int profile_id;         // Instance number of profile in Device.Bulkdata.Profile.{i}
-    bool transfer_result;   // Set to true if report sent successfully, false otherwise
+    bdc_transfer_result_t transfer_result;   // Result code of sending the report
 } bdc_transfer_result_msg_t;
 
 
@@ -212,7 +211,7 @@ int DM_EXEC_Init(void)
     err = socketpair(AF_UNIX, SOCK_DGRAM, 0, dm_mq_sockets);
     if (err != 0)
     {
-        USP_ERR_ERRNO("socketpair", err);
+        USP_ERR_ERRNO("socketpair", errno);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -298,7 +297,7 @@ int USP_SIGNAL_OperationComplete(int instance, int err_code, char *err_msg, kv_v
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -347,7 +346,7 @@ int USP_SIGNAL_DataModelEvent(char *event_name, kv_vector_t *output_args)
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -402,7 +401,7 @@ int USP_SIGNAL_OperationStatus(int instance, char *status)
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -452,7 +451,7 @@ int USP_SIGNAL_ObjectAdded(char *path)
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -502,7 +501,7 @@ int USP_SIGNAL_ObjectDeleted(char *path)
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -520,13 +519,12 @@ int USP_SIGNAL_ObjectDeleted(char *path)
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   role - Controller Trust Role allowed for this message
 ** \param   allowed_controllers - URN pattern describing the endpoint_id of allowed controllers
-** \param   stomp_dest - STOMP destination to send the reply to (or NULL if none setup in received message)
-** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table) to send the reply to
+** \param   mrt - details of where response to this USP message should be sent
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, char *stomp_dest, int stomp_instance)
+void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt)
 {
     dm_exec_msg_t  msg;
     process_usp_record_msg_t *pur;
@@ -547,16 +545,23 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role
     memcpy(pur->pbuf, pbuf, pbuf_len);
     pur->pbuf_len = pbuf_len;
     pur->role = role;
-    pur->allowed_controllers = (allowed_controllers != NULL) ? USP_STRDUP(allowed_controllers) : NULL;
-    pur->stomp_dest = (stomp_dest != NULL) ? USP_STRDUP(stomp_dest) : NULL;
-    pur->stomp_instance = stomp_instance;
+    pur->allowed_controllers = USP_STRDUP(allowed_controllers);
+    pur->mtp_reply_to.protocol = mrt->protocol;
+    pur->mtp_reply_to.is_reply_to_specified = mrt->is_reply_to_specified;
+    pur->mtp_reply_to.stomp_dest = USP_STRDUP(mrt->stomp_dest);
+    pur->mtp_reply_to.stomp_instance = mrt->stomp_instance;
+    pur->mtp_reply_to.coap_host = USP_STRDUP(mrt->coap_host);
+    pur->mtp_reply_to.coap_port = mrt->coap_port;
+    pur->mtp_reply_to.coap_resource = USP_STRDUP(mrt->coap_resource);
+    pur->mtp_reply_to.coap_encryption = mrt->coap_encryption;
+    pur->mtp_reply_to.coap_reset_session_hint = mrt->coap_reset_session_hint;
 
     // Send the message
     bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         return;
     }
 }
@@ -604,7 +609,7 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role, 
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         return;
     }
 }
@@ -642,7 +647,7 @@ void DM_EXEC_PostMtpThreadExited(void)
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         return;
     }
 }
@@ -657,12 +662,12 @@ void DM_EXEC_PostMtpThreadExited(void)
 ** report has been sent, or failed to send
 **
 ** \param   profile_id - Instance number of profile in Device.Bulkdata.Profile.{i}
-** \param   transfer_result - set to true if the report was sent successfuly, false otherwise
+** \param   transfer_result - result code of the transfer
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DM_EXEC_NotifyBdcTransferResult(int profile_id, bool transfer_result)
+int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transfer_result)
 {
     dm_exec_msg_t  msg;
     bdc_transfer_result_msg_t *btr;
@@ -687,9 +692,10 @@ int DM_EXEC_NotifyBdcTransferResult(int profile_id, bool transfer_result)
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         return USP_ERR_INTERNAL_ERROR;
     }
+
 
     return USP_ERR_OK;
 }
@@ -834,8 +840,7 @@ void UpdateSockSet(socket_set_t *set)
     CLI_SERVER_UpdateSocketSet(set);
 
     // Add the message queue receiving socket to the socket set
-    #define SECONDS 1000
-    SOCKET_SET_AddSocketToReceiveFrom(mq_rx_socket, 3600*SECONDS, set);
+    SOCKET_SET_AddSocketToReceiveFrom(mq_rx_socket, MAX_SOCKET_TIMEOUT, set);
 
     // Update socket timeout time with the time to the next timer
     delay_ms = SYNC_TIMER_TimeToNext();
@@ -905,12 +910,14 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
     {
         case kDmExecMsg_ProcessUspRecord:
             pur = &msg.params.usp_record;
-            MSG_HANDLER_HandleBinaryRecord(pur->pbuf, pur->pbuf_len, pur->role, pur->allowed_controllers, pur->stomp_dest, pur->stomp_instance);
+            MSG_HANDLER_HandleBinaryRecord(pur->pbuf, pur->pbuf_len, pur->role, pur->allowed_controllers, &pur->mtp_reply_to);
 
             // Free all arguments passed in this message
             USP_FREE(pur->pbuf);
             USP_SAFE_FREE(pur->allowed_controllers);
-            USP_SAFE_FREE(pur->stomp_dest);
+            USP_SAFE_FREE(pur->mtp_reply_to.stomp_dest);
+            USP_SAFE_FREE(pur->mtp_reply_to.coap_host);
+            USP_SAFE_FREE(pur->mtp_reply_to.coap_resource);
             break;
 
         case kDmExecMsg_StompHandshakeComplete:

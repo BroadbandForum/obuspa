@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -64,7 +64,7 @@
 int USP_DM_GetParameterValue(char *path, char *buf, int len)
 {
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -88,7 +88,7 @@ int USP_DM_GetParameterValue(char *path, char *buf, int len)
 int USP_DM_SetParameterValue(char *path, char *new_value)
 {
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -111,7 +111,7 @@ int USP_DM_SetParameterValue(char *path, char *new_value)
 int USP_DM_DeleteInstance(char *path)
 {
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -135,7 +135,7 @@ int USP_DM_DeleteInstance(char *path)
 int USP_DM_InformInstance(char *path)
 {
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -159,12 +159,32 @@ int USP_DM_InformInstance(char *path)
 int USP_DM_GetInstances(char *path, int_vector_t *iv)
 {
     // Exit if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
 
     return DATA_MODEL_GetInstances(path, iv);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_Create
+**
+** Dynamically allocates a key-value pair structure and initialises it
+**
+** \param   kvv - pointer to structure to initialise
+**
+** \return  None
+**
+**************************************************************************/
+kv_vector_t *USP_ARG_Create(void)
+{
+    kv_vector_t *kvv;
+    kvv = USP_MALLOC(sizeof(kv_vector_t));
+    KV_VECTOR_Init(kvv);
+
+    return kvv;
 }
 
 /*********************************************************************//**
@@ -203,10 +223,63 @@ void USP_ARG_Add(kv_vector_t *kvv, char *key, char *value)
 
 /*********************************************************************//**
 **
+** USP_ARG_AddUnsigned
+**
+** Adds a key value pair into the vector, where the value is specified as an unsigned number
+**
+** \param   kvv - pointer to structure to add the string to
+** \param   key - pointer to string to copy
+** \param   value - value to convert to a string and add to the vector
+**
+** \return  None
+**
+**************************************************************************/
+void USP_ARG_AddUnsigned(kv_vector_t *kvv, char *key, unsigned value)
+{
+    KV_VECTOR_AddUnsigned(kvv, key, value);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_AddBool
+**
+** Adds a key value pair into the vector, where the value is specified as a boolean
+**
+** \param   kvv - pointer to structure to add the string to
+** \param   key - pointer to string to copy
+** \param   value - value to convert to a string and add to the vector
+**
+** \return  None
+**
+**************************************************************************/
+void USP_ARG_AddBool(kv_vector_t *kvv, char *key, bool value)
+{
+    KV_VECTOR_AddBool(kvv, key, value);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_AddDateTime
+**
+** Adds a key value pair into the vector, where the value is specified as a date-time
+**
+** \param   kvv - pointer to structure to add the string to
+** \param   key - pointer to string to copy
+** \param   value - value to convert to a string and add to the vector
+**
+** \return  None
+**
+**************************************************************************/
+void USP_ARG_AddDateTime(kv_vector_t *kvv, char *key, time_t value)
+{
+    KV_VECTOR_AddDateTime(kvv, key, value);
+}
+
+/*********************************************************************//**
+**
 ** USP_ARG_Get
 **
-** Returns a pointer to the value associated with the specified key or 'unknown'
-** This function is typically used by debug
+** Returns a pointer to the value associated with the specified key or the specified default value
 **
 ** \param   kvv - pointer to key-value pair vector structure
 ** \param   key - pointer to name of key to get the value of
@@ -222,9 +295,92 @@ char *USP_ARG_Get(kv_vector_t *kvv, char *key, char *default_value)
 
 /*********************************************************************//**
 **
+** USP_ARG_GetUnsigned
+**
+** Gets the value of the specified parameter from the vector as an unsigned integer
+**
+** \param   kvv - pointer to key-value pair vector structure
+** \param   key - pointer to name of key to get the value of
+** \param   default_value - default value, if not present in the vector
+** \param   value - pointer to variable in which to return the value 
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INVALID_TYPE if unable to convert the key's value (given in the vector) to an unsigned integer
+**
+**************************************************************************/
+int USP_ARG_GetUnsigned(kv_vector_t *kvv, char *key, unsigned default_value, unsigned *value)
+{
+    return KV_VECTOR_GetUnsigned(kvv, key, default_value, value);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_GetUnsignedWihinRange
+**
+** Gets the value of the specified parameter from the vector as an unsigned integer,
+** checking that it is within the specified range
+**
+** \param   kvv - pointer to key-value pair vector structure
+** \param   key - pointer to name of key to get the value of
+** \param   default_value - default value, if not present in the vector
+** \param   min - minimum allowed value
+** \param   min - maximum allowed value
+** \param   value - pointer to variable in which to return the value 
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INVALID_TYPE if unable to convert the key's value (given in the vector) to an unsigned integer
+**          USP_ERR_INVALID_VALUE if value is out of range
+**
+**************************************************************************/
+int USP_ARG_GetUnsignedWithinRange(kv_vector_t *kvv, char *key, unsigned default_value, unsigned min, unsigned max, unsigned *value)
+{
+    return KV_VECTOR_GetUnsignedWithinRange(kvv, key, default_value, min, max, value);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_GetBool
+**
+** Gets the value of the specified parameter from the vector as a bool
+**
+** \param   kvv - pointer to key-value pair vector structure
+** \param   key - pointer to name of key to get the value of
+** \param   default_value - default value, if not present in the vector
+** \param   value - pointer to variable in which to return the value 
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int USP_ARG_GetBool(kv_vector_t *kvv, char *key, bool default_value, bool *value)
+{
+    return KV_VECTOR_GetBool(kvv, key, default_value, value);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_GetDateTime
+**
+** Gets the value of the specified parameter from the vector as a time_t
+**
+** \param   kvv - pointer to key-value pair vector structure
+** \param   key - pointer to name of key to get the value of
+** \param   default_value - default value, if not present in the vector
+** \param   value - pointer to variable in which to return the value
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int USP_ARG_GetDateTime(kv_vector_t *kvv, char *key, char *default_value, time_t *value)
+{
+    return KV_VECTOR_GetDateTime(kvv, key, default_value, value);
+}
+
+/*********************************************************************//**
+**
 ** USP_ARG_Destroy
 **
 ** Deallocates all memory associated with the key-value pair vector
+** This is the opposite of USP_ARG_Create()
 **
 ** \param   kvv - pointer to structure to destroy all dynmically allocated memory it contains
 **

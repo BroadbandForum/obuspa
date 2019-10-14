@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -53,25 +53,25 @@ typedef int (*paramerror_extractor_t)(Usp__Msg *src_msg, Usp__Msg *err_msg);
 
 //------------------------------------------------------------------------------
 // API functions
-int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, char *stomp_dest, int stomp_instance);
-int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, char *controller_endpoint, char *stomp_dest, int stomp_instance);
+int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt);
+int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, char *controller_endpoint, mtp_reply_to_t *mrt);
 void MSG_HANDLER_LogMessageToSend(Usp__Header__MsgType usp_msg_type, unsigned char *pbuf, int pbuf_len, mtp_protocol_t protocol, char *host, unsigned char *stomp_header);
-int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, char *stomp_dest, int stomp_instance);
-int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *stomp_dest, int stomp_instance);
+int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *mrt);
+int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, mtp_reply_to_t *mrt);
 int MSG_HANDLER_GetMsgControllerInstance(void);
 void MSG_HANDLER_GetMsgRole(combined_role_t *combined_role);
 char *MSG_HANDLER_GetMsgControllerEndpointId(void);
 
 // Parse message received and handle response
-void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
-void MSG_HANDLER_HandleSet(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
-void MSG_HANDLER_HandleAdd(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
-void MSG_HANDLER_HandleDelete(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
-void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
-void MSG_HANDLER_HandleGetSupportedProtocol(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
-void MSG_HANDLER_HandleGetInstances(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
-void MSG_HANDLER_HandleGetSupportedDM(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
-void MSG_HANDLER_HandleUnknownMsgType(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
+void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
+void MSG_HANDLER_HandleSet(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
+void MSG_HANDLER_HandleAdd(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
+void MSG_HANDLER_HandleDelete(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
+void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
+void MSG_HANDLER_HandleGetSupportedProtocol(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
+void MSG_HANDLER_HandleGetInstances(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
+void MSG_HANDLER_HandleGetSupportedDM(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
+void MSG_HANDLER_HandleUnknownMsgType(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
 char *MSG_HANDLER_UspMsgTypeToString(int msg_type);
 
 // Error response
@@ -82,7 +82,7 @@ int ERROR_RESP_CalcOuterErrCode(int count, int err);
 
 // Subscriptions request/response
 Usp__Msg *MSG_HANDLER_CreateNotifyReq_ValueChange(char *path, char *value, char *subscription_id, bool send_resp);
-void MSG_HANDLER_HandleNotifyResp(Usp__Msg *usp, char *controller_endpoint, char *stomp_dest, int stomp_instance);
+void MSG_HANDLER_HandleNotifyResp(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
 Usp__Msg *MSG_HANDLER_CreateEvent_Boot(kv_vector_t *param_values, char *dest_endpoint, char *subscription_id, bool send_resp);
 Usp__Msg *MSG_HANDLER_CreateNotifyReq_ObjectCreation(char *obj_path, char *subscription_id, bool send_resp);
 Usp__Msg *MSG_HANDLER_CreateNotifyReq_ObjectDeletion(char *obj_path, char *subscription_id, bool send_resp);

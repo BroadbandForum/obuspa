@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -106,7 +106,7 @@ void USP_ERR_SetMessage(char *fmt, ...)
     char local_buf[USP_ERR_MAXLEN];
     
     // Write the message into a local buffer, if this function is not being called from the data model thread
-    if (OS_UTILS_IsDataModelThread(__FUNCTION__)==false)
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, DONT_PRINT_WARNING)==false)
     {
         buf_to_use = local_buf;
         buf_len = sizeof(local_buf);
@@ -173,6 +173,33 @@ void USP_ERR_SetMessage_SqlParam(const char *func, int line, const char *sqlfunc
 
 /*********************************************************************//**
 **
+** USP_ERR_ToString
+**
+** Converts an error number into a textual error message
+** Wrapper function around strerror_r(), to workaround only the XSI version of strerror_r() being available on some platforms
+**
+** \param   err - error number to convert to a textual representation
+** \param   buf - pointer to buffer in which to return the textual representation
+** \param   len - length of buffer
+**
+** \return  pointer to the error message string
+**
+**************************************************************************/
+char *USP_ERR_ToString(int err, char *buf, int len)
+{
+#if (_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600) && ! _GNU_SOURCE
+    // XSI version of strerror_r
+    strerror_r(err, buf, len);
+    return buf;
+#else
+    // GNU version of strerror_r
+    // This must return the string directly, because it usually returns a static string rather than copying into the buffer
+    return strerror_r(err, buf, len);
+#endif
+}
+
+/*********************************************************************//**
+**
 ** USP_ERR_SetMessage_Errno
 **
 ** Sets the stored USP error message for function which sets errno
@@ -190,7 +217,7 @@ void USP_ERR_SetMessage_Errno(const char *func, int line, const char *failed_fun
 {
     char buf[USP_ERR_MAXLEN];
 
-    USP_ERR_SetMessage("%s(%d): %s failed : (err=%d) %s", func, line, failed_func, err, strerror_r(err, buf, sizeof(buf)) );
+    USP_ERR_SetMessage("%s(%d): %s failed : (err=%d) %s", func, line, failed_func, err, USP_ERR_ToString(err, buf, sizeof(buf)) );
 }
 
 /*********************************************************************//**

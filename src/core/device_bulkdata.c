@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2017-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2017-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -108,6 +108,7 @@ typedef struct
     report_t reports[BULKDATA_MAX_RETAINED_FAILED_REPORTS+1]; // Plus 1 because this array includes failed reports + current report
     int num_retained_reports;
     unsigned retry_count;           // Number of failed attempts. Count of what the next retry attempt will be. After a failed send, this starts counting from 1.
+
 } bulkdata_profile_t;
 
 //---------------------------------------------------------------------------------------------
@@ -169,6 +170,7 @@ int NotifyChange_BulkDataTimeReference(dm_req_t *req, char *value);
 int NotifyChange_BulkDataRetryEnable(dm_req_t *req, char *value);
 int NotifyChange_BulkDataRetryMinimumWaitInterval(dm_req_t *req, char *value);
 int NotifyChange_BulkDataRetryIntervalMultiplier(dm_req_t *req, char *value);
+int NotifyChange_BulkDataURL(dm_req_t *req, char *value);
 int Notify_BulkDataProfileAdded(dm_req_t *req);
 int Notify_BulkDataProfileDeleted(dm_req_t *req);
 int Get_BulkDataGlobalStatus(dm_req_t *req, char *buf, int len);
@@ -195,7 +197,6 @@ void bulkdata_drop_oldest_retained_reports(bulkdata_profile_t *bp, int num_repor
 int bulkdata_platform_get_uri_query_name_map(int profile_id, kv_vector_t *name_map);
 int bulkdata_platform_calc_uri_query_escaped_map(kv_vector_t *name_map, kv_vector_t *escaped_map);
 char *bulkdata_platform_calc_uri_query_string(kv_vector_t *escaped_map);
-
 
 /*********************************************************************//**
 **
@@ -259,7 +260,7 @@ int DEVICE_BULKDATA_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.JSONEncoding.ReportTimestamp", BULKDATA_JSON_TIMESTAMP_FORMAT_EPOCH, Validate_BulkDataReportTimestamp, NULL, DM_STRING);
 
     // Device.BulkData.Profile.{i}.HTTP
-    err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.HTTP.URL", "", NULL, NULL, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.HTTP.URL", "", NULL, NotifyChange_BulkDataURL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.HTTP.Username", "", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_Secure("Device.BulkData.Profile.{i}.HTTP.Password", "", NULL, NULL);
     err |= USP_REGISTER_Param_Constant("Device.BulkData.Profile.{i}.HTTP.CompressionsSupported", "GZIP", DM_STRING);
@@ -277,6 +278,7 @@ int DEVICE_BULKDATA_Init(void)
     err |= USP_REGISTER_Param_NumEntries("Device.BulkData.Profile.{i}.HTTP.RequestURIParameterNumberOfEntries", "Device.BulkData.Profile.{i}.HTTP.RequestURIParameter.{i}");
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.HTTP.RequestURIParameter.{i}.Name", "", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.HTTP.RequestURIParameter.{i}.Reference", "", Validate_BulkDataReference, NULL, DM_STRING);
+
 
     // Exit if any errors occurred
     if (err != USP_ERR_OK)
@@ -383,12 +385,12 @@ void DEVICE_BULKDATA_Stop(void)
 ** This function restarts the profile's sync timer, so that the profile fires again in the future
 **
 ** \param   profile_id - Instance number of profile in Device.Bulkdata.Profile.{i}
-** \param   transfer_result - true if the report was sent successfully, false otherwise
+** \param   transfer_result - Result code of the transfer
 **
 ** \return  None
 **
 **************************************************************************/
-void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bool transfer_result)
+void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bdc_transfer_result_t transfer_result)
 {
     bulkdata_profile_t *bp;
     int err;
@@ -402,7 +404,7 @@ void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bool transfer_result)
         return;
     }
     
-    if (transfer_result == true)
+    if (transfer_result == kBDCTransferResult_Success)
     {
         // Report(s) have been successfully sent, so don't retain them
         bulkdata_clear_retained_reports(bp);
@@ -417,6 +419,7 @@ void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bool transfer_result)
         }
     }
 
+
     // Exit if unable to restart the sync timer with the time until the next reporting interval (or retry)
     err = bulkdata_resync_profile(bp, &delta_time);
     if (err != USP_ERR_OK)
@@ -427,7 +430,7 @@ void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bool transfer_result)
     // If next processing event will be a retry, log how long it is until the retry
     // NOTE: This debug is not strictly true. If it is time for the next report before the retry,
     // then the next report will be sent at the time logged
-    if ((transfer_result == false) && (bp->retry_enable))
+    if ((transfer_result != kBDCTransferResult_Success) && (bp->retry_enable))
     {
         USP_LOG_Info("BULK DATA: Retrying profile_id=%d in %d seconds", profile_id, delta_time);
     }
@@ -975,6 +978,30 @@ int NotifyChange_BulkDataRetryIntervalMultiplier(dm_req_t *req, char *value)
 
 /*********************************************************************//**
 **
+** NotifyChange_BulkDataURL
+**
+** Called whenever Device.BulkData.Profile.{i}.HTTP.URL changes
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_BulkDataURL(dm_req_t *req, char *value)
+{
+    bulkdata_profile_t *bp;
+
+    // Reset the connectivity stats
+    bp = bulkdata_find_profile(inst1);
+    USP_ASSERT(bp != NULL);
+
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** Notify_BulkDataProfileAdded
 **
 ** Called whenever a new profile (Device.BulkData.Profile.{i}) is added
@@ -1136,6 +1163,7 @@ exit:
     return USP_ERR_OK;
 }
 
+
 /*********************************************************************//**
 **
 ** ProcessBulkDataProfileAdded
@@ -1161,6 +1189,7 @@ int ProcessBulkDataProfileAdded(int instance)
     if (bp == NULL)
     {
         USP_ERR_SetMessage("%s: Unable to add a new bulk data profile. Only %d profiles supported", __FUNCTION__, BULKDATA_MAX_PROFILES);
+        return USP_ERR_INTERNAL_ERROR;
     }
 
     // Clear the profile
@@ -1218,6 +1247,7 @@ int ProcessBulkDataProfileAdded(int instance)
     // Since successful, mark the profile as in use
     bp->profile_id = instance;
     bp->is_working = true;          // Assumed to be working correctly until first post proves otherwise
+
 
     // Start the profile, if enabled
     if ((bp->is_enabled) && (global_enable))
@@ -1844,6 +1874,7 @@ int bulkdata_start_profile(bulkdata_profile_t *bp)
     int wait_time;
     profile_ctrl_params_t ctrl;
 
+
     // Exit if unable to obtain the control parameters for this profile
     err = bulkdata_platform_get_profile_control_params(bp, &ctrl);
     if (err != USP_ERR_OK)
@@ -1988,6 +2019,7 @@ int bulkdata_stop_profile(bulkdata_profile_t *bp)
 {
     int err;
 
+
     // Free all dynamic memory associated with this profile
     bulkdata_clear_retained_reports(bp);
 
@@ -2109,7 +2141,7 @@ void bulkdata_process_profile_work(bulkdata_profile_t *bp)
     err = bulkdata_schedule_sending_report(&ctrl, bp, compressed_report, compressed_len);
     if (err != USP_ERR_OK)
     {
-        DEVICE_BULKDATA_NotifyTransferResult(bp->profile_id, false);
+        DEVICE_BULKDATA_NotifyTransferResult(bp->profile_id, kBDCTransferResult_Failure_Other);
     }
 }
 

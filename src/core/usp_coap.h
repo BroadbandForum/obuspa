@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -47,17 +47,28 @@
 #include "usp-msg.pb-c.h"
 
 //------------------------------------------------------------------------------
+// Structure containing CoAP configuration parameters
+typedef struct
+{
+    unsigned port;                  // port on which this agent listens for CoAP messages
+    char *resource;                 // CoAP resource path representing this agent's USP handler
+    bool enable_encryption;         // Whether connections to this port are encrypted
+} coap_config_t;
+
+//------------------------------------------------------------------------------
 // API
 int COAP_Init(void);
+int COAP_Start(void);
 void COAP_Destroy(void);
-int COAP_StartServer(int instance, int ip_protocol, char *intf_addr, int port, char *resource);
-void COAP_StopServer(int instance);
+int COAP_StartServer(int instance, char *interface, coap_config_t *config);
+int COAP_StopServer(int instance, char *interface, coap_config_t *unused);
 mtp_status_t COAP_GetServerStatus(int instance);
 int COAP_StartClient(int cont_instance, int mtp_instance, char *endpoint_id);
-int COAP_StopClient(int cont_instance, int mtp_instance);
+void COAP_StopClient(int cont_instance, int mtp_instance);
 void COAP_UpdateAllSockSet(socket_set_t *set);
 void COAP_ProcessAllSocketActivity(socket_set_t *set);
-int COAP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int cont_instance, int mtp_instance, unsigned char *pbuf, int pbuf_len, char *host, int port, char *resource);
+int COAP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int cont_instance, int mtp_instance, unsigned char *pbuf, int pbuf_len, mtp_reply_to_t *mrt);
+bool COAP_AreAllResponsesSent(void);
 
 #endif // ENABLE_COAP
 #endif

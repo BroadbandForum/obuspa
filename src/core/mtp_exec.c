@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -94,7 +94,7 @@ int MTP_EXEC_Init(void)
     err = socketpair(AF_UNIX, SOCK_DGRAM, 0, mtp_mq_sockets);
     if (err != 0)
     {
-        USP_ERR_ERRNO("socketpair", err);
+        USP_ERR_ERRNO("socketpair", errno);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -123,7 +123,7 @@ void MTP_EXEC_Wakeup(void)
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, strerror_r(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         return;
     }
 }
@@ -193,6 +193,7 @@ void *MTP_EXEC_Main(void *args)
 {
     int num_sockets;
     socket_set_t set;
+    bool all_responses_sent;
 
     while(FOREVER)
     {
@@ -224,7 +225,13 @@ void *MTP_EXEC_Main(void *args)
         // Exit this thread, if an exit is scheduled and all responses have been sent
         if (mtp_exit_scheduled == kScheduledAction_Activated)
         {
-            if (STOMP_AreAllResponsesSent())
+            #ifdef ENABLE_COAP
+            all_responses_sent = STOMP_AreAllResponsesSent() && COAP_AreAllResponsesSent();
+            #else
+            all_responses_sent = STOMP_AreAllResponsesSent();
+            #endif
+             
+            if (all_responses_sent)
             {
                 // Free all memory associated with MTP layer
                 STOMP_Destroy();
@@ -267,8 +274,7 @@ void UpdateMtpSockSet(socket_set_t *set)
 #endif
 
     // Add the message queue receiving socket to the socket set
-    #define SECONDS 1000  // in ms
-    SOCKET_SET_AddSocketToReceiveFrom(mq_rx_socket, 3600*SECONDS, set);
+    SOCKET_SET_AddSocketToReceiveFrom(mq_rx_socket, MAX_SOCKET_TIMEOUT, set);
 }
 
 /*********************************************************************//**

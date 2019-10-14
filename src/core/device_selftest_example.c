@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -143,7 +143,7 @@ int DEVICE_SELF_TEST_Operate(dm_req_t *req, kv_vector_t *input_args, int instanc
     // Extract the input arguments using KV_VECTOR_ functions
     #define DEFAULT_SELF_TEST 1
     #define MAX_SELF_TEST     10
-    err = KV_VECTOR_GetUnsignedWithinRange(input_args, "X_ARRIS-COM_TestNumber", DEFAULT_SELF_TEST, 1, MAX_SELF_TEST, &cond->test_number);
+    err = USP_ARG_GetUnsignedWithinRange(input_args, "X_ARRIS-COM_TestNumber", DEFAULT_SELF_TEST, 1, MAX_SELF_TEST, &cond->test_number);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -214,9 +214,8 @@ exit:
     USP_LOG_Info("Results: %s", res->result_str);
 
     // Save all results into the output arguments using KV_VECTOR_ functions
-    output_args = USP_MALLOC(sizeof(kv_vector_t));
-    KV_VECTOR_Init(output_args);
-    KV_VECTOR_Add(output_args, "Results", res->result_str);
+    output_args = USP_ARG_Create();
+    USP_ARG_Add(output_args, "Results", res->result_str);
 
     // Inform the protocol handler, that the operation has completed
     // Ownership of the output args passes to protocol handler

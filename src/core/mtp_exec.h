@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -67,13 +67,26 @@ typedef enum
 } mtp_protocol_t;
 
 //------------------------------------------------------------------------------
+// Structure containing a count of causes of connectivity failures for a particular MTP (eg STOMP, HTTP)
+typedef struct
+{
+    time_t reset_time;  // Time at which the counters were reset. In the case of STOMP, it is also the time at which the 'TotalUpTime' was reset.
+    unsigned dns;       // Count of number of times a connection failed due to unable to get IP address of server via DNS
+    unsigned authentication; // Count of number of times the password or the SSL handshake was rejected
+    unsigned connect;   // Count of number of times unable to connct to the server
+    unsigned readwrite; // Count of number of times a connection failed due to unable to send/receive from server
+    unsigned timeout;   // Count of number of times a connection failed due to a timeout. For STOMP, this is STOMP handshake or server heartbeat timeout. For BDC this is timed out getting HTTP response code
+    unsigned other;     // Count of number of times that other errors caused the connection to fail. These are mainly protocol errors/unexpected data.
+} mtp_failure_count_t;
+
+//------------------------------------------------------------------------------
 // Enumeration used to determine when to action a STOMP reconnect or MTP thread exit
 // A reconnect is signalled by calling STOMP_ScheduleReconnect()
 // An exit is signalled by calling MTP_EXEC_ScheduleExit()
 // But neither of these functions activate a reconnect or exit in themselves, because if they did, the MTP
 // thread might perform the action immediately, and we want all response messages to be sent before performing the action
 // So, instead, only after the response message has been put on the message queue do we activate (by calling MTP_EXEC_ActivateScheduledActions)
-// the actions. Onlce an action has been activated it is then scheduled to occur once all responses have been sent.
+// the actions. Once an action has been activated it is then scheduled to occur once all responses have been sent.
 typedef enum
 {
     kScheduledAction_Off,             // The action is not scheduled

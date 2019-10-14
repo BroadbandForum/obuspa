@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -67,6 +67,7 @@ typedef int (*generic_cb_t)(void);
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
+int ValidateAliasParam(dm_req_t *req, char *value);
 int ValidateParamUniqueness(dm_req_t *req, char *value);
 
 /*********************************************************************//**
@@ -660,7 +661,7 @@ int USP_REGISTER_DBParam_Alias(char *path, dm_notify_set_cb_t notify_set_cb)
     }
 
     // Exit if unable to register the Alias parameter
-    err =  USP_REGISTER_DBParam_ReadWriteAuto(path, DM_ACCESS_PopulateAliasParam, ValidateParamUniqueness, notify_set_cb, DM_STRING);
+    err =  USP_REGISTER_DBParam_ReadWriteAuto(path, DM_ACCESS_PopulateAliasParam, ValidateAliasParam, notify_set_cb, DM_STRING);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -1141,6 +1142,65 @@ int USP_REGISTER_EventArguments(char *path, char **event_arg_names, int num_even
     if (event_arg_names != NULL)
     {
         STR_VECTOR_Clone(&info->event_args, event_arg_names, num_event_arg_names);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** ValidateAliasParam
+**
+** Validates new values of an Alias parameter
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of the parameter for this instance which the controller would like to set
+**
+** \return  USP_ERR_OK if retrieved successfully
+**
+**************************************************************************/
+int ValidateAliasParam(dm_req_t *req, char *value)
+{
+    char cur_value[MAX_DM_SHORT_VALUE_LEN];
+    char c;
+    int err;
+
+    // Exit if value is empty. Alias values must not be empty according to the spec
+    c = *value;
+    if (c == '\0')
+    {
+        USP_ERR_SetMessage("%s: Alias parameter values must not be empty", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if value doesn't start with a letter. Alias values must start with a letter according to the spec
+    if (IS_ALPHA(c)==false)
+    {
+        USP_ERR_SetMessage("%s: Alias parameter values must start with a letter (%s doesn't)", __FUNCTION__, value);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if unable to get the current value of the parameter
+    err = DATA_MODEL_GetParameterValue(req->path, cur_value, sizeof(cur_value), 0);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: Failed to get the current value of an Alias parameter (%s)", __FUNCTION__, req->path);
+        return err;
+    }
+
+    // Exit if the current value has already been changed from "cpe-"
+    // We do not allow this, as the Alias parameter is only allowed to be set once (changed from the default value of 'cpe-')
+    if ((*cur_value != '\0') && (strncmp(cur_value, DEFAULT_ALIAS_PREFIX, sizeof(DEFAULT_ALIAS_PREFIX)-1) != 0))
+    {
+        USP_ERR_SetMessage("%s: Alias parameter values must not be changed once assigned (current_value='%s')", __FUNCTION__, cur_value);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if the parameter is not unique within the table
+    err = ValidateParamUniqueness(req, value);
+    if (err != USP_ERR_OK)
+    {
+        return err;
     }
 
     return USP_ERR_OK;

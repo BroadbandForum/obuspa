@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -76,16 +76,52 @@ extern int USP_SNPRINTF(char *dest, size_t size, const char *fmt, ...) __attribu
 #define FOREVER 1
 
 //------------------------------------------------------------------------------
+// Common defines
+#define SECONDS 1000   // 1 second in milliseconds
+
+//------------------------------------------------------------------------------
 // Macro that converts the given pre-processor argument to a string (TO_STR)
 #define STRINGIFY(x) #x
 #define TO_STR(x) STRINGIFY(x)
 
+//----------------------------------------------------------------
+// Macros to read a value from a byte stream buffer (big endian format), but not update the pointer and length of stream left
+#define CONVERT_2_BYTES(p) ((p)[0]<<8) + (p)[1];
+#define CONVERT_3_BYTES(p)  ((p)[0]<<16) + ((p)[1]<<8) + (p)[2];
+#define CONVERT_4_BYTES(p)  ((p)[0]<<24) + ((p)[1]<<16) + ((p)[2]<<8) + (p)[3];
+
+//----------------------------------------------------------------
+// Macros to read a value from a byte stream buffer (big endian format), updating the pointer and length of stream left (in input buffer)
+#define READ_BYTE(p,l)     (p)[0]; (p)++; (l)--;
+#define READ_2_BYTES(p,l)  CONVERT_2_BYTES(p);   (p) += 2;  (l) -= 2;
+#define READ_3_BYTES(p,l)  CONVERT_3_BYTES(p);   (p) += 3;  (l) -= 3;
+#define READ_4_BYTES(p,l)  CONVERT_4_BYTES(p);   (p) += 4;  (l) -= 4;
+#define READ_N_BYTES(dest, src, n, len)  memcpy((dest), (src), (n)); (src) += n; (len) -= n;
+
+//----------------------------------------------------------------------------
+// Macros to write a value to a byte stream buffer (big endian format), but not update the pointer
+#define STORE_BYTE(buf, v)  buf[0] = (unsigned char)(v & 0xFF);
+#define STORE_2_BYTES(buf, v) buf[0] = (unsigned char)((v >> 8) & 0xFF);  buf[1] = (unsigned char)(v & 0xFF);
+#define STORE_3_BYTES(buf, v) buf[0] = (unsigned char)((v >> 16) & 0xFF); buf[1] = (unsigned char)((v >> 8) & 0xFF); buf[2] = (unsigned char)(v & 0xFF);
+#define STORE_4_BYTES(buf, v) buf[0] = (unsigned char)((v >> 24) & 0xFF); buf[1] = (unsigned char)((v >> 16) & 0xFF); buf[2] = (unsigned char)((v >> 8) & 0xFF); buf[3] = (unsigned char)(v & 0xFF);
+
 //-----------------------------------------------------------------------------------------------
 // Macros to write a value to a byte stream buffer (big endian format), updating the pointer
-#define WRITE_BYTE(buf, v)  buf[0] = (unsigned char)(v & 0xFF); buf++;
-#define WRITE_2_BYTES(buf, v) buf[0] = (unsigned char)((v >> 8) & 0xFF);  buf[1] = (unsigned char)(v & 0xFF); buf += 2;
-#define WRITE_3_BYTES(buf, v) buf[0] = (unsigned char)((v >> 16) & 0xFF); buf[1] = (unsigned char)((v >> 8) & 0xFF); buf[2] = (unsigned char)(v & 0xFF); buf += 3;
-#define WRITE_4_BYTES(buf, v) buf[0] = (unsigned char)((v >> 24) & 0xFF); buf[1] = (unsigned char)((v >> 16) & 0xFF); buf[2] = (unsigned char)((v >> 8) & 0xFF); buf[3] = (unsigned char)(v & 0xFF); buf += 4;
+#define WRITE_BYTE(buf, v)  STORE_BYTE(buf, v); buf++;
+#define WRITE_2_BYTES(buf, v) STORE_2_BYTES(buf, v); buf += 2;
+#define WRITE_3_BYTES(buf, v) STORE_3_BYTES(buf, v); buf += 3;
+#define WRITE_4_BYTES(buf, v) STORE_4_BYTES(buf, v); buf += 4;
+#define WRITE_N_BYTES(dest, src, n)  memcpy((dest), (src), (n)); (dest) += n;
+
+//----------------------------------------------------------------------------
+// Macros to extract bits from an int
+#define BIT(m, x)      ((x >> m) & 0x0001)
+#define BITS(n, m, x)  ((x >> m) & ((1 <<  (n-m+1)) - 1)) // NOTE: n must be greater than m
+
+//----------------------------------------------------------------------------
+// Macros to modify bits in an int
+#define MODIFY_BIT(m, x, v)     x = (x & (~ (1 << m))) | (((v) & 1) << m);
+#define MODIFY_BITS(n, m, x, v) x = (x & (~ (((1 <<  (n-m+1)) - 1) << m )) ) | (((v)  & ((1 <<  (n-m+1)) - 1)) << m); // NOTE: n must be greater than m
 
 //-----------------------------------------------------------------------------------------------
 // Global variables set by command line

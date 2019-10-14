@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,13 +46,9 @@
 #include "common_defs.h"
 #include "usp_api.h"
 #include "dm_access.h"
-#include "dm_trans.h"
 #include "data_model.h"
 #include "device.h"
 #include "version.h"
-#include "iso8601.h"
-#include "stomp.h"
-#include "vendor_api.h"
 #include "nu_macaddr.h"
 #include "nu_ipaddr.h"
 #include "text_utils.h"
@@ -101,7 +97,6 @@ static bool dual_stack_prefer_ipv6 = false;
 int Validate_DualStackPreference(dm_req_t *req, char *value);
 int NotifyChange_DualStackPreference(dm_req_t *req, char *value);
 int GetUpTime(dm_req_t *req, char *buf, int len);
-int GetCurrentLocalTime(dm_req_t *req, char *buf, int len);
 int ScheduleReboot(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
 int ScheduleFactoryReset(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
 int GetDefaultOUI(char *buf, int len);
@@ -172,8 +167,6 @@ int DEVICE_LOCAL_AGENT_Init(void)
     // NOTE: The default value of this database parameter is setup later in DEVICE_LOCAL_AGENT_SetDefaults()
     err |= USP_REGISTER_DBParam_ReadOnly(endpoint_id_path, "", DM_STRING);
 
-
-    err |= USP_REGISTER_VendorParam_ReadOnly("Device.Time.CurrentLocalTime", GetCurrentLocalTime, DM_DATETIME);
     err |= USP_REGISTER_DBParam_ReadWrite(dual_stack_preference_path, "IPv4", Validate_DualStackPreference, NotifyChange_DualStackPreference, DM_STRING);
     if (err != USP_ERR_OK)
     {
@@ -230,8 +223,8 @@ int DEVICE_LOCAL_AGENT_SetDefaults(void)
     // If vendor has not registered Device.DeviceInfo.OUI, then ignore the error, and use the default value
     if (err == USP_ERR_INVALID_PATH)
     {
-        USP_STRNCPY(oui, default_value, sizeof(oui));
-        err = USP_ERR_OK;
+        USP_LOG_Error("%s: Code configuration error: You must provide an implementation of Device.DeviceInfo.OUI if REMOVE_DEVICE_INFO is defined", __FUNCTION__);
+        return err;
     }
 #endif
 
@@ -263,11 +256,11 @@ int DEVICE_LOCAL_AGENT_SetDefaults(void)
     err = DATA_MODEL_GetParameterValue(serial_number_path, serial_number, sizeof(serial_number), 0);
 
 #ifdef REMOVE_DEVICE_INFO
-    // If vendor has not registered Device.DeviceInfo.SerialNumber, then ignore the error, and use the default value
+    // If vendor has defined REMOVE_DEVICE_INFO but not registered Device.DeviceInfo.SerialNumber, then this is a configuration error
     if (err == USP_ERR_INVALID_PATH)
     {
-        USP_STRNCPY(serial_number, default_value, sizeof(serial_number));
-        err = USP_ERR_OK;
+        USP_LOG_Error("%s: Code configuration error: You must provide an implementation of Device.DeviceInfo.SerialNumber if REMOVE_DEVICE_INFO is defined", __FUNCTION__);
+        return err;
     }
 #endif
 
@@ -546,36 +539,6 @@ int GetUpTime(dm_req_t *req, char *buf, int len)
 
 /*********************************************************************//**
 **
-** GetCurrentLocalTime
-**
-** Returns the current local time in ISO8601 format
-**
-** \param   req - pointer to structure identifying the parameter
-** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
-** \param   len - length of buffer in which to return the value of the parameter
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int GetCurrentLocalTime(dm_req_t *req, char *buf, int len)
-{
-    time_t t;
-    struct tm tm;
-
-    // Get current UTC time offset from unix epoch
-    t = time(NULL);
-
-    // Create split representation of time
-    localtime_r(&t, &tm);
-
-    // Finally create the current time string
-    iso8601_strftime(buf, len, &tm);
-
-    return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
 ** ScheduleReboot
 **
 ** Sync Operation handler for the Reboot operation
@@ -595,7 +558,7 @@ int ScheduleReboot(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv
     int err;
 
     // Ensure that no output arguments are returned for this sync operation
-    KV_VECTOR_Init(output_args);
+    USP_ARG_Init(output_args);
 
     err = DEVICE_LOCAL_AGENT_ScheduleReboot(kExitAction_Reboot, "RemoteReboot", command_key, INVALID);
 
@@ -623,7 +586,7 @@ int ScheduleFactoryReset(dm_req_t *req, char *command_key, kv_vector_t *input_ar
     int err;
 
     // Ensure that no output arguments are returned for this sync operation
-    KV_VECTOR_Init(output_args);
+    USP_ARG_Init(output_args);
 
     err = DEVICE_LOCAL_AGENT_ScheduleReboot(kExitAction_FactoryReset, "RemoteFactoryReset", command_key, INVALID);
 
@@ -706,11 +669,13 @@ int GetDefaultSerialNumber(char *buf, int len)
     }
 
     // Otherwise use serial number set by MAC address (default)
-    // Exit if unable to get MAC address
     err = nu_macaddr_wan_macaddr(mac_addr);
     if (err != USP_ERR_OK)
     {
-        return err;
+        // If unable to get the WAN interface's MAC address, then set serial number to 'undefined'
+        USP_LOG_Warning("%s: WARNING: Unable to determine a serial number for this device", __FUNCTION__);
+        USP_STRNCPY(buf, "undefined", len);
+        return USP_ERR_OK;
     }
     
     // Convert MAC address into ASCII string form

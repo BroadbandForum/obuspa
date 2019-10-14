@@ -1,3 +1,5 @@
+// Copyright 2018 CommScope, Inc.
+
 /*
   Copyright (C) 2011 Joseph A. Adams (joeyadams3.14159@gmail.com)
   All rights reserved.
@@ -793,7 +795,7 @@ failure:
 bool parse_string(const char **sp, char **out)
 {
 	const char *s = *sp;
-	SB sb = {0};        // Copyright 2018 ARRIS Enterprises, LLC: Added NULL initialiser to prevent compiler complaining about possible use of uninitialised variable in call to sb_free()
+	SB sb = {0};        // Copyright 2018 CommScope, Inc: Added NULL initialiser to prevent compiler complaining about possible use of uninitialised variable in call to sb_free()
 	char throwaway_buffer[4];
 		/* enough space for a UTF-8 character */
 	char *b;

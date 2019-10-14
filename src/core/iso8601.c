@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2008-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2008-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -92,6 +92,13 @@ char *iso8601_from_unix_time(time_t unix_time, char *buf, int len)
 {
    	struct tm tm;
 
+    // Exit if the time provided is the special case of the unknown time    
+    if (unix_time == UNKNOWN_TIME)
+    {
+        USP_STRNCPY(buf, UNKNOWN_TIME_STR, len);
+        return buf;
+    }
+
     memset(&tm, 0, sizeof(tm));
     gmtime_r(&unix_time, &tm);
     iso8601_strftime(buf, len, &tm);
@@ -171,39 +178,6 @@ iso8601_us_strftime(char *buf, size_t bufsiz, const struct timeval *tv)
         return sz;
 }
  
-
-/*********************************************************************//**
-**
-**  iso8601_is_valid
-**
-**  Determines whether the specified string is in ISO8601 format
-**
-** \param   date - ISO8601 string to validate
-**          
-** \return  true if the specified string is valid, otherwise false
-**
-**************************************************************************/
-bool
-iso8601_is_valid(const char *date)
-{
-    char *p;
-    struct tm tm;
-
-    memset(&tm, 0, sizeof(tm));     // Needed as strptime only fills-in the fields it parses out
-	p = strptime(date, "%FT%T", &tm);
-    if (p == NULL) {
-        return false;
-    }
-
-    // Exit if time is not expressed as UTC time (this is mandated by TR069. See 'dateTime' in TR069 Table 12)
-    // NOTE: Because time must be expressed as UTC, this also means that we do not have to validate any of the time offset formats for ISO8601
-    if (*p != 'Z') {
-        return false;
-    }
-
-    return true;
-}
-
 /*********************************************************************//**
 **
 **  iso8601_to_unix_time

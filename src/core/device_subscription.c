@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -310,7 +310,7 @@ void DEVICE_SUBSCRIPTION_Stop(void)
 ** DEVICE_SUBSCRIPTION_Update
 **
 ** Periodically called to update all subscriptions
-** The first time this function is called, it regisyters a sync timer to periodically poll for value change
+** The first time this function is called, it registers a sync timer to periodically poll for value change
 **
 ** \param   id - (unused) identifier of the sync timer which caused this callback
 **
@@ -419,7 +419,7 @@ void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, 
         err = KV_VECTOR_ValidateArguments(output_args, &info->event_args);
         if (err != USP_ERR_OK)
         {
-            USP_LOG_Warning("%s: Output arguments names do not match those registered. Please check code.", __FUNCTION__);
+            USP_LOG_Warning("%s: Output argument names do not match those registered (%s). Please check code.", __FUNCTION__, event_name);
         }
     }
 #endif
@@ -1918,12 +1918,12 @@ void SendBootNotify(subs_t *sub)
     // Add the cause (and associated command_key) of the last reboot
     KV_VECTOR_Init(&event_params);
     DEVICE_LOCAL_AGENT_GetRebootInfo(&info);
-    KV_VECTOR_Add(&event_params, "CommandKey", info.command_key);
-    KV_VECTOR_Add(&event_params, "Cause", info.cause);
+    USP_ARG_Add(&event_params, "CommandKey", info.command_key);
+    USP_ARG_Add(&event_params, "Cause", info.cause);
 
     // Set the Firmware updated output argument
     firmware_updated = (info.is_firmware_updated) ? "true" : "false";
-    KV_VECTOR_Add(&event_params, "FirmwareUpdated", firmware_updated);
+    USP_ARG_Add(&event_params, "FirmwareUpdated", firmware_updated);
 
     // Exit if unable to get the name of the controller table entry. This might be empty if the controller was deleted.
     USP_SNPRINTF(path, sizeof(path), "%s.%d.Recipient", device_subs_root, sub->instance);
@@ -1950,7 +1950,7 @@ void SendBootNotify(subs_t *sub)
         // Skip this parameter if not enabled
         USP_SNPRINTF(path, sizeof(path), "%s.BootParameter.%d.Enable", controller, instance);
         err = DM_ACCESS_GetBool(path, &enable);
-        if (enable == false)
+        if ((err != USP_ERR_OK) || (enable == false))
         {
             continue;
         }
@@ -1977,7 +1977,7 @@ void SendBootNotify(subs_t *sub)
     json_object = SerializeToJSONObject(&param_values);
 
     // Add the JSON Object as the value of the 'ParameterMap' argument
-    KV_VECTOR_Add(&event_params, "ParameterMap", json_object);
+    USP_ARG_Add(&event_params, "ParameterMap", json_object);
     KV_VECTOR_Destroy(&param_values);
     USP_FREE(json_object);
 
@@ -2104,6 +2104,7 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
     time_t retry_expiry_time;
     char *msg_id;
     char *dest_endpoint;
+    mtp_reply_to_t mtp_reply_to = {0};  // Ensures mtp_reply_to.is_reply_to_specified=false
 
     // Exit if unable to determine the endpoint of the controller
     // This could occur if the controller had been deleted
@@ -2124,7 +2125,7 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
     // Send the message
     // NOTE: Intentionally ignoring error here. If the controller has been disabled or deleted, then
     // allow the subs retry code to remove any previous attempts from the retry array
-    MSG_HANDLER_QueueUspRecord(USP__HEADER__MSG_TYPE__NOTIFY, dest_endpoint, pbuf, pbuf_len, NULL, INVALID);
+    MSG_HANDLER_QueueUspRecord(USP__HEADER__MSG_TYPE__NOTIFY, dest_endpoint, pbuf, pbuf_len, &mtp_reply_to);
 
     // If the message should be retried until a NotifyResponse is received, then...
     if (sub->notification_retry)

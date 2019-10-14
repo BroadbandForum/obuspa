@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,6 +44,10 @@
 #include <time.h>
 #include "str_vector.h"
 #include "nu_ipaddr.h"
+
+//-------------------------------------------------------------------------
+// The prefix to use when forming the default value of an Alias parameter
+#define DEFAULT_ALIAS_PREFIX "cpe-"
 
 //-------------------------------------------------------------------------
 // API functions

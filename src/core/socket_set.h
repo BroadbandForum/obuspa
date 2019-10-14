@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  ARRIS Enterprises, LLC
+ * Copyright (C) 2016-2019  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -42,6 +42,11 @@
 #define SOCKET_SET_H
 
 #include <sys/select.h>
+
+//------------------------------------------------------------------------------
+// Maximum socket timeout that the code uses - 1 hour in milliseconds
+#define MAX_SOCKET_TIMEOUT_SECONDS 3600
+#define MAX_SOCKET_TIMEOUT (MAX_SOCKET_TIMEOUT_SECONDS*SECONDS)
 
 //------------------------------------------------------------------------------
 // Socket set structure
