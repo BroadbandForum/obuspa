@@ -43,7 +43,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+#ifdef HAVE_MALLOC_H
 #include <malloc.h>
+#endif
 #include <protobuf-c/protobuf-c.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -412,9 +414,11 @@ void USP_MEM_StartCollection(void)
     collect_memory_info = true;
     print_leak_report = true;
 
+#ifdef HAVE_MALLOC_H
     // Store initial static memory usage after data model has been registered
     baseline_memory_usage = mallinfo().uordblks;
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
+#endif
 
     // The sync timer vector is reallocated by BulkDataCollection after collection has been started,
     // so needs to be in the meminfo array (otherwise we assert that a realloc has occured before an alloc)
@@ -456,7 +460,9 @@ void USP_MEM_StopCollection(void)
 **************************************************************************/
 void USP_MEM_PrintSummary(void)
 {
+#ifdef HAVE_MALLOC_H
     USP_LOG_Info("Memory in use: %d", (int) mallinfo().uordblks);
+#endif
 }
 
 /*********************************************************************//**
@@ -475,8 +481,11 @@ void USP_MEM_Print(void)
     int i;
     minfo_t *mi;
     int count = 0;
+
+#ifdef HAVE_MALLOC_H
     static int last_memory_usage = 0;
     int cur_memory_usage;
+#endif
 
     // Exit if not collecting memory info
     if (collect_memory_info==false)
@@ -484,6 +493,7 @@ void USP_MEM_Print(void)
         return;
     }
 
+#ifdef HAVE_MALLOC_H
     // Exit if no change in memory usage since last time called
     cur_memory_usage = mallinfo().uordblks;
     if (cur_memory_usage == last_memory_usage)
@@ -494,6 +504,7 @@ void USP_MEM_Print(void)
 
     USP_LOG_Info("Memory usage changed to: %d (%s line %d)", cur_memory_usage, __FUNCTION__, __LINE__);
     last_memory_usage = cur_memory_usage;
+#endif
 
     // Iterate over the memory info array, printing out all entries which have changed since last time this function was called
     OS_UTILS_LockMutex(&mem_access_mutex);
@@ -539,13 +550,13 @@ void USP_MEM_PrintLeakReport(void)
     }
 
     // Print a memory leak report
-    USP_LOG_Error("START: Memory leak report\n");
+    USP_LOG_Info("START: Memory leak report\n");
     count = USP_MEM_PrintAll();
     if (count > 0)
     {
-        USP_LOG_Error("DETECTED_MEMORY_LEAK in this automated test\n");
+        USP_LOG_Info("DETECTED_MEMORY_LEAK in this automated test\n");
     }
-    USP_LOG_Error("STOP: Memory leak report\n");
+    USP_LOG_Info("STOP: Memory leak report\n");
 }
 
 /*********************************************************************//**
@@ -565,8 +576,10 @@ int USP_MEM_PrintAll(void)
     minfo_t *mi;
     int count = 0;
 
+#ifdef HAVE_MALLOC_H
     USP_LOG_Info("Memory in use: %d (%s line %d)", (int) mallinfo().uordblks, __FUNCTION__, __LINE__);
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
+#endif
 
     // Exit if not collecting memory info
     if (print_leak_report==false)

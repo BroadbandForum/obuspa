@@ -81,6 +81,13 @@
 #define USP_ERR_UNIQUE_KEY_CONFLICT       7025       // unique keys would conflict
 #define USP_ERR_INVALID_PATH              7026       // Path is not present in the data model schema
 
+// Brokered USP Record Errors
+#define USP_ERR_RECORD_NOT_PARSED         7100       // Record could not be parsed
+#define USP_ERR_SECURE_SESS_REQUIRED      7101       // A secure session must be started before pasing any records
+#define USP_ERR_SECURE_SESS_NOT_SUPPORTED 7102       // Secure session is not supported by this endpoint
+#define USP_ERR_SEG_NOT_SUPPORTED         7103       // Segmentation and reassembly is not supported by this endpoint
+#define USP_ERR_RECORD_FIELD_INVALID      7104       // A USP record field was invalid
+
 // Vendor defined error codes
 // These use codes 7800-7999. Currently USP Agent core does not define any codes in this range.
 

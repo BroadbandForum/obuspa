@@ -59,6 +59,7 @@
 #define MAX_COAP_CONNECTIONS (MAX_CONTROLLERS)  // Maximum number of CoAP connections that an agent may have in the DB (Device.LocalAgent.Controller.{i}.MTP.{i}.CoAP)
 #define MAX_COAP_SERVERS 5          // Maximum number of interfaces which an agent listens for CoAP messages on
 #define MAX_COAP_CLIENTS (MAX_CONTROLLERS)  // Maximum number of CoAP controllers which an agent sends to
+#define MAX_COAP_SERVER_SESSIONS 2      // Maxiumum number of simultaneous sessions with CoAP controllers which the agent can service
 #define MAX_FIRMWARE_IMAGES 2       // Maximum number of firmware images that the CPE can hold in flash at any one time
 #define MAX_ACTIVATE_TIME_WINDOWS 5 // Maximum number of time windows allowed in the Activate() command's input arguments
 
@@ -140,7 +141,7 @@
 // Comma separated list of network interface names on which CoAP should listen for USP messages
 // An empty list or "any" indicates to listen on all interfaces
 // This may be overridden using the '-i' option (only one interface name is supported, if using '-i')
-#define COAP_LISTEN_INTERFACES    "eth0"  /*"lo, enp0s9"*/
+#define COAP_LISTEN_INTERFACES    "eth0"  /* "lo, enp0s9" */
 
 //-----------------------------------------------------------------------------------------
 // Defines for Bulk Data Collection
@@ -161,7 +162,8 @@
 // The names of all enumerations may be altered, and enumerations added/deleted, but the last entry must always be kCTrustRole_Max
 typedef enum
 {
-    kCTrustRole_FullAccess,
+    kCTrustRole_Min = 0,
+    kCTrustRole_FullAccess = 0,
     kCTrustRole_Untrusted,
 
     kCTrustRole_Max         // This must always be the last entry in this enumeration. It is used to statically size arrays

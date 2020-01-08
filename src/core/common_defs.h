@@ -43,6 +43,8 @@
 
 #include <stdbool.h>    // for bool
 #include <stddef.h>     // for NULL
+#include <time.h>       // for time_t
+#include <limits.h>     // for INT_MAX
 #include "vendor_defs.h"
 #include "usp_err.h"
 #include "usp_log.h"
@@ -76,8 +78,9 @@ extern int USP_SNPRINTF(char *dest, size_t size, const char *fmt, ...) __attribu
 #define FOREVER 1
 
 //------------------------------------------------------------------------------
-// Common defines
+// Common defines for time
 #define SECONDS 1000   // 1 second in milliseconds
+#define END_OF_TIME   ((time_t)INT_MAX)
 
 //------------------------------------------------------------------------------
 // Macro that converts the given pre-processor argument to a string (TO_STR)

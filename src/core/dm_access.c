@@ -42,7 +42,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <malloc.h>
 
 #include "common_defs.h"
 #include "data_model.h"

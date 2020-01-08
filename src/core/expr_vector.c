@@ -417,7 +417,7 @@ int ParseExprComponent(char *buf, char **p_relative_path, expr_op_t *p_op, char 
     }
 
     // Convert % escaped characters in the expression constant to their equivalent value
-    expr_const = TEXT_UTILS_UnescapeString(expr_const);
+    expr_const = TEXT_UTILS_PercentDecodeString(expr_const);
 
     // If the code gets here, then the values were extracted successfully
     *p_relative_path = expr_param;

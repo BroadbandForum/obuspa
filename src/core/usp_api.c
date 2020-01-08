@@ -440,7 +440,7 @@ char *USP_CONVERT_UnixTimeToDateTime(time_t unix_time, char *buf, int len)
 int USP_DM_RegisterRoleName(ctrust_role_t role, char *name)
 {
     // Exit if role is out of bounds
-    if ((role < 0) || (role >= kCTrustRole_Max))
+    if ((role < kCTrustRole_Min) || (role >= kCTrustRole_Max))
     {
         USP_ERR_SetMessage("%s: Supplied role (%d) is out of bounds (expected < %d)", __FUNCTION__, role, kCTrustRole_Max);
         return USP_ERR_INTERNAL_ERROR;
@@ -475,7 +475,7 @@ int USP_DM_AddControllerTrustPermission(ctrust_role_t role, char *path, unsigned
     bool is_qualified_instance; // Discarded
     
     // Exit if role is out of bounds
-    if ((role < 0) || (role >= kCTrustRole_Max))
+    if ((role < kCTrustRole_Min) || (role >= kCTrustRole_Max))
     {
         USP_ERR_SetMessage("%s: Supplied role (%d) is out of bounds (expected < %d)", __FUNCTION__, role, kCTrustRole_Max);
         return USP_ERR_INTERNAL_ERROR;

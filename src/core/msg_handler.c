@@ -90,7 +90,7 @@ static enum_entry_t usp_msg_types[] = {
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
-bool IsValidUspRecord(UspRecord__Record *rec);
+int ValidateUspRecord(UspRecord__Record *rec);
 void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_protocol_t protocol);
 
 
@@ -106,7 +106,7 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_pro
 ** \param   allowed_controllers - URN pattern containing the endpoint_id of allowed controllers
 ** \param   mrt - details of where response to this USP message should be sent
 **
-** \return  USP_ERR_OK if successful, anything else causes the caller to terminate the connection to the controller, and retry
+** \return  USP_ERR_OK if successful, USP_ERR_MESSAGE_NOT_UNDERSTOOD if unable to unpack the USP Record
 **
 **************************************************************************/
 int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt)
@@ -118,15 +118,14 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_rol
     rec = usp_record__record__unpack(pbuf_allocator, pbuf_len, pbuf);
     if (rec == NULL)
     {
-        USP_ERR_SetMessage("%s(%d): usp_record__session_record__unpack failed. Ignoring USP Message", __FUNCTION__, __LINE__);
-        return USP_ERR_INTERNAL_ERROR;
+        USP_ERR_SetMessage("%s: usp_record__session_record__unpack failed. Ignoring USP Message", __FUNCTION__);
+        return USP_ERR_RECORD_NOT_PARSED;
     }
 
     // Exit if USP record failed validation
-    // NOTE: Since none of the failures are fatal, we just ignore the message, and don't want the caller to terminate the connection
-    if (IsValidUspRecord(rec) == false)
+    err = ValidateUspRecord(rec);
+    if (err != USP_ERR_OK)
     {
-        err = USP_ERR_OK;
         goto exit;
     }
 
@@ -156,7 +155,7 @@ exit:
 ** \param   controller_endpoint - endpoint which sent this message
 ** \param   mrt - details of where response to this USP message should be sent
 **
-** \return  USP_ERR_OK if successful, anything else causes the caller to terminate the connection to the controller, and retry
+** \return  USP_ERR_OK if successful, USP_ERR_MESSAGE_NOT_UNDERSTOOD if unable to unpack the USP Record
 **
 **************************************************************************/
 int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, char *controller_endpoint, mtp_reply_to_t *mrt)
@@ -168,8 +167,8 @@ int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_ro
     usp = usp__msg__unpack(pbuf_allocator, pbuf_len, pbuf);
     if (usp == NULL)
     {
-        USP_ERR_SetMessage("%s(%d): usp__msg__unpack failed", __FUNCTION__, __LINE__);
-        return USP_ERR_INTERNAL_ERROR;
+        USP_ERR_SetMessage("%s: usp__msg__unpack failed", __FUNCTION__);
+        return USP_ERR_MESSAGE_NOT_UNDERSTOOD;
     }
 
     // Set the role that the controller should use when handling this message
@@ -208,11 +207,12 @@ exit:
 ** \param   host - hostname of controller to send the message to (for use by debug)
 ** \param   stomp_header - pointer to string containing the STOMP header (if message is going to be sent over STOMP, NULL otherwise)
 **                         This is only used for debug purposes
+** \param   content_type - type of content contained in pbuf
 **
 ** \return  None
 **
 **************************************************************************/
-void MSG_HANDLER_LogMessageToSend(Usp__Header__MsgType usp_msg_type, unsigned char *pbuf, int pbuf_len, mtp_protocol_t protocol, char *host, unsigned char *stomp_header)
+void MSG_HANDLER_LogMessageToSend(Usp__Header__MsgType usp_msg_type, unsigned char *pbuf, int pbuf_len, mtp_protocol_t protocol, char *host, unsigned char *stomp_header, mtp_content_type_t content_type)
 {
     UspRecord__Record *rec;
     Usp__Msg *usp;
@@ -230,6 +230,19 @@ void MSG_HANDLER_LogMessageToSend(Usp__Header__MsgType usp_msg_type, unsigned ch
     // Exit if protocol trace is not enabled
     if (enable_protocol_trace == false)
     {
+        return;
+    }
+
+    // Exit if message contained text, printing out the text
+    if (content_type == kMtpContentType_Text)
+    {
+        // Print STOMP header (if message is being sent out on STOMP)
+        if (stomp_header != NULL)
+        {
+            USP_PROTOCOL("%s", stomp_header);
+        }
+
+        USP_PROTOCOL("%s\n", pbuf);
         return;
     }
 
@@ -335,7 +348,7 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *m
     USP_ASSERT(size == pbuf_len);          // If these are not equal, then we may have had a buffer overrun, so terminate
 
     // Encapsulate this message in a USP record, then queue the record, to send to a controller
-    err = MSG_HANDLER_QueueUspRecord(usp->header->msg_type, endpoint_id, pbuf, pbuf_len, mrt);
+    err = MSG_HANDLER_QueueUspRecord(usp->header->msg_type, endpoint_id, pbuf, pbuf_len, usp->header->msg_id, mrt, END_OF_TIME);
 
     // Free the serialized USP message
     USP_FREE(pbuf);
@@ -355,12 +368,14 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *m
 ** \param   pbuf - pointer to buffer containing serialized USP message
 **                 NOTE: Ownership of the serialized USP message stays with the caller
 ** \param   pbuf_len - length of protobuf encoded USP message
+** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
 ** \param   mrt - details of where this USP response message should be sent
+** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
 ** 
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, mtp_reply_to_t *mrt)
+int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time)
 {
     UspRecord__Record rec;
     UspRecord__NoSessionContextRecord ctx;
@@ -401,7 +416,7 @@ int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint
 
     // Exit if unable to queue the message, to send to a controller
     // NOTE: If successful, ownership of the buffer passes to the MTP layer. If not successful, buffer is freed here
-    err = DEVICE_CONTROLLER_QueueBinaryMessage(usp_msg_type, endpoint_id, buf, len, mrt);
+    err = DEVICE_CONTROLLER_QueueBinaryMessage(usp_msg_type, endpoint_id, buf, len, usp_msg_id, mrt, expiry_time);
     if (err != USP_ERR_OK)
     {
         USP_FREE(buf);
@@ -513,6 +528,7 @@ char *MSG_HANDLER_UspMsgTypeToString(int msg_type)
 **************************************************************************/
 int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt)
 {
+    int err = USP_ERR_OK;
     char buf[MAX_ISO8601_LEN];
 
     // Ignore the message if it came from a controller which we do not recognise
@@ -520,17 +536,17 @@ int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *m
     if (cur_msg_controller_instance == INVALID)
     {
         USP_ERR_SetMessage("%s: Ignoring message from endpoint_id=%s (unknown controller)", __FUNCTION__, controller_endpoint);
+        err = USP_ERR_REQUEST_DENIED;
         goto exit;
     }
 
-    // Ignore the message if it was ill-formed
-    // NOTE: We cannot send back an error response, because we cannot parse usp->header->msg_id
+    // Ignore the message if it was ill-formed (and notify the controller)
     if (usp->header == NULL)
     {
         USP_ERR_SetMessage("%s: Ignoring malformed USP message", __FUNCTION__);
+        err = USP_ERR_MESSAGE_NOT_UNDERSTOOD;
         goto exit;
     }
-
 
     // Log the message
     USP_LOG_Info("%s : processing at time %s", 
@@ -587,7 +603,7 @@ exit:
     // Activate all STOMP reconnects or scheduled exits, now that we have queued all response messages
     MTP_EXEC_ActivateScheduledActions();
 
-    return USP_ERR_OK;
+    return err;
 }
 
 /*********************************************************************//**
@@ -598,10 +614,10 @@ exit:
 **
 ** \param   rec - pointer to protobuf structure describing the received USP record
 **
-** \return  true if record is to be processed further, false otherwise
+** \return  USP_ERR_OK if record is valid
 **
 **************************************************************************/
-bool IsValidUspRecord(UspRecord__Record *rec)
+int ValidateUspRecord(UspRecord__Record *rec)
 {
     char *endpoint_id;
     UspRecord__NoSessionContextRecord *ctx;
@@ -609,8 +625,8 @@ bool IsValidUspRecord(UspRecord__Record *rec)
     // Exit if unsupported version
     if ((rec->version == NULL) || (strcmp(rec->version, "1.0") != 0))
     {
-        USP_LOG_Warning("%s: WARNING: Ignoring USP record with unsupported version (%s)", __FUNCTION__, rec->version);
-        return false;
+        USP_ERR_SetMessage("%s: Ignoring USP record with unsupported version (%s)", __FUNCTION__, rec->version);
+        return USP_ERR_RECORD_FIELD_INVALID;
     }
 
     // Exit if this record is not supposed to be processed by us
@@ -618,21 +634,21 @@ bool IsValidUspRecord(UspRecord__Record *rec)
     if ((rec->to_id == NULL) || (strcmp(rec->to_id, endpoint_id) != 0))
     {
         USP_LOG_Warning("%s: WARNING: Ignoring USP record as it was addressed to endpoint_id=%s", __FUNCTION__, rec->to_id);
-        return false;
+        return USP_ERR_OK;
     }
 
     // Exit if no USP destination to send the message back to
     if (rec->from_id == NULL)
     {
-        USP_LOG_Warning("%s: WARNING: Ignoring USP record as from_id is blank", __FUNCTION__);
-        return false;
+        USP_ERR_SetMessage("%s: Ignoring USP record as from_id is blank", __FUNCTION__);
+        return USP_ERR_RECORD_FIELD_INVALID;
     }
 
     // Exit if this record contains an encrypted payload. 
     if (rec->payload_security != USP_RECORD__RECORD__PAYLOAD_SECURITY__PLAINTEXT)
     {
-        USP_LOG_Warning("%s: WARNING: Ignoring USP record as it contains an encrypted payload", __FUNCTION__);
-        return false;
+        USP_ERR_SetMessage("%s: Ignoring USP record as it contains an encrypted payload", __FUNCTION__);
+        return USP_ERR_SECURE_SESS_NOT_SUPPORTED;
     }
 
     // Print a warning if ignoring integrity check
@@ -641,29 +657,30 @@ bool IsValidUspRecord(UspRecord__Record *rec)
         USP_LOG_Warning("%s: WARNING: Not performing integrity check on non-payload fields of received USP Record", __FUNCTION__);
     }
 
-    // Print a warning if ignoring sender certificate
+    // Exit if ignoring sender certificate
     if ((rec->sender_cert.len != 0) || (rec->sender_cert.data != NULL))
     {
-        USP_LOG_Warning("%s: WARNING: Not checking sender certificate of received USP Record", __FUNCTION__);
+        USP_ERR_SetMessage("%s: Ignoring USP record as checking of sender certificate is not supported", __FUNCTION__);
+        return USP_ERR_SECURE_SESS_NOT_SUPPORTED;
     }
 
     // Exit if this record contains an End-to-End Session Context (which we don't yet support)
     if (rec->record_type_case != USP_RECORD__RECORD__RECORD_TYPE_NO_SESSION_CONTEXT)
     {
-        USP_LOG_Warning("%s: WARNING: Ignoring USP record as it contains an End-to-End session context", __FUNCTION__);
-        return false;
+        USP_ERR_SetMessage("%s: Ignoring USP record as it contains an End-to-End session context", __FUNCTION__);
+        return USP_ERR_SEG_NOT_SUPPORTED;
     }
 
     // Exit if this record does not contain a payload
     ctx = rec->no_session_context;
     if ((ctx == NULL) || (ctx->payload.data == NULL) || (ctx->payload.len == 0))
     {
-        USP_LOG_Warning("%s: WARNING: Ignoring USP record as it does not contain a payload", __FUNCTION__);
-        return false;
+        USP_ERR_SetMessage("%s: Ignoring USP record as it does not contain a payload", __FUNCTION__);
+        return USP_ERR_RECORD_FIELD_INVALID;
     }
 
     // If the code gets here, then the USP record passed validation, and the encapsulated USP message may be processed
-    return true;
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**

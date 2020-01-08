@@ -41,7 +41,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <malloc.h>
 #include <sqlite3.h>
 #include <errno.h>
 

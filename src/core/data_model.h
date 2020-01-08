@@ -240,7 +240,6 @@ extern char *reboot_cause_path;
 //------------------------------------------------------------------------------
 // Definitions for flags in DATA_MODEL_GetParameterValue()
 #define SHOW_PASSWORD 0x00000001        // Used internally by USP Agent to get the actual value of passwords (default behaviour is to return an empty string)
-#define JSON_FORMAT   0x00000002        // Used internally by USP Agent to get the value in JSON format (if the parameter's type is a string or dateTime, then the value is quoted and escaped)
 
 //------------------------------------------------------------------------------
 // Definitions for flags in DATA_MODEL_SetParameterValue()
@@ -291,6 +290,7 @@ int DATA_MODEL_GetUniqueKeys(char *path, dm_unique_key_vector_t *ukv);
 int DATA_MODEL_GetUniqueKeyParams(char *obj_path, kv_vector_t *params, combined_role_t *combined_role);
 void DATA_MODEL_DumpSchema(void);
 void DATA_MODEL_DumpInstances(void);
+char DATA_MODEL_GetJSONParameterType(char *path);
 int DATA_MODEL_SetParameterInDatabase(char *path, char *value);
 
 int DM_PRIV_InitSetRequest(dm_req_t *req, dm_node_t *node, char *path, dm_instances_t *inst, char *new_value);

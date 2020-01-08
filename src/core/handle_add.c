@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
  * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,6 +49,7 @@
 #include "dm_access.h"
 #include "path_resolver.h"
 #include "device.h"
+#include "text_utils.h"
 
 //------------------------------------------------------------------------------
 // String vector storing the param_name associated with each OperFailure object in the response message
@@ -694,7 +695,7 @@ AddResp_OperSuccess(Usp__AddResp *add_resp, char *req_path, char *path)
     oper_success->n_param_errs = 0;
 
 
-    oper_success->instantiated_path = USP_STRDUP(path);
+    oper_success->instantiated_path = TEXT_UTILS_StrDupWithTrailingDot(path);
     oper_success->param_errs = NULL;             // Start from an empty list
     oper_success->n_param_errs = 0;
 

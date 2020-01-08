@@ -6,11 +6,11 @@ AM_CPPFLAGS = -I$(top_srcdir)/src \
               -I$(top_srcdir)/src/include
 
 # Enable warnings, treat warnings as errors, and stop compilation at
-# first error.  Define _GNU_SOURCE to pickup GNU version of strerror_r() and dladdr()
+# first error.
 # Sub-makes are free to supplement AM_CFLAGS, e.g.
 #         AM_CFLAGS += -Wno-error
 # as necessary.
-AM_CFLAGS = -Wall -Wfatal-errors -D _GNU_SOURCE
+AM_CFLAGS = -Wall -Wfatal-errors
 
 bin_PROGRAMS = obuspa
 
@@ -78,7 +78,9 @@ obuspa_SOURCES = src/core/main.c \
                     src/protobuf-c/usp-msg.pb-c.c \
                     src/protobuf-c/usp-record.pb-c.c \
                     src/protobuf-c/protobuf-c.c \
-					src/core/usp_coap.c \
+					src/core/coap_common.c \
+					src/core/coap_client.c \
+					src/core/coap_server.c \
                     src/core/uri.c
 
 obuspa_CPPFLAGS = $(openssl_CFLAGS) $(sqlite3_CFLAGS) $(libcurl_CFLAGS) $(libcares_CFLAGS) $(zlib_CFLAGS)

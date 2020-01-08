@@ -67,6 +67,14 @@ typedef enum
 } mtp_protocol_t;
 
 //------------------------------------------------------------------------------
+// Enumeration describing what the contents of pbuf are to MSG_HANDLER_LogMessageToSend()
+typedef enum
+{
+    kMtpContentType_UspRecord,        // Protobuf encoded USP Record
+    kMtpContentType_Text,             // Plain text
+} mtp_content_type_t;
+
+//------------------------------------------------------------------------------
 // Structure containing a count of causes of connectivity failures for a particular MTP (eg STOMP, HTTP)
 typedef struct
 {
@@ -97,16 +105,20 @@ typedef enum
 //------------------------------------------------------------------------------
 // Global Variables
 extern scheduled_action_t mtp_exit_scheduled;
-extern bool is_mtp_thread_exited;
+extern bool is_coap_mtp_thread_exited;
+extern bool is_stomp_mtp_thread_exited;
 
 //------------------------------------------------------------------------------
 // API functions
 int MTP_EXEC_Init(void);
-void *MTP_EXEC_Main(void *args);
-void MTP_EXEC_Wakeup(void);
+void *MTP_EXEC_StompMain(void *args);
+void *MTP_EXEC_CoapMain(void *args);
+void MTP_EXEC_StompWakeup(void);
 void MTP_EXEC_ScheduleExit(void);
 void MTP_EXEC_ActivateScheduledActions(void);
-
+#ifdef ENABLE_COAP
+void MTP_EXEC_CoapWakeup(void);
+#endif
 //------------------------------------------------------------------------------
 
 #endif

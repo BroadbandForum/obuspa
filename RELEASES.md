@@ -1,4 +1,11 @@
 # Release History
+## Release 2.1.0
+  * Simultaneous sessions with multiple CoAP based controllers are now supported
+  * USP Record error handling has been upgraded to be compliant with the USP 1.1 Specification
+  * The InstantiatedPath field in the USP AddResponse message is now formed correctly
+  * Percent encoded CoAP resource names are now handled correctly
+  * Queued USP notifications are not sent out if their NotifExpiration period has elapsed
+
 ## Release 2.0.0
   * CoAP
      * New USP optimized implementation

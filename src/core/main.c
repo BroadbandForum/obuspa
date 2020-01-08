@@ -278,11 +278,19 @@ int main(int argc, char *argv[])
     }
 
     // Exit if unable to spawn off a thread to service the MTPs
-    err = OS_UTILS_CreateThread(MTP_EXEC_Main, NULL);
+    err = OS_UTILS_CreateThread(MTP_EXEC_StompMain, NULL);
     if (err != USP_ERR_OK)
     {
         goto exit;
     }
+
+#ifdef ENABLE_COAP
+    err = OS_UTILS_CreateThread(MTP_EXEC_CoapMain, NULL);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+#endif
 
     // Exit if unable to spawn off a thread to perform bulk data collection posts
     err = OS_UTILS_CreateThread(BDC_EXEC_Main, NULL);

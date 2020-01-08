@@ -66,7 +66,7 @@ static const char device_cont_root[] = DEVICE_CONT_ROOT;
 
 //------------------------------------------------------------------------------
 // Time at which next periodic notification should fire
-static time_t first_periodic_notification_time = (time_t) INT_MAX;
+static time_t first_periodic_notification_time = END_OF_TIME;
 
 //------------------------------------------------------------------------------
 // Structure representing entries in the Device.LocalAgent.Controller.{i}.MTP.{i} table
@@ -184,7 +184,7 @@ int DEVICE_CONTROLLER_Init(void)
     controller_mtp_t *mtp;
 
     // Add timer to be called back when first periodic notification fires
-    first_periodic_notification_time = (time_t) INT_MAX;
+    first_periodic_notification_time = END_OF_TIME;
     SYNC_TIMER_Add(PeriodicNotificationExec, 0, first_periodic_notification_time);
 
     // Mark all controller and mtp slots as unused
@@ -548,18 +548,22 @@ void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role,
 ** \param   endpoint_id - controller to send the message to
 ** \param   pbuf - pointer to buffer containing binary protobuf message. Ownership of this buffer passes to protocol handler, if successful
 ** \param   pbuf_len - length of buffer containing protobuf binary message
+** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
 ** \param   mrt - details of where this USP response message should be sent
+** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
 ** 
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, mtp_reply_to_t *mrt)
+int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time)
 {
     int err = USP_ERR_INTERNAL_ERROR;
     controller_t *cont;
     controller_mtp_t *mtp;
     char *agent_queue;
     mtp_reply_to_t dest;
+    char raw_err_id_header[256];        // header's contents before colons have been escaped (to '\c')
+    char err_id_header[256];            // header's contents after colons have been escaped (to '\c')
 
     // Take a copy of the MTP destination parameters we've been given
     // because we may modify it (and we don't want the caller to free anything we put in it, as they are owned by the data model)
@@ -620,12 +624,17 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
     {
         case kMtpProtocol_STOMP:
             agent_queue = DEVICE_MTP_GetAgentStompQueue(dest.stomp_instance);
-            err = DEVICE_STOMP_QueueBinaryMessage(usp_msg_type, dest.stomp_instance, dest.stomp_dest, agent_queue, pbuf, pbuf_len);
+
+            // Form the colon escaped contents of the 'usp-err-id' header
+            USP_SNPRINTF(raw_err_id_header, sizeof(raw_err_id_header), "%s/%s", endpoint_id, usp_msg_id);
+            TEXT_UTILS_ReplaceCharInString(raw_err_id_header, ':', "\\c", err_id_header, sizeof(err_id_header));
+
+            err = DEVICE_STOMP_QueueBinaryMessage(usp_msg_type, dest.stomp_instance, dest.stomp_dest, agent_queue, pbuf, pbuf_len, err_id_header, expiry_time);
             break;
 
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
-            err = COAP_QueueBinaryMessage(usp_msg_type, cont->instance, mtp->instance, pbuf, pbuf_len, &dest);
+            err = COAP_CLIENT_QueueBinaryMessage(usp_msg_type, cont->instance, mtp->instance, pbuf, pbuf_len, &dest, expiry_time);
             break;
 #endif
         default:
@@ -893,7 +902,7 @@ int Notify_ControllerMtpDeleted(dm_req_t *req)
     //  address to send to, the STOMP connection itself is separate)
     if ((mtp->protocol == kMtpProtocol_CoAP) && (mtp->enable) && (cont->enable))
     {
-        COAP_StopClient(cont->instance, mtp->instance);
+        COAP_CLIENT_Stop(cont->instance, mtp->instance);
     }
 #endif
 
@@ -987,17 +996,20 @@ int Validate_ControllerMtpEnable(dm_req_t *req, char *value)
 int Validate_ControllerMtpProtocol(dm_req_t *req, char *value)
 {
     int err;
+    int index;
     mtp_protocol_t protocol;
     bool enable;
     char path[MAX_DM_PATH];
 
     // Exit if the protocol was invalid
-    protocol = TEXT_UTILS_StringToEnum(value, mtp_protocols, NUM_ELEM(mtp_protocols));
-    if (protocol == INVALID)
+    index = TEXT_UTILS_StringToEnum(value, mtp_protocols, NUM_ELEM(mtp_protocols));
+    if (index == INVALID)
     {
         USP_ERR_SetMessage("%s: Invalid or unsupported protocol %s", __FUNCTION__, value);
         return USP_ERR_INVALID_VALUE;
     }
+
+    protocol = (mtp_protocol_t) index;
 
     // Exit if the new protocol is not STOMP. In this case we do not have to check for only one enabled STOMP MTP
     if (protocol != kMtpProtocol_STOMP)
@@ -1126,7 +1138,7 @@ int Notify_ControllerEnable(dm_req_t *req, char *value)
             if ((mtp->enable) && (cont->enable))
             {
                 // Exit if unable to start client
-                err = COAP_StartClient(cont->instance, mtp->instance, cont->endpoint_id);
+                err = COAP_CLIENT_Start(cont->instance, mtp->instance, cont->endpoint_id);
                 if (err != USP_ERR_OK)
                 {
                     return err;
@@ -1134,7 +1146,7 @@ int Notify_ControllerEnable(dm_req_t *req, char *value)
             }
             else
             {
-                COAP_StopClient(cont->instance, mtp->instance);
+                COAP_CLIENT_Stop(cont->instance, mtp->instance);
             }
         }
     }
@@ -1236,7 +1248,7 @@ int Notify_ControllerMtpEnable(dm_req_t *req, char *value)
         if ((mtp->enable) && (cont->enable))
         {
             // Exit if unable to start client
-            err = COAP_StartClient(cont->instance, mtp->instance, cont->endpoint_id);
+            err = COAP_CLIENT_Start(cont->instance, mtp->instance, cont->endpoint_id);
             if (err != USP_ERR_OK)
             {
                 return err;
@@ -1244,7 +1256,7 @@ int Notify_ControllerMtpEnable(dm_req_t *req, char *value)
         }
         else
         {
-            COAP_StopClient(cont->instance, mtp->instance);
+            COAP_CLIENT_Stop(cont->instance, mtp->instance);
         }
     }
 #endif
@@ -1270,6 +1282,7 @@ int Notify_ControllerMtpProtocol(dm_req_t *req, char *value)
     controller_t *cont;
     controller_mtp_t *mtp;
     mtp_protocol_t new_protocol;
+    int index;
 
     // Determine MTP to be updated
     mtp = FindControllerMtpFromReq(req, &cont);
@@ -1281,8 +1294,9 @@ int Notify_ControllerMtpProtocol(dm_req_t *req, char *value)
 #endif
 
     // Extract the new value
-    new_protocol = TEXT_UTILS_StringToEnum(value, mtp_protocols, NUM_ELEM(mtp_protocols));
-    USP_ASSERT(new_protocol != INVALID); // Value must already have validated to have got here
+    index = TEXT_UTILS_StringToEnum(value, mtp_protocols, NUM_ELEM(mtp_protocols));
+    USP_ASSERT(index != INVALID); // Value must already have validated to have got here
+    new_protocol = (mtp_protocol_t) index;
 
     // Exit if protocol has not changed
     if (new_protocol == mtp->protocol)
@@ -1305,13 +1319,13 @@ int Notify_ControllerMtpProtocol(dm_req_t *req, char *value)
     // Stop the old CoAP server, if we've moved from CoAP
     if (old_protocol == kMtpProtocol_CoAP)
     {
-        COAP_StopClient(cont->instance, mtp->instance);
+        COAP_CLIENT_Stop(cont->instance, mtp->instance);
     }
 
     // Start the new CoAP server, if we've moved to CoAP, exiting if an error occurred
     if (new_protocol == kMtpProtocol_CoAP)
     {
-        err = COAP_StartClient(cont->instance, mtp->instance, cont->endpoint_id);
+        err = COAP_CLIENT_Start(cont->instance, mtp->instance, cont->endpoint_id);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -1950,7 +1964,7 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     // Start a CoAP client to this controller (if required)
     if ((mtp->protocol == kMtpProtocol_CoAP) && (mtp->enable) && (cont->enable))
     {
-        err = COAP_StartClient(cont->instance, mtp_instance, cont->endpoint_id);
+        err = COAP_CLIENT_Start(cont->instance, mtp_instance, cont->endpoint_id);
         if (err != USP_ERR_OK)
         {
             goto exit;
@@ -2518,7 +2532,7 @@ void UpdateFirstPeriodicNotificationTime(void)
 {
     int i;
     controller_t *cont;
-    time_t first = INT_MAX;
+    time_t first = END_OF_TIME;
 
     // Iterate over all controllers
     for (i=0; i<MAX_CONTROLLERS; i++)

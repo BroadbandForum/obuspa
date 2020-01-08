@@ -53,27 +53,43 @@
 #endif
 
 //------------------------------------------------------------------------------
-// Unix domain socket pair used to implement a wakeup message queue
-// One socket is always used for sending, and the other always used for receiving
-static int mtp_mq_sockets[2] = {-1, -1};
-
-#define mq_rx_socket  mtp_mq_sockets[0]
-#define mq_tx_socket  mtp_mq_sockets[1]
-
-//------------------------------------------------------------------------------
 // Enumeration that is set when a USP Agent stop has been scheduled (for when connections have finished sending and receiving messages)
 scheduled_action_t mtp_exit_scheduled = kScheduledAction_Off;
 
 //------------------------------------------------------------------------------
+// Unix domain socket pair used to implement a wakeup message queue
+// One socket is always used for sending, and the other always used for receiving
+static int mtp_stomp_mq_sockets[2] = {-1, -1};
+
+#define mq_stomp_rx_socket  mtp_stomp_mq_sockets[0]
+#define mq_stomp_tx_socket  mtp_stomp_mq_sockets[1]
+
+//------------------------------------------------------------------------------
 // Flag set to true if the MTP thread has exited
 // This gets set after a scheduled exit due to a stop command, Reboot or FactoryReset operation
-bool is_mtp_thread_exited = false;
+bool is_stomp_mtp_thread_exited = false;
+
+
+#ifdef ENABLE_COAP
+//------------------------------------------------------------------------------
+// Unix domain socket pair used to implement a wakeup message queue
+// One socket is always used for sending, and the other always used for receiving
+static int mtp_coap_mq_sockets[2] = {-1, -1};
+
+#define mq_coap_rx_socket  mtp_coap_mq_sockets[0]
+#define mq_coap_tx_socket  mtp_coap_mq_sockets[1]
+
+//------------------------------------------------------------------------------
+// Flag set to true if the MTP thread has exited
+// This gets set after a scheduled exit due to a stop command, Reboot or FactoryReset operation
+bool is_coap_mtp_thread_exited = false;
+#endif
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void UpdateMtpSockSet(socket_set_t *set);
 void ProcessMtpSocketActivity(socket_set_t *set);
-void ProcessMtpWakeupQueueSocketActivity(socket_set_t *set);
+void ProcessMtpWakeupQueueSocketActivity(socket_set_t *set, int sock);
 
 /*********************************************************************//**
 **
@@ -91,35 +107,45 @@ int MTP_EXEC_Init(void)
     int err;
 
     // Exit if unable to initialize the unix domain socket pair used to implement a wakeup message queue
-    err = socketpair(AF_UNIX, SOCK_DGRAM, 0, mtp_mq_sockets);
+    err = socketpair(AF_UNIX, SOCK_DGRAM, 0, mtp_stomp_mq_sockets);
     if (err != 0)
     {
         USP_ERR_ERRNO("socketpair", errno);
         return USP_ERR_INTERNAL_ERROR;
     }
 
+#ifdef ENABLE_COAP
+    // Exit if unable to initialize the unix domain socket pair used to implement a wakeup message queue
+    err = socketpair(AF_UNIX, SOCK_DGRAM, 0, mtp_coap_mq_sockets);
+    if (err != 0)
+    {
+        USP_ERR_ERRNO("socketpair", errno);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+#endif
+
     return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** MTP_EXEC_Wakeup
+** MTP_EXEC_StompWakeup
 **
-** Posts a message on the MTP thread's queue, to cause it to wakeup from the select()
+** Posts a message on each MTP thread's queue, to cause it to wakeup from the select()
 **
 ** \param   None
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-void MTP_EXEC_Wakeup(void)
+void MTP_EXEC_StompWakeup(void)
 {
     #define WAKEUP_MESSAGE 'W'
     char msg = WAKEUP_MESSAGE;
     int bytes_sent;
     
     // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    bytes_sent = send(mq_stomp_tx_socket, &msg, sizeof(msg), 0);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
@@ -127,6 +153,34 @@ void MTP_EXEC_Wakeup(void)
         return;
     }
 }
+
+#ifdef ENABLE_COAP
+/*********************************************************************//**
+**
+** MTP_EXEC_CoapWakeup
+**
+** Posts a message on each MTP thread's queue, to cause it to wakeup from the select()
+**
+** \param   None
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+void MTP_EXEC_CoapWakeup(void)
+{
+    char msg = WAKEUP_MESSAGE;
+    int bytes_sent;
+
+    // Send the message
+    bytes_sent = send(mq_coap_tx_socket, &msg, sizeof(msg), 0);
+    if (bytes_sent != sizeof(msg))
+    {
+        char buf[USP_ERR_MAXLEN];
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        return;
+    }
+}
+#endif
 
 /*********************************************************************//**
 **
@@ -162,8 +216,14 @@ void MTP_EXEC_ScheduleExit(void)
 **************************************************************************/
 void MTP_EXEC_ActivateScheduledActions(void)
 {
-    // Exit if MTP thread has exited
-    if (is_mtp_thread_exited)
+#ifdef ENABLE_COAP
+    #define either_mtp_exited    (is_stomp_mtp_thread_exited || is_coap_mtp_thread_exited)
+#else
+    #define either_mtp_exited    (is_stomp_mtp_thread_exited)
+#endif
+
+    // Exit if either MTP thread has already exited (because if they have, there is no need to schedule any further actions)
+    if (either_mtp_exited)
     {
         return;
     }
@@ -172,33 +232,38 @@ void MTP_EXEC_ActivateScheduledActions(void)
     if (mtp_exit_scheduled == kScheduledAction_Signalled)
     {
         mtp_exit_scheduled = kScheduledAction_Activated;
-        MTP_EXEC_Wakeup();
+        MTP_EXEC_StompWakeup();
+#ifdef ENABLE_COAP
+        MTP_EXEC_CoapWakeup();
+#endif
     }
 
+    // Activate all scheduled reconnects, if signalled
     STOMP_ActivateScheduledActions();
 }
 
 /*********************************************************************//**
 **
-** MTP_EXEC_Main
+** MTP_EXEC_StompMain
 **
-** Main loop of MTP thread
+** Main loop of MTP thread for STOMP
 **
 ** \param   args - arguments (currently unused)
 **
 ** \return  None
 **
 **************************************************************************/
-void *MTP_EXEC_Main(void *args)
+void *MTP_EXEC_StompMain(void *args)
 {
     int num_sockets;
     socket_set_t set;
-    bool all_responses_sent;
 
     while(FOREVER)
     {
-        // Create the socket set to receive/transmit on (with timeout)
-        UpdateMtpSockSet(&set);
+        // Create the set of all sockets to receive/transmit on (with timeout)
+        SOCKET_SET_Clear(&set);
+        STOMP_UpdateAllSockSet(&set);
+        SOCKET_SET_AddSocketToReceiveFrom(mq_stomp_rx_socket, MAX_SOCKET_TIMEOUT, &set);
 
         // Wait for read/write activity on sockets or timeout
         num_sockets = SOCKET_SET_Select(&set);
@@ -217,115 +282,128 @@ void *MTP_EXEC_Main(void *args)
             case 0:
                 // No controllers with any activity, but we still may need to process a timeout, so fall-through
             default:
-                // Controllers with activity
-                ProcessMtpSocketActivity(&set);
+                // Process the wakeup queue
+                ProcessMtpWakeupQueueSocketActivity(&set, mq_stomp_rx_socket);
+
+                // Process activity on all STOMP message queues
+                STOMP_ProcessAllSocketActivity(&set);
                 break;
         }
 
         // Exit this thread, if an exit is scheduled and all responses have been sent
         if (mtp_exit_scheduled == kScheduledAction_Activated)
         {
-            #ifdef ENABLE_COAP
-            all_responses_sent = STOMP_AreAllResponsesSent() && COAP_AreAllResponsesSent();
-            #else
-            all_responses_sent = STOMP_AreAllResponsesSent();
-            #endif
-             
-            if (all_responses_sent)
+            if (STOMP_AreAllResponsesSent())
             {
                 // Free all memory associated with MTP layer
                 STOMP_Destroy();
 
-                #ifdef ENABLE_COAP
-                COAP_Destroy();
-                #endif
-
                 // Prevent the data model from making any other changes to the MTP thread
-                is_mtp_thread_exited = true;
+                is_stomp_mtp_thread_exited = true;
 
                 // Signal the data model thread that this thread has exited
-                DM_EXEC_PostMtpThreadExited();
+                DM_EXEC_PostMtpThreadExited(STOMP_EXITED);
                 return NULL;
             }
         }
     }
 }
 
+#ifdef ENABLE_COAP
 /*********************************************************************//**
 **
-** UpdateMtpSockSet
+** MTP_EXEC_CoapMain
 **
-** Adds all sockets to wait for activity on, into the socket set
-** Also updates the associated timeout for activity
-** This function must be called every time before the call to select(), as select alters the socket set
+** Main loop of MTP thread for CoAP
 **
-** \param   set - pointer to socket set structure to update with sockets to wait for activity on
+** \param   args - arguments (currently unused)
 **
 ** \return  None
 **
 **************************************************************************/
-void UpdateMtpSockSet(socket_set_t *set)
+void *MTP_EXEC_CoapMain(void *args)
 {
-    // Add all controller sockets to the socket set
-    SOCKET_SET_Clear(set);
-    STOMP_UpdateAllSockSet(set);
-#ifdef ENABLE_COAP
-    COAP_UpdateAllSockSet(set);
-#endif
+    int num_sockets;
+    socket_set_t set;
 
-    // Add the message queue receiving socket to the socket set
-    SOCKET_SET_AddSocketToReceiveFrom(mq_rx_socket, MAX_SOCKET_TIMEOUT, set);
+    while(FOREVER)
+    {
+        // Create the set of all sockets to receive/transmit on (with timeout)
+        SOCKET_SET_Clear(&set);
+        COAP_UpdateAllSockSet(&set);
+        SOCKET_SET_AddSocketToReceiveFrom(mq_coap_rx_socket, MAX_SOCKET_TIMEOUT, &set);
+
+        // Wait for read/write activity on sockets or timeout
+        num_sockets = SOCKET_SET_Select(&set);
+
+        // Process socket activity
+        switch(num_sockets)
+        {
+            case -1:
+                // An unrecoverable error has occurred
+                USP_LOG_Error("%s: Unrecoverable socket select() error. Aborting MTP thread", __FUNCTION__);
+                return NULL;
+                break;
+
+                break;
+
+            case 0:
+                // No controllers with any activity, but we still may need to process a timeout, so fall-through
+            default:
+                // Process the wakeup queue
+                ProcessMtpWakeupQueueSocketActivity(&set, mq_coap_rx_socket);
+
+                // Process activity on all COAP message queues
+                COAP_ProcessAllSocketActivity(&set);
+                break;
+        }
+
+        // Exit this thread, if an exit is scheduled and all responses have been sent
+        if (mtp_exit_scheduled == kScheduledAction_Activated)
+        {
+            if (COAP_AreAllResponsesSent())
+            {
+                // Free all memory associated with MTP layer
+                COAP_Destroy();
+
+                // Prevent the data model from making any other changes to the MTP thread
+                is_coap_mtp_thread_exited = true;
+
+                // Signal the data model thread that this thread has exited
+                DM_EXEC_PostMtpThreadExited(COAP_EXITED);
+                return NULL;
+            }
+        }
+    }
 }
-
-/*********************************************************************//**
-**
-** ProcessMtpSocketActivity
-**
-** Processes all activity on sockets (ie receiving messages and sending messages)
-**
-** \param   set - pointer to socket set structure containing sockets with activity on them
-**
-** \return  None
-**
-**************************************************************************/
-void ProcessMtpSocketActivity(socket_set_t *set)
-{
-    // Process the wakeup queue
-    ProcessMtpWakeupQueueSocketActivity(set);
-
-    // Process activity on all STOMP message queues
-    STOMP_ProcessAllSocketActivity(set);
- 
-#ifdef ENABLE_COAP
-    // Process activity on all CoAP message queues
-    COAP_ProcessAllSocketActivity(set);
-#endif
-}
+#endif // ENABLE_COAP
 
 /*********************************************************************//**
 **
 ** ProcessMtpWakeupQueueSocketActivity
 **
 ** Processes any activity on the message queue receiving socket
+** NOTE: There are separate sockets for STOMP and CoAP MTP tasks, but both use this function for processing
 **
 ** \param   set - pointer to socket set structure containing sockets with activity on them
+** \param   sock - socket on which the wakeup message is received
 **
 ** \return  None (any errors that occur are handled internally)
 **
 **************************************************************************/
-void ProcessMtpWakeupQueueSocketActivity(socket_set_t *set)
+void ProcessMtpWakeupQueueSocketActivity(socket_set_t *set, int sock)
 {
     int bytes_read;
     char msg;
 
     // Exit if there is no activity on the wakeup message queue socket
-    if (SOCKET_SET_IsReadyToRead(mq_rx_socket, set) == 0)
+    if (SOCKET_SET_IsReadyToRead(sock, set) == 0)
     {
         return;
     }
 
     // Exit if unable to purge this wakeup message from the queue
-    bytes_read = recv(mq_rx_socket, &msg, sizeof(msg), 0);
+    bytes_read = recv(sock, &msg, sizeof(msg), 0);
     if (bytes_read != sizeof(msg))
     {
         USP_LOG_Error("%s: recv() did not return a full message", __FUNCTION__);

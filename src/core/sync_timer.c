@@ -94,7 +94,7 @@ void SYNC_TIMER_Init(void)
 {
     sync_timers.vector = NULL;
     sync_timers.num_entries = 0;
-    first_sync_timer_time = (time_t) INT_MAX;
+    first_sync_timer_time = END_OF_TIME;
 }
 
 /*********************************************************************//**
@@ -392,7 +392,7 @@ void UpdateFirstSyncTimerTime(void)
     time_t first;
     
     // Iterate over all timers
-    first = (time_t) INT_MAX;
+    first = END_OF_TIME;
     for (i=0; i < sync_timers.num_entries; i++)
     {
         // Skip this timer if it is not enabled

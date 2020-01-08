@@ -92,11 +92,12 @@ typedef struct
     // Following member variables only set if reply_to was specified and USP message was received over STOMP
     char *stomp_dest;
     int stomp_instance;
+    char *stomp_err_id;         // if the USP record or USP message are formed incorrectly, this is used to identify the STOMP frame that was in error to the controller
 
     // Following member variables only set if reply_to was specified and USP message was received over CoAP
-    char *coap_host;
+    char *coap_host;                    // Percent encoded hostname
     int coap_port;
-    char *coap_resource;
+    char *coap_resource;                // Percent encoded resource name
     bool coap_encryption;
     bool coap_reset_session_hint;       // Set if an existing DTLS session with this host should be reset. 
                                         // If we know that the USP request came in on a new DTLS session, then it is likely 
@@ -127,7 +128,7 @@ int DEVICE_CONTROLLER_Init(void);
 int DEVICE_CONTROLLER_Start(void);
 void DEVICE_CONTROLLER_Stop(void);
 int DEVICE_CONTROLLER_FindInstanceByEndpointId(char *endpoint_id);
-int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, mtp_reply_to_t *mtp_reply_to);
+int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *usp_msg_id, mtp_reply_to_t *mtp_reply_to, time_t expiry_time);
 char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance);
 int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_role);
 int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_role_t *combined_role);
@@ -146,7 +147,7 @@ int DEVICE_STOMP_Init(void);
 int DEVICE_STOMP_Start(void);
 void DEVICE_STOMP_Stop(void);
 int DEVICE_STOMP_StartAllConnections(void);
-int DEVICE_STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *controller_queue, char *agent_queue, unsigned char *pbuf, int pbuf_len);
+int DEVICE_STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *controller_queue, char *agent_queue, unsigned char *pbuf, int pbuf_len, char *err_id_header, time_t expiry_time);
 void DEVICE_STOMP_ScheduleReconnect(int instance);
 mtp_status_t DEVICE_STOMP_GetMtpStatus(int instance);
 int DEVICE_STOMP_CountEnabledConnections(void);

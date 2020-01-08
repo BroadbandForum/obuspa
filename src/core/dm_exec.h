@@ -43,12 +43,22 @@
 
 #include "device.h"
 //------------------------------------------------------------------------------
+// Bitmask indicating which thread exited to DM_EXEC_PostMtpThreadExited()
+#define STOMP_EXITED 0x00000001
+#define COAP_EXITED  0x00000002
+
+#ifdef ENABLE_COAP
+    #define ALL_MTP_EXITED    (STOMP_EXITED | COAP_EXITED)
+#else
+    #define ALL_MTP_EXITED    (STOMP_EXITED)
+#endif
+//------------------------------------------------------------------------------
 // API functions
 int DM_EXEC_Init(void);
 void DM_EXEC_Destroy(void);
 void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt);
 void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role, char *allowed_controllers);
-void DM_EXEC_PostMtpThreadExited(void);
+void DM_EXEC_PostMtpThreadExited(unsigned flags);
 void DM_EXEC_HandleStompHandshakeComplete(int stomp_instance, ctrust_role_t role, char *allowed_controllers);
 int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
 void *DM_EXEC_Main(void *args);

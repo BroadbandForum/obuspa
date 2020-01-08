@@ -37,11 +37,14 @@ This database may be created using either:
 * 'obuspa -c dbset' commands (see next section)
 * code in vendor_factory_reset_example.c (if INCLUDE_PROGRAMMATIC_FACTORY_RESET is defined in vendor_defs.h)
 * a text file located by the '-r' option
+
 To start with, use the last option, as this is the simplest method.
 
 If OB-USP-AGENT cannot find a database when it starts up, then it will create one using the parameter values specified in the file located by the '-r' option.
 
 To specify the data model parameters and values used to create the factory reset database, modify factory_reset_example.txt. You will need to modify the STOMP connection parameters and the USP EndpointID of the controller to connect to.
+
+When using this option, to prevent the code in vendor_factory_reset_example.c from overriding the values specified in the file located by the '-r' option, ensure that INCLUDE_PROGRAMMATIC_FACTORY_RESET is undefined in vendor_defs.h.
 
 To create the database and run OB-USP-AGENT connecting to a STOMP server from network interface eth0 with protocol and trace logging enabled to stdout, use the following command:
 ```

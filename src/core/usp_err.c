@@ -187,7 +187,7 @@ void USP_ERR_SetMessage_SqlParam(const char *func, int line, const char *sqlfunc
 **************************************************************************/
 char *USP_ERR_ToString(int err, char *buf, int len)
 {
-#if (_POSIX_C_SOURCE >= 200112L || _XOPEN_SOURCE >= 600) && ! _GNU_SOURCE
+#if HAVE_STRERROR_R && !STRERROR_R_CHAR_P
     // XSI version of strerror_r
     strerror_r(err, buf, len);
     return buf;

@@ -310,11 +310,13 @@ int DEVICE_STOMP_StartAllConnections(void)
 **                        NOTE: This may be NULL, if agent's STOMP queue is set by subscribe_dest: STOMP header
 ** \param   pbuf - pointer to buffer containing binary protobuf message. Ownership of this buffer passes to this code, if successful
 ** \param   pbuf_len - length of buffer containing protobuf binary message
+** \param   err_id_header - pointer to string containing the STOMP usp-err-id header
+** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DEVICE_STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *controller_queue, char *agent_queue, unsigned char *pbuf, int pbuf_len)
+int DEVICE_STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *controller_queue, char *agent_queue, unsigned char *pbuf, int pbuf_len, char *err_id_header, time_t expiry_time)
 {
     stomp_conn_params_t *sp;
 
@@ -326,7 +328,7 @@ int DEVICE_STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int insta
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    STOMP_QueueBinaryMessage(usp_msg_type, instance, controller_queue, agent_queue, pbuf, pbuf_len);
+    STOMP_QueueBinaryMessage(usp_msg_type, instance, controller_queue, agent_queue, pbuf, pbuf_len, kMtpContentType_UspRecord, err_id_header, expiry_time);
     
     return USP_ERR_OK;
 }
