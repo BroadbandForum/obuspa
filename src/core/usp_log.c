@@ -49,7 +49,9 @@
 #include <dlfcn.h>
 #include <openssl/err.h>
 
+#ifdef HAVE_EXECINFO_H
 #include <execinfo.h>
+#endif
 
 #include "common_defs.h"
 #include "cli.h"
@@ -139,6 +141,7 @@ int USP_LOG_SetFile(char *file)
 ** \return  None
 **
 **************************************************************************/
+#ifdef HAVE_EXECINFO_H
 void USP_LOG_Callstack(void)
 {
     #define MAX_CALLSTACK  30
@@ -170,6 +173,11 @@ void USP_LOG_Callstack(void)
         }
     }
 }
+#else
+void USP_LOG_Callstack(void)
+{
+}
+#endif
 
 /*********************************************************************//**
 **

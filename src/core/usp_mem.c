@@ -51,7 +51,9 @@
 #include <unistd.h>
 #include <dlfcn.h>
 
+#ifdef HAVE_EXECINFO_H
 #include <execinfo.h>
+#endif
 
 #include "common_defs.h"
 #include "cli.h"
@@ -414,7 +416,7 @@ void USP_MEM_StartCollection(void)
     collect_memory_info = true;
     print_leak_report = true;
 
-#ifdef HAVE_MALLOC_H
+#ifdef HAVE_MALLINFO
     // Store initial static memory usage after data model has been registered
     baseline_memory_usage = mallinfo().uordblks;
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
@@ -460,7 +462,7 @@ void USP_MEM_StopCollection(void)
 **************************************************************************/
 void USP_MEM_PrintSummary(void)
 {
-#ifdef HAVE_MALLOC_H
+#ifdef HAVE_MALLINFO
     USP_LOG_Info("Memory in use: %d", (int) mallinfo().uordblks);
 #endif
 }
@@ -482,7 +484,7 @@ void USP_MEM_Print(void)
     minfo_t *mi;
     int count = 0;
 
-#ifdef HAVE_MALLOC_H
+#ifdef HAVE_MALLINFO
     static int last_memory_usage = 0;
     int cur_memory_usage;
 #endif
@@ -493,7 +495,7 @@ void USP_MEM_Print(void)
         return;
     }
 
-#ifdef HAVE_MALLOC_H
+#ifdef HAVE_MALLINFO
     // Exit if no change in memory usage since last time called
     cur_memory_usage = mallinfo().uordblks;
     if (cur_memory_usage == last_memory_usage)
@@ -576,7 +578,7 @@ int USP_MEM_PrintAll(void)
     minfo_t *mi;
     int count = 0;
 
-#ifdef HAVE_MALLOC_H
+#ifdef HAVE_MALLINFO
     USP_LOG_Info("Memory in use: %d (%s line %d)", (int) mallinfo().uordblks, __FUNCTION__, __LINE__);
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
 #endif
@@ -710,6 +712,7 @@ minfo_t *FindMemInfoByPtr(void *ptr)
 ** \return  None
 **
 **************************************************************************/
+#ifdef HAVE_EXECINFO_H
 void GetCallers(char **callers, int num_callers)
 {
     int i;
@@ -752,4 +755,9 @@ void GetCallers(char **callers, int num_callers)
         callers[i] = NULL;
     }
 }
-
+#else
+void GetCallers(char **callers, int num_callers)
+{
+	*callers = NULL;
+}
+#endif
