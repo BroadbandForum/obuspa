@@ -657,11 +657,10 @@ int ValidateUspRecord(UspRecord__Record *rec)
         USP_LOG_Warning("%s: WARNING: Not performing integrity check on non-payload fields of received USP Record", __FUNCTION__);
     }
 
-    // Exit if ignoring sender certificate
+    // Ignore sender certificate
     if ((rec->sender_cert.len != 0) || (rec->sender_cert.data != NULL))
     {
-        USP_ERR_SetMessage("%s: Ignoring USP record as checking of sender certificate is not supported", __FUNCTION__);
-        return USP_ERR_SECURE_SESS_NOT_SUPPORTED;
+        USP_LOG_Warning("%s: Skipping sender certificate verification", __FUNCTION__);
     }
 
     // Exit if this record contains an End-to-End Session Context (which we don't yet support)
