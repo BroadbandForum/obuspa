@@ -45,7 +45,10 @@
 // Defines for all USP error codes
 #define USP_ERR_OK                        0           // No error
 #define EOK                               USP_ERR_OK
-  
+
+// Internal non USP error codes
+#define USP_ERR_DROP_MSG                  -1
+
 // Message error codes  
 #define USP_ERR_GENERAL_FAILURE           7000       // Message failed. This error indicates a general failure that is described in an err_msg element.
 #define USP_ERR_MESSAGE_NOT_UNDERSTOOD    7001       // Attempted message was not understood

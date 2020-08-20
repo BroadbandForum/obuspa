@@ -1129,7 +1129,7 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
 
     // Exit if handled the USP record successfully
     err = MSG_HANDLER_HandleBinaryRecord(pbuf, pbuf_len, role, allowed_controllers, mrt);
-    if (err == USP_ERR_OK)
+    if (err == USP_ERR_OK || err == USP_ERR_DROP_MSG)
     {
         return;
     }

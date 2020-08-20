@@ -626,7 +626,7 @@ int ValidateUspRecord(UspRecord__Record *rec)
     if ((rec->version == NULL) || (strcmp(rec->version, "1.0") != 0))
     {
         USP_ERR_SetMessage("%s: Ignoring USP record with unsupported version (%s)", __FUNCTION__, rec->version);
-        return USP_ERR_RECORD_FIELD_INVALID;
+        return USP_ERR_DROP_MSG;
     }
 
     // Exit if this record is not supposed to be processed by us
@@ -634,7 +634,7 @@ int ValidateUspRecord(UspRecord__Record *rec)
     if ((rec->to_id == NULL) || (strcmp(rec->to_id, endpoint_id) != 0))
     {
         USP_LOG_Warning("%s: WARNING: Ignoring USP record as it was addressed to endpoint_id=%s", __FUNCTION__, rec->to_id);
-        return USP_ERR_OK;
+        return USP_ERR_DROP_MSG;
     }
 
     // Exit if no USP destination to send the message back to
