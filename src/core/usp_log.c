@@ -49,7 +49,9 @@
 #include <dlfcn.h>
 #include <openssl/err.h>
 
+#if defined(__GLIBC__)
 #include <execinfo.h>
+#endif
 
 #include "common_defs.h"
 #include "cli.h"
@@ -151,8 +153,11 @@ void USP_LOG_Callstack(void)
     int indent;
 
     // Get program counter return addresses of all functions in the callstack
+#if defined(__GLIBC__)
     stack_size = backtrace(callstack, NUM_ELEM(callstack));
-
+#else
+    stack_size = 0;
+#endif
     // Convert all addresses to function name
     USP_LOG_Info("Callstack is:-");
     for (i=stack_size-3; i>0; i--)          // Minus 3 because we want to start at main() - not callstack prior to main()

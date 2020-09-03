@@ -51,7 +51,9 @@
 #include <unistd.h>
 #include <dlfcn.h>
 
+#if defined(__GLIBC__)
 #include <execinfo.h>
+#endif
 
 #include "common_defs.h"
 #include "cli.h"
@@ -416,7 +418,11 @@ void USP_MEM_StartCollection(void)
 
 #ifdef HAVE_MALLOC_H
     // Store initial static memory usage after data model has been registered
+#if defined(__GLIBC__)
     baseline_memory_usage = mallinfo().uordblks;
+#else
+    baseline_memory_usage = 0;
+#endif
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
 #endif
 
@@ -461,7 +467,11 @@ void USP_MEM_StopCollection(void)
 void USP_MEM_PrintSummary(void)
 {
 #ifdef HAVE_MALLOC_H
+#if defined(__GLIBC__)
     USP_LOG_Info("Memory in use: %d", (int) mallinfo().uordblks);
+#else
+USP_LOG_Info("Memory in use: Not supported in this version");
+#endif
 #endif
 }
 
@@ -495,7 +505,11 @@ void USP_MEM_Print(void)
 
 #ifdef HAVE_MALLOC_H
     // Exit if no change in memory usage since last time called
+#if defined(__GLIBC__)
     cur_memory_usage = mallinfo().uordblks;
+#else
+    cur_memory_usage = 0;
+#endif
     if (cur_memory_usage == last_memory_usage)
     {
         USP_LOG_Info("No change in memory usage.\nMemory in use: %d (%s line %d)", cur_memory_usage, __FUNCTION__, __LINE__);
@@ -577,7 +591,9 @@ int USP_MEM_PrintAll(void)
     int count = 0;
 
 #ifdef HAVE_MALLOC_H
+#if defined(__GLIBC__)
     USP_LOG_Info("Memory in use: %d (%s line %d)", (int) mallinfo().uordblks, __FUNCTION__, __LINE__);
+#endif
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
 #endif
 
@@ -723,7 +739,11 @@ void GetCallers(char **callers, int num_callers)
     Dl_info info;
 
     // Get program counter return addresses of all functions in the callstack
+#if defined(__GLIBC__)
     stack_size = backtrace(callstack, NUM_ELEM(callstack));
+#else
+stack_size = 0;
+#endif
 
     // Adjust callstack and stack_size, so that it starts at the grandparent caller of this function
     #define SKIP_UP_CALLSTACK 2

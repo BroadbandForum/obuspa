@@ -44,7 +44,11 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#if defined(__GLIBC__)
 #include <sys/errno.h>
+#else
+#include <errno.h>
+#endif
 #include <stdio.h>
 #include <stdbool.h>
 #include <netinet/in.h>
