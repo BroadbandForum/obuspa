@@ -113,6 +113,8 @@ typedef int ssl_verify_callback_t(int preverify_ok, X509_STORE_CTX *x509_ctx);
 //------------------------------------------------------------------------------
 // Data model components API
 int DEVICE_TIME_Init(void);
+int DEVICE_WIFI_Init(void);
+int DEVICE_WIFI_Start(void);
 int DEVICE_TIME_Start(void);
 int DEVICE_LOCAL_AGENT_Init(void);
 int DEVICE_LOCAL_AGENT_SetDefaults(void);

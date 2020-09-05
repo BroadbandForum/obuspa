@@ -48,6 +48,7 @@ obuspa_SOURCES = src/core/main.c \
                     src/core/device_bulkdata.c \
                     src/core/device_selftest_example.c \
                     src/core/device_time.c \
+                    src/core/device_wifi.c \
                     src/core/uptime.c \
                     src/core/rfc1123.c \
                     src/core/database.c \

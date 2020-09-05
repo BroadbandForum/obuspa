@@ -191,6 +191,8 @@ int DATA_MODEL_Init(void)
     err |= DEVICE_SELF_TEST_Init();
 #endif
 
+    err |= DEVICE_WIFI_Init();
+
 
     // Exit if an error has occurred
     if (err != USP_ERR_OK)
@@ -299,8 +301,9 @@ int DATA_MODEL_Start(void)
     err |= DEVICE_SUBSCRIPTION_Start();   // NOTE: This must come after DEVICE_LOCAL_AGENT_Start(), as it calls DEVICE_LOCAL_AGENT_GetRebootInfo()
     err |= DEVICE_CTRUST_Start();
     err |= DEVICE_BULKDATA_Start();
-
-
+#ifdef SHIBU
+    err |= DEVICE_WIFI_Start();
+#endif
 
 
 
@@ -398,6 +401,7 @@ int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags)
     {
         return USP_ERR_INVALID_PATH;
     }
+	//USP_LOG_Callstack();
 
     // NOTE: We do not check 'is_qualified_instance' here, because the only time it would be unqualified, is if the
     //       path represented a multi-instance object. If path does represent this, then it will be caught below (switch statement)

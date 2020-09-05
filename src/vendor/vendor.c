@@ -42,11 +42,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "usp_err_codes.h"
 #include "vendor_defs.h"
 #include "vendor_api.h"
 #include "usp_api.h"
+
+int GetModelNumber(dm_req_t *req, char *buf, int len)
+{
+    strncpy(buf, "MyModelNumber", len);
+    return USP_ERR_OK;
+}
 
 /*********************************************************************//**
 **
@@ -61,8 +68,9 @@
 **************************************************************************/
 int VENDOR_Init(void)
 {
+		return USP_REGISTER_VendorParam_ReadOnly("Device.DeviceInfo.ModelNumber", GetModelNumber, DM_STRING);
 
-    return USP_ERR_OK;
+    //return USP_ERR_OK;
 }
 
 
@@ -102,4 +110,5 @@ int VENDOR_Stop(void)
 
     return USP_ERR_OK;
 }
+
 
