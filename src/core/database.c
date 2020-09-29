@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -84,7 +84,7 @@ char database_filename[128];
 
 //--------------------------------------------------------------------
 // SQLite uses -1 as a length argument to denote that the string is zero terminated (so no length needs to be passed)
-#define SQLITE_ZERO_TERMINATED (-1) 
+#define SQLITE_ZERO_TERMINATED (-1)
 
 //--------------------------------------------------------------------
 // Set if a factory reset initialisation of the database should potentially be performed in DATABASE_Start()
@@ -148,7 +148,7 @@ int DATABASE_Init(char *db_file)
         fclose(fp);
     }
 
-    // Exit if unable to open the database    
+    // Exit if unable to open the database
     USP_LOG_Info("%s: Opening database %s", __FUNCTION__, db_file);
     err = OpenUspDatabase(db_file);
     if (err != USP_ERR_OK)
@@ -259,7 +259,7 @@ void DATABASE_PerformFactoryReset_ControllerInitiated(void)
 
     // Close the current database
     DATABASE_Destroy();
-    
+
     // Exit if unable to delete the current database file
     err = remove(db_file);
     if ((err == -1) && (errno != ENOENT))
@@ -271,7 +271,7 @@ void DATABASE_PerformFactoryReset_ControllerInitiated(void)
     // Copy across the factory reset database (which has reboot cause set to "LocalFactoryReset")
     CopyFactoryResetDatabase(FACTORY_RESET_FILE, db_file);
 
-    // Exit if unable to open the database    
+    // Exit if unable to open the database
     err = OpenUspDatabase(db_file);
     if (err != USP_ERR_OK)
     {
@@ -376,7 +376,7 @@ int DATABASE_GetParameterValue(char *path, dm_hash_t hash, char *instances, char
     stmt = prepared_stmts[kSqlStmt_Get];
 
     // Exit if unable to set the value of the hash in the prepared statement
-    err = sqlite3_bind_int64(stmt, 1, hash);
+    err = sqlite3_bind_int64(stmt, 1, (db_hash_t)hash);
     if (err != SQLITE_OK)
     {
         USP_ERR_SQL_PARAM(db_handle, "sqlite3_bind_int");
@@ -412,7 +412,7 @@ int DATABASE_GetParameterValue(char *path, dm_hash_t hash, char *instances, char
         goto exit;
     }
 
-    // Determine the length of the value string to copy into the return buffer, truncating it, if it is too long    
+    // Determine the length of the value string to copy into the return buffer, truncating it, if it is too long
     value_len = sqlite3_column_bytes(stmt, 0);
     value_len = MIN(value_len, buflen-1);
 
@@ -449,7 +449,7 @@ exit:
     {
         USP_ERR_SQL_PARAM(db_handle, "sqlite3_reset");
     }
-    
+
     return result;
 }
 
@@ -499,7 +499,7 @@ int DATABASE_SetParameterValue(char *path, dm_hash_t hash, char *instances, char
 
     // Exit if unable to set the value of the hash in the prepared statement
     stmt = prepared_stmts[kSqlStmt_Set];
-    err = sqlite3_bind_int64(stmt, 1, hash);
+    err = sqlite3_bind_int64(stmt, 1, (db_hash_t)hash);
     if (err != SQLITE_OK)
     {
         USP_ERR_SQL_PARAM(db_handle, "sqlite3_bind_int");
@@ -542,7 +542,7 @@ exit:
     {
         USP_ERR_SQL_PARAM(db_handle, "sqlite3_reset");
     }
-    
+
     return result;
 }
 
@@ -576,7 +576,7 @@ int DATABASE_DeleteParameter(char *path, dm_hash_t hash, char *instances)
     stmt = prepared_stmts[kSqlStmt_Del];
 
     // Exit if unable to set the value of the hash in the prepared statement
-    err = sqlite3_bind_int64(stmt, 1, hash);
+    err = sqlite3_bind_int64(stmt, 1, (db_hash_t)hash);
     if (err != SQLITE_OK)
     {
         USP_ERR_SQL_PARAM(db_handle, "sqlite3_bind_int");
@@ -612,7 +612,7 @@ exit:
     {
         USP_ERR_SQL_PARAM(db_handle, "sqlite3_reset");
     }
-    
+
     return result;
 }
 
@@ -630,7 +630,7 @@ exit:
 int DATABASE_StartTransaction(void)
 {
     int err;
-    
+
     // Exit if this function is not being called from the data model thread
     if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
@@ -661,7 +661,7 @@ int DATABASE_StartTransaction(void)
 int DATABASE_CommitTransaction(void)
 {
     int err;
-    
+
     // Exit if this function is not being called from the data model thread
     if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
@@ -778,7 +778,7 @@ int DATABASE_ReadDataModelInstanceNumbers(bool remove_unknown_params)
         USP_ERR_SQL(db_handle,"sqlite3_finalize");
         result = USP_ERR_INTERNAL_ERROR;
     }
-    
+
     return result;
 }
 
@@ -833,7 +833,7 @@ void DATABASE_Dump(void)
         hash = sqlite3_column_int(stmt, 0);
         instances = (char *)sqlite3_column_text(stmt, 1);
         value = (char *)sqlite3_column_text(stmt, 2);
-        
+
         result = DM_PRIV_FormPath_FromDB(hash, instances, path, sizeof(path));
         if (result == USP_ERR_OK)
         {
@@ -1025,7 +1025,7 @@ int ResetFactoryParameters(void)
     {
         kv = &params.vector[i];
 
-        // Exit if a parameter was not in the data model or failed to set    
+        // Exit if a parameter was not in the data model or failed to set
         err = DATA_MODEL_SetParameterInDatabase(kv->key, kv->value);
         if (err != USP_ERR_OK)
         {
@@ -1092,7 +1092,7 @@ int ResetFactoryParametersFromFile(char *file)
                 goto exit;
             }
         }
-        
+
         // Get the next line
         line_number++;
         result = fgets(buf, sizeof(buf), fp);
@@ -1140,7 +1140,7 @@ void LogSQLStatement(char *op, char *path, sqlite3_stmt *stmt)
 **
 ** ObfuscatedCopy
 **
-** Copies the specified source value into the destination buffer, 
+** Copies the specified source value into the destination buffer,
 ** whilst obfuscating/unobfuscating it
 ** NOTE: Obfuscation may result in embedded NULLs within the destination, or
 **       be the cause of embedded NULLs in the src

@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -48,6 +48,7 @@
 #include "sync_timer.h"
 #include "subs_vector.h"
 #include "device.h"
+#include "group_set_vector.h"
 
 //-----------------------------------------------------------------------------------------
 // Type of each data model node
@@ -56,13 +57,13 @@ typedef enum
 {
     kDMNodeType_Object_MultiInstance,
     kDMNodeType_Object_SingleInstance,
-    kDMNodeType_Param_ConstantValue,
-    kDMNodeType_Param_NumEntries,
+    kDMNodeType_Param_ConstantValue,                // Read Only
+    kDMNodeType_Param_NumEntries,                   // Read Only
     kDMNodeType_DBParam_ReadWrite,
     kDMNodeType_DBParam_ReadOnly,
     kDMNodeType_DBParam_ReadOnlyAuto,
     kDMNodeType_DBParam_ReadWriteAuto,
-    kDMNodeType_DBParam_Secure,
+    kDMNodeType_DBParam_Secure,                     // Read Write
     kDMNodeType_VendorParam_ReadOnly,
     kDMNodeType_VendorParam_ReadWrite,
     kDMNodeType_SyncOperation,
@@ -92,7 +93,7 @@ typedef struct
 
 //--------------------------------------------------------------------
 // Typedef for structure containing the instance numbers parsed from a data model path, and the data model nodes associated with each instance number
-// e.g. 'Device.Wifi.1.Interface.2.Enable' would have count=2 and 
+// e.g. 'Device.Wifi.1.Interface.2.Enable' would have count=2 and
 // instances[0]=1, nodes[0]= ptr to 'Device.Wifi'
 // instances[1]=2, nodes[1]= ptr to 'Device.Wifi.{i}.Interface'
 typedef struct
@@ -114,6 +115,8 @@ typedef struct
 //-----------------------------------------------------------------------------------------
 // Information registered in the data model for parameters
 // NOTE: Not all of these parameters are relevant for each type of node. See USP_REGISTER_XXX() functions.
+#define NON_GROUPED  (-1)       // Indicates that the parameter is not grouped with any other parameters during get/set
+
 typedef struct
 {
     char *default_value;
@@ -121,6 +124,7 @@ typedef struct
     dm_notify_set_cb_t notify_set_cb;
     dm_get_value_cb_t get_cb;
     dm_set_value_cb_t set_cb;
+    int group_id;
     unsigned type_flags;                  // type of the parameter
     struct dm_node_tag *table_node;       // database node representing the table which we need to get the number of entries in (for kDMNodeType_Param_NumEntries)
 } dm_param_info_t;
@@ -135,7 +139,17 @@ typedef struct
     dm_del_cb_t          del_cb;
     dm_notify_del_cb_t   notify_del_cb;
     dm_unique_key_vector_t unique_keys;
-    dm_instances_vector_t inst_vector;
+
+    int group_id;                   // Indicates the group_id of the software component implementing this object
+                                    // If set to NON_GROUPED then the add_cb and del_cb etc callbacks are used
+                                    // If set to anything else then the add_group_cb and del_group_cb callbacks are used
+    bool group_writable;            // Set if this object can have instances added/deleted by a controller. Only used by grouped objects
+
+    // The following are only used by top-level multi-instance objects
+    dm_instances_vector_t inst_vector;          // vector of instances for this multi-instance object and all its children
+    dm_refresh_instances_cb_t refresh_instances_cb; // (optional) callback to get the instances of this object and its children
+    time_t refresh_instances_expiry_time;       // Absolute time at which the instances in the inst_vector are valid until. NOTE: Only used if refresh_instances_cb is non-NULL.
+                                                // After this time, if the USP Agent needs to access the top-level multi-instance object or any of its children, then the callback will be invoked again.
 } dm_object_info_t;
 
 // Information registered in the data model for operations
@@ -160,27 +174,29 @@ typedef struct
                                             // If not set, a reboot will cause the operation complete to be sent (if subscribed to)
 
 //-----------------------------------------------------------------------------------------
-// Typedef for hash of generic path to data model parameter
-typedef int dm_hash_t;
+// Typedef for hash of schema path to data model parameter or object
+typedef unsigned dm_hash_t;
+typedef      int db_hash_t;     // This is different from dm_hash_t for historical reasons, to maintain backward compatability of databases
 
 //-----------------------------------------------------------------------------------------
 // Structure describing each data model node
 typedef struct dm_node_tag
 {
     double_link_t link;         // Link to siblings in the data model tree
+    struct dm_node_tag *next_node_map_link;  // pointer to next node having the same squashed hash in dm_node_map[]
     char *path;                 // Schema path for this node. Used for debug, passed to the vendor hooks and with GetSupportedDM
 
-    char *name;                 // Part of the path that this node implements
+    char *name;                 // Part of the path that this node implements (name of path segment)
     dm_node_type_t type;
     double_linked_list_t child_nodes;
 
-    dm_hash_t hash;             // If this is a parameter (not object), contains hash of the node path to this parameter
+    dm_hash_t hash;             // Contains hash of the data model schema path to this node. If this node is a multi-instance object, then schema path includes trailing '{i}'
 
     int order;                   // Number of instance separators in the path to this node
                                  // e.g. Device.Wifi.{i}.Interface.{i}.Enable would have an order of 2
-                                 // And would contain pointers to the 2 nodes 'Device.Wifi' and 
+                                 // And would contain pointers to the 2 nodes 'Device.Wifi' and
                                  // 'Device.Wifi.{i}.Interface' in the instance_nodes[] array
-                                 // For nodes which are objects, if the node is a multi-instance object, then 
+                                 // For nodes which are objects, if the node is a multi-instance object, then
                                  // it's instance separator is included e.g. Device.Wifi.{i}.Interface.{i} would have an order of 2
     struct dm_node_tag *instance_nodes[MAX_DM_INSTANCE_ORDER]; // See 'order' above
 
@@ -199,6 +215,18 @@ typedef struct dm_node_tag
 //------------------------------------------------------------------------------
 // Structure containing the vendor hook callbacks
 extern vendor_hook_cb_t vendor_hook_callbacks;
+
+//------------------------------------------------------------------------------
+// Array containing the get/set vendor hooks for each group of vendor parameters
+typedef struct
+{
+    dm_get_group_cb_t get_group_cb;
+    dm_set_group_cb_t set_group_cb;
+    dm_add_group_cb_t add_group_cb;
+    dm_del_group_cb_t del_group_cb;
+} group_vendor_hook_t;
+
+extern group_vendor_hook_t group_vendor_hooks[MAX_VENDOR_PARAM_GROUPS];
 
 //------------------------------------------------------------------------------
 // Boolean that allows us to control which scope the USP_REGISTER_XXX() functions can be called in
@@ -220,6 +248,7 @@ extern char *reboot_cause_path;
 #define PP_PARENT_INSTANCE_NUMBERS_EXIST  0x00000080   // If the path represents a multi-instance object with a trailing instance number that does not exist, then if this bit is set, the parent instance numbers are instantiated in the model
 #define PP_IS_MULTI_INSTANCE_OBJECT       0x00000100   // Set if the path represents a multi-instance object
 #define PP_IS_SECURE_PARAM                0x00000200   // Set if the path represents a secure parameter
+#define PP_IS_WRITABLE                    0x00000400   // Set if the path represents a writable parameter
 
 //------------------------------------------------------------------------------
 // Convenience macros
@@ -260,7 +289,7 @@ extern char *reboot_cause_path;
 #define SUPPRESS_PRE_EXISTANCE_ERR  0x00000001 // Does not generate an error if the schema path already exists.
                                                // Using this flag allows the caller to check that the node exists
 #define SUPPRESS_LAST_TYPE_CHECK    0x00000002 // Do not check the type of the last (ie rightmost) node in the path
-                                               // This is used when we know that the node has already been added, but it could be more than one type. 
+                                               // This is used when we know that the node has already been added, but it could be more than one type.
                                                // When this is used, the caller must check the type of the last node
 //-----------------------------------------------------------------------------
 // API Functions
@@ -281,13 +310,13 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags);
 int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_args, char *command_key, int *instance);
 int DATA_MODEL_ShouldOperationRestart(char *path, int instance, bool *is_restart, int *err_code, char *err_msg, int err_msg_len, kv_vector_t *output_args);
 int DATA_MODEL_RestartAsyncOperation(char *path, kv_vector_t *input_args, int instance);
-int DATA_MODEL_CompareParameterValue(char *path, expr_op_t op, char *expr_constant, bool *result);
-unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role, unsigned short *permission_bitmask);
+unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role, unsigned short *permission_bitmask, int *group_id, unsigned *type_flags);
 int DATA_MODEL_SplitPath(char *path, char **schema_path, dm_req_instances_t *instances, bool *instances_exist);
 int DATA_MODEL_InformInstance(char *path);
 int DATA_MODEL_AddParameterInstances(dm_hash_t hash, char *instances);
 int DATA_MODEL_GetUniqueKeys(char *path, dm_unique_key_vector_t *ukv);
 int DATA_MODEL_GetUniqueKeyParams(char *obj_path, kv_vector_t *params, combined_role_t *combined_role);
+int DATA_MODEL_ValidateDefaultedUniqueKeys(char *obj_path, kv_vector_t *unique_key_params, group_set_vector_t *gsv);
 void DATA_MODEL_DumpSchema(void);
 void DATA_MODEL_DumpInstances(void);
 char DATA_MODEL_GetJSONParameterType(char *path);

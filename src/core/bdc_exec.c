@@ -2,32 +2,32 @@
  *
  * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -264,7 +264,7 @@ void *BDC_EXEC_Main(void *args)
 
             case 0:
                 // A timeout occurred - fall through
-                
+
             default:
                 // Start sending the report contained in the message (if received a message)
                 ProcessBdcMessageQueueSocketActivity(&set);
@@ -346,7 +346,7 @@ void ProcessBdcMessageQueueSocketActivity(socket_set_t *set)
     bdc_exec_msg_t  msg;
     bdc_connection_t *bc;
     int err;
-    
+
     // Exit if there is no activity on the message queue socket
     if (SOCKET_SET_IsReadyToRead(mq_rx_socket, set) == 0)
     {
@@ -399,7 +399,7 @@ void ProcessBdcMessageQueueSocketActivity(socket_set_t *set)
 **  Starts Sending the BDC report by adding it to the curl multi-interface handle
 **
 ** \param   bc - pointer to BDC connection slot containing the report and associated parameters
-**       
+**
 ** \return  USP_ERR_OK if successfully started sending the report
 **
 **************************************************************************/
@@ -415,11 +415,11 @@ int StartSendingReport(bdc_connection_t *bc)
     curl_ctx = curl_easy_init();
     if (curl_ctx == NULL)
     {
-        USP_LOG_Error("%s: curl_easy_init failed", __FUNCTION__); 
+        USP_LOG_Error("%s: curl_easy_init failed", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Set options for PUT or POST    
+    // Set options for PUT or POST
     curl_easy_setopt(curl_ctx, CURLOPT_POSTFIELDS, (char *)bc->report);
     curl_easy_setopt(curl_ctx, CURLOPT_POSTFIELDSIZE, bc->report_len);
     if (bc->flags & BDC_FLAG_PUT)
@@ -452,7 +452,7 @@ int StartSendingReport(bdc_connection_t *bc)
         curl_easy_setopt(curl_ctx, CURLOPT_HTTPAUTH, BULKDATA_HTTP_AUTH_METHOD);
     }
 
-    // Setup SSL options    
+    // Setup SSL options
     curl_easy_setopt(curl_ctx, CURLOPT_SSL_VERIFYPEER, true);
     curl_easy_setopt(curl_ctx, CURLOPT_SSL_VERIFYHOST, 2);
     curl_easy_setopt(curl_ctx, CURLOPT_CAINFO, NULL);
@@ -577,7 +577,7 @@ void PerformSendingReports(void)
 **
 ** \param   curl_ctx - curl easy handle for transfer that completed
 ** \param   curl_res - curl result code for the transfer
-**          
+**
 ** \return  None
 **
 **************************************************************************/
@@ -604,7 +604,7 @@ void HandleBdcTransferComplete(CURL *curl_ctx, CURLcode curl_res)
     // Remove the curl easy handle that has completed from the multi-handle and free it
     curl_multi_remove_handle(curl_multi_ctx, curl_ctx);
     curl_easy_cleanup(curl_ctx);
-    
+
     // Update the number of transfers in progress in the curl multi-handle
     num_transfers_in_progress--;
     USP_ASSERT(num_transfers_in_progress >= 0);
@@ -622,7 +622,7 @@ void HandleBdcTransferComplete(CURL *curl_ctx, CURLcode curl_res)
 ** \param   curl_ctx - curl easy handle for transfer that completed
 ** \param   curl_res - curl result code for the transfer
 ** \param   profile_id - Instance number of profile in Device.Bulkdata.Profile.{i}
-**          
+**
 ** \return  result code of the transfer
 **
 **************************************************************************/
@@ -638,33 +638,33 @@ bdc_transfer_result_t CalcBdcTransferResult(CURL *curl_ctx, CURLcode curl_res, i
             transfer_result = kBDCTransferResult_Success;
             break;
 
-        case CURLE_COULDNT_RESOLVE_PROXY:   // 5 
-        case CURLE_COULDNT_RESOLVE_HOST:    // 6 
+        case CURLE_COULDNT_RESOLVE_PROXY:   // 5
+        case CURLE_COULDNT_RESOLVE_HOST:    // 6
             transfer_result = kBDCTransferResult_Failure_DNS;
             break;
-        
+
 #if (LIBCURL_VERSION_NUM < 0x073E00)
         // In Curl version 7.62.0 onwards, CURLE_SSL_CACERT is the same as CURLE_PEER_FAILED_VERIFICATION, so don't include it twice
-        case CURLE_SSL_CACERT:              // 60 - problem with the CA cert (path?) 
+        case CURLE_SSL_CACERT:              // 60 - problem with the CA cert (path?)
 #endif
-        case CURLE_SSL_CONNECT_ERROR:       // 35 - wrong when connecting with SSL 
-        case CURLE_PEER_FAILED_VERIFICATION: // 51 - peer's certificate or fingerprint wasn't verified fine 
-        case CURLE_SSL_CERTPROBLEM:         // 58 - problem with the local certificate 
-        case CURLE_SSL_CIPHER:              // 59 - couldn't use specified cipher 
+        case CURLE_SSL_CONNECT_ERROR:       // 35 - wrong when connecting with SSL
+        case CURLE_PEER_FAILED_VERIFICATION: // 51 - peer's certificate or fingerprint wasn't verified fine
+        case CURLE_SSL_CERTPROBLEM:         // 58 - problem with the local certificate
+        case CURLE_SSL_CIPHER:              // 59 - couldn't use specified cipher
             transfer_result =  kBDCTransferResult_Failure_Auth;
             break;
 
-        case CURLE_COULDNT_CONNECT:         // 7 
+        case CURLE_COULDNT_CONNECT:         // 7
             transfer_result = kBDCTransferResult_Failure_Connect;
             break;
 
-        case CURLE_SEND_ERROR:              // 55 - failed sending network data 
-        case CURLE_RECV_ERROR:              // 56 - failure in receiving network data 
-        case CURLE_AGAIN:                   // 81 - socket is not ready for send/recv, wait till it's ready and try again 
+        case CURLE_SEND_ERROR:              // 55 - failed sending network data
+        case CURLE_RECV_ERROR:              // 56 - failure in receiving network data
+        case CURLE_AGAIN:                   // 81 - socket is not ready for send/recv, wait till it's ready and try again
             transfer_result =  kBDCTransferResult_Failure_ReadWrite;
             break;
 
-        case CURLE_OPERATION_TIMEDOUT:      // 28 - the timeout time was reached 
+        case CURLE_OPERATION_TIMEDOUT:      // 28 - the timeout time was reached
             transfer_result =  kBDCTransferResult_Failure_Timeout;
             break;
 
@@ -714,7 +714,7 @@ bdc_transfer_result_t CalcBdcTransferResult(CURL *curl_ctx, CURLcode curl_res, i
 ** \param   size - size of an element of data
 ** \param   nmemb - number of elements of data
 ** \param   userp - pointer to user context (we do not register any)
-**          
+**
 ** \return  number of bytes processed by this function
 **
 **************************************************************************/
@@ -731,7 +731,7 @@ size_t bulkdata_curl_null_sink(void *buffer, size_t size, size_t nmemb, void *us
 **  Finds a free connection slot
 **
 ** \param   None
-**          
+**
 ** \return  pointer to connection slot, or NULL if no free slot found
 **
 **************************************************************************/
@@ -762,7 +762,7 @@ bdc_connection_t *FindFreeBdcConnection(void)
 **  Finds the connection slot, given a curl easy handle
 **
 ** \param   curl_ctx - curl easy handle to find in the connection array
-**          
+**
 ** \return  pointer to connection slot, or NULL if no connection found
 **
 **************************************************************************/
@@ -809,13 +809,13 @@ void FreeBdcConnection(bdc_connection_t *bc)
     {
         free(bc->report);
     }
-    
+
     // Free curl headers
     if (bc->headers != NULL)
     {
         curl_slist_free_all(bc->headers);
     }
-    
+
     // Mark the slot as unused
     memset(bc, 0, sizeof(bdc_connection_t));
     bc->profile_id = INVALID;
@@ -854,7 +854,7 @@ void FreeBdcExecMsgContents(bdc_exec_msg_t *msg)
 ** \param   curl - pointer to curl context
 ** \param   curl_sslctx - pointer to curl's SSL context
 ** \param   userptr - pointer to user data (unused)
-**          
+**
 ** \return  CURLE_OK if successful
 **
 **************************************************************************/

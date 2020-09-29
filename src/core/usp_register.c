@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -51,6 +51,10 @@
 // Structure containing vendor hook callback functions which are used by the core agent data model
 // NOTE: As this structure is registered early in the bootup, it is safe to be indexed from multiple threads subsequently
 vendor_hook_cb_t vendor_hook_callbacks = { NULL };
+
+//------------------------------------------------------------------------------
+// Array containing the get/set callbacks for each group of vendor parameters
+group_vendor_hook_t group_vendor_hooks[MAX_VENDOR_PARAM_GROUPS];
 
 //------------------------------------------------------------------------------
 // Commonly used strings
@@ -140,7 +144,7 @@ int USP_REGISTER_Param_Constant(char *path, char *value, unsigned type_flags)
 {
     dm_node_t *node;
     dm_param_info_t *info;
-    
+
     // Exit if this function is not being called from within VENDOR_Init()
     if (is_executing_within_dm_init == false)
     {
@@ -166,6 +170,7 @@ int USP_REGISTER_Param_Constant(char *path, char *value, unsigned type_flags)
     info = &node->registered.param_info;
     memset(info, 0, sizeof(dm_param_info_t));
     info->default_value = USP_STRDUP(value);
+    info->group_id = NON_GROUPED;
     info->type_flags = type_flags;
     return USP_ERR_OK;
 }
@@ -191,7 +196,7 @@ int USP_REGISTER_Param_NumEntries(char *path, char *table_path)
     dm_node_t *table_node;
     int order;
     dm_param_info_t *info;
-    
+
     // Exit if this function is not being called from within VENDOR_Init()
     if (is_executing_within_dm_init == false)
     {
@@ -243,6 +248,7 @@ int USP_REGISTER_Param_NumEntries(char *path, char *table_path)
     info = &param_node->registered.param_info;
     memset(info, 0, sizeof(dm_param_info_t));
     info->table_node = table_node;
+    info->group_id = NON_GROUPED;
     info->type_flags = DM_UINT;
     return USP_ERR_OK;
 }
@@ -264,12 +270,12 @@ int USP_REGISTER_Param_NumEntries(char *path, char *table_path)
 **          USP_ERR_INTERNAL_ERROR if any other error occurred
 **
 **************************************************************************/
-int USP_REGISTER_DBParam_ReadWrite(char *path, char *value, dm_validate_value_cb_t validator_cb, 
+int USP_REGISTER_DBParam_ReadWrite(char *path, char *value, dm_validate_value_cb_t validator_cb,
                                   dm_notify_set_cb_t notify_set_cb, unsigned type_flags)
 {
     dm_node_t *node;
     dm_param_info_t *info;
-    
+
     // Exit if this function is not being called from within VENDOR_Init()
     if (is_executing_within_dm_init == false)
     {
@@ -303,6 +309,7 @@ int USP_REGISTER_DBParam_ReadWrite(char *path, char *value, dm_validate_value_cb
     info->default_value = USP_STRDUP(value);
     info->validator_cb = validator_cb;
     info->notify_set_cb = notify_set_cb;
+    info->group_id = NON_GROUPED;
     info->type_flags = type_flags;
 
     return USP_ERR_OK;
@@ -328,7 +335,7 @@ int USP_REGISTER_DBParam_Secure(char *path, char *value, dm_validate_value_cb_t 
 {
     dm_node_t *node;
     dm_param_info_t *info;
-    
+
     // Exit if this function is not being called from within VENDOR_Init()
     if (is_executing_within_dm_init == false)
     {
@@ -362,6 +369,7 @@ int USP_REGISTER_DBParam_Secure(char *path, char *value, dm_validate_value_cb_t 
     info->default_value = USP_STRDUP(value);
     info->validator_cb = validator_cb;
     info->notify_set_cb = notify_set_cb;
+    info->group_id = NON_GROUPED;
     info->type_flags = DM_STRING;
 
     return USP_ERR_OK;
@@ -421,6 +429,7 @@ int USP_REGISTER_DBParam_ReadOnly(char *path, char *value, unsigned type_flags)
     info->default_value = USP_STRDUP(value);
     info->validator_cb = NULL;
     info->notify_set_cb = NULL;
+    info->group_id = NON_GROUPED;
     info->type_flags = type_flags;
 
     return USP_ERR_OK;
@@ -472,6 +481,7 @@ int USP_REGISTER_VendorParam_ReadOnly(char *path, dm_get_value_cb_t get_cb, unsi
     memset(info, 0, sizeof(dm_param_info_t));
     info->get_cb = get_cb;
     info->set_cb = NULL;
+    info->group_id = NON_GROUPED;
     info->type_flags = type_flags;
     return USP_ERR_OK;
 }
@@ -492,7 +502,7 @@ int USP_REGISTER_VendorParam_ReadOnly(char *path, dm_get_value_cb_t get_cb, unsi
 **          USP_ERR_INTERNAL_ERROR if any other error occurred
 **
 **************************************************************************/
-int USP_REGISTER_VendorParam_ReadWrite(char *path, dm_get_value_cb_t get_cb, dm_set_value_cb_t set_cb, 
+int USP_REGISTER_VendorParam_ReadWrite(char *path, dm_get_value_cb_t get_cb, dm_set_value_cb_t set_cb,
                                                    dm_notify_set_cb_t notify_set_cb, unsigned type_flags)
 {
     dm_node_t *node;
@@ -525,6 +535,108 @@ int USP_REGISTER_VendorParam_ReadWrite(char *path, dm_get_value_cb_t get_cb, dm_
     info->get_cb = get_cb;
     info->set_cb = set_cb;
     info->notify_set_cb = notify_set_cb;
+    info->group_id = NON_GROUPED;
+    info->type_flags = type_flags;
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** USP_REGISTER_GroupedVendorParam_ReadOnly
+**
+** Registers a grouped parameter which is not persisted in the database and is read only
+** This is useful for parameters which are used for monitoring the current (transient) state of the agent
+** The parameter is part of a group of parameters (with the same group_id) that can be more efficiently get using the group get value vendor hook
+**
+** \param   group_id - identifier of the group of parameters that this parameter belongs to
+** \param   path - full data model path for the parameter
+** \param   type_flags - type of the parameter
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INTERNAL_ERROR if any other error occurred
+**
+**************************************************************************/
+int USP_REGISTER_GroupedVendorParam_ReadOnly(int group_id, char *path, unsigned type_flags)
+{
+    dm_node_t *node;
+    dm_param_info_t *info;
+
+    // Exit if this function is not being called from within VENDOR_Init()
+    if (is_executing_within_dm_init == false)
+    {
+        USP_ERR_SetMessage(usp_err_bad_scope_str, __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if input parameters are not defined
+    if ((path == NULL) || (group_id == NON_GROUPED) || (group_id >= MAX_VENDOR_PARAM_GROUPS))
+    {
+        USP_ERR_SetMessage(usp_err_invalid_param_str, __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Add this path to the data model
+    node = DM_PRIV_AddSchemaPath(path, kDMNodeType_VendorParam_ReadOnly, 0);
+    if (node == NULL)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Save registered info into the data model
+    info = &node->registered.param_info;
+    memset(info, 0, sizeof(dm_param_info_t));
+    info->get_cb = NULL;
+    info->set_cb = NULL;
+    info->group_id = group_id;
+    info->type_flags = type_flags;
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** USP_REGISTER_GroupedVendorParam_ReadWrite
+**
+** Registers a read-write parameter which is implemented by the vendor and is not persisted in the USP Agent database
+** The parameter is part of a group of parameters (with the same group_id) that can be more efficiently get/set using the group get/set value vendor hook
+**
+** \param   group_id - identifier of the group of parameters that this parameter belongs to
+** \param   path - full data model path for the parameter
+** \param   type_flags - type of the parameter
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INTERNAL_ERROR if any other error occurred
+**
+**************************************************************************/
+int USP_REGISTER_GroupedVendorParam_ReadWrite(int group_id, char *path, unsigned type_flags)
+{
+    dm_node_t *node;
+    dm_param_info_t *info;
+
+    // Exit if this function is not being called from within VENDOR_Init()
+    if (is_executing_within_dm_init == false)
+    {
+        USP_ERR_SetMessage(usp_err_bad_scope_str, __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if input parameters are not defined
+    if ((path == NULL) || (group_id == NON_GROUPED) || (group_id >= MAX_VENDOR_PARAM_GROUPS))
+    {
+        USP_ERR_SetMessage(usp_err_invalid_param_str, __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Add this path to the data model
+    node = DM_PRIV_AddSchemaPath(path, kDMNodeType_VendorParam_ReadWrite, 0);
+    if (node == NULL)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Save registered info into the data model
+    info = &node->registered.param_info;
+    memset(info, 0, sizeof(dm_param_info_t));
+    info->group_id = group_id;
     info->type_flags = type_flags;
     return USP_ERR_OK;
 }
@@ -574,6 +686,7 @@ int USP_REGISTER_DBParam_ReadOnlyAuto(char *path, dm_get_value_cb_t get_cb, unsi
     memset(info, 0, sizeof(dm_param_info_t));
     info->default_value = USP_STRDUP("");
     info->get_cb = get_cb;
+    info->group_id = NON_GROUPED;
     info->type_flags = type_flags;
 
     return USP_ERR_OK;
@@ -595,7 +708,7 @@ int USP_REGISTER_DBParam_ReadOnlyAuto(char *path, dm_get_value_cb_t get_cb, unsi
 **          USP_ERR_INTERNAL_ERROR if any other error occurred
 **
 **************************************************************************/
-int USP_REGISTER_DBParam_ReadWriteAuto(char *path, dm_get_value_cb_t get_cb, dm_validate_value_cb_t validator_cb, 
+int USP_REGISTER_DBParam_ReadWriteAuto(char *path, dm_get_value_cb_t get_cb, dm_validate_value_cb_t validator_cb,
                                       dm_notify_set_cb_t notify_set_cb, unsigned type_flags)
 {
     dm_node_t *node;
@@ -629,6 +742,7 @@ int USP_REGISTER_DBParam_ReadWriteAuto(char *path, dm_get_value_cb_t get_cb, dm_
     info->get_cb = get_cb;
     info->validator_cb = validator_cb;
     info->notify_set_cb = notify_set_cb;
+    info->group_id = NON_GROUPED;
     info->type_flags = type_flags;
 
     return USP_ERR_OK;
@@ -745,6 +859,7 @@ int USP_REGISTER_Object(char *path, dm_validate_add_cb_t validate_add_cb, dm_add
     info->validate_del_cb = validate_del_cb;
     info->del_cb = del_cb;
     info->notify_del_cb = notify_del_cb;
+    info->group_id = NON_GROUPED;
     DM_INST_VECTOR_Init(&info->inst_vector);
 
     return USP_ERR_OK;
@@ -828,6 +943,111 @@ int USP_REGISTER_Object_UniqueKey(char *path, char **params, int num_params)
 
     // Add this unique key to the data model
     DM_PRIV_AddUniqueKey(node, &unique_key);
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** USP_REGISTER_Object_RefreshInstances
+**
+** Registers a function to call to get the instances of the top level multi-instance object (and all its descendants in the data model tree)
+**
+** \param   path - full data model path for the top-level multi-instance object
+** \param   refresh_instances_cb - callback called to get all the instances of the specified object (and instances of all child objects)
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INTERNAL_ERROR if any other error occurred
+**
+**************************************************************************/
+int USP_REGISTER_Object_RefreshInstances(char *path, dm_refresh_instances_cb_t refresh_instances_cb)
+{
+    dm_node_t *node;
+    dm_object_info_t *info;
+
+    // Exit if this function is not being called from within VENDOR_Init()
+    if (is_executing_within_dm_init == false)
+    {
+        USP_ERR_SetMessage(usp_err_bad_scope_str, __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if calling arguments are specified incorrectly
+    if ((path==NULL) || (refresh_instances_cb==NULL))
+    {
+        USP_ERR_SetMessage(usp_err_invalid_param_str, __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if unable to find this multi-instance object in the data model
+    // NOTE: This call will add the path if not already added, but unlike other DM_REGISTER functions will
+    // not generate an error if this function is called after the node has been added by USP_REGISTER_Object()
+    node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_MultiInstance, SUPPRESS_PRE_EXISTANCE_ERR);
+    if (node == NULL)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if node is not a top-level multi-instance node
+    if (node->order != 1)
+    {
+        USP_ERR_SetMessage("%s: Path %s is not a top-level multi-instance object", __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Save registered info into the data model
+    info = &node->registered.object_info;
+    info->refresh_instances_cb = refresh_instances_cb;
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** USP_REGISTER_GroupedObject
+**
+** Registers an object which uses the group add and delete vendor hooks
+**
+** \param   group_id - group_id to register for the object
+** \param   path - full data model path for the top-level multi-instance object
+** \param   is_writable - set if instances can be added/deleted, clear if instances are not controlled by USP controller
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INTERNAL_ERROR if any other error occurred
+**
+**************************************************************************/
+int USP_REGISTER_GroupedObject(int group_id, char *path, bool is_writable)
+{
+    dm_node_t *node;
+    dm_object_info_t *info;
+
+    // Exit if this function is not being called from within VENDOR_Init()
+    if (is_executing_within_dm_init == false)
+    {
+        USP_ERR_SetMessage(usp_err_bad_scope_str, __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if calling arguments are specified incorrectly
+    if ((path == NULL) || (group_id >= MAX_VENDOR_PARAM_GROUPS))
+    {
+        USP_ERR_SetMessage(usp_err_invalid_param_str, __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Add this path to the data model
+    node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_MultiInstance, 0);
+    if (node == NULL)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Save registered info into the data model
+    info = &node->registered.object_info;
+    memset(info, 0, sizeof(dm_object_info_t));
+    info->group_id = group_id;
+    info->group_writable = is_writable;
+    DM_INST_VECTOR_Init(&info->inst_vector);
 
     return USP_ERR_OK;
 }
@@ -1025,7 +1245,7 @@ int USP_REGISTER_OperationArguments(char *path, char **input_arg_names, int num_
     {
         STR_VECTOR_Clone(&info->input_args, input_arg_names, num_input_arg_names);
     }
-    
+
     if (output_arg_names != NULL)
     {
         STR_VECTOR_Clone(&info->output_args, output_arg_names, num_output_arg_names);
@@ -1149,6 +1369,40 @@ int USP_REGISTER_EventArguments(char *path, char **event_arg_names, int num_even
 
 /*********************************************************************//**
 **
+** USP_REGISTER_GroupVendorHooks
+**
+** Registers the get and set vendor hooks for a group of vendor parameters
+**
+** \param   group_id - identifier of the group of parameters that this parameter belongs to
+** \param   get_group_cb - callback called to get the values of an assortment of parameters from the group
+** \param   set_group_cb - callback called to set the values of an assortment of parameters from the group
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INTERNAL_ERROR if any other error occurred
+**
+**************************************************************************/
+int USP_REGISTER_GroupVendorHooks(int group_id, dm_get_group_cb_t get_group_cb, dm_set_group_cb_t set_group_cb,
+                                                dm_add_group_cb_t add_group_cb, dm_del_group_cb_t del_group_cb)
+{
+    group_vendor_hook_t *gvh;
+
+    if ((group_id == NON_GROUPED) || (group_id < 0) || (group_id >= MAX_VENDOR_PARAM_GROUPS))
+    {
+        USP_ERR_SetMessage("%s: Invalid Group ID (%d). Expected a value between 0 and %d", __FUNCTION__, group_id, MAX_VENDOR_PARAM_GROUPS-1);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    gvh = &group_vendor_hooks[group_id];
+    gvh->get_group_cb = get_group_cb;
+    gvh->set_group_cb = set_group_cb;
+    gvh->add_group_cb = add_group_cb;
+    gvh->del_group_cb = del_group_cb;
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** ValidateAliasParam
 **
 ** Validates new values of an Alias parameter
@@ -1229,7 +1483,7 @@ int ValidateParamUniqueness(dm_req_t *req, char *value)
     char *param_name;
     char table_path[MAX_DM_PATH];
     char path[MAX_DM_PATH];
-    char buf[MAX_DM_SHORT_VALUE_LEN];    
+    char buf[MAX_DM_SHORT_VALUE_LEN];
 
     INT_VECTOR_Init(&iv);
 
@@ -1278,7 +1532,8 @@ int ValidateParamUniqueness(dm_req_t *req, char *value)
         if (strcmp(buf, value) == 0)
         {
             USP_ERR_SetMessage("%s: The value for %s (%s) is not unique (already used by instance %d)", __FUNCTION__, req->path, value, instance);
-            return USP_ERR_INVALID_ARGUMENTS;
+            err = USP_ERR_INVALID_ARGUMENTS;
+            goto exit;
         }
     }
 

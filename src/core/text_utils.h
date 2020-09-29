@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -43,10 +43,17 @@
 
 #include "str_vector.h"
 #include "nu_ipaddr.h"
+#include "data_model.h"  // for dm_hash_t
+
+//-------------------------------------------------------------------------
+// Macros associated with performing the FNV1a hashing algorithm
+#define OFFSET_BASIS (0x811C9DC5)
+#define FNV_PRIME (0x1000193)
+#define ADD_TO_HASH(c, hash)  hash = hash*FNV_PRIME;  hash = hash^(c);
 
 //-------------------------------------------------------------------------
 // API functions
-int TEXT_UTILS_CalcHash(char *s);
+dm_hash_t TEXT_UTILS_CalcHash(char *s);
 int TEXT_UTILS_StringToUnsigned(char *str, unsigned *value);
 int TEXT_UTILS_StringToInteger(char *str, int *value);
 int TEXT_UTILS_StringToUnsignedLongLong(char *str, unsigned long long *value);
@@ -64,14 +71,15 @@ void TEXT_UTILS_StrncpyLen(char *dst, int dst_len, char *src, int src_len);
 char *TEXT_UTILS_StrStr(char *haystack, char *needle);
 int TEXT_UTILS_NullStringCompare(char *str1, char *str2);
 void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char safe_char);
-char *TEXT_UTILS_PercentDecodeString(char *buf);
+void TEXT_UTILS_PercentDecodeString(char *buf);
 void TEXT_UTILS_ReplaceCharInString(char *src, char match_char, char *replacement, char *dst, int dst_len);
 char *TEXT_UTILS_TrimBuffer(char *buf);
 bool TEXT_UTILS_IsSymbol(char *buf);
+int TEXT_UTILS_HexStringToValue(char *s);
 int TEXT_UTILS_HexDigitToValue(char c);
 char TEXT_UTILS_ValueToHexDigit(int nibble);
 void TEXT_UTILS_PathToSchemaForm(char *path, char *buf, int len);
-int TEXT_UTILS_CountConsecutiveDigits(char *s);
+int TEXT_UTILS_CountConsecutiveDigits(char *p);
 char *TEXT_UTILS_StrDupWithTrailingDot(char *path);
 int TEXT_UTILS_KeyValueFromString(char *buf, char **key, char **value);
 

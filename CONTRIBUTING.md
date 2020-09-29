@@ -25,5 +25,5 @@ For build instructions, please refer to [QUICK_START_GUIDE](https://github.com/B
 
 ## Contributor License Agreement
 
-Any company or individual interested in participating in this open source project must sign a Contributor License Agreement (more details [here](https://github.com/BroadbandForum/obuspa/wiki/Contributor-License-Agreement-Details)).
+Any company or individual interested in participating in this open source project must sign a Contributor License Agreement (more details [here](https://wiki.broadband-forum.org/pages/viewpage.action?pageId=87557395)).
 

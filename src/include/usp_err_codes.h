@@ -2,32 +2,32 @@
  *
  * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -45,8 +45,8 @@
 // Defines for all USP error codes
 #define USP_ERR_OK                        0           // No error
 #define EOK                               USP_ERR_OK
-  
-// Message error codes  
+
+// Message error codes
 #define USP_ERR_GENERAL_FAILURE           7000       // Message failed. This error indicates a general failure that is described in an err_msg element.
 #define USP_ERR_MESSAGE_NOT_UNDERSTOOD    7001       // Attempted message was not understood
 #define USP_ERR_REQUEST_DENIED            7002       // Cannot or will not process message
@@ -55,8 +55,8 @@
 #define USP_ERR_RESOURCES_EXCEEDED        7005       // Message failed due to memory or processing limitations
 #define USP_ERR_PERMISSION_DENIED         7006       // Source endpoint does not have authorisation to use this message
 #define USP_ERR_INVALID_CONFIGURATION     7007       // Message failed because the result of processing the message would result in an invalid or unstable state
-  
-// ParamError codes  
+
+// ParamError codes
 #define USP_ERR_INVALID_PATH_SYNTAX       7008       // Requested path was invalid or a reference was invalid
 #define USP_ERR_PARAM_ACTION_FAILED       7009       // Parameter failed to update for a general reason described in an err_msg element.
 #define USP_ERR_UNSUPPORTED_PARAM         7010       // Requested Path Name associated with this ParamError did not match any instantiated parameters

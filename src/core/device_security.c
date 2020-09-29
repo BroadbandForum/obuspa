@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2017-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2017-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -60,6 +60,10 @@
 #include "vendor_api.h"
 #include "iso8601.h"
 
+
+//-----------------------------------------------------------------------------------------
+// Typedef for hash of certificate
+typedef unsigned cert_hash_t;
 
 //------------------------------------------------------------------------------
 // String, set by '-a' command line option to specify a file containing the client cert and private key to use when authenticating this device
@@ -96,7 +100,7 @@ static client_cert_t client_cert;
 // Vector holding information about each trusted certificate
 typedef struct
 {
-    X509 *cert;                 // Copy of the certificate in the trust store. This is used to seed curl's trust store in DEVICE_SECURITY_SetCurlTrustStore() 
+    X509 *cert;                 // Copy of the certificate in the trust store. This is used to seed curl's trust store in DEVICE_SECURITY_SetCurlTrustStore()
 
     char *subject;              // Free with OPENSSL_free()
     char *issuer;               // Free with OPENSSL_free()
@@ -106,7 +110,7 @@ typedef struct
     time_t last_modif;
     char *subject_alt;          // Free with USP_FREE()
     char *signature_algorithm;  // Free with USP_FREE()
-    unsigned hash;          // Hash of the DER (binary) form of the certificate
+    cert_hash_t hash;           // Hash of the DER (binary) form of the certificate
 } trust_cert_t;
 
 static trust_cert_t *trust_certs = NULL;
@@ -148,8 +152,8 @@ int ParseCert_NotAfter(X509 *cert, time_t *not_after);
 time_t Asn1Time_To_UnixTime(ASN1_TIME *cert_time);
 int ParseCert_SubjectAlt(X509 *cert, char **p_subject_alt);
 int ParseCert_SignatureAlg(X509 *cert, char **p_sig_alg);
-int CalcCertHash(X509 *cert, unsigned *p_hash);
-int FindMatchingTrustCert(unsigned hash);
+int CalcCertHash(X509 *cert, cert_hash_t *p_hash);
+int FindMatchingTrustCert(cert_hash_t hash);
 bool IsSystemTimeReliable(void);
 void LogCertChain(STACK_OF(X509) *cert_chain);
 void LogTrustCerts(void);
@@ -360,7 +364,7 @@ int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, ctrust_role_t 
     unsigned num_certs;
     X509 *ca_cert;
     X509 *broker_cert;
-    unsigned hash;
+    cert_hash_t hash;
     int instance;
 
     // The cert at position[0] will be the STOMP broker cert
@@ -440,7 +444,7 @@ int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, ctrust_role_t 
 ** \param   method - Type of SSL to use (eg TLS or DTLS)
 ** \param   verify_mode - whether SSL should verify the peer (SSL_VERIFY_PEER), and whether to only perform verification once (SSL_VERIFY_CLIENT_ONCE - for DTLS servers)
 ** \param   verify_callback - Function to call when verifying certificates from the server
-**          
+**
 ** \return  pointer to created SSL context, or NULL if an error occurred
 **
 **************************************************************************/
@@ -484,7 +488,7 @@ exit:
 ** \param   ssl_ctx - pointer to SSL context to add trust store certs to
 ** \param   verify_mode - whether SSL should verify the peer (SSL_VERIFY_PEER), and whether to only perform verification once (SSL_VERIFY_CLIENT_ONCE - for DTLS servers)
 ** \param   verify_callback - Function to call when verifying certificates from the server
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -542,7 +546,7 @@ int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify
             USP_LOG_Error("%s: SSL_CTX_use_certificate() failed", __FUNCTION__);
             return USP_ERR_INTERNAL_ERROR;
         }
-    
+
         // Exit if unable to add the private key
         err = SSL_CTX_use_PrivateKey(ssl_ctx, agent_pkey);
         if (err != 1)
@@ -568,7 +572,7 @@ exit:
 ** \param   available - pointer to variable in which to return whether a client certificate has been loaded
 ** \param   matches_endpoint - pointer to variable in which to return whether the SubjectAltName field in the client cert matches the EndpointID of the device
 **                             i.e. whether the client cert is suitable for authentication purposes
-**          
+**
 ** \return  true if a client cert has been loaded and SAN=EndpointID
 **
 **************************************************************************/
@@ -578,22 +582,9 @@ void DEVICE_SECURITY_GetClientCertStatus(bool *available, bool *matches_endpoint
     *matches_endpoint = client_cert.is_san_equal_endpoint_id;
 }
 
-/*********************************************************************//**
-**
-** DEVICE_SECURITY_TrustCertVerifyCallback
-**
-** Called back from OpenSSL for each certificate in the received server certificate chain of trust
-** This function saves the certificate chain into the STOMP connection structure
-** This function is used to ignore certificate validation errors caused by system time being incorrect
-**
-** \param   preverify_ok - set to 1, if the current certificate passed, set to 0 if it did not
-** \param   x509_ctx - pointer to context for certificate chain verification
-**
-** \return  1 if certificate chain should be trusted
-**          0 if certificate chain should not be trusted, and connection dropped
-**
-**************************************************************************/
-int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
+
+// Basically the same as the below, but with a cert chain being passed in
+int DEVICE_SECURITY_TrustCertVerifyCallbackWithCertChain(int preverify_ok, X509_STORE_CTX *x509_ctx, STACK_OF_X509 **p_cert_chain)
 {
     int cert_err;
     bool is_reliable;
@@ -601,16 +592,7 @@ int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x5
     int err_depth;        // A depth of 0 indicates the server cert, 1=intermediate cert (CA cert) etc
     char *err_string;
     STACK_OF(X509) *cert_chain;
-    STACK_OF(X509) **p_cert_chain;
-    SSL *ssl;
     char buf[MAX_ISO8601_LEN];
-
-    // Get the parent SSL context
-    ssl = X509_STORE_CTX_get_ex_data(x509_ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
-    USP_ASSERT(ssl != NULL);
-
-    // Get the pointer to variable in which to save the certificate chain)
-    p_cert_chain = (STACK_OF(X509) **)SSL_get_app_data(ssl);
 
     // Save the certificate chain back into the STOMP connection if not done so already
     // (This function is called for each certificate in the chain, so it might have been done already)
@@ -625,7 +607,7 @@ int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x5
 
         *p_cert_chain = cert_chain;
     }
-    
+
     // Exit if OpenSSL validation has passed
     if (preverify_ok == 1)
     {
@@ -635,7 +617,7 @@ int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x5
     // From this point on, OpenSSL had determined that the certificate could not be trusted
     // Fail validation if the reason the certificate could not be trusted was not one related to validity time
     cert_err = X509_STORE_CTX_get_error(x509_ctx);
-    if ((cert_err != X509_V_ERR_CERT_NOT_YET_VALID) && 
+    if ((cert_err != X509_V_ERR_CERT_NOT_YET_VALID) &&
         (cert_err != X509_V_ERR_CERT_HAS_EXPIRED) &&
         (cert_err != X509_V_ERR_CRL_NOT_YET_VALID) &&
         (cert_err != X509_V_ERR_CRL_HAS_EXPIRED) )
@@ -670,6 +652,37 @@ int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x5
     // If the code gets here, then the cert validity time check failed whilst system time was reliable, so fail validation
     USP_LOG_Error("%s: Cert validity time check failed whilst system time was reliable (current system time=%s)", __FUNCTION__, iso8601_cur_time(buf, sizeof(buf)));
     return 0;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_SECURITY_TrustCertVerifyCallback
+**
+** Called back from OpenSSL for each certificate in the received server certificate chain of trust
+** This function saves the certificate chain into the STOMP connection structure
+** This function is used to ignore certificate validation errors caused by system time being incorrect
+**
+** \param   preverify_ok - set to 1, if the current certificate passed, set to 0 if it did not
+** \param   x509_ctx - pointer to context for certificate chain verification
+**
+** \return  1 if certificate chain should be trusted
+**          0 if certificate chain should not be trusted, and connection dropped
+**
+**************************************************************************/
+int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
+{
+    STACK_OF(X509) **p_cert_chain;
+    SSL *ssl;
+
+    // Get the parent SSL context
+    ssl = X509_STORE_CTX_get_ex_data(x509_ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+    USP_ASSERT(ssl != NULL);
+
+    // Get the pointer to variable in which to save the certificate chain)
+    p_cert_chain = (STACK_OF(X509) **)SSL_get_app_data(ssl);
+
+    // Simplification, allow this to be functionally the same with origin of p_cert_chain to differ
+    return DEVICE_SECURITY_TrustCertVerifyCallbackWithCertChain(preverify_ok, x509_ctx, p_cert_chain);
 }
 
 /*********************************************************************//**
@@ -712,7 +725,7 @@ int DEVICE_SECURITY_BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE
     // From this point on, OpenSSL had determined that the certificate could not be trusted
     // Fail validation if the reason the certificate could not be trusted was not one related to validity time
     cert_err = X509_STORE_CTX_get_error(x509_ctx);
-    if ((cert_err != X509_V_ERR_CERT_NOT_YET_VALID) && 
+    if ((cert_err != X509_V_ERR_CERT_NOT_YET_VALID) &&
         (cert_err != X509_V_ERR_CERT_HAS_EXPIRED) &&
         (cert_err != X509_V_ERR_CRL_NOT_YET_VALID) &&
         (cert_err != X509_V_ERR_CRL_HAS_EXPIRED) )
@@ -727,7 +740,7 @@ int DEVICE_SECURITY_BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE
             USP_LOG_Error("%s: X509_STORE_CTX_get1_chain() failed", __FUNCTION__);
             return 0;
         }
-    
+
         LogCertChain(cert_chain);
         LogTrustCerts();
         sk_X509_pop_free(cert_chain, X509_free);
@@ -1065,7 +1078,7 @@ void LogTrustCerts(void)
         tc = &trust_certs[i];
         USP_LOG_Info("[%d] Subject: %s", i, tc->subject);
         USP_LOG_Info("[%d]      (Issuer: %s)", i, tc->issuer);
-    }        
+    }
 }
 
 /*********************************************************************//**
@@ -1129,7 +1142,7 @@ int AddClientCert(SSL_CTX *ctx)
     }
     USP_ASSERT(subject_alt != NULL);
 
-    // Determine whether the SubjectAltName field in the certificate matches the URN form of the agent's endpoint_id    
+    // Determine whether the SubjectAltName field in the certificate matches the URN form of the agent's endpoint_id
     #define URN_PREFIX "urn:bbf:usp:id:"
     #define URN_PREFIX_LEN (sizeof(URN_PREFIX)-1)    // Minus 1 to not include the NULL terminator
     endpoint_id = DEVICE_LOCAL_AGENT_GetEndpointID();
@@ -1139,7 +1152,7 @@ int AddClientCert(SSL_CTX *ctx)
     {
         client_cert.is_san_equal_endpoint_id = true;
     }
- 
+
     USP_LOG_Info("%s: Using a device certificate for connections (SubjectAltName=%s)", __FUNCTION__, subject_alt);
     USP_SAFE_FREE(subject_alt);
 
@@ -1454,7 +1467,7 @@ int AddTrustCert(X509 *cert, ctrust_role_t role)
 ** Extracts the Subject field of the specified cert
 **
 ** \param   cert - pointer to the certificate structure to extract the details of
-** \param   p_subject - pointer to variable in which to return the pointer to a 
+** \param   p_subject - pointer to variable in which to return the pointer to a
 **                      dynamically allocated string containing the value
 **
 ** \return  USP_ERR_OK if successful
@@ -1473,7 +1486,7 @@ int ParseCert_Subject(X509 *cert, char **p_subject)
 ** Extracts the Issuer field of the specified cert
 **
 ** \param   cert - pointer to the certificate structure to extract the details of
-** \param   p_issuer - pointer to variable in which to return the pointer to a 
+** \param   p_issuer - pointer to variable in which to return the pointer to a
 **                     dynamically allocated string containing the value
 **
 ** \return  USP_ERR_OK if successful
@@ -1761,7 +1774,7 @@ time_t Asn1Time_To_UnixTime(ASN1_TIME *cert_time)
 ** NOTE: There may be more than one SubjectAlt field. This code extracts only the first
 **
 ** \param   cert - pointer to the certificate structure to extract the details of
-** \param   p_subject_alt - pointer to variable in which to return the pointer to a 
+** \param   p_subject_alt - pointer to variable in which to return the pointer to a
 **                          dynamically allocated string containing the value
 **
 ** \return  USP_ERR_OK if successful
@@ -1777,7 +1790,7 @@ int ParseCert_SubjectAlt(X509 *cert, char **p_subject_alt)
     char *subject_alt;
     char buf[257];
     int err;
-    
+
     // Exit if unable to get the list of subject alt names
     // NOTE: This is not an error, as subject alt name is an optional field
     subj_alt_names = X509_get_ext_d2i(cert, NID_subject_alt_name, NULL, NULL);
@@ -1897,7 +1910,7 @@ exit:
 ** Extracts the SignatureAlg field of the specified cert
 **
 ** \param   cert - pointer to the certificate structure to extract the details of
-** \param   p_sig_alg - pointer to variable in which to return the pointer to a 
+** \param   p_sig_alg - pointer to variable in which to return the pointer to a
 **                      dynamically allocated string containing the value
 **
 ** \return  USP_ERR_OK if successful
@@ -2041,12 +2054,12 @@ exit:
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int CalcCertHash(X509 *cert, unsigned *p_hash)
+int CalcCertHash(X509 *cert, cert_hash_t *p_hash)
 {
     #define OFFSET_BASIS (0x811C9DC5)
     #define FNV_PRIME (0x1000193)
     int i;
-    unsigned hash = OFFSET_BASIS;
+    cert_hash_t hash = OFFSET_BASIS;
     int len;
     unsigned char *buf = NULL;
     unsigned char *p;
@@ -2086,7 +2099,7 @@ int CalcCertHash(X509 *cert, unsigned *p_hash)
 ** \return  Instance number of the certificate within Device.Security.Certificate.{i} table, or INVALID if not found
 **
 **************************************************************************/
-int FindMatchingTrustCert(unsigned hash)
+int FindMatchingTrustCert(cert_hash_t hash)
 {
     int i;
     trust_cert_t *tc;
@@ -2289,7 +2302,7 @@ int LoadTrustCert(const unsigned char *cert_data, int cert_len, ctrust_role_t ro
     const unsigned char *in;
     X509 *ssl_cert;
 
-    // Exit if unable to convert the DER format byte array into an internal X509 format (DER to internal - d2i) 
+    // Exit if unable to convert the DER format byte array into an internal X509 format (DER to internal - d2i)
     in = cert_data;
     ssl_cert = d2i_X509(NULL, &in, cert_len);
     if (ssl_cert == NULL)
@@ -2297,7 +2310,7 @@ int LoadTrustCert(const unsigned char *cert_data, int cert_len, ctrust_role_t ro
         USP_ERR_SetMessage("%s: d2i_X509() failed. Error in trusted root cert array", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
-    
+
     // Exit if unable to add the certificate's details to our vector
     // NOTE: Ownership of the ssl_cert passes to our vector, so no need to free it in this function
     err = AddTrustCert(ssl_cert, role);
@@ -2321,7 +2334,7 @@ int LoadTrustCert(const unsigned char *cert_data, int cert_len, ctrust_role_t ro
 **  If system time has not been set, then USP Agent will disregard system time when processing.
 **
 ** \param   None
-**          
+**
 ** \return  true if system time has been set, false otherwise
 **
 **************************************************************************/

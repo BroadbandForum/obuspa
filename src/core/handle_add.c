@@ -2,32 +2,32 @@
  *
  * Copyright (C) 2019-2020, Broadband Forum
  * Copyright (C) 2016-2020  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -50,6 +50,7 @@
 #include "path_resolver.h"
 #include "device.h"
 #include "text_utils.h"
+#include "group_set_vector.h"
 
 //------------------------------------------------------------------------------
 // String vector storing the param_name associated with each OperFailure object in the response message
@@ -209,7 +210,7 @@ int CreateExpressionObjects(Usp__AddResp *add_resp, Usp__Add__CreateObject *cr, 
 
     // Return OperFailure if an internal error occurred
     MSG_HANDLER_GetMsgRole(&combined_role);
-    err = PATH_RESOLVER_ResolveDevicePath(cr->obj_path, &obj_paths, kResolveOp_Add, NULL, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(cr->obj_path, &obj_paths, NULL, kResolveOp_Add, NULL, &combined_role, 0);
     if (err != USP_ERR_OK)
     {
         AddResp_OperFailure(add_resp, cr->obj_path, NULL, err, USP_ERR_GetMessage());
@@ -262,7 +263,7 @@ int CreateObject_Trans(char *obj_path, Usp__AddResp *add_resp, Usp__Add__CreateO
 {
     int err;
     dm_trans_vector_t trans;
-    
+
     // Start a transaction here, if allow_partial is at the object level
     if (allow_partial == true)
     {
@@ -296,7 +297,7 @@ int CreateObject_Trans(char *obj_path, Usp__AddResp *add_resp, Usp__Add__CreateO
         {
             // Because allow_partial=true, we rollback the creation of this object, but do not fail the entire message
             DM_TRANS_Abort();
-            err = USP_ERR_OK;                             
+            err = USP_ERR_OK;
         }
     }
 
@@ -329,8 +330,8 @@ int CreateObject(char *obj_path, Usp__AddResp *add_resp, Usp__Add__CreateObject 
     int len;
     kv_vector_t unique_key_params;
     combined_role_t combined_role;
-    unsigned short permission_bitmask;
-    unsigned path_properties;
+    group_set_vector_t gsv;
+    group_set_entry_t *gse;
 
     // Exit if unable to add the specified object (and set the default values of all its child parameters)
     err = DATA_MODEL_AddInstance(obj_path, &instance, CHECK_CREATABLE);
@@ -353,41 +354,41 @@ int CreateObject(char *obj_path, Usp__AddResp *add_resp, Usp__Add__CreateObject 
     // Assume OperSuccess
     oper_success = AddResp_OperSuccess(add_resp, cr->obj_path, full_path);
 
-    // Iterate over all parameters specified in the USP message (which override the default parameters)
+    // Add all parameters to be set to the group set vector
+    GROUP_SET_VECTOR_Init(&gsv);
     for (i=0; i < cr->n_param_settings; i++)
     {
         ps = cr->param_settings[i];
-
-        // Append the parameter name to the path
         USP_SNPRINTF(&full_path[len], sizeof(full_path)-len, ".%s", ps->param);
+        GROUP_SET_VECTOR_Add(&gsv, full_path, ps->value, ps->required, &combined_role);
+    }
 
-        // Set the parameter, if the role has permission
-        path_properties = DATA_MODEL_GetPathProperties(full_path, &combined_role, &permission_bitmask);
-        if ((path_properties && PP_EXISTS_IN_SCHEMA) && ((permission_bitmask & PERMIT_SET)==0))
-        {
-            USP_ERR_SetMessage("%s: No permission to write to %s", __FUNCTION__, full_path);
-            err = USP_ERR_PERMISSION_DENIED;
-        }
-        else
-        {
-            // NOTE: If the parameter does not exist in the schema, then it will be caught here
-            err = DATA_MODEL_SetParameterValue(full_path, ps->value, CHECK_WRITABLE);
-        }
+    // Perform the set of the parameters for this object
+    GROUP_SET_VECTOR_SetValues(&gsv, 0, gsv.num_entries);
 
-        if (err != USP_ERR_OK)
+    // Iterate over all parameters
+    USP_ASSERT(gsv.num_entries == cr->n_param_settings);
+    for (i=0; i < cr->n_param_settings; i++)
+    {
+        ps = cr->param_settings[i];
+        gse = &gsv.vector[i];
+
+        if (gse->err_code != USP_ERR_OK)
         {
             // The parameter was not set successfully
             if (ps->required)
             {
                 // Exit if this parameter was required to be set, but failed
                 param_name = ps->param;
+                err = gse->err_code;
+                USP_ERR_SetMessage("%s", gse->err_msg);
                 goto exit;
             }
             else
             {
                 // This parameter failed to be set, but was not required
                 // So add it to the ParamErr list
-                AddResp_OperSuccess_ParamErr(oper_success, ps->param, err, USP_ERR_GetMessage());
+                AddResp_OperSuccess_ParamErr(oper_success, ps->param, gse->err_code, gse->err_msg);
             }
         }
     }
@@ -401,6 +402,14 @@ int CreateObject(char *obj_path, Usp__AddResp *add_resp, Usp__Add__CreateObject 
     err = DATA_MODEL_GetUniqueKeyParams(full_path, &unique_key_params, &combined_role);
     if (err != USP_ERR_OK)
     {
+        goto exit;
+    }
+
+    // Exit if any unique keys have been left with a default value which is not unique
+    err = DATA_MODEL_ValidateDefaultedUniqueKeys(full_path, &unique_key_params, &gsv);
+    if (err != USP_ERR_OK)
+    {
+        KV_VECTOR_Destroy(&unique_key_params);
         goto exit;
     }
 
@@ -423,6 +432,9 @@ exit:
         // NOTE: We do not delete the object here. Deletion is handled by the transaction rolling back
         // the data model instances vector and the database transaction (for child parameters)
     }
+
+    // Clean up
+    GROUP_SET_VECTOR_Destroy(&gsv);
 
     return err;
 }
@@ -480,7 +492,7 @@ Usp__Msg *CreateAddResp(char *msg_id)
     add_resp->created_obj_results = NULL;
 
     return resp;
-}    
+}
 
 /*********************************************************************//**
 **
@@ -505,13 +517,13 @@ AddResp_OperFailure(Usp__AddResp *add_resp, char *path, char *param_name, int er
     Usp__AddResp__CreatedObjectResult__OperationStatus *oper_status;
     Usp__AddResp__CreatedObjectResult__OperationStatus__OperationFailure *oper_failure;
     int new_num;    // new number of entries in the created object result array
-    
+
     // Allocate memory to store the created object result
     created_obj_res = USP_MALLOC(sizeof(Usp__AddResp__CreatedObjectResult));
     usp__add_resp__created_object_result__init(created_obj_res);
 
     oper_status = USP_MALLOC(sizeof(Usp__AddResp__CreatedObjectResult__OperationStatus));
-    usp__add_resp__created_object_result__operation_status__init(oper_status);    
+    usp__add_resp__created_object_result__operation_status__init(oper_status);
 
     oper_failure = USP_MALLOC(sizeof(Usp__AddResp__CreatedObjectResult__OperationStatus__OperationFailure));
     usp__add_resp__created_object_result__operation_status__operation_failure__init(oper_failure);
@@ -595,10 +607,10 @@ int ParamError_FromAddRespToErrResp(Usp__Msg *add_msg, Usp__Msg *err_msg)
     {
         created_obj_res = add_resp->created_obj_results[i];
         USP_ASSERT(created_obj_res != NULL);
-        
+
         oper_status = created_obj_res->oper_status;
         USP_ASSERT(oper_status != NULL);
-        
+
         // Convert an OperFailure object into a ParamError object
         if (oper_status->oper_status_case == USP__ADD_RESP__CREATED_OBJECT_RESULT__OPERATION_STATUS__OPER_STATUS_OPER_FAILURE)
         {
@@ -606,12 +618,12 @@ int ParamError_FromAddRespToErrResp(Usp__Msg *add_msg, Usp__Msg *err_msg)
             {
                 oper_failure = oper_status->oper_failure;
                 USP_ASSERT(oper_failure != NULL);
-    
+
                 // Extract the ParamError fields
                 obj_path = created_obj_res->requested_path;
                 err_code = oper_failure->err_code;
                 err_str = oper_failure->err_msg;
-    
+
                 // Get the name of the parameter associated with this OperFailure
                 if (count < add_oper_failure_param_names.num_entries)
                 {
@@ -637,7 +649,7 @@ int ParamError_FromAddRespToErrResp(Usp__Msg *add_msg, Usp__Msg *err_msg)
 
                 ERROR_RESP_AddParamError(err_msg, path, err_code, err_str);
             }
-            
+
             // Increment the number of param err fields
             count++;
         }
@@ -668,14 +680,14 @@ AddResp_OperSuccess(Usp__AddResp *add_resp, char *req_path, char *path)
     Usp__AddResp__CreatedObjectResult__OperationStatus *oper_status;
     Usp__AddResp__CreatedObjectResult__OperationStatus__OperationSuccess *oper_success;
     int new_num;    // new number of entries in the created object result array
-    
+
     // Allocate memory to store the created object result
     created_obj_res = USP_MALLOC(sizeof(Usp__AddResp__CreatedObjectResult));
     usp__add_resp__created_object_result__init(created_obj_res);
 
     oper_status = USP_MALLOC(sizeof(Usp__AddResp__CreatedObjectResult__OperationStatus));
-    usp__add_resp__created_object_result__operation_status__init(oper_status);    
-    
+    usp__add_resp__created_object_result__operation_status__init(oper_status);
+
     oper_success = USP_MALLOC(sizeof(Usp__AddResp__CreatedObjectResult__OperationStatus__OperationSuccess));
     usp__add_resp__created_object_result__operation_status__operation_success__init(oper_success);
 
@@ -806,7 +818,7 @@ void AddOperSuccess_UniqueKeys(Usp__AddResp__CreatedObjectResult__OperationStatu
         entry = USP_MALLOC(sizeof(Usp__AddResp__CreatedObjectResult__OperationStatus__OperationSuccess__UniqueKeysEntry));
         usp__add_resp__created_object_result__operation_status__operation_success__unique_keys_entry__init(entry);
         oper_success->unique_keys[i] = entry;
-        
+
         // Move the key and value from the key-value vector to the map entry
         kv = &kvv->vector[i];
         entry->key = kv->key;

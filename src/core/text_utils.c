@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -63,20 +63,17 @@
 ** \return  hash value
 **
 **************************************************************************/
-int TEXT_UTILS_CalcHash(char *s)
+dm_hash_t TEXT_UTILS_CalcHash(char *s)
 {
-    #define OFFSET_BASIS (0x811C9DC5)
-    #define FNV_PRIME (0x1000193)
-    unsigned hash = OFFSET_BASIS;
+    dm_hash_t hash = OFFSET_BASIS;
 
     while (*s != '\0')
     {
-        hash = hash * FNV_PRIME;
-        hash = hash ^ (*s);
+        ADD_TO_HASH(*s, hash);
         s++;
     }
 
-    return (int)hash;
+    return hash;
 }
 
 /*********************************************************************//**
@@ -132,7 +129,7 @@ int TEXT_UTILS_StringToUnsigned(char *str, unsigned *value)
 int TEXT_UTILS_StringToInteger(char *str, int *value)
 {
     int num_converted;
-    
+
     num_converted = sscanf(str, "%d", value);
     if (num_converted != 1)
     {
@@ -567,7 +564,7 @@ char *TEXT_UTILS_StrStr(char *haystack, char *needle)
                 return haystack;
             }
         }
-        
+
         // Move to next character
         haystack++;
         c = *haystack;
@@ -696,11 +693,11 @@ int TEXT_UTILS_KeyValueFromString(char *buf, char **key, char **value)
     char *p;
     int len;
     int key_len;
-    
+
     // Set default return parameters
     *key = NULL;
     *value = NULL;
-    
+
     // Exit if this line is a comment - nothing more to do
     if (buf[0] == '#')
     {
@@ -713,14 +710,14 @@ int TEXT_UTILS_KeyValueFromString(char *buf, char **key, char **value)
     {
         *p = '\0';
     }
-    
+
     // Truncate string at carriage return
     p = strchr(buf, '\r');
     if (p != NULL)
     {
         *p = '\0';
     }
-    
+
     // Skip leading whitespace
     #define WHITESPACE_CHARS " \t"
     len = strspn(buf, WHITESPACE_CHARS);
@@ -804,7 +801,7 @@ int TEXT_UTILS_NullStringCompare(char *str1, char *str2)
             return -1;
         }
     }
-    
+
     // Since both strings are non-NULL, compare them with the standard strcmp function
     return strcmp(str1, str2);
 }
@@ -813,7 +810,7 @@ int TEXT_UTILS_NullStringCompare(char *str1, char *str2)
 **
 ** TEXT_UTILS_TrimBuffer
 **
-** Trims the string in a buffer of leading and trailing whitespace by 
+** Trims the string in a buffer of leading and trailing whitespace by
 ** truncating the string in the buffer and returning a new pointer to the start of the string in the buffer
 **
 ** \param   buf - pointer to buffer containing string to trim
@@ -881,9 +878,9 @@ void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char safe
     int num_required;
 
     // Reserve space in the destination buffer for a trailing NULL terminator
-    USP_ASSERT(dst_len > 0);    
+    USP_ASSERT(dst_len > 0);
     dst_len--;
-    
+
     c = *src++;
     while (c != '\0')
     {
@@ -931,20 +928,21 @@ exit:
 **
 ** Converts any percent escaped characters within a string buffer back to their character
 ** The changes to the string are made in-place within the input buffer
+** NOTE: Badly formed percent encoded characters are ignored. This makes the code more
+**       robust if the originator did not realise that the string had to be percent encoded
+**       For example: If the string contains a '%' character, but the originator forgot to percent encode it
 **
 ** \param   buf - pointer to buffer containing string to trim
 **
-** \return  NULL if a 2 digit hex value did not follow any percent, otherwise buf
+** \return  None
 **
 **************************************************************************/
-char *TEXT_UTILS_PercentDecodeString(char *buf)
+void TEXT_UTILS_PercentDecodeString(char *buf)
 {
     char c;
     char *src;
     char *dest;
-    char hex1, hex2;
     int digit1, digit2;
-    char unescaped;
 
     src = buf;
     dest = buf;
@@ -953,51 +951,40 @@ char *TEXT_UTILS_PercentDecodeString(char *buf)
     {
         if (c == '%')
         {
-            // Exit if string ends in a trailing '%' without a 2 digit trailing hex number following
-            src++;
-            hex1 = *src++;
-            if (hex1 == '\0')
+            // Skip this percent if string ends in a trailing '%' without a 2 digit trailing hex number following
+            src++;      // Consume the percent character from the input
+            if ((src[0] == '\0') || (src[1] == '\0'))
             {
-                return NULL;
+                *dest++ = '%';
+                goto next;
             }
 
-            hex2 = *src++;
-            if (hex2 == '\0')
-            {
-                return NULL;
-            }
-
-            // Exit if not a valid hex number            
-            digit1 = TEXT_UTILS_HexDigitToValue(hex1);
-            digit2 = TEXT_UTILS_HexDigitToValue(hex2);
+            // Skip this percent if following 2 digits don't form a hex number
+            digit1 = TEXT_UTILS_HexDigitToValue(src[0]);
+            digit2 = TEXT_UTILS_HexDigitToValue(src[1]);
             if ((digit1 == INVALID) || (digit2==INVALID))
             {
-                return NULL;
+                *dest++ = '%';
+                goto next;
             }
 
-            unescaped = (char)(16*digit1 + digit2);
-            *dest++ = unescaped;
+            src += 2;   // Consume the 2 digits from the input
+            *dest++ = (char)(16*digit1 + digit2);
         }
         else
         {
             // Copy down characters
-            if (dest != src)
-            {
-                *dest = *src;
-            }
-
-            // Move to next character
             src++;
-            dest++;
+            *dest++ = c;
         }
 
+next:
         c = *src;
     }
 
     // If the code gets here, we have stepped through all characters in the string converting them
     // So terminate the string
     *dest = '\0';
-    return buf;
 }
 
 /*********************************************************************//**
@@ -1099,6 +1086,50 @@ bool TEXT_UTILS_IsSymbol(char *buf)
 
 /*********************************************************************//**
 **
+** TEXT_UTILS_HexStringToValue
+**
+** Converts the specified string of hexadecimal characters into a value
+** NOTE: As this function returns errors using the value INVALID, it cannot accept strings longer than 7 characters
+**
+** \param   s - string of hexadecimal characters
+**
+** \return  value of hex string, or INVALID if unable to convert the character
+**
+**************************************************************************/
+int TEXT_UTILS_HexStringToValue(char *s)
+{
+    int i;
+    int len;
+    int value = 0;
+    int nibble;
+
+    // Prevent the string from erroneously converting to INVALID, by disallowing strings longer than 7 characters
+    // Also string must contain some hex digits
+    len = strlen(s);
+    if ((len == 0) || (len > 7))
+    {
+        return INVALID;
+    }
+
+    // Iterate over all characters in the string
+    for (i=0; i<len; i++)
+    {
+        nibble = TEXT_UTILS_HexDigitToValue( s[i] );
+        if (nibble == INVALID)
+        {
+            return INVALID;
+        }
+
+        value = (value << 4) + nibble;
+    }
+
+    // If the code gets here, the string was converted successfully
+    return value;
+}
+
+
+/*********************************************************************//**
+**
 ** TEXT_UTILS_HexDigitToValue
 **
 ** Converts the specified hex character into a value 0-15
@@ -1173,37 +1204,55 @@ char TEXT_UTILS_ValueToHexDigit(int nibble)
 void TEXT_UTILS_PathToSchemaForm(char *path, char *buf, int len)
 {
     char c;
+    char *p;
+    char t;
+    int num_digits;
 
-    c = *path;
+    // Iterate over all characters in the path
+    c = *path++;
     while (c != '\0')
     {
-        if (IS_NUMERIC(c))
+        // If hit a path segment separator...
+        if (c == '.')
         {
-            // Replace number with schema instance separator in the output buffer
-            #define INSTANCE_SEPARATOR "{i}"
-            #define INSTANCE_SEPARATOR_LEN (sizeof(INSTANCE_SEPARATOR)-1)       // Minus 1 to not include NULL terminator
-            memcpy(buf, INSTANCE_SEPARATOR, INSTANCE_SEPARATOR_LEN);
-            buf += INSTANCE_SEPARATOR_LEN;
-            len -= INSTANCE_SEPARATOR_LEN;
+            // Determine the number of digits, if the following path segment is a number
+            num_digits = 0;
+            p = path;
+            t = *p++;
+            while (IS_NUMERIC(t))
+            {
+                num_digits++;
+                t = *p++;
+            }
 
-            // Skip to after number
-            path += TEXT_UTILS_CountConsecutiveDigits(path);
-        }
-        else
-        {
-            // Copy character into output buffer
-            *buf++ = c;
-            len--;
-            path ++;
+            // If the path segment is purely a number...
+            if ((num_digits > 0) && ((t == '.') || (t == '\0')))
+            {
+                // Copy the schema instance separator into the output buffer, instead of the number
+                #define INSTANCE_SEPARATOR ".{i}"
+                #define INSTANCE_SEPARATOR_LEN (sizeof(INSTANCE_SEPARATOR)-1)       // Minus 1 to not include NULL terminator
+                memcpy(buf, INSTANCE_SEPARATOR, INSTANCE_SEPARATOR_LEN);
+                buf += INSTANCE_SEPARATOR_LEN;
+                len -= INSTANCE_SEPARATOR_LEN;
+
+                // Skip to after number
+                path += num_digits;
+                c = *path++;
+                continue;
+            }
         }
 
-        // Exit if not enough space for output
+        // Otherwise copy current character into output buffer
+        *buf++ = c;
+        len--;
+
+        // Exit if not enough space for maximum possible number of characters which could be copied next iteration
         if (len < INSTANCE_SEPARATOR_LEN+1)        // Plus 1, so that we have enough space to copy the instance separator and a NULL terminator
         {
             goto exit;
         }
 
-        c = *path;
+        c = *path++;
     }
 
 exit:
@@ -1214,37 +1263,28 @@ exit:
 **
 ** TEXT_UTILS_CountConsecutiveDigits
 **
-** Determines the number of consecutive numeric digits in the string, 
+** Determines the number of consecutive numeric digits in the string,
 ** terminated by either a non digit character or the NULL terminator
 **
-** \param   s - pointer to string
+** \param   p - pointer to string
 **
 ** \return  Number of digts in the string. Note: This may be 0 if the first character is a non digit
 **
 **************************************************************************/
-int TEXT_UTILS_CountConsecutiveDigits(char *s)
+int TEXT_UTILS_CountConsecutiveDigits(char *p)
 {
-    int count = 0;
     char c;
+    int num_digits;
 
-    c = *s;
-    while(true)
-    {    
-        if (IS_NUMERIC(c))
-        {
-            // Increment count if hit a digit character
-            count++;
-        }
-        else
-        {
-            // Exit if hit a non-digit character (or NULL terminator)
-            return count;
-        }
-
-        // Move to next character
-        s++;
-        c = *s;
+    num_digits = 0;
+    c = *p++;
+    while (IS_NUMERIC(c))
+    {
+        num_digits++;
+        c = *p++;
     }
+
+    return num_digits;
 }
 
 /*********************************************************************//**
@@ -1313,7 +1353,7 @@ void TestTrimBuffer(void)
 
 //------------------------------------------------------------------------------------------
 // Code to test the TEXT_UTILS_PercentDecodeString() function
-// NOTE '%25' (ASCII character 0x25) is the '%' character
+// NOTE '%25' (ASCII character 0x25) is the '%' character, '%2A' is '*', and '%3D' is '='
 #if 0
 char *percent_decode_string_test_cases[] =
 {
@@ -1324,27 +1364,35 @@ char *percent_decode_string_test_cases[] =
     "one%25",       "one%",
     "%25one",       "%one",
     "one%25two%25three%25four",       "one%two%three%four",
-    "one%2two",       NULL,
-    "one%",       NULL,
-    "one%2",       NULL,
-    "one%X2two",       NULL,
-    "one%2Xtwo",       NULL,
+    "one%2two",   "one%2two",
+    "one%",       "one%",
+    "one%2",      "one%2",
+    "one%X2two",       "one%X2two",
+    "one%2Xtwo",       "one%2Xtwo",
     "one%22two",       "one\"two",
+    "one%2Atwo",       "one*two",
+    "one%2atwo",       "one*two",
+    "one%3Dtwo",       "one=two",
+    "one%2atwo%",       "one*two%",
+    "one%2atwo%2",       "one*two%2",
+    "one%2atwo%2a",       "one*two*",
+    "one%2atwo%2at",       "one*two*t",
+    "one%2atwo%%2a",       "one*two%*",
+    "one%2atwo%%2at",       "one*two%*t",
 };
 
 void TestPercentDecodeString(void)
 {
     int i;
-    char *s;
     char buf[256];
 
     for (i=0; i < NUM_ELEM(percent_decode_string_test_cases); i+=2)
     {
         strcpy(buf, percent_decode_string_test_cases[i]);
-        s = TEXT_UTILS_PercentDecodeString(buf);
-        if (TEXT_UTILS_NullStringCompare(s, percent_decode_string_test_cases[i+1]) != 0)
+        TEXT_UTILS_PercentDecodeString(buf);
+        if (strcmp(buf, percent_decode_string_test_cases[i+1]) != 0)
         {
-            printf("ERROR: [%d] Test case result for '%s' is '%s' (expected '%s')\n", i/2, percent_decode_string_test_cases[i], s, percent_decode_string_test_cases[i+1]);
+            printf("ERROR: [%d] Test case result for '%s' is '%s' (expected '%s')\n", i/2, percent_decode_string_test_cases[i], buf, percent_decode_string_test_cases[i+1]);
         }
     }
 }
@@ -1393,7 +1441,7 @@ void TestSplitString(void)
             expected = split_string_test_cases[i+1+j];
             if (TEXT_UTILS_NullStringCompare(result, expected) != 0)
             {
-                printf("FAIL: [%d] Test case result %d is wrong (got %s, expected %s)", i/4, j, result, expected); 
+                printf("FAIL: [%d] Test case result %d is wrong (got %s, expected %s)", i/4, j, result, expected);
                 count++;
             }
         }
@@ -1435,7 +1483,7 @@ void TestStrStr(void)
         {
             if (result != NULL)
             {
-                printf("FAIL: [%d] Test case result is wrong (got '%s', expected NULL)\n", i/3, result); 
+                printf("FAIL: [%d] Test case result is wrong (got '%s', expected NULL)\n", i/3, result);
                 count++;
             }
         }
@@ -1470,6 +1518,18 @@ char *schema_form_test_cases[] =
     "Value.12458.",                 "Value.{i}.",
     "Value.14.Stuff.6752.Other",    "Value.{i}.Stuff.{i}.Other",
     "Value.1444.Stuff.2942",        "Value.{i}.Stuff.{i}",
+    "Value.14Stuff.6752.Other",    "Value.14Stuff.{i}.Other",
+    "Value.14.Stuff6752.Other",    "Value.{i}.Stuff6752.Other",
+    "Value.14.Stuff6752.Other.",    "Value.{i}.Stuff6752.Other.",
+    "Value.14.Stuff6752.",          "Value.{i}.Stuff6752.",
+    "Value.14.",                    "Value.{i}.",
+    "Value.14",                     "Value.{i}",
+    "Device.IPsec.IKEv2SA.1.",      "Device.IPsec.IKEv2SA.{i}.",
+    "Device.IPsec.IKEv2SA.{i}.",    "Device.IPsec.IKEv2SA.{i}.",
+    "Device.IPsec.IKEv2SA.{i}",     "Device.IPsec.IKEv2SA.{i}",
+    "Device.{i}.IKEv2SA.{i}",       "Device.{i}.IKEv2SA.{i}",
+    "Device...IKEv2SA.{i}",         "Device...IKEv2SA.{i}",
+
 };
 
 void Test_ToSchemaForm(void)
@@ -1550,7 +1610,7 @@ void Test_ToKeyValue(void)
                 count++;
             }
         }
-   
+
         // Check that returned value is correct
         if (to_key_value_test_cases[i+2] != NULL)
         {
@@ -1568,7 +1628,7 @@ void Test_ToKeyValue(void)
                 count++;
             }
         }
-   
+
         if (err != USP_ERR_OK)
         {
             if ((key != NULL) || (value != NULL))
@@ -1604,7 +1664,7 @@ void Test_ReplaceCharInString(void)
 
     for (i=0; i < NUM_ELEM(replace_char_test_cases); i+=2)
     {
-        
+
         TEXT_UTILS_ReplaceCharInString(replace_char_test_cases[i], ':', "\\c", buf, sizeof(buf));
 
         printf("[%d] '%s' => '%s'\n", i/2, replace_char_test_cases[i], buf);

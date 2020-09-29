@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -134,7 +134,7 @@ void MSG_HANDLER_HandleDelete(Usp__Msg *usp, char *controller_endpoint, mtp_repl
             count = ParamError_FromDeleteRespToErrResp(resp, NULL);
             err = ERROR_RESP_CalcOuterErrCode(count, err);
             resp = ERROR_RESP_CreateSingle(usp->header->msg_id, err, resp, ParamError_FromDeleteRespToErrResp);
-    
+
             // Abort the global transaction, only logging errors (the message we want to send back over USP is above)
             DM_TRANS_Abort();
             goto exit;
@@ -185,7 +185,7 @@ int DeleteExpressionObjects(Usp__DeleteResp *del_resp, char *exp_path, bool allo
     // Exit if unable to resolve to objects that are instantiated
     STR_VECTOR_Init(&obj_paths);
     MSG_HANDLER_GetMsgRole(&combined_role);
-    err = PATH_RESOLVER_ResolveDevicePath(exp_path, &obj_paths, kResolveOp_Del, NULL, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(exp_path, &obj_paths, NULL, kResolveOp_Del, NULL, &combined_role, 0);
     if (err != USP_ERR_OK)
     {
         AddDeleteResp_OperFailure(del_resp, exp_path, err, USP_ERR_GetMessage());
@@ -324,7 +324,7 @@ Usp__Msg *CreateDeleteResp(char *msg_id)
     del_resp->deleted_obj_results = NULL;
 
     return resp;
-}    
+}
 
 /*********************************************************************//**
 **
@@ -348,7 +348,7 @@ AddDeleteResp_OperFailure(Usp__DeleteResp *del_resp, char *path, uint32_t err_co
     Usp__DeleteResp__DeletedObjectResult__OperationStatus *oper_status;
     Usp__DeleteResp__DeletedObjectResult__OperationStatus__OperationFailure *oper_failure;
     int new_num;    // new number of entries in the created object result array
-    
+
     // Allocate memory to store the created object result
     deleted_obj_res = USP_MALLOC(sizeof(Usp__DeleteResp__DeletedObjectResult));
     usp__delete_resp__deleted_object_result__init(deleted_obj_res);
@@ -373,7 +373,7 @@ AddDeleteResp_OperFailure(Usp__DeleteResp *del_resp, char *path, uint32_t err_co
 
     oper_status->oper_status_case = USP__DELETE_RESP__DELETED_OBJECT_RESULT__OPERATION_STATUS__OPER_STATUS_OPER_FAILURE;
     oper_status->oper_failure = oper_failure;
-    
+
     oper_failure->err_code = err_code;
     oper_failure->err_msg = USP_STRDUP(err_msg);
 
@@ -426,10 +426,10 @@ int ParamError_FromDeleteRespToErrResp(Usp__Msg *del_msg, Usp__Msg *err_msg)
     {
         deleted_obj_res = del_resp->deleted_obj_results[i];
         USP_ASSERT(deleted_obj_res != NULL);
-        
+
         oper_status = deleted_obj_res->oper_status;
         USP_ASSERT(oper_status != NULL);
-        
+
         // Convert an OperFailure object into a ParamError object
         if (oper_status->oper_status_case == USP__DELETE_RESP__DELETED_OBJECT_RESULT__OPERATION_STATUS__OPER_STATUS_OPER_FAILURE)
         {
@@ -437,7 +437,7 @@ int ParamError_FromDeleteRespToErrResp(Usp__Msg *del_msg, Usp__Msg *err_msg)
             {
                 oper_failure = oper_status->oper_failure;
                 USP_ASSERT(oper_failure != NULL);
-    
+
                 // Extract the ParamError fields
                 path = deleted_obj_res->requested_path;
                 err_code = oper_failure->err_code;
@@ -473,7 +473,7 @@ AddDeleteResp_OperSuccess(Usp__DeleteResp *del_resp, char *path)
     Usp__DeleteResp__DeletedObjectResult__OperationStatus *oper_status;
     Usp__DeleteResp__DeletedObjectResult__OperationStatus__OperationSuccess *oper_success;
     int new_num;    // new number of entries in the created object result array
-    
+
     // Allocate memory to store the created object result
     deleted_obj_res = USP_MALLOC(sizeof(Usp__DeleteResp__DeletedObjectResult));
     usp__delete_resp__deleted_object_result__init(deleted_obj_res);

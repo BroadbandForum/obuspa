@@ -16,9 +16,11 @@ For example,  DEVICE_XXX_Init() refers to a set of functions:
 
 
 ## Building OB-USP-AGENT
-1. Install dependencies (Curl, OpenSSL, Sqlite, C-Ares, z-lib, autotools) using package manager:
+1. Install dependencies (Curl, OpenSSL, Sqlite, z-lib, autotools) using package manager:
 ```
-$ sudo apt-get install libssl-dev libcurl4-openssl-dev libsqlite3-dev libc-ares-dev libz-dev autoconf automake libtool
+$ sudo apt-add-repository ppa:mosquitto-dev/mosquitto-ppa
+$ sudo apt-get update
+$ sudo apt-get install libssl-dev libcurl4-openssl-dev libsqlite3-dev libz-dev autoconf automake libtool libmosquitto-dev pkg-config
 ```
 
 2. Install OB-USP-AGENT from source:
@@ -64,16 +66,16 @@ If OB-USP-AGENT successfully connected to your STOMP server you should see trace
    endpoint-id:os\c\c002456-0800270B57FF
    login:my_username
    passcode:
-   
-   
+
+
    Received CONNECTED frame from (host=controller1, port=61613)
    CONNECTED
    session:session-1K6NehQnoR3hioRXZgFBBw
    heart-beat:300000,30000
    server:RabbitMQ/3.5.7
    version:1.2
-   
-   
+
+
    Sending SUBSCRIBE frame to (host=controller1, port=61613)
    SUBSCRIBE
    id:0
@@ -86,7 +88,7 @@ If you subsequently change the settings in factory_reset_example.txt, then you m
 in order that the database is re-created the next time you run OB-USP_AGENT.
 To delete the database in the default location:
 ```
-$ rm /tmp/usp.db
+$ rm /usr/local/var/obuspa/usp.db
 ```
 
 Alternatively you can use the 'obuspa -c dbset' command (see next section) to alter parameters
@@ -189,7 +191,7 @@ The following defines are most likely to need modifying:
                                     used for USP communications. If not defined, the Linux routing tables select
                                     which network interface to use.
                                     IMPORTANT: Even if not defined, DEFAULT_WAN_IFNAME must be a valid network interface.
-                                    
+
 * DEFAULT_DATABASE_FILE - The file system location of the database file, if none is specified
                           by the '-f' option when invoking OB-USP-AGENT.
 
@@ -206,7 +208,7 @@ The following defines are most likely to need modifying:
 ## Extending the Data Model
 Use the USP_REGISTER_XXX() set of functions to register USP data model objects, parameters, cammands and Events.
 * Integrators should always call USP_REGISTER_XXX() from VENDOR_Init() in src/vendor/vendor.c
-* Contributors should create a new device_XXX.c file in src/core, and call USP_REGISTER_XX() from a 
+* Contributors should create a new device_XXX.c file in src/core, and call USP_REGISTER_XX() from a
   DEVICE_XXX_Init() located in the new device_XXX.c file.
   The new DEVICE_XXX_Init() must be hooked into the existing core data model from DATA_MODEL_Init() (in src/core/data_model.c).
 
@@ -238,7 +240,7 @@ At bootup, the instance numbers of data model objects must be signalled to OB-US
 * Integrators should call USP_DM_InformInstance() from VENDOR_Start() (in src/vendor/vendor.c).
 * Contributors should call USP_DM_InformInstance() from a DEVICE_XXX_Start() function in their device_XXX.c file.
 
-After bootup, changes to object instances should be signalled with the USP_SIGNAL_ObjectAdded() and 
+After bootup, changes to object instances should be signalled with the USP_SIGNAL_ObjectAdded() and
 USP_SIGNAL_ObjectDeleted() functions.
 
 For an example of implementing a USP asynchronous command, see src/core/device_selftest_example.c.
@@ -284,4 +286,111 @@ The following core vendor hooks are most likely to need overriding:
 * get_trust_store_cb - called by OB-USP-AGENT core to get the list of SSL certificates to install in OB-USP-AGENT's trust store. These can alternatively be specified using the '-t' option when invoking OB-USP-AGENT.
 * get_agent_cert_cb - called by OB-USP-AGENT core to get the SSL client certificate and private key associated with this device. This can alternatively be specified using the '-a' option when invoking OB-USP-AGENT.
 
-Certificates provided to the get_trust_store_cb() and get_agent_cert_cb() must be in DER (binary) form.
+The trust store certificates and agent certificate (with associated private key) may alternatively be specified using the '--truststore' and
+'--authcert' arguments when invoking OB-USP-AGENT.
+
+Certificates provided to the get_trust_store_cb() and get_agent_cert_cb() must be in DER (binary) form,
+whilst certificates provided to the '--authcert' and '--truststore' invocation arguments must be in PEM format.
+
+## Advanced APIs
+### Extending the Data Model using grouped parameter and object API
+With some integrations, the data model is implemented by other executables and OB-USP-AGENT must communicate with the other executables to get or set parameters or add or delete object instances. 
+
+Use the USP_REGISTER_GroupXXX() set of functions to register the group of parameters and objects implemented by the other executable. When getting or setting grouped parameters, OB-USP-AGENT passes a list of all affected parameters in the group to a single group get or set callback function, improving communication efficiency with the other executable.
+
+Example (for Integrators):
+
+```C
+int VENDOR_Init(void)
+{
+    int err = USP_ERR_OK;
+
+    #define MY_GROUP 1
+    err |= USP_REGISTER_GroupedObject(MY_GROUP, "Device.MyObject.{i}", true);
+    
+    err |= USP_REGISTER_GroupedVendorParam_ReadWrite(MY_GROUP, "Device.MyObject.{i}.MyParam", DM_BOOL);
+    
+    err |= USP_REGISTER_GroupVendorHooks(MY_GROUP, GetMyParams, SetMyParams, AddMyObject, DelMyObject);
+
+    if (err != USP_ERR_OK)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    return USP_ERR_OK;
+}
+```
+In the example, the grouped vendor hook callbacks registered by USP_REGISTER_GroupVendorHooks() are called to get, set, add or delete data model parameters and objects associated with MY_GROUP. Providing example implementations of these functions would be too verbose for this guide. Instead, follow the implementation guidelines below.
+
+```C
+int GetMyParams(int group_id, kv_vector_t *params)
+{
+    // params->vector[].key contains parameters to get
+    // Obtain the value of these parameters from the other executable then use USP_ARG_Replace()
+    // or USP_ARG_ReplaceWithHint() to copy the obtained value back into params->vector[]
+    // If some parameters could not be obtained, then just do not call USP_ARG_Replace()
+    // Only return an error if none of the parameters could be obtained (Example: RPC call failure)
+}
+
+int SetMyParams(int group_id, kv_vector_t *params, unsigned *param_types, int *failure_index)
+{
+    // params->vector[].key contains parameters to set
+    // params->vector[].value contains the associated values to set
+    // param_types[] contains the associated type of each parameter (Example: DM_BOOL)
+    // return an error if any of the parameters could not be set.
+    // *failure_index may be used to return the index of the first parameter to fail (index in the params->vector[] and param_types[] arrays).
+    // If this is not known, you should return an index of the value INVALID.
+}
+
+int AddMyObject(int group_id, char *path, int *instance)
+{
+    // return the instance number of the object created by the other executable in *instance
+    // return USP_ERR_CREATION_FAILURE if the object could not be created
+}
+
+int DelMyObject(int group_id, char *path)
+{
+    // return USP_ERR_OBJECT_NOT_DELETABLE if the object could not be deleted
+}
+```
+
+### Refreshing Object Instances
+Changes to object instances are normally signalled using the USP_SIGNAL_ObjectAdded() and 
+USP_SIGNAL_ObjectDeleted() functions. However for some data model objects these events can only be determined by periodically polling the object's instances. This is wasteful to perform continuously, as the object instances are only required when forming a USP response.
+
+Use USP_REGISTER_Object_RefreshInstances() to register an object instance query function which is called on demand.
+
+Example (for Integrators):
+
+```C
+int VENDOR_Init(void)
+{
+    int err = USP_ERR_OK;
+
+    err |= USP_REGISTER_Object("Device.IP.Interface.{i}", NULL, NULL, NULL, NULL, NULL, NULL);
+    
+    err |= USP_REGISTER_ObjectRefreshInstances("Device.IP.Interface.{i}", RefreshIPInterfaceInstances);
+    
+    if (err != USP_ERR_OK)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    return USP_ERR_OK;
+}
+
+int RefreshIPInterfaceInstances(int group_id, char *path, int *expiry_period)
+{
+    // Register the currently valid instances for this object and all child objects
+    USP_DM_RefreshInstance("Device.IP.Interface.1");
+    USP_DM_RefreshInstance("Device.IP.Interface.1.IPv4Address.1");
+    
+    // cache the object instance numbers for 30 seconds
+    *expiry_period = 30;
+    return USP_ERR_OK;
+}
+
+
+```
+
+

@@ -1,4 +1,25 @@
 # Release History
+## Release 3.0.0
+  * MQTT MTP support
+     * MQTT v5.0 and MQTT v3.1.1 support
+     * TLS support
+     * MQTT topic subscriptions
+  * Architectural enhancements
+     * More efficient USP Get and Set for groups of parameters provided by separate components
+     * On-demand querying of table instance numbers
+  * Build support for MUSL libc
+  * Bug fixes
+     * Conformance test failures
+     * Defaulted unique key parameters are validated for uniqueness when adding an instance to a table
+     * Deleting a controller deletes its subscriptions
+     * References to objects without trailing instance numbers do not cause assert
+     * USPRetry set of parameters, should actually be named USPNotifRetry
+  * Other changes
+     * Ignore sender certificate in USP records
+     * Annotations on function prototypes for better Clang static analyzer results
+     * CoAP.Interfaces parameter removed
+     * More robust handling of badly formed percent encoded CoAP resource in URI query option
+
 ## Release 2.1.0
   * Simultaneous sessions with multiple CoAP based controllers are now supported
   * USP Record error handling has been upgraded to be compliant with the USP 1.1 Specification

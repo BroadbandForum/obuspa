@@ -2,32 +2,32 @@
  *
  * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2017-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -123,9 +123,9 @@ typedef struct
     int pbuf_len;           // Length of protobuf message to send
     char *host;             // Hostname of the controller to send to
     coap_config_t config;   // Port, resource and whether encryption is enabled
-    bool coap_reset_session_hint;       // Set if an existing DTLS session with this host should be reset. 
-                                        // If we know that the USP request came in on a new DTLS session, then it is likely 
-                                        // that the USP response must be sent back on a new DTLS session also. Wihout this, 
+    bool coap_reset_session_hint;       // Set if an existing DTLS session with this host should be reset.
+                                        // If we know that the USP request came in on a new DTLS session, then it is likely
+                                        // that the USP response must be sent back on a new DTLS session also. Wihout this,
                                         // the CoAP retry mechanism will cause the DTLS session to restart, but it is a while
                                         // before the retry is triggered, so this hint speeds up communications
     time_t expiry_time;     // Time at which this message should be removed from the queue
@@ -184,7 +184,7 @@ int COAP_CLIENT_Init(void)
 {
     int i;
     coap_client_t *cc;
-    
+
     // Initialise the CoAP clients array
     memset(coap_clients, 0, sizeof(coap_clients));
     for (i=0; i<MAX_COAP_CLIENTS; i++)
@@ -211,7 +211,7 @@ int COAP_CLIENT_Init(void)
 int COAP_CLIENT_InitStart(void)
 {
     // Create the DTLS client SSL context with trust store and client cert loaded
-    coap_client_ssl_ctx = DEVICE_SECURITY_CreateSSLContext(DTLS_client_method(), SSL_VERIFY_PEER, 
+    coap_client_ssl_ctx = DEVICE_SECURITY_CreateSSLContext(DTLS_client_method(), SSL_VERIFY_PEER,
                                                            DEVICE_SECURITY_TrustCertVerifyCallback);
     if (coap_client_ssl_ctx == NULL)
     {
@@ -236,7 +236,7 @@ void COAP_CLIENT_Destroy(void)
 {
     int i;
     coap_client_t *cc;
-    
+
     // Free all CoAP clients
     for (i=0; i<MAX_COAP_CLIENTS; i++)
     {
@@ -298,7 +298,7 @@ int COAP_CLIENT_Start(int cont_instance, int mtp_instance, char *endpoint_id)
     cc->reconnect_time = INVALID_TIME;
     cc->reconnect_count = 0;
     cc->reconnect_timeout_ms = CalcCoapInitialTimeout();
-    
+
     cc->linger_time = INVALID_TIME;
 
     err = USP_ERR_OK;
@@ -395,7 +395,7 @@ void COAP_CLIENT_UpdateAllSockSet(socket_set_t *set)
 
     cur_time = time(NULL);
     #define CALC_TIMEOUT(res, t) res = t - cur_time; if (res < 0) { res = 0; }
-    
+
     // Add all CoAP client sockets (these receive CoAP ACK packets from the controller)
     for (i=0; i<MAX_COAP_CLIENTS; i++)
     {
@@ -629,7 +629,7 @@ void HandleCoapAck(coap_client_t *cc)
     unsigned char buf[MAX_COAP_PDU_SIZE];
     parsed_pdu_t pp;
     unsigned action_flags;
-    
+
     // Exit if connection was closed
     len = COAP_ReceivePdu(cc->ssl, cc->rbio, cc->socket_fd, buf, sizeof(buf));
     if (len == -1)
@@ -659,7 +659,7 @@ void HandleCoapAck(coap_client_t *cc)
 
 exit:
     // Perform the actions set in the action flags
-    
+
     // Handle sending a RST, then go back to retrying to transmit the first block
     // NOTE: Note any errors that might be reported in an ACK, instead send a RST, because this code is a CoAP client, so it doesn't send ACKs
     if (action_flags & (SEND_RST | INDICATE_ERR_IN_ACK))
@@ -684,11 +684,11 @@ exit:
         cc->message_id = NEXT_MESSAGE_ID(cc->message_id);
         cc->ack_timeout_ms = CalcCoapInitialTimeout();
         cc->retransmission_counter = 0;
-    
-        // Change the size of the next blocks being sent out, if the receiver requested it, 
+
+        // Change the size of the next blocks being sent out, if the receiver requested it,
         //and the size they requested is less than our current (otherwise ignore the request)
         cc->block_size = MIN(cc->block_size, pp.block_size);
-    
+
         // Send the next block
         err = SendCoapBlock(cc);
         if (err != USP_ERR_OK)
@@ -839,7 +839,7 @@ unsigned CalcCoapClientActions(coap_client_t *cc, parsed_pdu_t *pp)
         USP_PROTOCOL("%s: Received CoAP PDU (MID=%d) does not contain BLOCK1 option", __FUNCTION__, pp->message_id);
         return RESET_STATE;
     }
-    
+
     // Exit if the block being acknowledged is not the current block
     // NOTE: This should never occur as the message_id and block number are tied together
     if (pp->rxed_block != cc->cur_block)
@@ -847,7 +847,7 @@ unsigned CalcCoapClientActions(coap_client_t *cc, parsed_pdu_t *pp)
         USP_PROTOCOL("%s: Received CoAP PDU (MID=%d) is for a different block than current (rxed_block=%d, expected=%d)", __FUNCTION__, pp->message_id, pp->rxed_block, cc->cur_block);
         return RESET_STATE;
     }
-    
+
     USP_PROTOCOL("%s: Received CoAP ACK 'Continue' (MID=%d)", __FUNCTION__, pp->message_id);
     return SEND_NEXT_BLOCK;
 }
@@ -890,7 +890,7 @@ void HandleNoCoapAck(coap_client_t *cc)
     }
 
     // Retry with a longer timeout period for the ACK
-    cc->ack_timeout_ms *= 2; 
+    cc->ack_timeout_ms *= 2;
     err = SendCoapBlock(cc);
     if (err != USP_ERR_OK)
     {
@@ -964,7 +964,7 @@ void StartSendingCoapUspRecord(coap_client_t *cc, unsigned flags)
     {
         // Get the preference for IPv4 or IPv6, if dual stack
         prefer_ipv6 = DEVICE_LOCAL_AGENT_GetDualStackPreference();
-    
+
         // Exit if unable to lookup the IP address of the USP controller to send to
         err = tw_ulib_diags_lookup_host(csi->host, AF_UNSPEC, prefer_ipv6, NULL, &csi_peer_addr);
         if (err != USP_ERR_OK)
@@ -975,8 +975,8 @@ void StartSendingCoapUspRecord(coap_client_t *cc, unsigned flags)
     }
 
     // Close the socket, if the next message needs to send to a different IP address/port or the request was received on a new DTLS session
-    if ((memcmp(&csi_peer_addr, &cc->peer_addr, sizeof(csi_peer_addr)) != 0) || 
-        (csi->config.port != cc->peer_port) || 
+    if ((memcmp(&csi_peer_addr, &cc->peer_addr, sizeof(csi_peer_addr)) != 0) ||
+        (csi->config.port != cc->peer_port) ||
         (csi->config.enable_encryption != cc->enable_encryption) ||
         (csi->coap_reset_session_hint==true))
     {
@@ -1036,7 +1036,7 @@ int ClientConnectToController(coap_client_t *cc, nu_ipaddr_t *peer_addr, coap_co
     {
         goto exit;
     }
-    
+
     // Exit if unable to determine which address family to use to contact the CoAP server
     // NOTE: This shouldn't fail if tw_ulib_diags_lookup_host() is correct
     err = nu_ipaddr_get_family(&cc->peer_addr, &family);
@@ -1106,7 +1106,7 @@ int PerformClientDtlsConnect(coap_client_t *cc, struct sockaddr_storage *remote_
     USP_ASSERT(cc->ssl == NULL);
 
     // Exit if unable to create a new SSL connection
-    cc->ssl = SSL_new(coap_client_ssl_ctx); 
+    cc->ssl = SSL_new(coap_client_ssl_ctx);
     if (cc->ssl == NULL)
     {
         USP_LOG_Error("%s: SSL_new() failed", __FUNCTION__);
@@ -1179,14 +1179,14 @@ int PerformClientDtlsConnect(coap_client_t *cc, struct sockaddr_storage *remote_
 void StopSendingToController(coap_client_t *cc)
 {
     // NOTE: If linger timeout is 0, it is still OK to close the socket after reception of the (first received) final ACK
-    // Whilst there may be more final ACKs on their way to our CoAP client, since the server only resends the ACK in response 
+    // Whilst there may be more final ACKs on their way to our CoAP client, since the server only resends the ACK in response
     // to receiving a block message. In effect, the server has already assumed that the data has been posted successfully.
     CloseCoapClientSocket(cc);
 
     memset(&cc->peer_addr, 0, sizeof(cc->peer_addr));
     cc->peer_port = INVALID;
     cc->uri_query_option[0] = '\0';
-    
+
     cc->retransmission_counter = 0;
     cc->ack_timeout_ms = 0;
     memset(cc->token, 0, sizeof(cc->token));
@@ -1221,7 +1221,7 @@ void RetryClientSendLater(coap_client_t *cc, unsigned flags)
     // Wind back any coap client state to known values
     StopSendingToController(cc);
 
-    // Exit if we've reached the limit of retrying to connect. 
+    // Exit if we've reached the limit of retrying to connect.
     // If so drop the current USP Record that we're trying to send, and move on to the next one
     cc->reconnect_count++;
     if (cc->reconnect_count >= MAX_COAP_RECONNECTS)
@@ -1410,7 +1410,7 @@ int WriteCoapBlock(coap_client_t *cc, unsigned char *buf, int len)
 
     // Calculate the block option
     bytes_remaining = csi->pbuf_len - cc->bytes_sent;
-    is_more_blocks = (bytes_remaining <= cc->block_size) ? 0 : 1; 
+    is_more_blocks = (bytes_remaining <= cc->block_size) ? 0 : 1;
     block_option_len = COAP_CalcBlockOption(block_option, cc->cur_block, is_more_blocks, cc->block_size);
 
     // Calculate the size option (this option contains the total size of the message)
@@ -1436,7 +1436,7 @@ int WriteCoapBlock(coap_client_t *cc, unsigned char *buf, int len)
     // Exit if the buffer is not large enough to contain everything
     payload_size = (bytes_remaining >= cc->block_size) ? cc->block_size : bytes_remaining;
     #define NUM_OPTIONS 6       // Number of options that this function intends to write (not including the URI path options)
-    pdu_size = COAP_HEADER_SIZE + sizeof(cc->token) + 
+    pdu_size = COAP_HEADER_SIZE + sizeof(cc->token) +
                (NUM_OPTIONS + uri_path.num_entries)*MAX_OPTION_HEADER_SIZE +
                strlen(peer_addr_str) + sizeof(port_option) + total_uri_path_len + sizeof(content_format_option) +
                strlen(cc->uri_query_option) + block_option_len + sizeof(size_option) +
@@ -1529,7 +1529,7 @@ coap_client_t *FindUnusedCoapClient(void)
 {
     int i;
     coap_client_t *cc;
-    
+
     // Iterate over all CoAP controllers, trying to find a free slot
     for (i=0; i<MAX_COAP_CLIENTS; i++)
     {
@@ -1561,7 +1561,7 @@ coap_client_t *FindCoapClientByInstance(int cont_instance, int mtp_instance)
 {
     int i;
     coap_client_t *cc;
-    
+
     // Iterate over all CoAP clients, trying to find a match
     for (i=0; i<MAX_COAP_CLIENTS; i++)
     {
@@ -1644,7 +1644,7 @@ void RemoveExpiredCoapMessages(coap_client_t *cc)
     if (csi == NULL)
     {
         return;
-    }    
+    }
 
     // This CoAP client always attempts to send the item at the head of the queue
     // So skip this item because we don't want to be removing an item which is currently being sent out

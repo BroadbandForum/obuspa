@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2019-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -49,6 +49,7 @@
 #include "usp_api.h"
 #include "iso8601.h"
 
+#ifndef REMOVE_DEVICE_TIME
 //------------------------------------------------------------------------------
 // Data model path strings
 static char *timezone_path = "Device.Time.LocalTimeZone";
@@ -95,7 +96,7 @@ int DEVICE_TIME_Init(void)
     err = USP_ERR_OK;
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.Time.CurrentLocalTime", GetCurrentLocalTime, DM_DATETIME);
     err |= USP_REGISTER_DBParam_ReadWrite(timezone_path, "", Validate_LocalTimeZone, NotifyChange_LocalTimeZone, DM_STRING);
-    
+
     if (err != USP_ERR_OK)
     {
         return USP_ERR_INTERNAL_ERROR;
@@ -208,7 +209,7 @@ int GetCurrentLocalTime(dm_req_t *req, char *buf, int len)
         USP_ERR_SetMessage("%s: setenv(TZ=%s) failed: %s", __FUNCTION__, database_tz, strerror(errno));
         return USP_ERR_INTERNAL_ERROR;
     }
-    
+
     tzset();   /* NOTE: tzset() does not return an error code, so we have to assume it was successful. (Also cannot use errno. It is always set with type 2 format timezone strings, even though no error occurred) */
 
     // Create split representation of time, applying the timezone definition
@@ -250,7 +251,7 @@ int GetCurrentLocalTime(dm_req_t *req, char *buf, int len)
 **     name offset1[dst[offset2][,start[/time],end[/time]]]
 **
 ** \param   p - pointer to POSIX format timezone string to validate
-**          
+**
 ** \return  true if the string was a valid timezone, false otherwise
 **
 **************************************************************************/
@@ -270,7 +271,7 @@ bool mifd_tzvalidate(char *p)
     }
 
 
-    // Exit if the name of the timezone ("name") is incorrectly specified   
+    // Exit if the name of the timezone ("name") is incorrectly specified
     p = tz_skip_name(p);
     if (p == NULL)
     {
@@ -294,7 +295,7 @@ bool mifd_tzvalidate(char *p)
     // or we have reached the end of the string (success)
     // NOTE: "dst" is optional, if it is missing, then next character will be ',' or '\0'
     if ((*p != ',') && (*p != '\0'))
-    {  
+    {
         p = tz_skip_name(p);
         if (p == NULL)
         {
@@ -305,12 +306,12 @@ bool mifd_tzvalidate(char *p)
         {
             return true;
         }
-    
+
         // Exit if the daylight saving timezone offset ("offset2") is incorrectly specified (failure)
         // or we have reached the end of the string (success)
         // NOTE: "offset2" is optional, if it is missing, then next character will be ','
         if (*p != ',')
-        {   
+        {
             p = tz_skip_offset(p);
             if (p == NULL)
             {
@@ -323,7 +324,7 @@ bool mifd_tzvalidate(char *p)
             }
         }
     }
-        
+
     // Exit if the daylight saving time start date/time are incorrectly specified (failure)
     p = tz_skip_dst_definition(p);
     if (p == NULL)
@@ -355,9 +356,9 @@ bool mifd_tzvalidate(char *p)
 **  Skips a time zone name, which is either:-
 **    Format A: A string containing alphabetic characters
 **    Format B: A string enclosed by <> and containing alphabetic characters, digits and '+' or '-'
-** 
+**
 ** \param   p - pointer to POSIX format timezone string to validate, starting at a timezone name
-**          
+**
 ** \return  pointer to next section of the timezone, or NULL if an error occurred in parsing
 **
 **************************************************************************/
@@ -365,7 +366,7 @@ char *tz_skip_name(char *p)
 {
     #define ALLOW_ALPHABETIC_ONLY false
     #define ALLOW_ALPHABETIC_AND_NUMERIC true
-    
+
     if (*p == '<')
     {
         // Deal with format B
@@ -396,11 +397,11 @@ char *tz_skip_name(char *p)
 **  tz_skip_word
 **
 **  Skips a word which may or may not contain numeric characters
-** 
+**
 ** \param   p - pointer to POSIX format timezone string to validate, starting at a timezone name
-** \param   allow_numeric - Set to false if the word can contain only alphabetic characters. 
+** \param   allow_numeric - Set to false if the word can contain only alphabetic characters.
 **                          Set to true if the word can additionally contain numberic characters.
-**          
+**
 ** \return  pointer to next section of the timezone, or NULL if an error occurred in parsing
 **
 **************************************************************************/
@@ -408,7 +409,7 @@ char *tz_skip_word(char *p, bool allow_numeric)
 {
     int count = 0;
     char *saved_p;
-    
+
     // Skip valid characters
     #define is_alphabetic(c) ( (((c) >= 'a') && ((c) <= 'z')) || (((c) >= 'A') && ((c) <= 'Z')) )
     #define is_numeric(c)    ( ((c) >= '0') && ((c) <= '9') )
@@ -437,9 +438,9 @@ char *tz_skip_word(char *p, bool allow_numeric)
 **
 **  Skips a time specified as hours:minutes:seconds in the form
 **              [+|-]hh[:mm[:ss]]
-** 
+**
 ** \param   p - pointer to POSIX format timezone string to validate, starting at a time
-**          
+**
 ** \return  pointer to next section of the timezone, or NULL if an error occurred in parsing
 **
 **************************************************************************/
@@ -461,7 +462,7 @@ char *tz_skip_hours_minutes_seconds(char *p)
         {
             return NULL;
         }
-        
+
         if (*p == ':')
         {
             // Exit if seconds are not correct (if present)
@@ -482,14 +483,14 @@ char *tz_skip_hours_minutes_seconds(char *p)
 **  tz_skip_number
 **
 **  Skip a number made up of a number of digits, and validating it against a range
-** 
+**
 ** \param   p - pointer to POSIX format timezone string to validate, starting at a number
 ** \param   min_digits - Minimum number of digits comprising the number
 ** \param   max_digits - Maximum number of digits comprising the number
 ** \param   min_value - Minimum value of the number
 ** \param   max_value - Maximum value of the number
 ** \param   name - name of the field being parsed (used in error message)
-**          
+**
 ** \return  pointer to next section of the timezone, or NULL if an error occurred in parsing
 **
 **************************************************************************/
@@ -507,7 +508,7 @@ char *tz_skip_number(char *p, int min_digits, int max_digits, int min_value, int
         {
             break;
         }
-    
+
         // Otherwise concatenate the digit to the number, and move to next digit
         number = 10*number + (int)(*p -'0');
         digit_count++;
@@ -537,13 +538,13 @@ char *tz_skip_number(char *p, int min_digits, int max_digits, int min_value, int
 **
 **  Skip a daylight saving time (DST) definition. This has the format
 **      ,start[/time]
-** 
+**
 ** \param   p - pointer to POSIX format timezone string to validate, starting at the DST start time definition
 ** \param   min_digits - Minimum number of digits comprising the number
 ** \param   max_digits - Maximum number of digits comprising the number
 ** \param   min_value - Minimum value of the number
 ** \param   max_value - Maximum value of the number
-**          
+**
 ** \return  pointer to next section of the timezone, or NULL if an error occurred in parsing
 **
 **************************************************************************/
@@ -588,7 +589,7 @@ char *tz_skip_dst_definition(char *p)
 
 
         default:
-            USP_ERR_SetMessage("%s: Illegal DST change format (expected 'J', 'M' or number)", __FUNCTION__); 
+            USP_ERR_SetMessage("%s: Illegal DST change format (expected 'J', 'M' or number)", __FUNCTION__);
             return NULL;
     }
 
@@ -618,16 +619,16 @@ char *tz_skip_dst_definition(char *p)
 **  Skip a month.week.day definition (used to define the day that daylight saving time starts/stops).
 **  This has the format
 **                   m.w.d
-** 
+**
 ** \param   p - pointer to POSIX format timezone string to validate, starting at the month
-**          
+**
 ** \return  pointer to next section of the timezone, or NULL if an error occurred in parsing
 **
 **************************************************************************/
 char *tz_skip_month_week_day(char *p)
 {
     char *saved_p;
-    
+
     // Exit if month is out of range
     saved_p = p;
     p = tz_skip_number(p, 1,2, 1,12, "Month");
@@ -677,9 +678,9 @@ char *tz_skip_month_week_day(char *p)
 **  Skips a time offset
 **  This has the format
 **          [+/-]HH[:MM[:SS]]
-** 
+**
 ** \param   p - pointer to POSIX format timezone string to validate, starting at the time offset
-**          
+**
 ** \return  pointer to next section of the timezone, or NULL if an error occurred in parsing
 **
 **************************************************************************/
@@ -690,7 +691,7 @@ char *tz_skip_offset(char *p)
     {
         p++;
     }
-    
+
     p = tz_skip_hours_minutes_seconds(p);
     return p;
 }
@@ -833,6 +834,7 @@ char *tz_skip_offset(char *p)
 //t}
 #endif
 
+#endif // REMOVE_DEVICE_TIME
 
 
 

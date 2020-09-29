@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2017-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2017-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -80,11 +80,11 @@ int DEVICE_REQUEST_Init(void)
     int err = USP_ERR_OK;
 
 
-    err |= USP_REGISTER_Object(DEVICE_REQ_ROOT ".{i}", 
+    err |= USP_REGISTER_Object(DEVICE_REQ_ROOT ".{i}",
                               USP_HOOK_DenyAddInstance, NULL, NULL,
                               USP_HOOK_DenyDeleteInstance, NULL, DeleteRequestArgs);
     err |= USP_REGISTER_Param_NumEntries("Device.LocalAgent.RequestNumberOfEntries", DEVICE_REQ_ROOT ".{i}");
-    err |= USP_REGISTER_DBParam_Alias(DEVICE_REQ_ROOT ".{i}.Alias", NULL); 
+    err |= USP_REGISTER_DBParam_Alias(DEVICE_REQ_ROOT ".{i}.Alias", NULL);
 
     err |= USP_REGISTER_DBParam_ReadOnly(DEVICE_REQ_ROOT ".{i}.Originator", "", DM_STRING);
     err |= USP_REGISTER_DBParam_ReadOnly(DEVICE_REQ_ROOT ".{i}.Command", "", DM_STRING);
@@ -222,13 +222,11 @@ void DEVICE_REQUEST_OperationComplete(int instance, int err_code, char *err_msg,
     {
         // Validate the names of the output arguments
         dm_node_t *node;
-        dm_instances_t inst;
         dm_oper_info_t *info;
-        bool is_qualified_instance;
-    
-        node = DM_PRIV_GetNodeFromPath(command, &inst, &is_qualified_instance);
+
+        node = DM_PRIV_GetNodeFromPath(command, NULL, NULL);
         USP_ASSERT(node != NULL);
-    
+
         info = &node->registered.oper_info;
         err = KV_VECTOR_ValidateArguments(output_args, &info->output_args);
         if (err != USP_ERR_OK)
@@ -343,10 +341,11 @@ int DEVICE_REQUEST_RestartAsyncOperations(void)
 
     // Exit if unable to get all async operation requests that were started last boot time
     KV_VECTOR_Init(&output_args);
+    INT_VECTOR_Init(&inst);
     err = DATA_MODEL_GetInstances(device_req_root, &inst);
     if (err != USP_ERR_OK)
     {
-        return err;
+        goto exit;
     }
 
     // Iterate over all request instances
@@ -479,10 +478,11 @@ bool IsRequestInstanceValid(int instance)
     int_vector_t iv;
 
     // Exit if unable to get a list of the instance numbers in the request table
+    INT_VECTOR_Init(&iv);
     err = DATA_MODEL_GetInstances(device_req_root, &iv);
     if (err != USP_ERR_OK)
     {
-        return false;
+        goto exit;
     }
 
     // Iterate over all instance numbers in the request table, seeing if this
@@ -496,6 +496,7 @@ bool IsRequestInstanceValid(int instance)
         }
     }
 
+exit:
     // If the code gets here, no match was found
     INT_VECTOR_Destroy(&iv);
     return false;
@@ -525,9 +526,9 @@ int RestartAsyncOperation(char *path, int instance)
     {
         goto exit;
     }
-    
+
     // Exit if unable to restart the operation
-    err = DATA_MODEL_RestartAsyncOperation(path, &input_args, instance); 
+    err = DATA_MODEL_RestartAsyncOperation(path, &input_args, instance);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -543,7 +544,7 @@ exit:
         DEVICE_REQUEST_OperationComplete(instance, err, err_msg, NULL);
         return err;
     }
-    
+
     return err;
 }
 
@@ -573,7 +574,7 @@ int ReadOperationArgs(int instance, kv_vector_t *args, char *prefix)
     KV_VECTOR_Init(args);
 
     // Exit if unable to get the number of persisted arguments
-    // NOTE: It is safe to use DATA_MODEL_GetNumInstances() rather than 
+    // NOTE: It is safe to use DATA_MODEL_GetNumInstances() rather than
     // DATA_MODEL_GetInstances() because we always ensure the instances are contiguous and start from 1
     USP_SNPRINTF(path, sizeof(path), "Internal.Request.%d.%sArgs", instance, prefix);
     err = DATA_MODEL_GetNumInstances(path, &num_args);
@@ -612,7 +613,7 @@ int ReadOperationArgs(int instance, kv_vector_t *args, char *prefix)
 **
 ** DeleteRequestArgs
 **
-** Function called to cascade the delete of a request object to 
+** Function called to cascade the delete of a request object to
 ** the shadow object containing the persisted arguments for the operation
 **
 ** \param   req - pointer to structure containing path information of the request that was deleted
@@ -629,6 +630,6 @@ int DeleteRequestArgs(dm_req_t *req)
     USP_SNPRINTF(path, sizeof(path), "Internal.Request.%d", inst1);
     err = DATA_MODEL_DeleteInstance(path, IGNORE_NO_INSTANCE);
 
-    return err;    
+    return err;
 }
 

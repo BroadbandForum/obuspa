@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
+ * Copyright (C) 2019-2020, Broadband Forum
  * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -51,7 +51,9 @@
 #include <unistd.h>
 #include <dlfcn.h>
 
+#ifdef HAVE_EXECINFO_H
 #include <execinfo.h>
+#endif
 
 #include "common_defs.h"
 #include "cli.h"
@@ -226,7 +228,7 @@ void *USP_MEM_Malloc(const char *func, int line, int size)
         }
         OS_UTILS_UnlockMutex(&mem_access_mutex);
     }
-    
+
     return ptr;
 }
 
@@ -246,7 +248,7 @@ void *USP_MEM_Malloc(const char *func, int line, int size)
 void USP_MEM_Free(const char *func, int line, void *ptr)
 {
     minfo_t *mi;
-    
+
     // Free the memory
     free(ptr);
 
@@ -414,7 +416,7 @@ void USP_MEM_StartCollection(void)
     collect_memory_info = true;
     print_leak_report = true;
 
-#ifdef HAVE_MALLOC_H
+#ifdef HAVE_MALLINFO
     // Store initial static memory usage after data model has been registered
     baseline_memory_usage = mallinfo().uordblks;
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
@@ -460,7 +462,7 @@ void USP_MEM_StopCollection(void)
 **************************************************************************/
 void USP_MEM_PrintSummary(void)
 {
-#ifdef HAVE_MALLOC_H
+#ifdef HAVE_MALLINFO
     USP_LOG_Info("Memory in use: %d", (int) mallinfo().uordblks);
 #endif
 }
@@ -482,7 +484,7 @@ void USP_MEM_Print(void)
     minfo_t *mi;
     int count = 0;
 
-#ifdef HAVE_MALLOC_H
+#ifdef HAVE_MALLINFO
     static int last_memory_usage = 0;
     int cur_memory_usage;
 #endif
@@ -493,7 +495,7 @@ void USP_MEM_Print(void)
         return;
     }
 
-#ifdef HAVE_MALLOC_H
+#ifdef HAVE_MALLINFO
     // Exit if no change in memory usage since last time called
     cur_memory_usage = mallinfo().uordblks;
     if (cur_memory_usage == last_memory_usage)
@@ -536,17 +538,17 @@ void USP_MEM_Print(void)
 **
 ** \param   None
 **
-** \return  None
+** \return  Count of memory leaks
 **
 **************************************************************************/
-void USP_MEM_PrintLeakReport(void)
+int USP_MEM_PrintLeakReport(void)
 {
     int count = 0;
 
     // Exit if not collecting memory info
     if (print_leak_report==false)
     {
-        return;
+        return count;
     }
 
     // Print a memory leak report
@@ -557,6 +559,8 @@ void USP_MEM_PrintLeakReport(void)
         USP_LOG_Info("DETECTED_MEMORY_LEAK in this automated test\n");
     }
     USP_LOG_Info("STOP: Memory leak report\n");
+
+    return count;
 }
 
 /*********************************************************************//**
@@ -576,7 +580,7 @@ int USP_MEM_PrintAll(void)
     minfo_t *mi;
     int count = 0;
 
-#ifdef HAVE_MALLOC_H
+#ifdef HAVE_MALLINFO
     USP_LOG_Info("Memory in use: %d (%s line %d)", (int) mallinfo().uordblks, __FUNCTION__, __LINE__);
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
 #endif
@@ -626,7 +630,7 @@ void PrintMemInfoEntry(minfo_t *mi, char *str, int index)
 {
     int i;
     char *func;
-    
+
     USP_LOG_Info("%s [%d] %p size=%d %s (line number:%d)", str, index, mi->ptr, mi->size, mi->func, mi->line);
     for (i=0; i<NUM_ELEM(mi->callers); i++)
     {
@@ -702,7 +706,7 @@ minfo_t *FindMemInfoByPtr(void *ptr)
 ** GetCallers
 **
 ** Gets an array of pointers to the names of the functions in the callstack
-** This function returns 
+** This function returns
 **
 ** \param   callers - pointer to array in which to return pointers to the names of the function in the callstack
 ** \param   num_callers - number of entries in the array
@@ -710,6 +714,7 @@ minfo_t *FindMemInfoByPtr(void *ptr)
 ** \return  None
 **
 **************************************************************************/
+#ifdef HAVE_EXECINFO_H
 void GetCallers(char **callers, int num_callers)
 {
     int i;
@@ -717,7 +722,7 @@ void GetCallers(char **callers, int num_callers)
     #define MAX_CALLSTACK  30
     void *callstack[MAX_CALLSTACK];
     void **stack_start;
-    int stack_size; 
+    int stack_size;
     int symbols_found;
     const char *func_name;
     Dl_info info;
@@ -752,4 +757,9 @@ void GetCallers(char **callers, int num_callers)
         callers[i] = NULL;
     }
 }
-
+#else
+void GetCallers(char **callers, int num_callers)
+{
+	*callers = NULL;
+}
+#endif

@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -130,20 +130,20 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_rep
         // Add the key value pair from the USP input message to our key value vector
         KV_VECTOR_Add(&input_args, ame->key, ame->value);
     }
-    
+
     // Create an Operate Response
     resp = CreateOperResp(usp->header->msg_id);
     oper_resp = resp->body->response->operate_resp;
 
     // Exit if unable to resolve the paths to the operation
     MSG_HANDLER_GetMsgRole(&combined_role);
-    err = PATH_RESOLVER_ResolveDevicePath(oper->command, &paths, kResolveOp_Oper, NULL, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(oper->command, &paths, NULL, kResolveOp_Oper, NULL, &combined_role, 0);
     if (err != USP_ERR_OK)
     {
         resp = ERROR_RESP_CreateSingle(usp->header->msg_id, err, resp, NULL);
         goto exit;
     }
-    
+
     // Iterate over all operation paths
     for (i=0; i < paths.num_entries; i++)
     {
@@ -257,7 +257,7 @@ Usp__Msg *CreateOperResp(char *msg_id)
     oper_resp->operation_results = NULL;
 
     return resp;
-}    
+}
 
 /*********************************************************************//**
 **

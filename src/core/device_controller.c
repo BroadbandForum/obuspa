@@ -1,33 +1,34 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2020,  BT PLC
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -86,6 +87,10 @@ typedef struct
     coap_config_t coap;
 #endif
 
+#ifdef ENABLE_MQTT
+    int mqtt_connection_instance;
+    char *mqtt_controller_topic;
+#endif
 } controller_mtp_t;
 
 //------------------------------------------------------------------------------
@@ -157,12 +162,20 @@ void UpdateFirstPeriodicNotificationTime(void);
 int Validate_ControllerAssignedRole(dm_req_t *req, char *value);
 int Notify_ControllerAssignedRole(dm_req_t *req, char *value);
 int UpdateAssignedRole(controller_t *cont, char *reference);
+int ValidateMtpUniquenessReq(mtp_protocol_t protocol, dm_req_t* req);
 
 #ifdef ENABLE_COAP
 int Notify_ControllerMtpCoapHost(dm_req_t *req, char *value);
 int Notify_ControllerMtpCoapPort(dm_req_t *req, char *value);
 int Notify_ControllerMtpCoapPath(dm_req_t *req, char *value);
 int Notify_ControllerMtpCoapEncryption(dm_req_t *req, char *value);
+#endif
+
+#ifdef ENABLE_MQTT
+int Notify_ControllerMtpMqttReference(dm_req_t *req, char *value);
+int Notify_ControllerMtpMqttTopic(dm_req_t *req, char *value);
+int ValidateMqttMtpUniquenessReq(dm_req_t *req);
+int ValidateMqttMtpUniqueness(controller_t *cont, int mtp_instance);
 #endif
 
 /*********************************************************************//**
@@ -202,12 +215,12 @@ int DEVICE_CONTROLLER_Init(void)
     }
 
     // Register parameters implemented by this component
-    err |= USP_REGISTER_Object(DEVICE_CONT_ROOT ".{i}", ValidateAdd_Controller, NULL, Notify_ControllerAdded, 
+    err |= USP_REGISTER_Object(DEVICE_CONT_ROOT ".{i}", ValidateAdd_Controller, NULL, Notify_ControllerAdded,
                                                         NULL, NULL, Notify_ControllerDeleted);
-    err |= USP_REGISTER_Object(DEVICE_CONT_ROOT ".{i}.MTP.{i}", ValidateAdd_ControllerMtp, NULL, Notify_ControllerMtpAdded, 
+    err |= USP_REGISTER_Object(DEVICE_CONT_ROOT ".{i}.MTP.{i}", ValidateAdd_ControllerMtp, NULL, Notify_ControllerMtpAdded,
                                                                 NULL, NULL, Notify_ControllerMtpDeleted);
-    err |= USP_REGISTER_DBParam_Alias(DEVICE_CONT_ROOT ".{i}.Alias", NULL); 
-    err |= USP_REGISTER_DBParam_Alias(DEVICE_CONT_ROOT ".{i}.MTP.{i}.Alias", NULL); 
+    err |= USP_REGISTER_DBParam_Alias(DEVICE_CONT_ROOT ".{i}.Alias", NULL);
+    err |= USP_REGISTER_DBParam_Alias(DEVICE_CONT_ROOT ".{i}.MTP.{i}.Alias", NULL);
 
     err |= USP_REGISTER_Param_NumEntries("Device.LocalAgent.ControllerNumberOfEntries", DEVICE_CONT_ROOT ".{i}");
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.Enable", "false", NULL, Notify_ControllerEnable, DM_BOOL);
@@ -219,8 +232,8 @@ int DEVICE_CONTROLLER_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.PeriodicNotifTime", UNKNOWN_TIME_STR, NULL, Notify_PeriodicNotifTime, DM_DATETIME);
     err |= USP_REGISTER_Event("Device.LocalAgent.Periodic!");
 
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.USPRetryMinimumWaitInterval", "5", Validate_ControllerRetryMinimumWaitInterval, Notify_ControllerRetryMinimumWaitInterval, DM_UINT);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.USPRetryIntervalMultiplier", "2000", Validate_ControllerRetryIntervalMultiplier, Notify_ControllerRetryIntervalMultiplier, DM_UINT);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.USPNotifRetryMinimumWaitInterval", "5", Validate_ControllerRetryMinimumWaitInterval, Notify_ControllerRetryMinimumWaitInterval, DM_UINT);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.USPNotifRetryIntervalMultiplier", "2000", Validate_ControllerRetryIntervalMultiplier, Notify_ControllerRetryIntervalMultiplier, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.ControllerCode", "", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.ProvisioningCode", "", NULL, NULL, DM_STRING);
 
@@ -236,7 +249,11 @@ int DEVICE_CONTROLLER_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.CoAP.Port", "5683", DM_ACCESS_ValidatePort, Notify_ControllerMtpCoapPort, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.CoAP.Path", "", NULL, Notify_ControllerMtpCoapPath, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.CoAP.EnableEncryption", "true", NULL, Notify_ControllerMtpCoapEncryption, DM_BOOL);
+#endif
 
+#ifdef ENABLE_MQTT
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.MQTT.Reference", "", DEVICE_MTP_ValidateMqttReference, Notify_ControllerMtpMqttReference, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.MQTT.Topic", "", NULL, Notify_ControllerMtpMqttTopic, DM_STRING);
 #endif
 
     // Register unique keys for all tables
@@ -262,7 +279,7 @@ int DEVICE_CONTROLLER_Init(void)
 **
 ** Initialises the controllers array with the values of all controllers from the DB
 ** NOTE: If the database contains invalid data, then entries will be deleted
-**       We need to do this otherwise it would be possible to set bad DB values to good, 
+**       We need to do this otherwise it would be possible to set bad DB values to good,
 **       but our code would not pick them up because they were not in the internal data structure
 **       This function ensures that the database and the internal controller data structure it populates always match
 **
@@ -280,10 +297,11 @@ int DEVICE_CONTROLLER_Start(void)
     char path[MAX_DM_PATH];
 
     // Exit if unable to get the object instance numbers present in the controllers table
+    INT_VECTOR_Init(&iv);
     err = DATA_MODEL_GetInstances(DEVICE_CONT_ROOT, &iv);
     if (err != USP_ERR_OK)
     {
-        return err;
+        goto exit;
     }
 
     // Exit, issuing a warning, if no controllers are present in database
@@ -350,11 +368,11 @@ void DEVICE_CONTROLLER_Stop(void)
 /*********************************************************************//**
 **
 ** DEVICE_CONTROLLER_FindInstanceByEndpointId
-** 
+**
 ** Gets the instance number of the enabled controller (in Device.Controller.{i}) based on the specified endpoint_id
-** 
+**
 ** \param   endpoint_id - controller that we want to find the instance number of
-** 
+**
 ** \return  instance number of controller, or INVALID if unable to find the enabled controller
 **
 **************************************************************************/
@@ -382,11 +400,11 @@ int DEVICE_CONTROLLER_FindInstanceByEndpointId(char *endpoint_id)
 /*********************************************************************//**
 **
 ** DEVICE_CONTROLLER_FindEndpointIdByInstance
-** 
+**
 ** Gets the endpoint_id of the specified enabled controller
-** 
+**
 ** \param   instance - instance number of the controller in the Device.Controller.{i} table
-** 
+**
 ** \return  pointer to endpoint_id of the controller, or NULL if no controller found, or controller was disabled
 **
 **************************************************************************/
@@ -408,13 +426,13 @@ char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance)
 /*********************************************************************//**
 **
 ** DEVICE_CONTROLLER_GetSubsRetryParams
-** 
+**
 ** Gets the subscription retry parameters for the specified endpoint_id
-** 
+**
 ** \param   endpoint_id - controller that we want to get the retry parameters for
 ** \param   min_wait_interval - pointer to variable in which to return the minimum wait interval
 ** \param   interval_multiplier - pointer to variable in which to return the interval multiplier
-** 
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -439,13 +457,13 @@ int DEVICE_CONTROLLER_GetSubsRetryParams(char *endpoint_id, unsigned *min_wait_i
 /*********************************************************************//**
 **
 ** DEVICE_CONTROLLER_GetCombinedRole
-** 
+**
 ** Gets the inherited and assigned role to use for the specified controller instance
 ** This is used when resolving paths used by subscriptions
-** 
+**
 ** \param   instance - instance number of the controller in Device.LocalAgent.Controller.{i}
 ** \param   combined_role - pointer to variable in which to return the combined role
-** 
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -461,7 +479,7 @@ int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_ro
     }
 
 
-    // Copy across the combined role values    
+    // Copy across the combined role values
     *combined_role = cont->combined_role;
 
     return USP_ERR_OK;
@@ -470,12 +488,12 @@ int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_ro
 /*********************************************************************//**
 **
 ** DEVICE_CONTROLLER_GetCombinedRoleByEndpointId
-** 
-** Gets the combined role to use for the specified controller endpoint_id, when 
+**
+** Gets the combined role to use for the specified controller endpoint_id, when
 ** processing request messages from that controller
-** 
+**
 ** \param   endpoint_id - endpoint_id of the controller
-** 
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -490,7 +508,7 @@ int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_ro
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Copy across the combined role values    
+    // Copy across the combined role values
     *combined_role = cont->combined_role;
 
     return USP_ERR_OK;
@@ -499,13 +517,13 @@ int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_ro
 /*********************************************************************//**
 **
 ** DEVICE_CONTROLLER_SetRolesFromStomp
-** 
+**
 ** Sets the controller trust role to use for all controllers connected to the specified STOMP controller
-** 
+**
 ** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table)
 ** \param   role - Role allowed for this message
 ** \param   allowed_controllers - URN pattern containing the endpoint_id of allowed controllers
-** 
+**
 ** \return  None
 **
 **************************************************************************/
@@ -541,9 +559,9 @@ void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role,
 /*********************************************************************//**
 **
 ** DEVICE_CONTROLLER_QueueBinaryMessage
-** 
+**
 ** Queues a binary message to be sent to a controller
-** 
+**
 ** \param   usp_msg_type - Type of USP message contained in pbuf. This is used for debug logging when the message is sent by the MTP.
 ** \param   endpoint_id - controller to send the message to
 ** \param   pbuf - pointer to buffer containing binary protobuf message. Ownership of this buffer passes to protocol handler, if successful
@@ -551,7 +569,7 @@ void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role,
 ** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
 ** \param   mrt - details of where this USP response message should be sent
 ** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
-** 
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -564,6 +582,9 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
     mtp_reply_to_t dest;
     char raw_err_id_header[256];        // header's contents before colons have been escaped (to '\c')
     char err_id_header[256];            // header's contents after colons have been escaped (to '\c')
+#ifdef ENABLE_MQTT
+    char *response_topic;
+#endif
 
     // Take a copy of the MTP destination parameters we've been given
     // because we may modify it (and we don't want the caller to free anything we put in it, as they are owned by the data model)
@@ -597,12 +618,12 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
                     USP_ERR_SetMessage("%s: No Stomp connection in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
                     return USP_ERR_INTERNAL_ERROR;
                 }
-    
+
                 dest.protocol = kMtpProtocol_STOMP;
                 dest.stomp_instance = mtp->stomp_connection_instance;
                 dest.stomp_dest = mtp->stomp_controller_queue;
                 break;
-    
+
 #ifdef ENABLE_COAP
             case kMtpProtocol_CoAP:
                 dest.protocol = kMtpProtocol_CoAP;
@@ -612,7 +633,21 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
                 dest.coap_encryption = mtp->coap.enable_encryption;
                 dest.coap_reset_session_hint = false;
                 break;
-#endif    
+#endif
+
+#ifdef ENABLE_MQTT
+            case kMtpProtocol_MQTT:
+                if (mtp->mqtt_connection_instance == INVALID)
+                {
+                    USP_ERR_SetMessage("%s: No MQTT client in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
+                    return USP_ERR_INTERNAL_ERROR;
+                }
+
+                dest.protocol = kMtpProtocol_MQTT;
+                dest.mqtt_instance = mtp->mqtt_connection_instance;
+                dest.mqtt_topic = mtp->mqtt_controller_topic;
+                break;
+#endif
             default:
                 TERMINATE_BAD_CASE(mtp->protocol);
                 break;
@@ -635,6 +670,13 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
             err = COAP_CLIENT_QueueBinaryMessage(usp_msg_type, cont->instance, mtp->instance, pbuf, pbuf_len, &dest, expiry_time);
+            break;
+#endif
+
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+            response_topic = DEVICE_MTP_GetAgentMqttResponseTopic(dest.mqtt_instance);
+            err = DEVICE_MQTT_QueueBinaryMessage(usp_msg_type, dest.mqtt_instance, dest.mqtt_topic, response_topic, pbuf, pbuf_len);
             break;
 #endif
         default:
@@ -722,7 +764,7 @@ void PeriodicNotificationExec(int id)
         {
             // Send a notification event to the controller (if there are any periodic events subscribed to)
             DEVICE_SUBSCRIPTION_SendPeriodicEvent(cont->instance); // Intentionally ignoring any errors
-    
+
             // Update the time at which this notification next fires
             cont->next_time_to_fire = CalcNextPeriodicTime(cur_time, cont->periodic_base, cont->periodic_interval);
         }
@@ -751,7 +793,7 @@ int ValidateAdd_Controller(dm_req_t *req)
     cont = FindUnusedController();
     if (cont == NULL)
     {
-        return USP_ERR_RESOURCES_EXCEEDED;        
+        return USP_ERR_RESOURCES_EXCEEDED;
     }
 
     return USP_ERR_OK;
@@ -780,7 +822,7 @@ int ValidateAdd_ControllerMtp(dm_req_t *req)
     mtp = FindUnusedControllerMtp(cont);
     if (mtp == NULL)
     {
-        return USP_ERR_RESOURCES_EXCEEDED;        
+        return USP_ERR_RESOURCES_EXCEEDED;
     }
 
     return USP_ERR_OK;
@@ -832,7 +874,8 @@ int Notify_ControllerDeleted(dm_req_t *req)
     // Delete the controller from the array
     DestroyController(cont);
 
-    // 2DO RH: All Recipients in the Subscription table referencing this controller should also be cleared
+    // Delete all subscriptions owned by this controller
+    DEVICE_SUBSCRIPTION_NotifyControllerDeleted(inst1);
 
     return USP_ERR_OK;
 }
@@ -968,14 +1011,13 @@ int Validate_ControllerMtpEnable(dm_req_t *req, char *value)
     // NOTE: We look the value up in the database because this function may be called before the controller MTP has actually been added
     USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.Protocol", device_cont_root, inst1, inst2);
     err = DM_ACCESS_GetEnum(path, &protocol, mtp_protocols, NUM_ELEM(mtp_protocols));
-    if ((err != USP_ERR_OK) || (protocol != kMtpProtocol_STOMP))
+    if (err != USP_ERR_OK)
     {
         // NOTE: Ignoring any error because the setting of enable may be done before protocol, when performing an AddInstance
         return USP_ERR_OK;
     }
 
-    // Check that only one STOMP MTP is enabled at any one time
-    err = ValidateStompMtpUniquenessReq(req);
+    err = ValidateMtpUniquenessReq(protocol, req);
     return err;
 }
 
@@ -1011,12 +1053,6 @@ int Validate_ControllerMtpProtocol(dm_req_t *req, char *value)
 
     protocol = (mtp_protocol_t) index;
 
-    // Exit if the new protocol is not STOMP. In this case we do not have to check for only one enabled STOMP MTP
-    if (protocol != kMtpProtocol_STOMP)
-    {
-        return USP_ERR_OK;
-    }
-
     // Exit if this controller MTP is not enabled
     // NOTE: We look the value up in the database because this function may be called before the controller MTP has actually been added
     USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.Enable", device_cont_root, inst1, inst2);
@@ -1027,8 +1063,8 @@ int Validate_ControllerMtpProtocol(dm_req_t *req, char *value)
         return USP_ERR_OK;
     }
 
-    // Check that only one STOMP MTP is enabled at any one time
-    err = ValidateStompMtpUniquenessReq(req);
+    err = ValidateMtpUniquenessReq(protocol, req);
+
     return err;
 }
 
@@ -1036,7 +1072,7 @@ int Validate_ControllerMtpProtocol(dm_req_t *req, char *value)
 **
 ** Validate_ControllerRetryMinimumWaitInterval
 **
-** Validates Device.LocalAgent.Controller.{i}.USPRetryMinimumWaitInterval
+** Validates Device.LocalAgent.Controller.{i}.USPNotifRetryMinimumWaitInterval
 **
 ** \param   req - pointer to structure identifying the parameter
 ** \param   value - value that the controller would like to set the parameter to
@@ -1053,7 +1089,7 @@ int Validate_ControllerRetryMinimumWaitInterval(dm_req_t *req, char *value)
 **
 ** Validate_ControllerRetryIntervalMultiplier
 **
-** Validates Device.LocalAgent.Controller.{i}.USPRetryIntervalMultiplier
+** Validates Device.LocalAgent.Controller.{i}.USPNotifRetryIntervalMultiplier
 **
 ** \param   req - pointer to structure identifying the parameter
 ** \param   value - value that the controller would like to set the parameter to
@@ -1088,7 +1124,7 @@ int Validate_ControllerAssignedRole(dm_req_t *req, char *value)
     {
         return USP_ERR_OK;
     }
-    
+
     err = DM_ACCESS_ValidateReference(value, "Device.LocalAgent.ControllerTrust.Role.{i}", &instance);
 
     return err;
@@ -1200,7 +1236,7 @@ int Notify_ControllerAssignedRole(dm_req_t *req, char *value)
 {
     int err;
     controller_t *cont;
-    
+
     // Determine controller to be updated
     cont = FindControllerByInstance(inst1);
     USP_ASSERT(cont != NULL);
@@ -1334,7 +1370,7 @@ int Notify_ControllerMtpProtocol(dm_req_t *req, char *value)
 #endif
 
     // NOTE: We don't need to do anything explicitly for STOMP
-    
+
     return USP_ERR_OK;
 }
 
@@ -1425,7 +1461,7 @@ int Notify_ControllerMtpCoapHost(dm_req_t *req, char *value)
     USP_SAFE_FREE(mtp->coap_controller_host);
     mtp->coap_controller_host = USP_STRDUP(value);
 
-    // NOTE: We do not need to explicitly propagate this value to the COAP module here, 
+    // NOTE: We do not need to explicitly propagate this value to the COAP module here,
     // as each USP message that is queued includes this information
     return USP_ERR_OK;
 }
@@ -1454,7 +1490,7 @@ int Notify_ControllerMtpCoapPort(dm_req_t *req, char *value)
     // Set the new value
     mtp->coap.port = val_uint;
 
-    // NOTE: We do not need to explicitly propagate this value to the COAP module here, 
+    // NOTE: We do not need to explicitly propagate this value to the COAP module here,
     // as each USP message that is queued includes this information
 
     return USP_ERR_OK;
@@ -1485,7 +1521,7 @@ int Notify_ControllerMtpCoapPath(dm_req_t *req, char *value)
     USP_SAFE_FREE(mtp->coap.resource);
     mtp->coap.resource = USP_STRDUP(value);
 
-    // NOTE: We do not need to explicitly propagate this value to the COAP module here, 
+    // NOTE: We do not need to explicitly propagate this value to the COAP module here,
     // as each USP message that is queued includes this information
 
     return USP_ERR_OK;
@@ -1516,7 +1552,7 @@ int Notify_ControllerMtpCoapEncryption(dm_req_t *req, char *value)
     USP_SAFE_FREE(mtp->coap.resource);
     mtp->coap.enable_encryption = val_bool;
 
-    // NOTE: We do not need to explicitly propagate this value to the COAP module here, 
+    // NOTE: We do not need to explicitly propagate this value to the COAP module here,
     // as each USP message that is queued includes this information
 
     return USP_ERR_OK;
@@ -1595,7 +1631,7 @@ int Notify_PeriodicNotifTime(dm_req_t *req, char *value)
 **
 ** Notify_ControllerRetryMinimumWaitInterval
 **
-** Called when Device.LocalAgent.Controller.{i}.USPRetryMinimumWaitInterval is modified
+** Called when Device.LocalAgent.Controller.{i}.USPNotifRetryMinimumWaitInterval is modified
 **
 ** \param   req - pointer to structure identifying the parameter
 ** \param   value - new value of this parameter
@@ -1613,7 +1649,7 @@ int Notify_ControllerRetryMinimumWaitInterval(dm_req_t *req, char *value)
 
     // Update cached value
     cont->subs_retry_min_wait_interval = val_uint;
-    
+
     return USP_ERR_OK;
 }
 
@@ -1621,7 +1657,7 @@ int Notify_ControllerRetryMinimumWaitInterval(dm_req_t *req, char *value)
 **
 ** Notify_ControllerRetryIntervalMultiplier
 **
-** Called when Device.LocalAgent.Controller.{i}.USPRetryIntervalMultiplier is modified
+** Called when Device.LocalAgent.Controller.{i}.USPNotifRetryIntervalMultiplier is modified
 **
 ** \param   req - pointer to structure identifying the parameter
 ** \param   value - new value of this parameter
@@ -1639,7 +1675,7 @@ int Notify_ControllerRetryIntervalMultiplier(dm_req_t *req, char *value)
 
     // Update cached value
     cont->subs_retry_interval_multiplier = val_uint;
-    
+
     return USP_ERR_OK;
 }
 
@@ -1712,7 +1748,7 @@ int ProcessControllerAdded(int cont_instance)
     cont = FindUnusedController();
     if (cont == NULL)
     {
-        return USP_ERR_RESOURCES_EXCEEDED;        
+        return USP_ERR_RESOURCES_EXCEEDED;
     }
 
     // Initialise to defaults
@@ -1721,7 +1757,7 @@ int ProcessControllerAdded(int cont_instance)
     cont->instance = cont_instance;
     cont->combined_role.inherited = ROLE_DEFAULT;
     cont->combined_role.assigned = ROLE_DEFAULT;
-    
+
     for (i=0; i<MAX_CONTROLLER_MTPS; i++)
     {
         cont->mtps[i].instance = INVALID;
@@ -1761,7 +1797,7 @@ int ProcessControllerAdded(int cont_instance)
     UpdateFirstPeriodicNotificationTime();
 
     // Exit if unable to get the minimum subs retry interval for this controller
-    USP_SNPRINTF(path, sizeof(path), "%s.%d.USPRetryMinimumWaitInterval", device_cont_root, cont_instance);
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.USPNotifRetryMinimumWaitInterval", device_cont_root, cont_instance);
     err = DM_ACCESS_GetUnsigned(path, &cont->subs_retry_min_wait_interval);
     if (err != USP_ERR_OK)
     {
@@ -1769,7 +1805,7 @@ int ProcessControllerAdded(int cont_instance)
     }
 
     // Exit if unable to get the subs retry interval multiplier for this controller
-    USP_SNPRINTF(path, sizeof(path), "%s.%d.USPRetryIntervalMultiplier", device_cont_root, cont_instance);
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.USPNotifRetryIntervalMultiplier", device_cont_root, cont_instance);
     err = DM_ACCESS_GetUnsigned(path, &cont->subs_retry_interval_multiplier);
     if (err != USP_ERR_OK)
     {
@@ -1811,7 +1847,7 @@ int ProcessControllerAdded(int cont_instance)
     err = DATA_MODEL_GetInstances(path, &iv);
     if (err != USP_ERR_OK)
     {
-        return err;
+        goto exit;
     }
 
     // Exit, issuing a warning, if no MTPs for this controller are present in database
@@ -1878,7 +1914,7 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     mtp = FindUnusedControllerMtp(cont);
     if (mtp == NULL)
     {
-        return USP_ERR_RESOURCES_EXCEEDED;        
+        return USP_ERR_RESOURCES_EXCEEDED;
     }
 
     // Initialise to defaults
@@ -1972,6 +2008,43 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     }
 #endif
 
+#ifdef ENABLE_MQTT
+    // Exit if this MTP is not the only MQTT MTP for this controller
+    if (mtp->protocol == kMtpProtocol_MQTT)
+    {
+        err = ValidateMqttMtpUniqueness(cont, mtp_instance);
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
+    }
+
+    // Exit if unable to get the enable for this MTP
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.Enable", device_cont_root, cont->instance, mtp_instance);
+    err = DM_ACCESS_GetBool(path, &mtp->enable);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if there was an error in the reference to the entry in the MQTT client table
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.MQTT.Reference", device_cont_root, cont->instance, mtp_instance);
+    err = DEVICE_MTP_GetMqttReference(path, &mtp->mqtt_connection_instance);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to get the name of the controller's MQTT queue
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.MQTT.Topic", device_cont_root, cont->instance, mtp_instance);
+    USP_ASSERT(mtp->mqtt_controller_topic == NULL);
+    err = DM_ACCESS_GetString(path, &mtp->mqtt_controller_topic);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+#endif
+
     err = USP_ERR_OK;
 
 exit:
@@ -2007,7 +2080,7 @@ int UpdateAssignedRole(controller_t *cont, char *reference)
         cont->combined_role.assigned = INVALID_ROLE;
         return USP_ERR_OK;
     }
-    
+
     // Exif if the controller trust role instance number does not exist
     err = DM_ACCESS_ValidateReference(reference, "Device.LocalAgent.ControllerTrust.Role.{i}", &instance);
     if (err != USP_ERR_OK)
@@ -2023,7 +2096,7 @@ int UpdateAssignedRole(controller_t *cont, char *reference)
     }
 
     cont->combined_role.assigned = role;
-    
+
     return USP_ERR_OK;
 }
 
@@ -2182,7 +2255,7 @@ controller_t *FindControllerByEndpointId(char *endpoint_id)
     {
         // Exit if found an enabled controller that matches the endpoint_id
         cont = &controllers[i];
-        if ((cont->instance != INVALID) && 
+        if ((cont->instance != INVALID) &&
             (strcmp(cont->endpoint_id, endpoint_id)==0))
         {
             return cont;
@@ -2214,7 +2287,7 @@ controller_t *FindEnabledControllerByEndpointId(char *endpoint_id)
     {
         // Exit if found an enabled controller that matches the endpoint_id
         cont = &controllers[i];
-        if ((cont->instance != INVALID) && (cont->enable == true) && 
+        if ((cont->instance != INVALID) && (cont->enable == true) &&
             (strcmp(cont->endpoint_id, endpoint_id)==0))
         {
             return cont;
@@ -2232,7 +2305,7 @@ controller_t *FindEnabledControllerByEndpointId(char *endpoint_id)
 ** Finds the first enabled MTP for the specified controller, if possible matching the preferred MTP protocol
 **
 ** \param   cont - pointer to controller in the controller array, which this MTP is associated with
-** \param   preferred_protocol - preferred protocol to use (NOTE: this is unbknown for notification messages and will be set to kMtpProtocol_None)
+** \param   preferred_protocol - preferred protocol to use (NOTE: this is unknown for notification messages and will be set to kMtpProtocol_None)
 **
 ** \return  pointer to controller MTP found, or NULL if none was found
 **
@@ -2242,7 +2315,7 @@ controller_mtp_t *FindFirstEnabledMtp(controller_t *cont, mtp_protocol_t preferr
     int i;
     controller_mtp_t *mtp;
     controller_mtp_t *first_mtp = NULL;
-    
+
     // Iterate over all enabled MTPs for this controller, finding the first enabled MTP for this controller
     for (i=0; i<MAX_CONTROLLER_MTPS; i++)
     {
@@ -2314,7 +2387,7 @@ void DestroyController(controller_t *cont)
 {
     int i;
     controller_mtp_t *mtp;
-    
+
     cont->instance = INVALID;      // Mark controller slot as free
     cont->enable = false;
     USP_SAFE_FREE(cont->endpoint_id);
@@ -2349,6 +2422,11 @@ void DestroyControllerMtp(controller_mtp_t *mtp)
     USP_SAFE_FREE(mtp->coap_controller_host);
     USP_SAFE_FREE(mtp->coap.resource);
     mtp->coap.port = 0;
+#endif
+
+#ifdef ENABLE_MQTT
+    mtp->mqtt_connection_instance = INVALID;
+    USP_SAFE_FREE(mtp->mqtt_controller_topic);
 #endif
 }
 
@@ -2494,7 +2572,7 @@ int ValidateEndpointIdUniqueness(char *endpoint_id, int cont_instance)
 time_t CalcNextPeriodicTime(time_t cur_time, time_t periodic_base, int periodic_interval)
 {
     time_t diff;
-    time_t offset; 
+    time_t offset;
 
     if (periodic_base <= cur_time)
     {
@@ -2556,6 +2634,360 @@ void UpdateFirstPeriodicNotificationTime(void)
     SYNC_TIMER_Reload(PeriodicNotificationExec, 0, first_periodic_notification_time);
 }
 
+
+#ifdef ENABLE_MQTT
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_GetControllerTopic
+**
+** Gets the name of the controller queue to use for this controller on a particular MQTT client connection
+**
+** \param   instance - instance number of MQTT Clients Connection in the Device.MQTT.Client.{i} table
+**
+** \return  pointer to queue name, or NULL if unable to resolve the MQTT connection
+**
+**************************************************************************/
+char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance)
+{
+    int i, j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Iterate over all enabled controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if ((cont->instance != INVALID) && (cont->enable))
+        {
+            // Iterate over all enabled MTP slots for this controller
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->enable))
+                {
+                    // If this controller is connected to the specified MQTT connection, then set its inherited role
+                    if ((mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
+                    {
+                        return mtp->mqtt_controller_topic;
+                    }
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_SetRolesFromMqtt
+**
+** Sets the controller trust role to use for all controllers connected to the specified MQTT Client
+**
+** \param   mqtt_instance - MQTT instance (in Device.MQTT.Client table)
+** \param   role - Role allowed for this message
+** \param   allowed_controllers - URN pattern containing the endpoint_id of allowed controllers
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role, char *allowed_controllers)
+{
+    int i, j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Iterate over all enabled controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if ((cont->instance != INVALID) && (cont->enable))
+        {
+            // Iterate over all enabled MTP slots for this controller
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->enable))
+                {
+                    // If this controller is connected to the specified MQTT connection, then set its inherited role
+                    if ((mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
+                    {
+                        cont->combined_role.inherited = role;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_NotifyMqttConnDeleted
+**
+** Called when a MQTT connection is deleted
+** This code unpicks all references to the MQTT client existing in the Controller MTP table
+**
+** \param   mqtt_instance - instance in Device.MQTT.Client which has been deleted
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance)
+{
+    int i;
+    int j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+    char path[MAX_DM_PATH];
+
+    // Iterate over all controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        // Iterate over all MTP slots for this controller, clearing out all references to the deleted MQTT client
+        cont = &controllers[i];
+        if (cont->instance != INVALID)
+        {
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
+                {
+                    USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.Controller.%d.MTP.%d.MQTT.Reference", cont->instance, mtp->instance);
+                    DATA_MODEL_SetParameterValue(path, "", 0);
+                }
+            }
+        }
+    }
+}
+
+/*********************************************************************//**
+**
+** Notify_ControllerMtpMqttReference
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Reference is modified
+** This function updates the value of the mqtt_client_instance stored in the controller array
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpMqttReference(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+    char path[MAX_DM_PATH];
+    bool schedule_reconnect = false;
+    int instance, err;
+
+    // Exit if reference is a blank string
+    if (*value == '\0')
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exif if the controller trust role instance number does not exist
+    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", &instance);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: instance (%d) is not found", __FUNCTION__, instance);
+        return err;
+    }
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    // Set the new value
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.MQTT.Reference", device_cont_root, cont->instance, mtp->instance);
+
+    err = DEVICE_MTP_GetMqttReference(path, &mtp->mqtt_connection_instance);
+    if (err != USP_ERR_OK)
+    {
+        USP_LOG_Error("%s controller instance is invalid\n", __FUNCTION__);
+        return err;
+    }
+
+    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
+        (mtp->mqtt_connection_instance != instance))
+    {
+        if (instance != INVALID)
+        {
+            schedule_reconnect = true;
+        }
+    }
+
+    // Set the new value
+    mtp->mqtt_connection_instance = instance;
+
+    if (schedule_reconnect)
+    {
+        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Notify_ControllerMtpMqttTopic
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Topic is modified
+** This function updates the value of the mqtt_controller_topic stored in the controller array
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpMqttTopic(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+    bool schedule_reconnect = false;
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
+        (strcmp(mtp->mqtt_controller_topic, value) != 0))
+    {
+        if (mtp->mqtt_connection_instance != INVALID)
+        {
+            schedule_reconnect = true;
+        }
+    }
+
+    // Set the new value
+    USP_SAFE_FREE(mtp->mqtt_controller_topic);
+    mtp->mqtt_controller_topic = USP_STRDUP(value);
+
+    if (schedule_reconnect)
+    {
+        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** ValidateMqttMtpUniquenessReq
+**
+** Validates that only one MQTT MTP is enabled at any one time
+**
+** \param   req - pointer to structure identifying the controller MTP
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ValidateMqttMtpUniquenessReq(dm_req_t *req)
+{
+    int err;
+    controller_t *cont;
+
+    // Determine the controller entry
+    cont = FindControllerByInstance(inst1);
+    USP_ASSERT(cont != NULL);
+
+    // Exit if this instance is not the only MQTT MTP for this controller
+    err = ValidateMqttMtpUniqueness(cont, inst2);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    return USP_ERR_OK;
+}
+/*********************************************************************//**
+**
+** ValidateMqttMtpUniqueness
+**
+** Validates that only one MQTT MTP is enabled at any one time
+**
+** \param   cont - controller on which to validate there is only one MQTT MTP
+** \param   mtp_instance - Instance number which is expected to be the single MQTT MTP
+**                          This instance is skipped when searching.
+**                          It is necessary to allow you to set an MTP to use MQTT again.
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ValidateMqttMtpUniqueness(controller_t *cont, int mtp_instance)
+{
+    int i;
+    controller_mtp_t *mtp;
+
+    // Iterate over all MTPs, seeing if any (other than the one currently being set) is enabled and a MQTT connection
+    for (i=0; i < MAX_CONTROLLER_MTPS; i++)
+    {
+        mtp = &cont->mtps[i];
+
+        // Skip this entry if not in use
+        if (mtp->instance == INVALID)
+        {
+            continue;
+        }
+
+        // Skip the instance currently being validated - we allow the current MQTT MTP to have it's protocol set to MQTT again !
+        if (mtp->instance == mtp_instance)
+        {
+            continue;
+        }
+
+        // Exit if another MTP is enabled, and uses MQTT
+        if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT))
+        {
+            USP_ERR_SetMessage("%s: Controller can only have one enabled MQTT MTP (matches %s.%d.MTP.%d)", __FUNCTION__, device_cont_root, cont->instance, mtp->instance);
+            return USP_ERR_VALUE_CONFLICT;
+        }
+    }
+
+    // If the code gets here, then only the instance being validated is MQTT and enabled
+    return USP_ERR_OK;
+}
+#endif
+
+/*********************************************************************//**
+**
+** ValidateMtpUniquenessReq
+**
+** Function to determine if a unique MTP is in use
+**
+** \param   protocol - enum of the protocol
+** \param   req - pointer to structure identifying the controller MTP
+**
+** \return  USP_ERR_OK if ok or not required,
+**
+**************************************************************************/
+int ValidateMtpUniquenessReq(mtp_protocol_t protocol, dm_req_t* req)
+{
+    int err = USP_ERR_OK;
+
+    switch(protocol)
+    {
+        case kMtpProtocol_STOMP:
+            err = ValidateStompMtpUniquenessReq(req);
+            break;
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+            err = ValidateMqttMtpUniquenessReq(req);
+            break;
+#endif
+#ifdef ENABLE_COAP
+        case kMtpProtocol_CoAP:
+#endif
+        default:
+            // No uniqueness check required
+            // Keep default
+            break;
+    }
+
+    return err;
+}
+
 //------------------------------------------------------------------------------------------
 // Code to test the CalcNextPeriodicTime() function
 // NOTE: In test cases below, the periodic_interval is assumed to be 5 seconds
@@ -2568,14 +3000,14 @@ time_t calc_next_periodic_time_test_cases[] =
     1,          0,                  5,
     4,          0,                  5,
     5,          0,                  10,
-    
+
     4,          5,                  5,
     5,          5,                  10,
-    
+
     6,          5,                  10,
     9,          5,                  10,
     10,         5,                  15,
-    
+
     50,         100,                55,
     51,         100,                55,
     52,         100,                55,
@@ -2594,7 +3026,7 @@ void TestCalcNextPeriodicTime(void)
     p = calc_next_periodic_time_test_cases;
     for (i=0; i < NUM_ELEM(calc_next_periodic_time_test_cases); i+=3)
     {
-        
+
         result = CalcNextPeriodicTime(p[0], p[1], 5);
         if (result != p[2])
         {

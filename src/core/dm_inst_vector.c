@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -50,9 +50,23 @@
 
 
 //--------------------------------------------------------------------
+// Top-level multi-instance node being refreshed
+// This is used to ensure that within the refresh instances callback,
+// the caller of USP_RefreshInstance() is only refreshing the instances that it has ben asked to refresh
+// Outside of the refresh instances callback, this variable is set to NULL
+static dm_node_t *refresh_instances_top_node = NULL;
+
+//--------------------------------------------------------------------
+// Vector, used to hold the new set of instances for the refresh_instances_top_node, within the refresh instances callback
+static dm_instances_vector_t refreshed_instances_vector = { 0 };
+
+//--------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void AddObjectInstanceIfPermitted(dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role);
-
+int RefreshInstVector(dm_node_t *node, bool notify_subscriptions);
+int RefreshInstVectorEntry(char *path);
+bool IsExistInInstVector(dm_instances_t *match, dm_instances_vector_t *div);
+void AddToInstVector(dm_instances_t *inst, dm_instances_vector_t *div);
 
 /*********************************************************************//**
 **
@@ -109,7 +123,6 @@ void DM_INST_VECTOR_Destroy(dm_instances_vector_t *div)
 int DM_INST_VECTOR_Add(dm_instances_t *inst)
 {
     int i;
-    int size;
     dm_instances_t *oi;
     dm_node_t *top_node;
     dm_instances_vector_t *div;
@@ -136,19 +149,15 @@ int DM_INST_VECTOR_Add(dm_instances_t *inst)
         if (memcmp(oi, inst, sizeof(dm_instances_t)) == 0)
         {
             return USP_ERR_OK;
-        }        
+        }
     }
 
-    // Otherwise, increase the size of the dm_instances_vector array
-    size = (div->num_entries+1) * sizeof(dm_instances_t);
-    div->vector = USP_REALLOC(div->vector, size);
-
-    // And store this object instance
-    memcpy(&div->vector[div->num_entries], inst, sizeof(dm_instances_t));
-    div->num_entries++;
+    // Add the instance to the correct top-level node instance vector
+    AddToInstVector(inst, div);
 
     return USP_ERR_OK;
 }
+
 
 /*********************************************************************//**
 **
@@ -196,7 +205,7 @@ void DM_INST_VECTOR_Remove(dm_instances_t *inst)
             (memcmp(oi->nodes, inst->nodes, order*sizeof(dm_node_t *)) == 0) &&
             (memcmp(oi->instances, inst->instances, order*sizeof(int)) == 0))
         {
-            // Delete this node. Nothing to do in this iteration of the loop - this value will be overwritten by further 
+            // Delete this node. Nothing to do in this iteration of the loop - this value will be overwritten by further
         }
         else
         {
@@ -223,21 +232,22 @@ void DM_INST_VECTOR_Remove(dm_instances_t *inst)
 **
 ** \param   match - pointer to instances structure describing the instances to match against
 **                 contained within this structure is the top level multi-instance node which holds the dm_instances_vector
+** \param   exists - pointer to boolean in which to return whether the object exists or not
 **
-** \return  true if the specified object instances exist in the data model
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-bool DM_INST_VECTOR_IsExist(dm_instances_t *match)
+int DM_INST_VECTOR_IsExist(dm_instances_t *match, bool *exists)
 {
-    int i;
-    dm_instances_t *inst;
     dm_node_t *top_node;
     dm_instances_vector_t *div;
+    int err;
 
     // Exit if the object is a single instance object - these always exist
     if (match->order == 0)
     {
-        return true;
+        *exists = true;
+        return USP_ERR_OK;
     }
 
     // Determine which top level multi-instance node's DM instances array to search in
@@ -247,23 +257,16 @@ bool DM_INST_VECTOR_IsExist(dm_instances_t *match)
     USP_ASSERT(top_node->type == kDMNodeType_Object_MultiInstance);
     div = &top_node->registered.object_info.inst_vector;
 
-    // Iterate over the array of object instances which are present in the data model
-    for (i=0; i < div->num_entries; i++)
+    // Exit if unable to refresh the cache of instances for this object (if necessary)
+    err = RefreshInstVector(top_node, true);
+    if (err != USP_ERR_OK)
     {
-        inst = &div->vector[i];
-        if (inst->order >= match->order)
-        {
-            if ( (memcmp(inst->nodes, match->nodes, (match->order)*sizeof(dm_node_t *)) == 0) &&
-                 (memcmp(inst->instances, match->instances, (match->order)*sizeof(int)) == 0) )
-            {
-                // All specified object instances match
-                return true;
-            }
-        }
+        return err;
     }
 
-    // If the code gets here, then no instances matched
-    return false;
+    *exists = IsExistInInstVector(match, div);
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -271,6 +274,7 @@ bool DM_INST_VECTOR_IsExist(dm_instances_t *match)
 ** DM_INST_VECTOR_GetNextInstance
 **
 ** Gets the next numbered instance for the specified object (given it's parent instance numbers)
+** This function is called when allocating a new instance number for an object that is being added
 **
 ** \param   node - pointer to object in data model
 ** \param   inst - pointer to instance structure specifying the object's parents and their instance numbers
@@ -330,15 +334,17 @@ int DM_INST_VECTOR_GetNextInstance(dm_node_t *node, dm_instances_t *inst, int *n
 **
 ** \param   node - pointer to object in data model
 ** \param   inst - pointer to instance structure specifying the object's parents and their instance numbers
+** \param   num_instances - pointer to variable in which to return the number of instances of the specified object
 **
-** \return  Number of instances of the specified object
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DM_INST_VECTOR_GetNumInstances(dm_node_t *node, dm_instances_t *inst)
+int DM_INST_VECTOR_GetNumInstances(dm_node_t *node, dm_instances_t *inst, int *num_instances)
 {
     int i;
     int order;
     int count;
+    int err;
     dm_instances_t *oi;
     dm_node_t *top_node;
     dm_instances_vector_t *div;
@@ -353,7 +359,14 @@ int DM_INST_VECTOR_GetNumInstances(dm_node_t *node, dm_instances_t *inst)
     USP_ASSERT(top_node->type == kDMNodeType_Object_MultiInstance);
     div = &top_node->registered.object_info.inst_vector;
 
-    // Iterate over the table of instance numbers, determining the highest instance number for the specified object
+    // Exit if unable to refresh the cache of instances for this object (if necessary)
+    err = RefreshInstVector(top_node, true);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Iterate over the table of instance numbers, counting the number of instances which match the object and its parent instance numbers
     count = 0;
     for (i=0; i < div->num_entries; i++)
     {
@@ -368,7 +381,9 @@ int DM_INST_VECTOR_GetNumInstances(dm_node_t *node, dm_instances_t *inst)
 
     inst->nodes[order] = NULL;          // Undo the changes made by this function to the inst array
 
-    return count;
+    *num_instances = count;
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -406,6 +421,13 @@ int DM_INST_VECTOR_GetInstances(dm_node_t *node, dm_instances_t *inst, int_vecto
     USP_ASSERT(top_node->type == kDMNodeType_Object_MultiInstance);
     div = &top_node->registered.object_info.inst_vector;
 
+    // Exit if unable to refresh the cache of instances for this object (if necessary)
+    err = RefreshInstVector(top_node, true);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
     // Iterate over the instances array, finding the objects which match, and their instances
     for (i=0; i < div->num_entries; i++)
     {
@@ -420,12 +442,7 @@ int DM_INST_VECTOR_GetInstances(dm_node_t *node, dm_instances_t *inst, int_vecto
             index = INT_VECTOR_Find(iv, instance);
             if (index == INVALID)
             {
-                // Exit if array is already full
-                err = INT_VECTOR_Add(iv, instance);
-                if (err != USP_ERR_OK)
-                {
-                    goto exit;
-                }
+                INT_VECTOR_Add(iv, instance);
             }
         }
     }
@@ -435,6 +452,54 @@ int DM_INST_VECTOR_GetInstances(dm_node_t *node, dm_instances_t *inst, int_vecto
 exit:
     inst->nodes[order] = NULL;          // Undo the changes made by this function to the inst array
     return err;
+}
+
+/*********************************************************************//**
+**
+** DM_INST_VECTOR_RefreshBaselineInstances
+**
+** Called at startup to determine all refreshed object instances, so that
+** object creation and deletion after bootup can generate notification events if necessary
+** NOTE: This function is called recursively over the whole data model
+**
+** \param   parent - node to get instances of (if it is a top level multi-instance object)
+**
+** \return  None - If instances could not be refreshed, then we will try again at the time of generating a USP message that needs them
+**
+**************************************************************************/
+void DM_INST_VECTOR_RefreshBaselineInstances(dm_node_t *parent)
+{
+    dm_node_t *child;
+
+    // Stop recursing at all top level multi-instance object nodes of the data model tree
+    if (parent->type == kDMNodeType_Object_MultiInstance)
+    {
+        dm_object_info_t *info;                   // Objects
+
+        // Refresh the instances of this object (and all of its children) if required
+        info = &parent->registered.object_info;
+        if (info->refresh_instances_cb != NULL)
+        {
+            (void) RefreshInstVector(parent, false);
+        }
+
+        USP_ASSERT(parent->order == 1);
+        return;
+    }
+
+    // Iterate over list of children
+    child = (dm_node_t *) parent->child_nodes.head;
+    while (child != NULL)
+    {
+        // Recurse through all objects to find first top level multi-instance object from here
+        if (IsObject(child))
+        {
+            (void) DM_INST_VECTOR_RefreshBaselineInstances(child);
+        }
+
+        // Move to next sibling in the data model tree
+        child = (dm_node_t *) child->link.next;
+    }
 }
 
 /*********************************************************************//**
@@ -470,7 +535,7 @@ void DM_INST_VECTOR_Dump(dm_instances_vector_t *div)
 **
 ** DM_INST_VECTOR_GetAllInstancePaths_Unqualified
 **
-** Returns a string vector containing the paths of all instances to the specified 
+** Returns a string vector containing the paths of all instances to the specified
 ** unqualified multi-instance object and recursively all child instances
 ** This function expects the dm_instances_t structure to contain only the node's parents and parent instances
 **
@@ -480,13 +545,14 @@ void DM_INST_VECTOR_Dump(dm_instances_vector_t *div)
 **               NOTE: The caller must initialise this structure. This function adds to this structure, it does not initialise it.
 ** \param   combined_role - role to use to check that object instances may be returned.  If set to INTERNAL_ROLE, then full permissions are always returned
 **
-** \return  None
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-void DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role)
+int DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role)
 {
     int i;
     int order;
+    int err;
     dm_instances_t *oi;
     dm_node_t *top_node;
     dm_instances_vector_t *div;
@@ -501,6 +567,13 @@ void DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instance
     USP_ASSERT(top_node->type == kDMNodeType_Object_MultiInstance);
     div = &top_node->registered.object_info.inst_vector;
 
+    // Exit if unable to refresh the cache of instances for this object (if necessary)
+    err = RefreshInstVector(top_node, true);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
     // Iterate over the instances array, finding all objects which match, and their instances
     for (i=0; i < div->num_entries; i++)
     {
@@ -513,15 +586,19 @@ void DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instance
         }
     }
 
+    err = USP_ERR_OK;
+
+exit:
     // Undo the changes made by this function to the inst array
     inst->nodes[order] = NULL;
+    return err;
 }
 
 /*********************************************************************//**
 **
 ** DM_INST_VECTOR_GetAllInstancePaths_Qualified
 **
-** Returns a string vector containing the paths of all instances to the specified 
+** Returns a string vector containing the paths of all instances to the specified
 ** qualified multi-instance object and recursively all child instances
 ** This function expects the dm_instances_t structure to contain the object instances to match
 **
@@ -530,13 +607,14 @@ void DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instance
 **               NOTE: The caller must initialise this structure. This function adds to this structure, it does not initialise it.
 ** \param   combined_role - role to use to check that object instances may be returned.  If set to INTERNAL_ROLE, then full permissions are always returned
 **
-** \return  None
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-void DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role)
+int DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role)
 {
     int i;
     int order;
+    int err;
     dm_instances_t *oi;
     dm_node_t *top_node;
     dm_instances_vector_t *div;
@@ -551,6 +629,13 @@ void DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vect
     USP_ASSERT(top_node->type == kDMNodeType_Object_MultiInstance);
     div = &top_node->registered.object_info.inst_vector;
 
+    // Exit if unable to refresh the cache of instances for this object (if necessary)
+    err = RefreshInstVector(top_node, true);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Iterate over the instances array, finding all objects which match, and their instances
     for (i=0; i < div->num_entries; i++)
     {
@@ -562,6 +647,88 @@ void DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vect
             AddObjectInstanceIfPermitted(oi, sv, combined_role);
         }
     }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DM_INST_VECTOR_RefreshInstance
+**
+** Adds the specified object instance into the instance vector
+** NOTE: This function may only be called by the vendor within the context of the get_instances_cb call
+**       It must contain only instances of the object specified in the get_instances_cb (and that object's children)
+**
+** \param   path - data model path of the multi-instance object to add
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DM_INST_VECTOR_RefreshInstance(char *path)
+{
+    dm_node_t *node;
+    dm_node_t *top_node;
+    dm_instances_t inst;
+    bool is_qualified_instance;
+    bool exists;
+
+    // Exit if unable to find node representing this object
+    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    if (node == NULL)
+    {
+        USP_ERR_SetMessage("%s: Path (%s) does not exist in the schema", __FUNCTION__, path);
+        return USP_ERR_OBJECT_DOES_NOT_EXIST;
+    }
+
+    // Exit if the object the vendor signalled was not a multi-instance object
+    if (node->type != kDMNodeType_Object_MultiInstance)
+    {
+        USP_ERR_SetMessage("%s: Path (%s) is not a multi-instance object.", __FUNCTION__, path);
+        return USP_ERR_OBJECT_NOT_CREATABLE;
+    }
+
+    // Exit if this object is not a fully qualified instance
+    if (is_qualified_instance == false)
+    {
+        USP_ERR_SetMessage("%s: Path (%s) should contain instance number of object that was added", __FUNCTION__, path);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if the top-level multi-instance object does not match the one we requested instances for
+    // NOTE: We just emit a warning in this case, rather than returning an error
+    // This allows clients to potentially be 'dumb' in refreshing instances - we filter the instances to add here
+    top_node = inst.nodes[0];
+    if (top_node != refresh_instances_top_node)
+    {
+        USP_LOG_Warning("%s: Ignoring USP_RefreshInstance(%s) as it was not for path %s (or its descendants)", __FUNCTION__, path, top_node->path);
+        return USP_ERR_OK;
+    }
+
+    // Exit if instance already exists - nothing to do
+    exists = IsExistInInstVector(&inst, &refreshed_instances_vector);
+    if (exists)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if the parent object instances in the path do not exist
+    if (inst.order > 1)
+    {
+        inst.order--;           // Temporarily remove the instance number of the object that was added,
+                                // so that structure indicates only parent instance numbers
+        exists = IsExistInInstVector(&inst, &refreshed_instances_vector);
+        if (exists == false)
+        {
+            USP_ERR_SetMessage("%s: Parent objects in path (%s) do not exist", __FUNCTION__, path);
+            return USP_ERR_OBJECT_DOES_NOT_EXIST;
+        }
+        inst.order++;           // Restore the structure, so that it indicates the instance number of the object that was added
+    }
+
+    // Add this to the refreshed instances vector
+    AddToInstVector(&inst, &refreshed_instances_vector);
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -594,11 +761,206 @@ void AddObjectInstanceIfPermitted(dm_instances_t *inst, str_vector_t *sv, combin
 
     // Convert the dm_instances_t structure into a path
     DM_PRIV_FormPath_FromDM(node, inst, path, sizeof(path));
-    
+
     // Add the path to the string vector
     STR_VECTOR_Add(sv, path);
 }
 
+/*********************************************************************//**
+**
+** RefreshInstVector
+**
+** Called before querying the instances vector, to ensure that it is up to date
+** If a refresh_instances_cb is registered, then the instances vector acts as a cache, with ageing of its content
+** In this case, this function may call the refresh_instances_cb to obtain the instance numbers if the current ones in the cache have expired
+**
+** \param   top_node - pointer to top-level multi-instance object
+** \param   notify_subscriptions - set if subscriptions should be notified of instances added/deleted.
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int RefreshInstVector(dm_node_t *top_node, bool notify_subscriptions)
+{
+    dm_instances_vector_t *old_instances;
+    dm_instances_vector_t *new_instances;
+    dm_instances_vector_t deleted_instances;
+    dm_instances_t *inst;
+    dm_node_t *node;
+    char path[MAX_DM_PATH];
+    dm_object_info_t *info;
+    time_t cur_time;
+    int expiry_period;
+    int err;
+    int len;
+    int i;
+
+    // Exit if this function is being called re-entrantly
+    // This may be the case, as the refresh instances vendor callback ends up calling DM_INST_VECTOR_RefreshInstance()
+    if (refresh_instances_top_node != NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if this top-level multi-instance node is not maintained by the get instances callback
+    // NOTE: Objects which don't have a refresh instances callback use USP_DM_InformInstance(), USP_SIGNAL_ObjectAdded() and USP_SIGNAL_ObjectDeleted() to maintain the instance vector
+    info = &top_node->registered.object_info;
+    if (info->refresh_instances_cb == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if it's not yet time to refresh the instance vector
+    cur_time = time(NULL);
+    if (cur_time <= info->refresh_instances_expiry_time)
+    {
+        return USP_ERR_OK;
+    }
+
+    // If the code gets here, then the instances must be refreshed
+
+    // Truncate the schema path to form a partial path to the top-level multi-instance object
+    #define INSTANCE_SEPARATOR "{i}"
+    len = strlen(top_node->path) - (sizeof(INSTANCE_SEPARATOR)-1);
+    USP_ASSERT(strcmp(&top_node->path[len], INSTANCE_SEPARATOR)==0);
+    memcpy(path, top_node->path, len);
+    path[len] = '\0';
 
 
+    // Exit if unable to get the refreshed instances into the refreshed_instances_vector
+    refresh_instances_top_node = top_node;      // Indicate to DM_INST_VECTOR_RefreshInstance() the top level node which is meant to be being refreshed
+    DM_INST_VECTOR_Init(&refreshed_instances_vector);
+    err = info->refresh_instances_cb(info->group_id, path, &expiry_period);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_ReplaceEmptyMessage("%s: Refresh Instances callback for %s failed", __FUNCTION__, top_node->path);
+        DM_INST_VECTOR_Destroy(&refreshed_instances_vector);
+        refresh_instances_top_node = NULL;
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Update the expiry time
+    cur_time = time(NULL);
+    info->refresh_instances_expiry_time = cur_time + expiry_period;
+
+    // Skip determining add added/deleted instances, if we don't need to notify subscriptions because
+    // we're getting the baseline set of object instances at bootup
+    if (notify_subscriptions == false)
+    {
+        goto exit;
+    }
+
+    // Determine all instances which have been added, by finding all instances in the new, which are not in the old instance vector
+    old_instances = &info->inst_vector;
+    new_instances = &refreshed_instances_vector;
+    for (i=0; i < new_instances->num_entries; i++)
+    {
+        inst = &new_instances->vector[i];
+        if (IsExistInInstVector(inst, old_instances)==false)
+        {
+            node = inst->nodes[inst->order-1];
+            DM_PRIV_FormPath_FromDM(node, inst, path, sizeof(path));
+            DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(path, kSubNotifyType_ObjectCreation);
+        }
+    }
+
+    // Create a vector of all instances which have been deleted, by finding all instances in the old, which are not in the new instance vector
+    // NOTE: For why we create a vector, rather than calling DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent() directly, see below
+    DM_INST_VECTOR_Init(&deleted_instances);
+    for (i=0; i < old_instances->num_entries; i++)
+    {
+        inst = &old_instances->vector[i];
+        if (IsExistInInstVector(inst, new_instances)==false)
+        {
+            AddToInstVector(inst, &deleted_instances);
+        }
+    }
+
+    // NOTE: We need to call DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths() before DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent()
+    //       But as that is an unnecessary (and costly) operation if no instances are deleted, we only do if if there were any instances that were deleted
+    if (deleted_instances.num_entries > 0)
+    {
+        // NOTE: DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths() must be called before any objects are actually deleted from the data model
+        // NOTE: DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths() calls RefreshInstVector() recursively, so refresh_instances_top_node must still be set here
+        DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths();
+
+        for (i=0; i<deleted_instances.num_entries; i++)
+        {
+            inst = &deleted_instances.vector[i];
+            node = inst->nodes[inst->order-1];
+            DM_PRIV_FormPath_FromDM(node, inst, path, sizeof(path));
+            DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(path, kSubNotifyType_ObjectDeletion);
+        }
+    }
+    DM_INST_VECTOR_Destroy(&deleted_instances);
+
+exit:
+    // Replace the old instances with the new instances, deleting the old instances first
+    DM_INST_VECTOR_Destroy(&info->inst_vector);
+    memcpy(&info->inst_vector, &refreshed_instances_vector, sizeof(dm_instances_vector_t));
+    refresh_instances_top_node = NULL;
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** IsExistInInstVector
+**
+** Determines whether the specified object instance exists in the specified instances vector
+**
+** \param   match - pointer to instances structure describing the instances to match against
+** \param   div - pointer to dm_instances vector structure to search in
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+bool IsExistInInstVector(dm_instances_t *match, dm_instances_vector_t *div)
+{
+    int i;
+    dm_instances_t *inst;
+
+    // Iterate over the array of object instances
+    for (i=0; i < div->num_entries; i++)
+    {
+        inst = &div->vector[i];
+        if (inst->order >= match->order)
+        {
+            if ( (memcmp(inst->nodes, match->nodes, (match->order)*sizeof(dm_node_t *)) == 0) &&
+                 (memcmp(inst->instances, match->instances, (match->order)*sizeof(int)) == 0) )
+            {
+                // All specified object instances match
+                return true;
+            }
+        }
+    }
+
+    // If the code gets here, then no instances matched
+    return false;
+}
+
+/*********************************************************************//**
+**
+** AddToInstVector
+**
+** Adds the specified object instance into the specified instances vector
+**
+** \param   inst - pointer to instances structure describing the object instance
+** \param   div - pointer to dm_instances vector structure to add to
+**
+** \return  None
+**
+**************************************************************************/
+void AddToInstVector(dm_instances_t *inst, dm_instances_vector_t *div)
+{
+    int size;
+
+    // Increase the size of the dm_instances_vector array
+    size = (div->num_entries+1) * sizeof(dm_instances_t);
+    div->vector = USP_REALLOC(div->vector, size);
+
+    // And store this object instance
+    memcpy(&div->vector[div->num_entries], inst, sizeof(dm_instances_t));
+    div->num_entries++;
+}
 

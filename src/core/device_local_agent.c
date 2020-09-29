@@ -1,33 +1,34 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2020, BT PLC
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -133,7 +134,14 @@ int DEVICE_LOCAL_AGENT_Init(void)
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.LocalAgent.UpTime", GetUpTime, DM_UINT);
 
     // Determine which protocol is used
-    #ifdef ENABLE_COAP
+    // TODO: Make this more flexible, maybe don't use macros?
+    #ifdef ENABLE_MQTT
+        #ifdef ENABLE_COAP
+            #define SUPPORTED_PROTOCOLS "STOMP, CoAP, MQTT"
+        #else
+            #define SUPPORTED_PROTOCOLS "STOMP, MQTT"
+        #endif
+    #elif defined(ENABLE_COAP)
         #define SUPPORTED_PROTOCOLS      "STOMP, CoAP"
     #else
         #define SUPPORTED_PROTOCOLS      "STOMP"
@@ -198,8 +206,8 @@ int DEVICE_LOCAL_AGENT_SetDefaults(void)
     char serial_number[MAX_DM_SHORT_VALUE_LEN];
 
     //-------------------------------------------------------------
-    // OUI
-    // Exit if unable to get the default value of OUI (ie the value if not overridden by the USP DB)
+    // ManufacturerOUI
+    // Exit if unable to get the default value of ManufacturerOUI (ie the value if not overridden by the USP DB)
     err = GetDefaultOUI(default_value, sizeof(default_value));
     if (err != USP_ERR_OK)
     {
@@ -220,10 +228,10 @@ int DEVICE_LOCAL_AGENT_SetDefaults(void)
     err = DATA_MODEL_GetParameterValue(manufacturer_oui_path, oui, sizeof(oui), 0);
 
 #ifdef REMOVE_DEVICE_INFO
-    // If vendor has not registered Device.DeviceInfo.OUI, then ignore the error, and use the default value
+    // If vendor has not registered Device.DeviceInfo.ManufacturerOUI, then ignore the error, and use the default value
     if (err == USP_ERR_INVALID_PATH)
     {
-        USP_LOG_Error("%s: Code configuration error: You must provide an implementation of Device.DeviceInfo.OUI if REMOVE_DEVICE_INFO is defined", __FUNCTION__);
+        USP_LOG_Error("%s: Code configuration error: You must provide an implementation of Device.DeviceInfo.ManufacturerOUI if REMOVE_DEVICE_INFO is defined", __FUNCTION__);
         return err;
     }
 #endif
@@ -312,8 +320,8 @@ int DEVICE_LOCAL_AGENT_Start(void)
     int err;
     char value[MAX_DM_SHORT_VALUE_LEN];
 
-    // Get the time (after boot) at which USP Agent was started 
-    usp_agent_start_time = (unsigned)tu_uptime_secs(); 
+    // Get the time (after boot) at which USP Agent was started
+    usp_agent_start_time = (unsigned)tu_uptime_secs();
 
     PopulateRebootInfo();
 
@@ -353,7 +361,7 @@ void DEVICE_LOCAL_AGENT_Stop(void)
 **
 ** DEVICE_LOCAL_AGENT_ScheduleReboot
 **
-** Schedules a reboot to occur once all connections have finished sending. 
+** Schedules a reboot to occur once all connections have finished sending.
 **
 ** \param   exit_action - action to perform on exit
 ** \param   reboot_cause - cause of reboot
@@ -542,7 +550,7 @@ int GetUpTime(dm_req_t *req, char *buf, int len)
 ** ScheduleReboot
 **
 ** Sync Operation handler for the Reboot operation
-** The vendor reboot function will be called once all connections have finished sending. 
+** The vendor reboot function will be called once all connections have finished sending.
 ** eg after the response message for this operation has been sent
 **
 ** \param   req - pointer to structure identifying the operation in the data model
@@ -570,7 +578,7 @@ int ScheduleReboot(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv
 ** ScheduleFactoryReset
 **
 ** Sync Operation handler for the FactoryReset
-** The vendor reboot function will be called once all connections have finished sending. 
+** The vendor reboot function will be called once all connections have finished sending.
 ** eg after the response message for this operation has been sent
 **
 ** \param   req - pointer to structure identifying the operation in the data model
@@ -677,7 +685,7 @@ int GetDefaultSerialNumber(char *buf, int len)
         USP_STRNCPY(buf, "undefined", len);
         return USP_ERR_OK;
     }
-    
+
     // Convert MAC address into ASCII string form
     USP_ASSERT(len > 2*MAC_ADDR_LEN+1);
     p = buf;
@@ -740,7 +748,7 @@ int GetDefaultEndpointID(char *buf, int len, char *oui, char *serial_number)
 ** PopulateRebootInfo
 **
 ** Cache the cause (and command key) of the last reboot, then
-** setup the default cause and command key for the next reboot. 
+** setup the default cause and command key for the next reboot.
 ** This will be overridden if any other cause occurs
 **
 ** \param   None
@@ -841,7 +849,7 @@ int PopulateRebootInfo(void)
     // Save the last software version. Note that if this is from a factory reset, then use the current software version
     last_version = (last_value[0] == '\0') ? cur_value : last_value;
     reboot_info.last_software_version = USP_STRDUP(last_version);
-    
+
 
     // Save the software version used in this boot cycle, so next boot cycle we can see if its changed
     err = DATA_MODEL_SetParameterValue(last_software_version_path, cur_value, 0);
@@ -850,7 +858,7 @@ int PopulateRebootInfo(void)
         return err;
     }
 
-    // If the software version used in the last boot cycle differs from the one used 
+    // If the software version used in the last boot cycle differs from the one used
     // in this boot cycle, then the firmware has been updated, unless this was a factory reset
     if ((strcmp(last_value, cur_value) != 0) && (last_value[0] != '\0'))
     {

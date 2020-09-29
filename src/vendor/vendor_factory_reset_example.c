@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -69,8 +69,8 @@ static const kv_pair_t factory_reset_parameters[] =
     { "Device.LocalAgent.Controller.1.AssignedRole", "Device.LocalAgent.ControllerTrust.Role.1" },
     { "Device.LocalAgent.Controller.1.PeriodicNotifInterval", "86400" },
     { "Device.LocalAgent.Controller.1.PeriodicNotifTime", "0001-01-01T00:00:00Z" },
-    { "Device.LocalAgent.Controller.1.USPRetryMinimumWaitInterval", "5" },
-    { "Device.LocalAgent.Controller.1.USPRetryIntervalMultiplier", "2000" },
+    { "Device.LocalAgent.Controller.1.USPNotifRetryMinimumWaitInterval", "5" },
+    { "Device.LocalAgent.Controller.1.USPNotifRetryIntervalMultiplier", "2000" },
     { "Device.LocalAgent.Controller.1.ControllerCode", "" },
     { "Device.LocalAgent.Controller.1.MTP.1.Alias", "cpe-1" },
     { "Device.LocalAgent.Controller.1.MTP.1.Enable", "true" },
@@ -109,7 +109,7 @@ static const kv_pair_t factory_reset_parameters[] =
 int VENDOR_GetFactoryResetParams(kv_vector_t *kvv)
 {
     int i;
-    kv_pair_t *kv;    
+    kv_pair_t *kv;
 
     // Add all fixed parameter values to the returned vector
     #define NUM_ELEM(x) (sizeof((x)) / sizeof((x)[0]))

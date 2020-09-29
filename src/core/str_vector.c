@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -146,7 +146,7 @@ void STR_VECTOR_Add_IfNotExist(str_vector_t *sv, char *str)
     // Exit if string is already present in the vector
     index = STR_VECTOR_Find(sv, str);
     if (index != INVALID)
-    {        
+    {
         return;
     }
 
@@ -169,12 +169,14 @@ void STR_VECTOR_Add_IfNotExist(str_vector_t *sv, char *str)
 int STR_VECTOR_Find(str_vector_t *sv, char *str)
 {
     int i;
+    char *s;
 
     // Iterate over all strings in the vector
     for (i=0; i < sv->num_entries; i++)
     {
         // Exit if found a string that matches
-        if (strcmp(sv->vector[i], str)==0)
+        s = sv->vector[i];
+        if ((s != NULL) && (strcmp(s, str)==0))
         {
             return i;
         }
@@ -208,7 +210,7 @@ void STR_VECTOR_Destroy(str_vector_t *sv)
     // Free all strings in the vector
     for (i=0; i < sv->num_entries; i++)
     {
-        USP_FREE( sv->vector[i] );
+        USP_SAFE_FREE( sv->vector[i] );
     }
 
     // Free the vector itself
@@ -248,6 +250,7 @@ void STR_VECTOR_Dump(str_vector_t *sv)
 ** Converts a string vector into a key-value pair vector,
 ** avoiding as much memory allocation and copying as possible.
 ** The strings in the string vector become keys in the key-value pair vector
+** NOTE: The string vector is emptied as part of this operation
 **
 ** \param   sv - pointer to string vector source structure to convert
 ** \param   kvv - pointer to key-value pair vector destination structure
@@ -294,7 +297,7 @@ void STR_VECTOR_ConvertToKeyValueVector(str_vector_t *sv, kv_vector_t *kvv)
 bool STR_VECTOR_Compare(str_vector_t *sv1, str_vector_t *sv2)
 {
     int i;
-    
+
     // Exit if there are a different number of entries in each vector
     if (sv1->num_entries != sv2->num_entries)
     {
@@ -356,7 +359,7 @@ int PtrToNaturalStrCmp(const void *arg1, const void *arg2)
 
     s1 = *p_s1;
     s2 = *p_s2;
-    
+
     return NaturalStrCmp(s1, s2);
 }
 

@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -40,12 +40,16 @@
  *
  */
 
+#include <string.h>
+
 #include "common_defs.h"
 #include "data_model.h"
 #include "usp_api.h"
 #include "iso8601.h"
 #include "os_utils.h"
 #include "device.h"
+#include "dm_inst_vector.h"
+#include "dm_trans.h"
 
 /*********************************************************************//**
 **
@@ -87,13 +91,39 @@ int USP_DM_GetParameterValue(char *path, char *buf, int len)
 **************************************************************************/
 int USP_DM_SetParameterValue(char *path, char *new_value)
 {
+    int err;
+    dm_trans_vector_t trans;
+
     // Exit if this function is not being called from the data model thread
     if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
-    
-    return DATA_MODEL_SetParameterValue(path, new_value, 0);
+
+    // Exit, setting the value, if this function is called from within a transaction
+    if (DM_TRANS_IsWithinTransaction() == true)
+    {
+        return DATA_MODEL_SetParameterValue(path, new_value, 0);
+    }
+
+    // If the code gets here, then a transaction has not been started, so start one in this function
+    err = DM_TRANS_Start(&trans);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if the set parameter value failed
+    err = DATA_MODEL_SetParameterValue(path, new_value, 0);
+    if (err != USP_ERR_OK)
+    {
+        DM_TRANS_Abort();
+        return err;
+    }
+
+    // Commit the transaction
+    DM_TRANS_Commit();
+    return err;
 }
 
 /*********************************************************************//**
@@ -145,18 +175,18 @@ int USP_DM_InformInstance(char *path)
 
 /*********************************************************************//**
 **
-** USP_DM_GetInstances
+** USP_DM_RefreshInstance
 **
-** Gets a vector of instance numbers for the specified object
-** Wrapper function around data model API, that ensures the function is only called from the data model thread
+** Adds the specified object instance into the instance vector
+** NOTE: This function may only be called by the vendor within the context of the get_instances_cb call
+**       It must contain only instances of the object specified in the get_instances_cb (and that object's children)
 **
-** \param   path - path of the object
-** \param   iv - pointer to structure in which to return the instance numbers
+** \param   path - data model path of the multi-instance object to add
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int USP_DM_GetInstances(char *path, int_vector_t *iv)
+int USP_DM_RefreshInstance(char *path)
 {
     // Exit if this function is not being called from the data model thread
     if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
@@ -164,7 +194,59 @@ int USP_DM_GetInstances(char *path, int_vector_t *iv)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    return DATA_MODEL_GetInstances(path, iv);
+    return DM_INST_VECTOR_RefreshInstance(path);
+}
+
+/*********************************************************************//**
+**
+** USP_DM_GetInstances
+**
+** Gets an array of instance numbers for the specified object
+** Wrapper function around data model API, that ensures the function is only called from the data model thread
+**
+** \param   path - path of the object
+** \param   vector - pointer to array of integers to populate
+** \param   max_entries - Maximum number of entries to populate in the vector
+** \param   num_entries - pointer to variable in which to return the number of entries written to the return vector
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int USP_DM_GetInstances(char *path, int *vector, int max_entries, int *num_entries)
+{
+    int_vector_t iv;
+    int err;
+    int num_to_copy;
+
+    // Exit if this function has invalid arguments
+    if ((path == NULL) || (vector == NULL) | (num_entries == NULL))
+    {
+        USP_ERR_SetMessage("%s: Invalid arguments (some are NULL)", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if this function is not being called from the data model thread
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if unable to get the instances of this object
+    INT_VECTOR_Init(&iv);
+    err = DATA_MODEL_GetInstances(path, &iv);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Copy as many instance numbers into the return array as it has capacity for
+    num_to_copy = MIN(max_entries, iv.num_entries);
+    memcpy(vector, iv.vector, num_to_copy*sizeof(int));
+    *num_entries = num_to_copy;
+
+exit:
+    INT_VECTOR_Destroy(&iv);
+    return err;
 }
 
 /*********************************************************************//**
@@ -219,6 +301,43 @@ void USP_ARG_Init(kv_vector_t *kvv)
 void USP_ARG_Add(kv_vector_t *kvv, char *key, char *value)
 {
     KV_VECTOR_Add(kvv, key, value);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_Replace
+**
+** Replaces the value associated with the specified key
+**
+** \param   kvv - pointer to structure to replace the value in
+** \param   key - pointer to key, whose value we want to replace
+** \param   value - pointer to replacement value
+**
+** \return  true if the value was replaced, false if the key does not exist in the vector
+**
+**************************************************************************/
+bool USP_ARG_Replace(kv_vector_t *kvv, char *key, char *value)
+{
+    return KV_VECTOR_Replace(kvv, key, value);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_ReplaceWithHint
+**
+** Replaces the value associated with the specified key, given a hint index to find the key
+**
+** \param   kvv - pointer to structure to replace the value in
+** \param   key - pointer to key, whose value we want to replace
+** \param   value - pointer to replacement value
+** \param   hint - index of entry in key value vector at which the key is expected to be located
+**
+** \return  true if the value was replaced, false if the key does not exist in the vector
+**
+**************************************************************************/
+bool USP_ARG_ReplaceWithHint(kv_vector_t *kvv, char *key, char *value, int hint)
+{
+    return KV_VECTOR_ReplaceWithHint(kvv, key, value, hint);
 }
 
 /*********************************************************************//**
@@ -302,7 +421,7 @@ char *USP_ARG_Get(kv_vector_t *kvv, char *key, char *default_value)
 ** \param   kvv - pointer to key-value pair vector structure
 ** \param   key - pointer to name of key to get the value of
 ** \param   default_value - default value, if not present in the vector
-** \param   value - pointer to variable in which to return the value 
+** \param   value - pointer to variable in which to return the value
 **
 ** \return  USP_ERR_OK if successful
 **          USP_ERR_INVALID_TYPE if unable to convert the key's value (given in the vector) to an unsigned integer
@@ -325,7 +444,7 @@ int USP_ARG_GetUnsigned(kv_vector_t *kvv, char *key, unsigned default_value, uns
 ** \param   default_value - default value, if not present in the vector
 ** \param   min - minimum allowed value
 ** \param   min - maximum allowed value
-** \param   value - pointer to variable in which to return the value 
+** \param   value - pointer to variable in which to return the value
 **
 ** \return  USP_ERR_OK if successful
 **          USP_ERR_INVALID_TYPE if unable to convert the key's value (given in the vector) to an unsigned integer
@@ -346,7 +465,7 @@ int USP_ARG_GetUnsignedWithinRange(kv_vector_t *kvv, char *key, unsigned default
 ** \param   kvv - pointer to key-value pair vector structure
 ** \param   key - pointer to name of key to get the value of
 ** \param   default_value - default value, if not present in the vector
-** \param   value - pointer to variable in which to return the value 
+** \param   value - pointer to variable in which to return the value
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -399,7 +518,7 @@ void USP_ARG_Destroy(kv_vector_t *kvv)
 ** Converts an ISO8601 string time into a UTC-based unix time
 **
 ** \param   date - pointer to ISO8601 string to convert
-**          
+**
 ** \return  Number of seconds since the UTC unix epoch, or INVALID_TIME if the conversion failed
 **
 **************************************************************************/
@@ -467,13 +586,8 @@ int USP_DM_RegisterRoleName(ctrust_role_t role, char *name)
 **************************************************************************/
 int USP_DM_AddControllerTrustPermission(ctrust_role_t role, char *path, unsigned short permission_bitmask)
 {
-    char schema_path[MAX_DM_PATH];
-    char *in;
-    char *out;
     dm_node_t *node;
-    dm_instances_t inst;    // Discarded (it will contain all '1', since wildcards are replaced with '1')
-    bool is_qualified_instance; // Discarded
-    
+
     // Exit if role is out of bounds
     if ((role < kCTrustRole_Min) || (role >= kCTrustRole_Max))
     {
@@ -481,29 +595,8 @@ int USP_DM_AddControllerTrustPermission(ctrust_role_t role, char *path, unsigned
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Convert the data model path to an instantiated path that can be searched by replacing wildcards with '1'
-    // NOTE: This is a bit of a hack, because we do not have a function that finds a schema path
-    // Instead we do have a function that finds an instantiated path, but does not check the instance numbers
-    in = path;
-    out = schema_path;
-    while (*in != '\0')
-    {
-        if (*in == '*')
-        {
-            *out++ = '1';
-        }
-        else
-        {
-            *out++ = *in;
-        }
-
-        // Mve to next character in path
-        in++;
-    }
-    *out = '\0';    // Zero terminate the schema path
-
     // Exit if path is not a data model path
-    node =  DM_PRIV_GetNodeFromPath(schema_path, &inst, &is_qualified_instance);
+    node =  DM_PRIV_GetNodeFromPath(path, NULL, NULL);
     if (node == NULL)
     {
         return USP_ERR_INTERNAL_ERROR;

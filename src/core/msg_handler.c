@@ -1,33 +1,34 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2020, BT PLC
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -221,7 +222,7 @@ void MSG_HANDLER_LogMessageToSend(Usp__Header__MsgType usp_msg_type, unsigned ch
 
     // Log the message
     USP_PROTOCOL("\n");
-    USP_LOG_Info("%s sending at time %s, to host %s over %s", 
+    USP_LOG_Info("%s sending at time %s, to host %s over %s",
                 MSG_HANDLER_UspMsgTypeToString(usp_msg_type),
                 iso8601_cur_time(buf, sizeof(buf)),
                 host,
@@ -285,7 +286,7 @@ void MSG_HANDLER_LogMessageToSend(Usp__Header__MsgType usp_msg_type, unsigned ch
 
     // Print USP message in human readable form
     PROTO_TRACE_ProtobufMessage(&usp->base);
-    
+
     // Free the protobuf structures
     usp__msg__free_unpacked(usp, pbuf_allocator);
     usp_record__record__free_unpacked(rec, pbuf_allocator);
@@ -317,13 +318,13 @@ void MSG_HANDLER_HandleUnknownMsgType(Usp__Msg *usp, char *controller_endpoint, 
 /*********************************************************************//**
 **
 ** MSG_HANDLER_QueueMessage
-** 
+**
 ** Serializes a USP message to a buffer, then queues it, to be sent to a controller
-** 
+**
 ** \param   endpoint_id - controller to send the message to
 ** \param   usp - pointer to protobuf-c structure describing the USP message to send
 ** \param   mrt - details of where this USP response message should be sent
-** 
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -359,10 +360,10 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *m
 /*********************************************************************//**
 **
 ** MSG_HANDLER_QueueUspRecord
-** 
+**
 ** Serializes a protobuf USP record structure to a buffer (with encapsulated USP message),
 ** then queues it, to be sent to a controller
-** 
+**
 ** \param   usp_msg_type - Type of USP message contained in pbuf. This is used for debug logging when the message is sent by the MTP.
 ** \param   endpoint_id - controller to send the message to
 ** \param   pbuf - pointer to buffer containing serialized USP message
@@ -371,7 +372,7 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *m
 ** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
 ** \param   mrt - details of where this USP response message should be sent
 ** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
-** 
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -480,7 +481,7 @@ void MSG_HANDLER_GetMsgRole(combined_role_t *combined_role)
 char *MSG_HANDLER_GetMsgControllerEndpointId(void)
 {
     char *endpoint_id;
-    
+
     // Exit in case of running a CLI command, and hence no controller instance setup
     if (cur_msg_controller_instance == INVALID)
     {
@@ -493,7 +494,7 @@ char *MSG_HANDLER_GetMsgControllerEndpointId(void)
     {
         return "";
     }
-    
+
     return endpoint_id;
 }
 
@@ -549,7 +550,7 @@ int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *m
     }
 
     // Log the message
-    USP_LOG_Info("%s : processing at time %s", 
+    USP_LOG_Info("%s : processing at time %s",
                 MSG_HANDLER_UspMsgTypeToString(usp->header->msg_type),
                 iso8601_cur_time(buf, sizeof(buf)) );
 
@@ -563,11 +564,11 @@ int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *m
         case USP__HEADER__MSG_TYPE__SET:
             MSG_HANDLER_HandleSet(usp, controller_endpoint, mrt);
             break;
-    
+
         case USP__HEADER__MSG_TYPE__ADD:
             MSG_HANDLER_HandleAdd(usp, controller_endpoint, mrt);
             break;
-    
+
         case USP__HEADER__MSG_TYPE__DELETE:
             MSG_HANDLER_HandleDelete(usp, controller_endpoint, mrt);
             break;
@@ -633,8 +634,8 @@ int ValidateUspRecord(UspRecord__Record *rec)
     endpoint_id = DEVICE_LOCAL_AGENT_GetEndpointID();
     if ((rec->to_id == NULL) || (strcmp(rec->to_id, endpoint_id) != 0))
     {
-        USP_LOG_Warning("%s: WARNING: Ignoring USP record as it was addressed to endpoint_id=%s", __FUNCTION__, rec->to_id);
-        return USP_ERR_OK;
+        USP_LOG_Warning("%s: WARNING: Ignoring USP record as it was addressed to endpoint_id=%s not %s", __FUNCTION__, rec->to_id, endpoint_id);
+        return USP_ERR_REQUEST_DENIED;
     }
 
     // Exit if no USP destination to send the message back to
@@ -644,7 +645,7 @@ int ValidateUspRecord(UspRecord__Record *rec)
         return USP_ERR_RECORD_FIELD_INVALID;
     }
 
-    // Exit if this record contains an encrypted payload. 
+    // Exit if this record contains an encrypted payload.
     if (rec->payload_security != USP_RECORD__RECORD__PAYLOAD_SECURITY__PLAINTEXT)
     {
         USP_ERR_SetMessage("%s: Ignoring USP record as it contains an encrypted payload", __FUNCTION__);
@@ -657,11 +658,10 @@ int ValidateUspRecord(UspRecord__Record *rec)
         USP_LOG_Warning("%s: WARNING: Not performing integrity check on non-payload fields of received USP Record", __FUNCTION__);
     }
 
-    // Exit if ignoring sender certificate
+    // Ignore sender certificate
     if ((rec->sender_cert.len != 0) || (rec->sender_cert.data != NULL))
     {
-        USP_ERR_SetMessage("%s: Ignoring USP record as checking of sender certificate is not supported", __FUNCTION__);
-        return USP_ERR_SECURE_SESS_NOT_SUPPORTED;
+        USP_LOG_Warning("%s: Skipping sender certificate verification", __FUNCTION__);
     }
 
     // Exit if this record contains an End-to-End Session Context (which we don't yet support)
@@ -728,6 +728,11 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_pro
             break;
 #endif
 
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+            USP_ASSERT(cur_msg_combined_role.inherited == role);
+            break;
+#endif
         default:
             TERMINATE_BAD_CASE(protocol);
             break;

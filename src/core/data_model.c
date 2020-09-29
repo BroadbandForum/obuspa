@@ -1,33 +1,34 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2020,  BT PLC
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -54,11 +55,11 @@
 #include "vendor_api.h"
 #include "text_utils.h"
 #include "iso8601.h"
+#include "group_get_vector.h"
 
 #ifdef ENABLE_COAP
 #include "usp_coap.h"
 #endif
-
 
 //--------------------------------------------------------------------
 // Boolean that allows us to control which scope the USP_REGISTER_XXX() functions can be called in
@@ -89,7 +90,7 @@ char *dm_node_type_to_str[kDMNodeType_Max] =
     "ReadWriteVendorParameter",    // kDMNodeType_VendorParam_ReadWrite
     "SynchronousOperation",        // kDMNodeType_SyncOperation
     "AsynchronousOperation",       // kDMNodeType_AsyncOperation
-    "Event"                        // kDMNodeType_Event        
+    "Event"                        // kDMNodeType_Event
 };
 
 //--------------------------------------------------------------------
@@ -102,22 +103,8 @@ static dm_node_t *root_device_node;
 static dm_node_t *root_internal_node;
 
 //--------------------------------------------------------------------
-// Structure for looking up a data model parameter node in the data model, based on it's hash
-typedef struct
-{
-    dm_hash_t hash;
-    dm_node_t *node;
-} node_lookup_t;
-
-
-// This vector is used when reading the database at startup to determine which parameters (in the DB) to delete and which to add
-// based on the current schema
-static node_lookup_t *node_lookup = NULL;
-static int node_lookup_count = 0;
-
-//--------------------------------------------------------------------
-// Typedef for the compare callback
-typedef int (*dm_cmp_cb_t)(char *lhs, expr_op_t op, char *rhs, bool *result);
+// Map containing all data model nodes, indexed by squashed hash value
+dm_node_t *dm_node_map[MAX_NODE_MAP_BUCKETS] = { 0 };
 
 //--------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -125,7 +112,6 @@ void SerializeNativeValue(dm_req_t *req, dm_node_t *node, char *buf, int len);
 void FormInstanceString(dm_instances_t *inst, char *buf, int len);
 dm_node_t *CreateNode(char *name, dm_node_type_t type, char *schema_path);
 int ParseSchemaPath(char *path, char *path_segments, int path_segment_len, dm_node_type_t type, dm_path_segment *segments, int max_segments);
-int ParsePath(char *path, char *path_segments, int path_segment_len, char *segments[], int max_segments, dm_instances_t *inst);
 dm_node_t *FindNodeFromHash(dm_hash_t hash);
 int ParseInstanceString(char *instances, dm_instances_t *inst);
 char *ParseInstanceInteger(char *p, int *p_value);
@@ -140,7 +126,10 @@ int RegisterDefaultControllerTrust(void);
 void DestroySchemaRecursive(dm_node_t *parent);
 void DestroyInstanceVectorRecursive(dm_node_t *parent);
 void DumpInstanceVectorRecursive(dm_node_t *parent);
-void GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role);
+int GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role);
+void DumpDataModelNodeMap(void);
+int GetVendorParam(dm_node_t *node, char *path, dm_instances_t *inst, char *buf, int len, dm_req_t *req);
+int SetVendorParam(dm_node_t *node, char *path, dm_instances_t *inst, char *value, dm_req_t *req);
 
 /*********************************************************************//**
 **
@@ -173,10 +162,15 @@ int DATA_MODEL_Init(void)
     is_executing_within_dm_init = true;
     err = USP_ERR_OK;
     err |= DEVICE_LOCAL_AGENT_Init();
+#ifndef REMOVE_DEVICE_TIME
     err |= DEVICE_TIME_Init();
+#endif
     err |= DEVICE_CONTROLLER_Init();
     err |= DEVICE_MTP_Init();
     err |= DEVICE_STOMP_Init();
+#ifdef ENABLE_MQTT
+    err |= DEVICE_MQTT_Init();
+#endif
     err |= DEVICE_SUBSCRIPTION_Init();
     err |= DEVICE_SECURITY_Init();
     err |= DEVICE_CTRUST_Init();
@@ -249,7 +243,7 @@ int DATA_MODEL_Start(void)
     dm_trans_vector_t trans;
     register_controller_trust_cb_t   register_controller_trust_cb;
 
-    // Seed data model with instance numbers from the database    
+    // Seed data model with instance numbers from the database
     if (is_running_cli_local_command == false)
     {
         err = DATABASE_ReadDataModelInstanceNumbers(false);
@@ -267,7 +261,7 @@ int DATA_MODEL_Start(void)
     }
 
     // Set all roles and permissions
-    // NOTE: This must be done before any transaction is started otherwise object deletion notifications are not sent 
+    // NOTE: This must be done before any transaction is started otherwise object deletion notifications are not sent
     // (because we are unable to generate the list of objects in a deletion subscription because of lack of permissions)
     err = register_controller_trust_cb();
     if (err != USP_ERR_OK)
@@ -288,12 +282,18 @@ int DATA_MODEL_Start(void)
     // data model to be running to access database parameters (seeded from the database - above)
     err = USP_ERR_OK;
     err |= DEVICE_LOCAL_AGENT_Start();
+#ifndef REMOVE_DEVICE_TIME
     err |= DEVICE_TIME_Start();
+#endif
     err |= DEVICE_CONTROLLER_Start();
     err |= DEVICE_SECURITY_Start();
     err |= DEVICE_STOMP_Start();          // NOTE: This must come after DEVICE_SECURITY_Start(), as it assumes the trust store and client certs have been locally cached
 #ifdef ENABLE_COAP
     err |= COAP_Start();                  // NOTE: This must come after DEVICE_SECURITY_Start(), as it assumes the trust store and client certs have been locally cached
+#endif
+
+#ifdef ENABLE_MQTT
+    err |= DEVICE_MQTT_Start();
 #endif
     err |= DEVICE_MTP_Start();            // NOTE: This must come after COAP_Start, as it assumes that the CoAP SSL contexts have been created
     err |= DEVICE_SUBSCRIPTION_Start();   // NOTE: This must come after DEVICE_LOCAL_AGENT_Start(), as it calls DEVICE_LOCAL_AGENT_GetRebootInfo()
@@ -306,6 +306,10 @@ int DATA_MODEL_Start(void)
 
     // Always start the vendor last
     err |= VENDOR_Start();
+
+    // Refresh all objects which use the refresh instances vendor hook
+    // This provides the baseline after which object/additions deletions are notified (if relevant subscriptions exist)
+    DM_INST_VECTOR_RefreshBaselineInstances(root_device_node);
 
 exit:
     // Commit all database changes
@@ -339,6 +343,9 @@ void DATA_MODEL_Stop(void)
     DEVICE_CONTROLLER_Stop();
     DEVICE_MTP_Stop();
     DEVICE_STOMP_Stop();
+#ifdef ENABLE_MQTT
+    DEVICE_MQTT_Stop();
+#endif
     DEVICE_CTRUST_Stop();
     DEVICE_SECURITY_Stop();
     DEVICE_LOCAL_AGENT_Stop();
@@ -353,10 +360,9 @@ void DATA_MODEL_Stop(void)
     // And memory check will generate an error if it doesn't know about the memory block being freed
     USP_MEM_StopCollection();
 
-    // Free all allocations that occurred before mem info collection was turned on    
+    // Free all allocations that occurred before mem info collection was turned on
     DestroySchemaRecursive(root_device_node);
     DestroySchemaRecursive(root_internal_node);
-    USP_SAFE_FREE(node_lookup);
 
     // If logging memory usage, print out all memory still in use, after attempting to free all known references
     USP_MEM_PrintLeakReport();
@@ -380,20 +386,18 @@ int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags)
 {
     dm_node_t *node;
     dm_node_t *table_node;
-    dm_get_value_cb_t get_cb;
     int err;
     dm_instances_t inst;
     char instances[MAX_DM_PATH];
     bool exists;
     dm_req_t req;
-    bool is_qualified_instance;
     int num_instances;
     char *default_value;
     unsigned db_flags = 0;          // Default to database not unobfuscating values. NOTE Only secure nodes are obfuscated
 
     // Exit if unable to get node associated with parameter
-    // This could occur if the parameter is not present in the schema, or if the specified instance does not exist
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    // This could occur if the parameter is not present in the schema
+    node = DM_PRIV_GetNodeFromPath(path, &inst, NULL);
     if (node == NULL)
     {
         return USP_ERR_INVALID_PATH;
@@ -405,7 +409,12 @@ int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags)
     // Validate that the parsed object instance numbers exist in the data model (if parameter contains multi-instance objects in it's path)
     if (inst.order > 0)
     {
-        exists = DM_INST_VECTOR_IsExist(&inst);
+        err = DM_INST_VECTOR_IsExist(&inst, &exists);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
         if (exists == false)
         {
             USP_ERR_SetMessage("%s: Path %s: Instance numbers do not exist", __FUNCTION__, path);
@@ -419,7 +428,7 @@ int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags)
         case kDMNodeType_Param_ConstantValue:
             USP_STRNCPY(buf, node->registered.param_info.default_value, len);
             break;
-            
+
         case kDMNodeType_DBParam_Secure:
             // Return an empty string, if special flag is not set
             if ((flags & SHOW_PASSWORD)==0)
@@ -429,7 +438,7 @@ int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags)
             }
             // Intentional fall through to code below
             db_flags = OBFUSCATED_VALUE;
-            
+
         case kDMNodeType_DBParam_ReadWrite:
         case kDMNodeType_DBParam_ReadOnly:
         case kDMNodeType_DBParam_ReadOnlyAuto:
@@ -458,30 +467,23 @@ int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags)
 
         case kDMNodeType_Param_NumEntries:
             table_node = node->registered.param_info.table_node;
-            num_instances = DM_INST_VECTOR_GetNumInstances(table_node, &inst);
-            USP_SNPRINTF(buf, len, "%d", num_instances);
-            break;
-
-            
-        case kDMNodeType_VendorParam_ReadOnly:
-        case kDMNodeType_VendorParam_ReadWrite:
-            get_cb = node->registered.param_info.get_cb;
-            USP_ASSERT(get_cb != NULL)
-
-            // Exit if unable to get the value from the vendor code
-            DM_PRIV_RequestInit(&req, node, path, &inst);
-            USP_ERR_ClearMessage();
-            buf[0] = '\0';
-
-            err = get_cb(&req, buf, len);
+            err = DM_INST_VECTOR_GetNumInstances(table_node, &inst, &num_instances);
             if (err != USP_ERR_OK)
             {
-                USP_ERR_ReplaceEmptyMessage("%s: Get callback for path %s returned error %d", __FUNCTION__, path, err);
                 return err;
             }
 
-            // If the parameter value was returned as a native value (in val_union), then convert it to a string
-            SerializeNativeValue(&req, node, buf, len);
+            USP_SNPRINTF(buf, len, "%d", num_instances);
+            break;
+
+
+        case kDMNodeType_VendorParam_ReadOnly:
+        case kDMNodeType_VendorParam_ReadWrite:
+            err = GetVendorParam(node, path, &inst, buf, len, &req);
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
             break;
 
         case kDMNodeType_Object_MultiInstance:
@@ -535,9 +537,7 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags)
     dm_instances_t inst;
     char instances[MAX_DM_PATH];
     dm_validate_value_cb_t validate_cb;
-    dm_set_value_cb_t set_cb;
     dm_req_t req;
-    bool is_qualified_instance;
     bool exists;
     unsigned db_flags = 0;          // Default to database not unobfuscating values. NOTE Only secure nodes are obfuscated
 
@@ -545,7 +545,7 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags)
 
     // Exit if unable to get node associated with parameter
     // This could occur if the parameter is not present in the schema
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    node = DM_PRIV_GetNodeFromPath(path, &inst, NULL);
     if (node == NULL)
     {
         return USP_ERR_UNSUPPORTED_PARAM;
@@ -561,11 +561,16 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags)
         USP_ERR_SetMessage("%s: Trying to perform a parameter set on something which is not a parameter (%s)", __FUNCTION__, path);
         return USP_ERR_INVALID_PATH;
     }
-    
-    // Validate that the parsed object instance numbers exist in the data model (if parameter contains multi-instance objects in it's path)
+
+    // Validate that the parsed object instance numbers exist in the data model (if parameter contains multi-instance objects in its path)
     if (inst.order > 0)
     {
-        exists = DM_INST_VECTOR_IsExist(&inst);
+        err = DM_INST_VECTOR_IsExist(&inst, &exists);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
         if (exists == false)
         {
             USP_ERR_SetMessage("%s: Path %s: Instance numbers do not exist", __FUNCTION__, path);
@@ -606,22 +611,16 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags)
     {
         return err;
     }
-                
+
     // Peform the set
     switch(node->type)
     {
         case kDMNodeType_VendorParam_ReadWrite:
             // Exit if unable to set the vendor parameter, aborting the transaction
-            set_cb = node->registered.param_info.set_cb;
-            if (set_cb != NULL)
+            err = SetVendorParam(node, path, &inst, new_value, &req);
+            if (err != USP_ERR_OK)
             {
-                USP_ERR_ClearMessage();
-                err = set_cb(&req, new_value);
-                if (err != USP_ERR_OK)
-                {
-                    USP_ERR_ReplaceEmptyMessage("%s: Failed to set (new value=%s) on (path=%s)", __FUNCTION__, new_value, path);
-                    return err;
-                }
+                return err;
             }
             break;
 
@@ -643,7 +642,7 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags)
                     return err;
                 }
             }
-        
+
             // Set the parameter to the new value in the database
             FormInstanceString(&inst, instances, sizeof(instances));
             err = DATABASE_SetParameterValue(path, node->hash, instances, new_value, db_flags);
@@ -677,7 +676,7 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags)
             TERMINATE_BAD_CASE(node->type);
             break;
     }
-    
+
     // Add this instance to the dm_instances_vector vector
     err = DM_INST_VECTOR_Add(&inst);
     if (err != USP_ERR_OK)
@@ -686,7 +685,7 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags)
     }
 
     // Add this parameter to the list of parameters which are pending notification to the vendor
-    // They will be notified once the whole transaction has been completed successfully 
+    // They will be notified once the whole transaction has been completed successfully
     // (or they will be forgotten if the transaction was aborted)
     DM_TRANS_Add(kDMOp_Set, path, new_value, &req.val_union, node, &inst);
 
@@ -724,9 +723,12 @@ int DATA_MODEL_AddInstance(char *path, int *instance, unsigned flags)
     char internal_path[MAX_DM_PATH];
     dm_validate_add_cb_t validate_add;
     dm_add_cb_t add;
+    dm_add_group_cb_t group_add;
+    dm_object_info_t *info;
     dm_req_t req;
     bool exists;
     bool is_qualified_instance;
+    int group_id;
     int len;
     char *p;
 
@@ -740,7 +742,6 @@ int DATA_MODEL_AddInstance(char *path, int *instance, unsigned flags)
         return USP_ERR_RESOURCES_EXCEEDED;
     }
     USP_STRNCPY(internal_path, path, sizeof(internal_path));
-    
 
     // Fixup path (if necessary) so that it does not include a trailing '.'
     // The reason for this is so that strings in debug and notify callbacks are always consistent
@@ -763,117 +764,171 @@ int DATA_MODEL_AddInstance(char *path, int *instance, unsigned flags)
         return USP_ERR_OBJECT_NOT_CREATABLE;
     }
 
-    if (instance != NULL)
+    // Exit if the table is grouped but non-writable
+    info = &node->registered.object_info;
+    group_id = info->group_id;
+    if ((group_id != NON_GROUPED) && (info->group_writable == false))
     {
-        // This code allocates instance number
-        // Exit if this object is a fully qualified instance
+        USP_ERR_SetMessage("%s: Cannot add instances to a read only table", __FUNCTION__);
+        return USP_ERR_OBJECT_NOT_CREATABLE;
+    }
+
+    // Exit if the path contains a trailing instance number and shouldn't, or vice versa
+    if ((instance == NULL) && (group_id == NON_GROUPED))
+    {
+        // Path should contain an instance number
+        if (is_qualified_instance == false)
+        {
+            USP_ERR_SetMessage("%s: Path (%s) should contain instance number of object to add", __FUNCTION__, internal_path);
+            return USP_ERR_OBJECT_NOT_CREATABLE;
+        }
+    }
+    else
+    {
+        // Path shouldn't contain an instance number
         if (is_qualified_instance)
         {
             USP_ERR_SetMessage("%s: Path (%s) should not contain instance number of object to add", __FUNCTION__, internal_path);
             return USP_ERR_OBJECT_NOT_CREATABLE;
         }
     }
-    else
-    {
-        // Caller allocates instance number
-        // Exit if this object is not a fully qualified instance
-        if (is_qualified_instance == false)
-        {
-            USP_ERR_SetMessage("%s: Path (%s) should contain instance number of object to add", __FUNCTION__, internal_path);
-            return USP_ERR_OBJECT_NOT_CREATABLE;
-        }
 
-        // Exit if instance already exists
-        exists = DM_INST_VECTOR_IsExist(&inst);
-        if (exists)
+    // Determine the instance number to add
+    // NOTE: For grouped objects, the instance number is returned by the group_add callback
+    if (group_id == NON_GROUPED)
+    {
+        if (instance != NULL)
         {
-            // Exit if we don't care if the instance has already been created
-            if (flags & IGNORE_INSTANCE_EXISTS)
+            // Data model allocates instance number
+            err = DM_INST_VECTOR_GetNextInstance(node, &inst, &new_instance);
+            if (err != USP_ERR_OK)
             {
-                return USP_ERR_OK;
+                return err;
+            }
+        }
+        else
+        {
+            // Exit if unable to determine whether instance exists
+            err = DM_INST_VECTOR_IsExist(&inst, &exists);
+            if (err != USP_ERR_OK)
+            {
+                return err;
             }
 
-            USP_ERR_SetMessage("%s: Cannot add %s. Instance already exists", __FUNCTION__, path);
-            return USP_ERR_REQUEST_DENIED;
+            // Exit if specified instance already exists
+            if (exists)
+            {
+                // Exit if we don't care if the instance has already been created
+                if (flags & IGNORE_INSTANCE_EXISTS)
+                {
+                    return USP_ERR_OK;
+                }
+
+                USP_ERR_SetMessage("%s: Cannot add %s. Instance already exists", __FUNCTION__, path);
+                return USP_ERR_REQUEST_DENIED;
+            }
+
+            // Fixup internal_path, so that it does not include the trailing instance number
+            USP_ASSERT(inst.order > 0);        // since a fully qualified instance
+            inst.order--;
+            new_instance = inst.instances[ inst.order ];
+            p = strrchr(internal_path, '.');
+
+            USP_ASSERT(p != NULL);             // since a fully qualified instance
+            *p = '\0';
         }
+    }
 
-        // Strip off the instance number which the caller wants us to add
-        USP_ASSERT(inst.order > 0);        // since a fully qualified instance
-        inst.order--;
-        new_instance = inst.instances[ inst.order ];
-        p = strrchr(internal_path, '.');
-
-        USP_ASSERT(p != NULL);             // since a fully qualified instance
-        *p = '\0';
+    // Exit if unable to determine whether parent object instances in the path exist
+    err = DM_INST_VECTOR_IsExist(&inst, &exists);
+    if (err != USP_ERR_OK)
+    {
+        return err;
     }
 
     // Exit if the parent object instances in the path do not exist
-    exists = DM_INST_VECTOR_IsExist(&inst);
     if (exists == false)
     {
         USP_ERR_SetMessage("%s: Object exists in schema, but instances are invalid: %s", __FUNCTION__, internal_path);
         return USP_ERR_OBJECT_DOES_NOT_EXIST;
     }
 
-    // Populate request structure passed to vendor hook functions
-    DM_PRIV_RequestInit(&req, node, internal_path, &inst);
-
-    // Exit if vendor hook is not allowing any more instances of this object to be created
-    // Typically this will be the case if the agent has a fixed number of resources representing the object,
-    // or if the agent owns creation/deletion of the object
-    // NOTE: Read-only tables may be added to internally by USP Agent when seeding them
-    // but adds initiated by a controller should always check whether the table is read only
-    if (flags & CHECK_CREATABLE)
+    if (group_id == NON_GROUPED)
     {
-        validate_add = node->registered.object_info.validate_add_cb;
-        if (validate_add != NULL)
+        // USE NON GROUPED API
+        // Populate request structure passed to vendor hook functions
+        DM_PRIV_RequestInit(&req, node, internal_path, &inst);
+
+        // Exit if vendor hook is not allowing any more instances of this object to be created
+        // Typically this will be the case if the agent has a fixed number of resources representing the object,
+        // or if the agent owns creation/deletion of the object
+        // NOTE: Read-only tables may be added to internally by USP Agent when seeding them
+        // but adds initiated by a controller should always check whether the table is read only
+        if (flags & CHECK_CREATABLE)
+        {
+            validate_add = info->validate_add_cb;
+            if (validate_add != NULL)
+            {
+                USP_ERR_ClearMessage();
+
+                err = validate_add(&req);
+                if (err != USP_ERR_OK)
+                {
+                    USP_ERR_ReplaceEmptyMessage("%s: Cannot add any more instances to path=%s", __FUNCTION__, internal_path);
+                    return err;
+                }
+            }
+        }
+
+        // Add this instance and node to the instances structure
+        // NOTE: This implicitly updates the DM request structure, as that structure just points to the instance structure
+        order = inst.order;
+        inst.nodes[order] = node;
+        inst.instances[order] = new_instance;
+        inst.order = order+1;
+
+        // Exit if add vendor hook fails
+        add = info->add_cb;
+        if (add != NULL)
         {
             USP_ERR_ClearMessage();
 
-            err = validate_add(&req);
+            err = add(&req);
             if (err != USP_ERR_OK)
             {
-                USP_ERR_ReplaceEmptyMessage("%s: Cannot add any more instances to path=%s", __FUNCTION__, internal_path);
+                USP_ERR_ReplaceEmptyMessage("%s: add vendor hook failed for path=%s", __FUNCTION__, internal_path);
                 return err;
             }
         }
     }
-    
+    else
+    {
+        // USE GROUPED API
+        group_add = group_vendor_hooks[group_id].add_group_cb;
+        if (group_add == NULL)
+        {
+            USP_ERR_SetMessage("%s: No grouped Add vendor hook registered to add to %s", __FUNCTION__, internal_path);
+            return USP_ERR_OBJECT_NOT_CREATABLE;
+        }
+
+        USP_ERR_ClearMessage();
+        err = group_add(group_id, internal_path, &new_instance);
+        if (err != USP_ERR_OK)
+        {
+            USP_ERR_ReplaceEmptyMessage("%s: group add vendor hook failed for path=%s", __FUNCTION__, internal_path);
+            return err;
+        }
+
+        order = inst.order;
+        inst.nodes[order] = node;
+        inst.instances[order] = new_instance;
+        inst.order = order+1;
+    }
+
+    // Save the instance number to return
     if (instance != NULL)
     {
-        // This code allocates instance number
-        // Exit if unable to determine the next instance to use for this object
-        err = DM_INST_VECTOR_GetNextInstance(node, &inst, &new_instance);
-        if (err != USP_ERR_OK)
-        {
-            return err;
-        }
         *instance = new_instance;
-    }
-    
-    // Add this instance and node to the instances structure
-    // NOTE: This implicitly updates the DM request structure, as that structure just points to the instance structure
-    order = inst.order;
-    inst.nodes[order] = node;
-    inst.instances[order] = new_instance;
-    inst.order = order+1;
-
-    // Exit if add vendor hook fails
-    // This vendor hook typically is used to create a row in a vendor DB with default values
-    // NOTE: The add vendor hook needs to be separate from the validate and notify vendor hooks
-    // It needs to be separate from validate, because validate is not called for internal data model instance creation
-    // It needs to be separate from notify because vendor DB changes need to be done in same transaction as USP DB changes
-    add = node->registered.object_info.add_cb;
-    if (add != NULL)
-    {
-        USP_ERR_ClearMessage();
-    
-        err = add(&req);
-        if (err != USP_ERR_OK)
-        {
-            USP_ERR_ReplaceEmptyMessage("%s: add vendor hook failed for path=%s", __FUNCTION__, internal_path);
-            return err;
-        }
     }
 
     // Register the new instance number with the data model
@@ -887,7 +942,7 @@ int DATA_MODEL_AddInstance(char *path, int *instance, unsigned flags)
     len = strlen(internal_path);
     len += USP_SNPRINTF(&internal_path[len], sizeof(internal_path)-len, ".%d", new_instance);
 
-    // Now add default values for all child parameters
+    // Now add default values for all child parameters that exist in the USP database
     err = AddChildParamsDefaultValues(internal_path, len, node, &inst);
     if (err != USP_ERR_OK)
     {
@@ -897,7 +952,7 @@ int DATA_MODEL_AddInstance(char *path, int *instance, unsigned flags)
     internal_path[len] = '\0';      // Child path contains instance number of object just created
 
     // Add this object instance to the list of instances which are pending notification to the vendor
-    // They will be notified once the whole transaction has been completed successfully 
+    // They will be notified once the whole transaction has been completed successfully
     // (or they will be forgotten if the transaction was aborted)
     DM_TRANS_Add(kDMOp_Add, internal_path, NULL, NULL, node, &inst);
 
@@ -922,8 +977,11 @@ int DATA_MODEL_DeleteInstance(char *path, unsigned flags)
     dm_node_t *node;
     int err;
     char child_path[MAX_DM_PATH];
+    int group_id;
+    dm_object_info_t *info;
     dm_validate_del_cb_t validate_del;
     dm_del_cb_t del;
+    dm_del_group_cb_t group_del;
     dm_req_t req;
     bool exists;
     bool is_qualified_instance;
@@ -944,8 +1002,14 @@ int DATA_MODEL_DeleteInstance(char *path, unsigned flags)
         return USP_ERR_OBJECT_NOT_CREATABLE;
     }
 
+    // Exit if unable to determine whether the object instances in the path exist
+    err = DM_INST_VECTOR_IsExist(&inst, &exists);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Exit if the object instances in the path do not exist
-    exists = DM_INST_VECTOR_IsExist(&inst);
     if (exists == false)
     {
         // Exit if we should silently ignore objects that have already been deleted
@@ -958,58 +1022,89 @@ int DATA_MODEL_DeleteInstance(char *path, unsigned flags)
         return USP_ERR_OBJECT_DOES_NOT_EXIST;
     }
 
-    // Exit if we cannot add/delete instances of this object
+    // Exit if we cannot delete instances of this object
     if (node->type != kDMNodeType_Object_MultiInstance)
     {
         USP_ERR_SetMessage("%s: Cannot delete instances of %s. Not a multi-instance object.", __FUNCTION__, path);
         return USP_ERR_OBJECT_NOT_CREATABLE;
     }
 
-    // Populate request structure passed to vendor hook functions
-    DM_PRIV_RequestInit(&req, node, path, &inst);
-
-    // Exit if vendor hook is not allowing this instance to be deleted
-    // Typically this will be the case if the agent owns creation/deletion of the object
-    // NOTE: Read-only tables may be deleted internally by USP Agent
-    // but deletes initiated by a controller should always check whether the table is read only
-    if (flags & CHECK_DELETABLE)
+    info = &node->registered.object_info;
+    group_id = info->group_id;
+    if (group_id == NON_GROUPED)
     {
-        validate_del = node->registered.object_info.validate_del_cb;
-        if (validate_del != NULL)
+        // USE NON GROUPED API
+        // Populate request structure passed to vendor hook functions
+        DM_PRIV_RequestInit(&req, node, path, &inst);
+
+        // Exit if vendor hook is not allowing this instance to be deleted
+        // Typically this will be the case if the agent owns creation/deletion of the object
+        // NOTE: Read-only tables may be deleted internally by USP Agent
+        // but deletes initiated by a controller should always check whether the table is read only
+        if (flags & CHECK_DELETABLE)
+        {
+            validate_del = info->validate_del_cb;
+            if (validate_del != NULL)
+            {
+                USP_ERR_ClearMessage();
+
+                err = validate_del(&req);
+                if (err != USP_ERR_OK)
+                {
+                    USP_ERR_ReplaceEmptyMessage("%s: Cannot delete object=%s", __FUNCTION__, path);
+                    return err;
+                }
+            }
+        }
+
+        // Exit if delete vendor hook fails
+        // This vendor hook typically is used to delete a row in a vendor DB
+        // NOTE: The delete vendor hook needs to be separate from the validate and notify vendor hooks
+        // It needs to be separate from validate, because validate is not called for internal data model instance deletion
+        // It needs to be separate from notify because vendor DB changes need to be done in same transaction as USP DB changes
+        del = info->del_cb;
+        if (del != NULL)
         {
             USP_ERR_ClearMessage();
-    
-            err = validate_del(&req);
+
+            err = del(&req);
             if (err != USP_ERR_OK)
             {
-                USP_ERR_ReplaceEmptyMessage("%s: Cannot delete object=%s", __FUNCTION__, path);
+                USP_ERR_ReplaceEmptyMessage("%s: del vendor hook failed for path=%s", __FUNCTION__, path);
                 return err;
             }
         }
     }
-    
-    // Exit if delete vendor hook fails
-    // This vendor hook typically is used to delete a row in a vendor DB
-    // NOTE: The delete vendor hook needs to be separate from the validate and notify vendor hooks
-    // It needs to be separate from validate, because validate is not called for internal data model instance deletion
-    // It needs to be separate from notify because vendor DB changes need to be done in same transaction as USP DB changes
-    del = node->registered.object_info.del_cb;
-    if (del != NULL)
+    else
     {
+        // USE GROUPED API
+        // Exit if the table is non-writable
+        if (info->group_writable == false)
+        {
+            USP_ERR_SetMessage("%s: Cannot delete instances from a read only table", __FUNCTION__);
+            return USP_ERR_OBJECT_NOT_DELETABLE;
+        }
+
+        group_del = group_vendor_hooks[group_id].del_group_cb;
+        if (group_del == NULL)
+        {
+            USP_ERR_SetMessage("%s: No grouped Delete vendor hook registered to delete from %s", __FUNCTION__, path);
+            return USP_ERR_OBJECT_NOT_DELETABLE;
+        }
+
         USP_ERR_ClearMessage();
-    
-        err = del(&req);
+        err = group_del(group_id, path);
         if (err != USP_ERR_OK)
         {
-            USP_ERR_ReplaceEmptyMessage("%s: del vendor hook failed for path=%s", __FUNCTION__, path);
+            USP_ERR_ReplaceEmptyMessage("%s: group delete vendor hook failed for path=%s", __FUNCTION__, path);
             return err;
         }
     }
 
     // Add this object instance to the list of instances which are pending notification to the vendor
-    // They will be notified once the whole transaction has been completed successfully 
+    // They will be notified once the whole transaction has been completed successfully
     // (or they will be forgotten if the transaction was aborted)
-    // NOTE: This must be performed before the object is actually deleted from the data model, because 
+    // NOTE: This must be performed before the object is actually deleted from the data model, because
     // it determines the list of objects which will send ObjectDeletion notifies based on the objects currently in the data model
     DM_TRANS_Add(kDMOp_Del, path, NULL, NULL, node, &inst);
 
@@ -1044,12 +1139,10 @@ int DATA_MODEL_DeleteInstance(char *path, unsigned flags)
 int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsigned short *perm)
 {
     dm_node_t *node;
-    dm_instances_t inst;
-    bool is_qualified_instance;
 
     // Exit if unable to get node associated with object or parameter
     // This could occur if the parameter is not present in the schema, or if the specified instance does not exist
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL);
     if (node == NULL)
     {
         *perm = 0;
@@ -1058,7 +1151,7 @@ int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsign
 
     // Get the permissions associated with the role
     *perm = DM_PRIV_GetPermissions(node, combined_role);
-    
+
     return USP_ERR_OK;
 }
 
@@ -1105,8 +1198,14 @@ int DATA_MODEL_NotifyInstanceAdded(char *path)
         return USP_ERR_INVALID_ARGUMENTS;
     }
 
+    // Exit if unable to determine whether instance already exists
+    err = DM_INST_VECTOR_IsExist(&inst, &exists);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Exit if instance already exists - nothing to do
-    exists = DM_INST_VECTOR_IsExist(&inst);
     if (exists)
     {
         USP_ERR_SetMessage("%s: Object (%s) already exists in the data model", __FUNCTION__, path);
@@ -1114,11 +1213,16 @@ int DATA_MODEL_NotifyInstanceAdded(char *path)
     }
 
     // Exit if the parent object instances in the path do not exist
-    if (inst.order > 0)
+    if (inst.order > 1)
     {
         inst.order--;           // Temporarily remove the instance number of the object that was added,
                                 // so that structure indicates only parent instance numbers
-        exists = DM_INST_VECTOR_IsExist(&inst);
+        err = DM_INST_VECTOR_IsExist(&inst, &exists);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
         if (exists == false)
         {
             USP_ERR_SetMessage("%s: Parent objects in path (%s) do not exist", __FUNCTION__, path);
@@ -1156,6 +1260,7 @@ int DATA_MODEL_NotifyInstanceDeleted(char *path)
     dm_instances_t inst;
     bool is_qualified_instance;
     bool exists;
+    int err;
 
     // Exit if unable to find node representing this object
     node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
@@ -1178,8 +1283,14 @@ int DATA_MODEL_NotifyInstanceDeleted(char *path)
         return USP_ERR_OBJECT_NOT_CREATABLE;
     }
 
+    // Exit if unable to determine whether instance exists
+    err = DM_INST_VECTOR_IsExist(&inst, &exists);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Exit if instance does not exist - nothing to do
-    exists = DM_INST_VECTOR_IsExist(&inst);
     if (exists == false)
     {
         USP_ERR_SetMessage("%s: Object (%s) does not exist in the data model", __FUNCTION__, path);
@@ -1187,7 +1298,7 @@ int DATA_MODEL_NotifyInstanceDeleted(char *path)
     }
 
     // Resolve the list of objects subscribed-to for deletion
-    // NOTE: This must be done before the instance is removed from the data model, otherwise the subscription 
+    // NOTE: This must be done before the instance is removed from the data model, otherwise the subscription
     // would not resolve to the object (because the object would have already been deleted)
     DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths();
 
@@ -1245,8 +1356,14 @@ int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_
         return USP_ERR_COMMAND_FAILURE;
     }
 
+    // Exit if unable to determine whether the object instances in the path exist
+    err = DM_INST_VECTOR_IsExist(&inst, &exists);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Exit if the object instances in the path do not exist
-    exists = DM_INST_VECTOR_IsExist(&inst);
     if (exists == false)
     {
         USP_ERR_SetMessage("%s: Object exists in schema, but instances are invalid: %s", __FUNCTION__, path);
@@ -1351,7 +1468,7 @@ exit:
 ** \return  USP_ERR_OK if validated successfully
 **
 **************************************************************************/
-int DATA_MODEL_ShouldOperationRestart(char *path, int instance, bool *is_restart, 
+int DATA_MODEL_ShouldOperationRestart(char *path, int instance, bool *is_restart,
                                       int *err_code, char *err_msg, int err_msg_len, kv_vector_t *output_args)
 {
     dm_instances_t inst;
@@ -1377,8 +1494,14 @@ int DATA_MODEL_ShouldOperationRestart(char *path, int instance, bool *is_restart
         return USP_ERR_COMMAND_FAILURE;
     }
 
+    // Exit if unable to determine whether the object instances in the path exist
+    err = DM_INST_VECTOR_IsExist(&inst, &exists);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Exit if the object instances in the path do not exist
-    exists = DM_INST_VECTOR_IsExist(&inst);
     if (exists == false)
     {
         USP_ERR_SetMessage("%s: Object exists in schema, but instances are invalid: %s", __FUNCTION__, path);
@@ -1442,8 +1565,14 @@ int DATA_MODEL_RestartAsyncOperation(char *path, kv_vector_t *input_args, int in
         return USP_ERR_COMMAND_FAILURE;
     }
 
+    // Exit if unable to determine whether the object instances in the path exist
+    err = DM_INST_VECTOR_IsExist(&inst, &exists);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Exit if the object instances in the path do not exist
-    exists = DM_INST_VECTOR_IsExist(&inst);
     if (exists == false)
     {
         USP_ERR_SetMessage("%s: Object exists in schema, but instances are invalid: %s", __FUNCTION__, path);
@@ -1465,79 +1594,6 @@ int DATA_MODEL_RestartAsyncOperation(char *path, kv_vector_t *input_args, int in
 
 /*********************************************************************//**
 **
-** DATA_MODEL_CompareParameterValue
-**
-** Compares the value of the specified parameter with a given value
-**
-** \param   path - pointer to string containing complete data model path to the parameter
-** \param   op - operator to use for the comparison
-** \param   expr_constant - value to compare against
-** \param   result - pointer to variable in which to return the result of the comparision
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int DATA_MODEL_CompareParameterValue(char *path, expr_op_t op, char *expr_constant, bool *result)
-{
-    int err;
-    dm_node_t *node;
-    dm_instances_t inst;
-    bool is_qualified_instance;
-    dm_cmp_cb_t cmp_cb;
-    char buf[MAX_DM_SHORT_VALUE_LEN];
-    unsigned type_flags;
-
-    // Exit if unable to get the value of the parameter
-    // NOTE: Passwords will return empty string
-    err = DATA_MODEL_GetParameterValue(path, buf, sizeof(buf), 0);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    // Exit if unable to get node associated with the parameter
-    // NOTE: This should not fail, as we've already got the parameter's value
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
-    USP_ASSERT(node != NULL);
-    USP_ASSERT( ((node->type != kDMNodeType_Object_MultiInstance) &&
-                 (node->type != kDMNodeType_Object_SingleInstance) &&
-                 (node->type != kDMNodeType_SyncOperation) &&
-                 (node->type != kDMNodeType_AsyncOperation) &&
-                 (node->type != kDMNodeType_Event)) );
-
-    // Determine the function to call to perform the comparison
-    type_flags = node->registered.param_info.type_flags;
-    if (type_flags & (DM_INT | DM_UINT | DM_ULONG))
-    {
-        cmp_cb = DM_ACCESS_CompareNumber;
-    }
-    else if (type_flags & DM_BOOL)
-    {
-        cmp_cb = DM_ACCESS_CompareBool;
-    }
-    else if (type_flags & DM_DATETIME)
-    {
-        cmp_cb = DM_ACCESS_CompareDateTime;
-    }
-    else
-    {
-        // Default, and also for DM_STRING
-        cmp_cb = DM_ACCESS_CompareString;
-    }
-    
-    // Exit if an error occurred when comparing the values
-    // This could occur if the operator was invalid for the specified type, or type conversion failed
-    err = cmp_cb(buf, op, expr_constant, result);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
 ** DATA_MODEL_GetPathProperties
 **
 ** Determines whether the specified path exists in the schema, and if it does
@@ -1545,29 +1601,33 @@ int DATA_MODEL_CompareParameterValue(char *path, expr_op_t op, char *expr_consta
 ** If it is a multi-instance object, then determines whether the path contains the instance number of the object or not
 **
 ** \param   path - pointer to string containing complete path to object
-** \param   role - pointer to role used to access this path. If set to INTERNAL_ROLE(=NULL), then full permissions are always returned
+** \param   combined_role - pointer to role used to access this path. If set to INTERNAL_ROLE(=NULL), then full permissions are always returned
 ** \param   permission_bitmask - pointer to variable in which to return the permissions associated with this path
 **                               If this parameter is NULL, then the caller is not interested in the permissions for this node,
 **                               and the role argument is ignored
+** \param   group_id - pointer to variable in which to return the group_id, or NULL if this is not required. NOTE: Only applicable for parameters
+** \param   type_flags - pointer to variable in which to return the type of the parameter, or NULL if this is not required. NOTE: Only applicable for parameters
 **
 ** \return  flag variable containing the path's properties
 **          NOTE: Sets USP error message if returning flags that would constitute an error
 **
 **************************************************************************/
-unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role, unsigned short *permission_bitmask)
+unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role, unsigned short *permission_bitmask, int *group_id, unsigned *type_flags)
 {
     dm_node_t *node;
     dm_instances_t inst;
     bool exists;
     bool is_qualified_instance;
     unsigned flags = 0;               // default return value
+    dm_param_info_t *info;
+    int err;
 
     // Default return value for permissions
     if (permission_bitmask != NULL)
     {
         *permission_bitmask = PERMIT_NONE;
     }
-    
+
     // Exit if path does not exist in the schema
     node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
     if (node == NULL)
@@ -1582,7 +1642,7 @@ unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role
         *permission_bitmask = DM_PRIV_GetPermissions(node, combined_role);
     }
 
-    // Determine whether path is to a parameter or an object
+    // Determine whether path is to a parameter or an object, and also whether the parameter is writable
     switch(node->type)
     {
         case kDMNodeType_Object_MultiInstance:
@@ -1598,16 +1658,19 @@ unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role
 
         case kDMNodeType_DBParam_Secure:
             flags |= PP_IS_SECURE_PARAM;
-            // Intentional fall through
-            
+            // Intentional fall through (kDMNodeType_DBParam_Secure is writable and denotes a parameter)
+
+        case kDMNodeType_DBParam_ReadWrite:
+        case kDMNodeType_DBParam_ReadWriteAuto:
+        case kDMNodeType_VendorParam_ReadWrite:
+            flags |= PP_IS_WRITABLE;
+            // Intentional fall through (these types are parameters)
+
         case kDMNodeType_Param_ConstantValue:
         case kDMNodeType_Param_NumEntries:
-        case kDMNodeType_DBParam_ReadWrite:
         case kDMNodeType_DBParam_ReadOnly:
         case kDMNodeType_DBParam_ReadOnlyAuto:
-        case kDMNodeType_DBParam_ReadWriteAuto:
         case kDMNodeType_VendorParam_ReadOnly:
-        case kDMNodeType_VendorParam_ReadWrite:
             flags |= PP_IS_PARAMETER;
             USP_ASSERT(is_qualified_instance == true);     // If it's a parameter then path must be a qualified instance, otherwise DM_PRIV_GetNodeFromPath() would have returned NULL
             break;
@@ -1628,9 +1691,43 @@ unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role
             break;
     }
 
+    // Store the group_id, if this is a parameter
+    if (group_id != NULL)
+    {
+        if (flags & PP_IS_PARAMETER)
+        {
+            info = &node->registered.param_info;
+            *group_id = info->group_id;
+        }
+        else
+        {
+            *group_id = NON_GROUPED;
+        }
+    }
+
+    // Store the type_flags, if this is a parameter
+    if (type_flags != NULL)
+    {
+        if (flags & PP_IS_PARAMETER)
+        {
+            info = &node->registered.param_info;
+            *type_flags = info->type_flags;
+        }
+        else
+        {
+            *type_flags = 0;
+        }
+    }
+
+    // Exit if unable to determine if the specified object instances of the parameter/object exist
+    err = DM_INST_VECTOR_IsExist(&inst, &exists);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Determine if the specified object instances of the parameter/object exist
     // NOTE: If the path is to an unqualified multi-instance object, then this checks the parent instances of the object
-    exists = DM_INST_VECTOR_IsExist(&inst);
     if (exists)
     {
         flags |= (PP_INSTANCE_NUMBERS_EXIST | PP_PARENT_INSTANCE_NUMBERS_EXIST);
@@ -1648,7 +1745,12 @@ unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role
             else if (inst.order > 1)
             {
                 inst.order--;
-                exists = DM_INST_VECTOR_IsExist(&inst);
+                err = DM_INST_VECTOR_IsExist(&inst, &exists);
+                if (err != USP_ERR_OK)
+                {
+                    return err;
+                }
+
                 if (exists)
                 {
                     flags |= PP_PARENT_INSTANCE_NUMBERS_EXIST;
@@ -1672,7 +1774,7 @@ unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role
 ** \param   schema_path - pointer to variable in which to return the schema path
 ** \param   instances - pointer to structure in which to return instance numbers
 ** \param   instances_exist - pointer to boolean in which to return whether the returned instance numbers exist in the data model
-**                            or NULL, if the caller is not insterested in this information
+**                            or NULL, if the caller is not interested in this information
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -1681,10 +1783,10 @@ int DATA_MODEL_SplitPath(char *path, char **schema_path, dm_req_instances_t *ins
 {
     dm_node_t *node;
     dm_instances_t inst;
-    bool is_qualified_instance;
+    int err;
 
     // Exit if path does not exist in the schema
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    node = DM_PRIV_GetNodeFromPath(path, &inst, NULL);
     if (node == NULL)
     {
         return USP_ERR_INVALID_ARGUMENTS;
@@ -1693,9 +1795,13 @@ int DATA_MODEL_SplitPath(char *path, char **schema_path, dm_req_instances_t *ins
     // Determine if the parsed instances exist in the data model
     if (instances_exist != NULL)
     {
-        *instances_exist = DM_INST_VECTOR_IsExist(&inst);
+        err = DM_INST_VECTOR_IsExist(&inst, instances_exist);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
     }
-    
+
     // Finally copy the schema_path and instance numbers into the return arguments
     *schema_path = node->path;
     memcpy(instances, &inst, sizeof(dm_req_instances_t));
@@ -1821,11 +1927,9 @@ int DATA_MODEL_AddParameterInstances(dm_hash_t hash, char *instances)
 int DATA_MODEL_GetUniqueKeys(char *path, dm_unique_key_vector_t *ukv)
 {
     dm_node_t *node;
-    dm_instances_t inst;
-    bool is_qualified_instance;
 
     // Exit if path does not exist in the schema
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL);
     if (node == NULL)
     {
         return USP_ERR_INTERNAL_ERROR;
@@ -1849,7 +1953,7 @@ int DATA_MODEL_GetUniqueKeys(char *path, dm_unique_key_vector_t *ukv)
 ** Gets the values of all parameters which are registered as unique keys or part of compound unique keys
 **
 ** \param   obj_path - pointer to string containing complete path to multi-instance object
-** \param   params - pointer to key-value vector in which to return the name and values of all unique keys
+** \param   params - pointer to key-value vector in which to return the name and values of all unique keys.
 ** \param   combined_role - role used to access the unique keys. If set to INTERNAL_ROLE, then full permissions are always returned
 **
 ** \return  USP_ERR_OK if no error occurred
@@ -1858,38 +1962,44 @@ int DATA_MODEL_GetUniqueKeys(char *path, dm_unique_key_vector_t *ukv)
 int DATA_MODEL_GetUniqueKeyParams(char *obj_path, kv_vector_t *params, combined_role_t *combined_role)
 {
     dm_node_t *node;
-    dm_instances_t inst;
-    bool is_qualified_instance;
     dm_unique_key_vector_t *ukv;
     char *name;
     int i, j;
     char param_path[MAX_DM_PATH];
-    char buf[MAX_DM_SHORT_VALUE_LEN];
     unsigned short permission_bitmask;
+    group_get_vector_t ggv;
+    group_get_entry_t *gge;
+    kv_pair_t *pair;
+    str_vector_t nv;              // Contains the names of each parameter (ie not the full path)
+    int group_id;
     int len;
     int index;
     int err;
 
     KV_VECTOR_Init(params);
-    
+    STR_VECTOR_Init(&nv);
+    GROUP_GET_VECTOR_Init(&ggv);
+
     // Exit if path does not exist in the schema
-    node = DM_PRIV_GetNodeFromPath(obj_path, &inst, &is_qualified_instance);
+    node = DM_PRIV_GetNodeFromPath(obj_path, NULL, NULL);
     if (node == NULL)
     {
-        return USP_ERR_INTERNAL_ERROR;
+        err = USP_ERR_INTERNAL_ERROR;
+        goto exit;
     }
 
     // Exit if node is not a multi-instance object (only multi-instance objects have unique keys)
     // Handle this case gracefully, so that GetInstances can just return no unique keys when invoked on a single instance object
     if (node->type != kDMNodeType_Object_MultiInstance)
     {
-        return USP_ERR_OK;
+        err = USP_ERR_OK;
+        goto exit;
     }
 
-    // Calculate variables used to avoid unnecessary copying in the loop
+    // Pre=calculate base path to avoid unnecessary copying in the loop
     len = USP_SNPRINTF(param_path, sizeof(param_path), "%s.", obj_path);
 
-    // Iterate over all parameters of all unique keys, adding them (if not already added) to the return vector
+    // Iterate over all parameters of all unique keys, adding them (if not already added) to the group get vector
     ukv = &node->registered.object_info.unique_keys;
     for (i=0; i < ukv->num_entries; i++)
     {
@@ -1904,39 +2014,203 @@ int DATA_MODEL_GetUniqueKeyParams(char *obj_path, kv_vector_t *params, combined_
 
             // Move to next param in the compound unique key, if this param has already been added to the return array
             // This could occur if the object has more than one compound unique key, and the same param exists in two compound unique keys
-            index = KV_VECTOR_FindKey(params, name, 0);
+            index = GROUP_GET_VECTOR_FindParam(&ggv, name);
             if (index != INVALID)
             {
                 continue;
             }
 
-            // Append the unique key's parameter name to the path
+            // Form the full path to the parameter
             USP_STRNCPY(&param_path[len], name, sizeof(param_path)-len);
 
             // Move to next param in the compound unique key if role does not have permission to read this parameter
-            DATA_MODEL_GetPathProperties(param_path, combined_role, &permission_bitmask);
+            DATA_MODEL_GetPathProperties(param_path, combined_role, &permission_bitmask, &group_id, NULL);
             if ((permission_bitmask & PERMIT_GET)==0)
             {
                 continue;
             }
 
-            // Exit if unable to get the value of the parameter
-            err = DATA_MODEL_GetParameterValue(param_path, buf, sizeof(buf), 0);
-            if (err != USP_ERR_OK)
-            {
-                KV_VECTOR_Destroy(params);
-                goto exit;
-            }
-
-            // Add this parameter to the return array
-            KV_VECTOR_Add(params, name, buf);
+            // Add this parameter to the names and group get vectors
+            STR_VECTOR_Add(&nv, name);
+            GROUP_GET_VECTOR_Add(&ggv, param_path, group_id);
         }
     }
+
+    // Exit if there aren't any unique key parameters associated with this object
+    if (ggv.num_entries == 0)
+    {
+        err = USP_ERR_OK;
+        goto exit;
+    }
+
+    // Get all unique key parameters
+    GROUP_GET_VECTOR_GetValues(&ggv);
+
+    // Exit if any of the parameters previously failed to get, returning the reason for error
+    for (i=0; i < ggv.num_entries; i++)
+    {
+        gge = &ggv.vector[i];
+        if ((gge->err_code != USP_ERR_OK) || (gge->value == NULL))
+        {
+            USP_ERR_SetMessage("%s", gge->err_msg);
+            err = gge->err_code;
+            goto exit;
+        }
+    }
+
+    // Allocate memory to store the array of the key-value pair vector
+    params->vector = USP_MALLOC(ggv.num_entries*sizeof(kv_pair_t));
+    params->num_entries = ggv.num_entries;
+
+    // Move all parameter names in the names vector, and values in the group get vector to the key-value pair vector
+    // Freeing the contents of the group get vector whilst going along
+    for (i=0; i < ggv.num_entries; i++)
+    {
+        gge = &ggv.vector[i];
+        pair = &params->vector[i];
+        pair->key = nv.vector[i];
+        pair->value = gge->value;
+
+        USP_SAFE_FREE(gge->path);
+        USP_SAFE_FREE(gge->err_msg);
+    }
+
+    // Finally destroy the group get vector and name vectors
+    // (all memory referenced by them has been moved to the key-value pair vector or freed)
+    USP_FREE(ggv.vector);
+    ggv.vector = NULL;
+    ggv.num_entries = 0;
+    USP_FREE(nv.vector);
+    nv.vector = NULL;
+    nv.num_entries = 0;
 
     // If the code gets here, all parameters in unique keys have been obtained
     err = USP_ERR_OK;
 
 exit:
+    STR_VECTOR_Destroy(&nv);
+    GROUP_GET_VECTOR_Destroy(&ggv);
+    return err;
+}
+
+/*********************************************************************//**
+**
+** DATA_MODEL_ValidateDefaultedUniqueKeys
+**
+** Validates that the unique keys that have been read back are unique
+** by attempting to set any that haven't previously been set
+** NOTE: This code is necessary because it is possible for the USP Add message to not contain
+** values for some writable unique keys. If a unique key is not explicitly set,
+** then it will end up with its default value. The default value might not be unique.
+** By explicitly setting the parameter here, we force the set vendor hook to check that the key is unique
+**
+** \param   obj_path - pointer to string containing complete path to multi-instance object
+** \param   params - pointer to key-value vector containing the values of all unique keys.
+**                   Some of these values might be defaults, rather than having been explicitly set.
+** \param   gsv - group set vector containing the parameters which were explicitly set in the Add message, and their result
+**                or NULL, if no parameters were explicitly set
+**
+** \return  USP_ERR_OK if the unique keys are unique
+**
+**************************************************************************/
+int DATA_MODEL_ValidateDefaultedUniqueKeys(char *obj_path, kv_vector_t *unique_key_params, group_set_vector_t *gsv)
+{
+    int i;
+    int index;
+    int err;
+    char buf[MAX_DM_PATH];
+    char *path;
+    char *value;
+    group_set_entry_t *gse;
+    dm_node_t *node;
+    str_vector_t uk_paths;    // vector containing the full paths of the unique keys which we're going to set
+                              // the index of a parameter in this vector matches that in the unique_key_params vector
+
+    // First, form the full path to all unique keys
+    STR_VECTOR_Init(&uk_paths);
+    for (i=0; i < unique_key_params->num_entries; i++)
+    {
+        USP_SNPRINTF(buf, sizeof(buf), "%s.%s", obj_path, unique_key_params->vector[i].key);
+        STR_VECTOR_Add(&uk_paths, buf);
+    }
+
+    // Iterate over all parameters which were explicitly set
+    if (gsv != NULL)
+    {
+        for (i=0; i < gsv->num_entries; i++)
+        {
+            // Determine if this parameter was a unique key
+            gse = &gsv->vector[i];
+            index = STR_VECTOR_Find(&uk_paths, gse->path);
+            if (index != INVALID)
+            {
+                // Exit if the unique key failed to set, irrespective of whether it was marked as not-required
+                // This prevents controllers from getting around the uniqueness check by marking the parameter as 'not-required'
+                // (which would normally cause the failure to be ignored)
+                if (gse->err_code != USP_ERR_OK)
+                {
+                    err = gse->err_code;
+                    USP_ERR_SetMessage("%s", gse->err_msg);
+                    goto exit;
+                }
+
+                // Remove this unique key as it has already been explicitly set successfully
+                USP_FREE(uk_paths.vector[index]);
+                uk_paths.vector[index] = NULL;
+            }
+        }
+    }
+
+    // Then remove all unique keys that are read only, or would have been set automatically
+    // NOTE: We assume that if a key has been set automatically, that the chosen value is already unique (ensured by the automatic setter)
+    for (i=0; i < uk_paths.num_entries; i++)
+    {
+        path = uk_paths.vector[i];
+        if (path != NULL)
+        {
+            // Determine the data model type of the node
+            node = DM_PRIV_GetNodeFromPath(path, NULL, NULL);
+            USP_ASSERT(node != NULL);       // node should never be NULL, we've already got the value of all unique key parameters, so it must exist in the data model
+
+            // Remove the node, if it is a read only parameter (in which case it can't be set to a unique value anyway)
+            // or if the key has automatically been set to a unique value (kDMNodeType_DBParam_ReadWriteAuto)
+            switch(node->type)
+            {
+                case kDMNodeType_DBParam_ReadOnly:
+                case kDMNodeType_DBParam_ReadOnlyAuto:
+                case kDMNodeType_DBParam_ReadWriteAuto:
+                case kDMNodeType_VendorParam_ReadOnly:
+                    USP_FREE(path);
+                    uk_paths.vector[i] = NULL;
+                    break;
+
+                default:
+                    break;
+            }
+        }
+    }
+
+    // Finally, attempt to set all of the unique keys that are left,
+    // these will be parameters which we cannot yet guarantee their uniqueness (until they have been explicitly set)
+    for (i=0; i < uk_paths.num_entries; i++)
+    {
+        path = uk_paths.vector[i];
+        if (path != NULL)
+        {
+            value = unique_key_params->vector[i].value;
+            USP_ASSERT(value != NULL);
+            err = DATA_MODEL_SetParameterValue(path, value, 0);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+        }
+    }
+
+    err = USP_ERR_OK;
+
+exit:
+    STR_VECTOR_Destroy(&uk_paths);
     return err;
 }
 
@@ -1980,7 +2254,7 @@ void DATA_MODEL_DumpInstances(void)
 ** DATA_MODEL_GetNumInstances
 **
 ** Gets the number of instances of the specified object
-** NOTE: You almost certainly want to call DATA_MODEL_GetInstances() instead, 
+** NOTE: You almost certainly want to call DATA_MODEL_GetInstances() instead,
 **       unless you know the instances are contiguous and count from 1
 **
 ** \param   path - path of the object. NOTE: This is not a schema path (ie no '{i}' in the path. Use a partial path).
@@ -1995,6 +2269,7 @@ int DATA_MODEL_GetNumInstances(char *path, int *num_instances)
     dm_node_t *node;
     bool exists;
     bool is_qualified_instance;
+    int err;
 
     // Exit if input params are invalid
     // This is necessary because this function (unlike some others in the data model)
@@ -2026,8 +2301,14 @@ int DATA_MODEL_GetNumInstances(char *path, int *num_instances)
         return USP_ERR_INVALID_ARGUMENTS;
     }
 
+    // Exit if unable to determine whether the object instances in the path exist
+    err = DM_INST_VECTOR_IsExist(&inst, &exists);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Exit if the object instances in the path do not exist
-    exists = DM_INST_VECTOR_IsExist(&inst);
     if (exists == false)
     {
         USP_ERR_SetMessage("%s: Object exists in schema, but instances are invalid: %s", __FUNCTION__, path);
@@ -2035,7 +2316,11 @@ int DATA_MODEL_GetNumInstances(char *path, int *num_instances)
     }
 
     // Get the number of instances of the object represented by node
-    *num_instances = DM_INST_VECTOR_GetNumInstances(node, &inst);
+    err = DM_INST_VECTOR_GetNumInstances(node, &inst, num_instances);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
 
     return USP_ERR_OK;
 }
@@ -2046,7 +2331,7 @@ int DATA_MODEL_GetNumInstances(char *path, int *num_instances)
 **
 ** Gets a vector of instances numbers for the specified object
 **
-** \param   path - path of the object. NOTE: This is not a schema path (ie no '{i}' in the path. Use a partial path).
+** \param   path - path of the object. NOTE: This is not a schema path (ie no '{i}' in the path)
 ** \param   iv - pointer to structure in which to return the instance numbers
 **
 ** \return  USP_ERR_OK if successful
@@ -2093,8 +2378,14 @@ int DATA_MODEL_GetInstances(char *path, int_vector_t *iv)
         return USP_ERR_INVALID_PATH_SYNTAX;
     }
 
+    // Exit if unable to determine whether the object instances in the path exist
+    err = DM_INST_VECTOR_IsExist(&inst, &exists);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Exit if the object instances in the path do not exist
-    exists = DM_INST_VECTOR_IsExist(&inst);
     if (exists == false)
     {
         USP_ERR_SetMessage("%s: Object exists in schema, but instances are invalid: %s", __FUNCTION__, path);
@@ -2117,7 +2408,7 @@ int DATA_MODEL_GetInstances(char *path, int_vector_t *iv)
 **
 ** Returns a string vector containing the paths of all instances of the specified object
 ** NOTE: This code copes with being given a single qualified object instance (rather than a table)
-**       by just returning thata specific object instance in the string vector
+**       by just returning that specific object instance in the string vector
 **
 ** \param   path - path of the object. NOTE: This is not a schema path (ie no '{i}' in the path. Use a partial path).
 ** \param   sv - pointer to structure in which to return the paths to the instances
@@ -2211,6 +2502,7 @@ int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv, combined_role_t
     dm_instances_t inst;
     dm_node_t *node;
     bool is_qualified_instance;
+    int err;
 
     // Exit if unable to find node representing this object
     node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
@@ -2225,12 +2517,21 @@ int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv, combined_role_t
     // return this object and the child objects that match this instance
     if ((node->type==kDMNodeType_Object_MultiInstance) && (is_qualified_instance))
     {
-        DM_INST_VECTOR_GetAllInstancePaths_Qualified(&inst, sv, combined_role);
+        err = DM_INST_VECTOR_GetAllInstancePaths_Qualified(&inst, sv, combined_role);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
         return USP_ERR_OK;
     }
 
     // Find all child instances starting at this node
-    GetAllInstancePathsRecursive(node, &inst, sv, combined_role);
+    err = GetAllInstancePathsRecursive(node, &inst, sv, combined_role);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
 
     return USP_ERR_OK;
 }
@@ -2250,13 +2551,11 @@ int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv, combined_role_t
 **************************************************************************/
 char DATA_MODEL_GetJSONParameterType(char *path)
 {
-    dm_instances_t inst;            // unused
-    bool is_qualified_instance;     // unused
     dm_node_t *node;
     unsigned type_flags;
     char type;
 
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL);
     USP_ASSERT(node != NULL);  // because the path we queried was generated by the path resolver, so we expect it to exist
     USP_ASSERT( ((node->type != kDMNodeType_Object_MultiInstance) &&
                  (node->type != kDMNodeType_Object_SingleInstance) &&
@@ -2303,7 +2602,7 @@ int DATA_MODEL_SetParameterInDatabase(char *path, char *value)
     char instances[MAX_DM_PATH];
     unsigned path_flags;
     unsigned db_flags;
-    
+
     // Exit if parameter path is incorrect
     err = DM_PRIV_FormDB_FromPath(path, &hash, instances, sizeof(instances));
     if (err != USP_ERR_OK)
@@ -2312,7 +2611,7 @@ int DATA_MODEL_SetParameterInDatabase(char *path, char *value)
     }
 
     // Determine if this parameter is secure and hence whether the database needs to obfuscate the value
-    path_flags = DATA_MODEL_GetPathProperties(path, INTERNAL_ROLE, NULL);
+    path_flags = DATA_MODEL_GetPathProperties(path, INTERNAL_ROLE, NULL, NULL, NULL);
     db_flags = (path_flags & PP_IS_SECURE_PARAM) ? OBFUSCATED_VALUE : 0;
 
     // Exit if unable to set value of parameter in DB
@@ -2337,28 +2636,40 @@ int DATA_MODEL_SetParameterInDatabase(char *path, char *value)
 **               NOTE: The caller must initialise this structure. This function adds to this structure, it does not initialise it.
 ** \param   combined_role - role to use to check that object instances may be returned.  If set to INTERNAL_ROLE, then full permissions are always returned
 **
-** \return  true if the caller should abort further recursion
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-void GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role)
+int GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role)
 {
     dm_node_t *child;
+    int err;
 
     // Exit if this is a multi-instance node, adding all child instances below this node to the results
     if (node->type == kDMNodeType_Object_MultiInstance)
     {
-        DM_INST_VECTOR_GetAllInstancePaths_Unqualified(node, inst, sv, combined_role);
-        return;
+        err = DM_INST_VECTOR_GetAllInstancePaths_Unqualified(node, inst, sv, combined_role);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
+        return USP_ERR_OK;
     }
 
     // Recurse over all child nodes, trying to find all next level multi-instance nodes
     child = (dm_node_t *) node->child_nodes.head;
     while (child != NULL)
     {
-        GetAllInstancePathsRecursive(child, inst, sv, combined_role);
+        err = GetAllInstancePathsRecursive(child, inst, sv, combined_role);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
 
         child = (dm_node_t *) child->link.next;
     }
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -2448,16 +2759,20 @@ void DM_PRIV_RequestInit(dm_req_t *req, dm_node_t *node, char *path, dm_instance
 **
 ** DM_PRIV_GetNodeFromPath
 **
-** Walks the data model tree, returning the node associated with the given path
+** Returns the node associated with the given instantiated data model path
 ** NOTE: Checks that path is specified with the correct number of {i} instance numbers in it
 ** NOTE: Does not check that the instance numbers are present in the data model
 **
 ** \param   path - full data model path of the parameter or object to return the node of
+**                 This may be an instantiated or schema path or may use wildcards instead of instance numbers (if so, inst and is_qualified_instance must be NULL).
 ** \param   inst - pointer to instances structure, filled in from parsing the path
+**                 NOTE: This parameter may be NULL if instances are not required
+**
 ** \param   is_qualified_instance - Pointer to boolean in which to return whether the instances
 **                                  structure contains all instance numbers for the parameter/object being addressed
 **                                  It will be false only if the path represents a multi-instance object
 **                                  without instance number (unqualified)
+**                                  NOTE: This parameter may be NULL if checking is not required
 **
 ** \return  pointer to node, or NULL if matching node not found or specified object instance is not present
 **          NOTE: Sets USP error message if path is in error
@@ -2465,87 +2780,170 @@ void DM_PRIV_RequestInit(dm_req_t *req, dm_node_t *node, char *path, dm_instance
 **************************************************************************/
 dm_node_t *DM_PRIV_GetNodeFromPath(char *path, dm_instances_t *inst, bool *is_qualified_instance)
 {
-    dm_node_t *parent;        // This pointer walks through the data model tree
-    dm_node_t *child;         // This pointer walks through the children of the parent node
-    char *segments[MAX_PATH_SEGMENTS];
-    int num_segments;
-    char path_segments[MAX_DM_PATH];
-    int i;
+    dm_hash_t hash = OFFSET_BASIS;
+    char c;
+    char *p;
+    char *p_num;
+    char t;
+    int num_digits;
+    unsigned number;
+    dm_node_t *node;
 
-    // Exit if there were too many or not enough segments in the path
-    num_segments = ParsePath(path, path_segments, sizeof(path_segments), segments, MAX_PATH_SEGMENTS, inst);
-    if (num_segments < 1)
+    // Setup default return values
+    // NOTE: It is important that this structure does not contain uninitialised values, otherwise more than one entry may be added to the DM_INST_VECTOR
+    if (inst != NULL)
     {
-        return NULL;
-    }
-
-    // Exit if first segment was not one of the the root data model nodes
-    if (strcmp(segments[0], root_device_node->name) == 0)
-    {
-        parent = root_device_node;
-    }
-    else if (strcmp(segments[0], root_internal_node->name) == 0)
-    {
-        parent = root_internal_node;
-    }
-    else
-    {
-        USP_ERR_SetMessage("%s: Invalid path %s ", __FUNCTION__, path);
-        return NULL;
+        memset(inst, 0, sizeof(dm_instances_t));
     }
 
-    // Iterate over subsequent segments, using them to traverse the data model tree
-    for (i=1; i<num_segments; i++)
+    // Iterate over all characters in the path, calculating the hash of the schema version of the instantiated path,
+    // and extracting all instance numbers
+    p = path;
+    c = *p++;
+    while (c != '\0')
     {
-        child = DM_PRIV_FindMatchingChild(parent, segments[i]);
-        if (child == NULL)
+        // If hit a path segment separator...
+        if (c == '.')
+        {
+            // Ignore consecutive dots in the path
+            // This makes it easier to cope with pathnames which have been formed by concatenating an object and parameter name
+            // where the object name, may or may not contain a trailing dot. For example: Subscription Recipient
+            p_num = p;
+            t = *p_num++;
+            if (t == '.')
+            {
+                while (t == '.')    // On exiting this loop, t contains the character after the last consecutive dot
+                {
+                    t = *p_num++;
+                }
+                p = p_num - 1;      // Leave p pointing to the character after the last consecutive dot
+            }
+
+            // Exit loop if path contains a trailing path segment separator (these are not included in the hash)
+            if (t == '\0')
+            {
+                break;
+            }
+
+            // Determine the number of digits, if the following path segment is a number
+            // Also calculate the instance number in the path segment
+            num_digits = 0;
+            number = 0;
+            while (IS_NUMERIC(t))
+            {
+                number = 10*number + t - '0';
+                num_digits++;
+                t = *p_num++;
+            }
+
+            // If the path segment is purely an instance number...
+            if ((num_digits > 0) && ((t == '.') || (t == '\0')))
+            {
+                // Store the instance number in the dm_instances_t structure
+                if (inst != NULL)
+                {
+                    if (inst->order == MAX_DM_INSTANCE_ORDER)
+                    {
+                        USP_ERR_SetMessage("%s: More than %d instance numbers in path", __FUNCTION__, MAX_DM_INSTANCE_ORDER);
+                        return NULL;
+                    }
+                    inst->instances[ inst->order ] = number;
+                    inst->order++;
+                }
+
+                // Add schema instance separator to hash, instead of the instance number in the path segment
+                ADD_TO_HASH('.', hash);
+                ADD_TO_HASH('{', hash);
+                ADD_TO_HASH('i', hash);
+                ADD_TO_HASH('}', hash);
+
+                // Skip to after instance number
+                p += num_digits;
+                c = *p++;
+                continue;
+            }
+        }
+        else if (c == '*')
+        {
+            // Add schema instance separator to hash, instead of the wildcard in the path segment
+            ADD_TO_HASH('{', hash);
+            ADD_TO_HASH('i', hash);
+            ADD_TO_HASH('}', hash);
+            c = *p++;
+            continue;
+        }
+
+        // Otherwise add the current character to the hash
+        ADD_TO_HASH(c, hash);
+        c = *p++;
+    }
+
+    // If unable to find the node using the given path...
+    node = FindNodeFromHash(hash);
+    if (node == NULL)
+    {
+        // Then try again using a qualified instance schema path
+        // NOTE: This is necessary because this function is sometimes called with a path representing an
+        // unqualified multi-instance object. But the hash must be of a qualified multi-instance schema path
+        ADD_TO_HASH('.', hash);
+        ADD_TO_HASH('{', hash);
+        ADD_TO_HASH('i', hash);
+        ADD_TO_HASH('}', hash);
+
+        // Exit if unable to find the node
+        node = FindNodeFromHash(hash);
+        if (node == NULL)
         {
             USP_ERR_SetMessage("%s: Path is invalid: %s", __FUNCTION__, path);
             return NULL;
         }
-
-        // Found the child matching the segment, so move to the child, and search for next segment
-        parent = child;
     }
 
+    // Calculate 'is_qualified_instance' (if required)
     // Check that the object instance order in the path is correct
     // This is complicated by the fact that MultiInstanceObjects may be specified without the trailing instance (ie. unqualified) for some operations
-    if (inst->order == parent->order)
+    if (is_qualified_instance != NULL)
     {
-        *is_qualified_instance = true;
-    }
-    else
-    {
-        // Only multi-instance objects are allowed to be specified unqualified
-        if (parent->type != kDMNodeType_Object_MultiInstance)
+        if (inst->order == node->order)
         {
-            USP_ERR_SetMessage("%s: Path %s does not have the right number of '{i}' instances (got %d, expected %d)", __FUNCTION__, path, inst->order, parent->order);
-            return NULL;
+            *is_qualified_instance = true;
         }
         else
         {
-            if (inst->order == parent->order-1)
+            // Only multi-instance objects are allowed to be specified unqualified
+            if (node->type != kDMNodeType_Object_MultiInstance)
             {
-                *is_qualified_instance = false;
+                USP_ERR_SetMessage("%s: Path %s does not have the right number of '{i}' instances (got %d, expected %d)", __FUNCTION__, path, inst->order, node->order);
+                return NULL;
             }
             else
             {
-                USP_ERR_SetMessage("%s: Path %s does not have the right number of '{i}' instances (got %d, expected %d)", __FUNCTION__, path, inst->order, parent->order);
-                return NULL;
+                if (inst->order == node->order-1)
+                {
+                    *is_qualified_instance = false;
+                }
+                else
+                {
+                    USP_ERR_SetMessage("%s: Path %s does not have the right number of '{i}' instances (got %d, expected %d)", __FUNCTION__, path, inst->order, node->order);
+                    return NULL;
+                }
             }
         }
     }
 
-    // Copy the nodes associated with each multi-instance object into the instances structure
-    if (inst->order > 0)
+    // Copy the nodes associated with each multi-instance object into the instances structure (if required)
+    if (inst != NULL)
     {
-        memcpy(inst->nodes, parent->instance_nodes, (inst->order)*sizeof(dm_node_t *));
+        if (inst->order > 0)
+        {
+            memcpy(inst->nodes, node->instance_nodes, (inst->order)*sizeof(dm_node_t *));
+        }
     }
+
     // NOTE: We do not validate that the parsed instances actually exist in the data model in this function
     //       This is because for a SetParameterValues and AddObject, the instance might not yet exist
 
-    // If the code gets here, then all segments have been traversed in the data model
-    return parent;
+    return node;
 }
 
 /*********************************************************************//**
@@ -2636,6 +3034,14 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
                 inst.order++;
             }
 
+            // Default the group_id, if this is an object which we are adding implicitly to the data model by registering a parameter
+            if (IsObject(child))
+            {
+                dm_object_info_t *info;
+                info = &child->registered.object_info;
+                info->group_id = NON_GROUPED;
+            }
+
             // Save the instance nodes for this object
             memcpy(child->instance_nodes, &inst.nodes, inst.order*sizeof(dm_node_t *));
             child->order = inst.order;
@@ -2688,7 +3094,7 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
 
     // If the code gets here, then all segments have been traversed in the data model
     return parent;
-}        
+}
 
 /*********************************************************************//**
 **
@@ -2755,7 +3161,7 @@ char *DM_PRIV_FormPath_FromDM(dm_node_t *node, dm_instances_t *inst, char *buf, 
 ** This function is called by the 'dbset' and 'dbget' CLI commands
 ** NOTE: This function is not intended to support objects, as they are not represented in the database directly)
 **
-** \param   path - path to parameter in the data model 
+** \param   path - path to parameter in the data model
 ** \param   hash - pointer to variable in which to store the hash identifying the data model parameter
 ** \param   instances - pointer to buffer to return a string containing the instance numbers of the multi-instance objects in the path
 ** \param   len - length of the buffer
@@ -2769,11 +3175,10 @@ int DM_PRIV_FormDB_FromPath(char *path, dm_hash_t *hash, char *instances, int le
 {
     dm_node_t *node;
     dm_instances_t inst;
-    bool is_qualified_instance; // unused (as only relevant for objects)
 
     // Exit if parameter does not exist in the data model
     // or parameter is specified with incorrect instance order
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    node = DM_PRIV_GetNodeFromPath(path, &inst, NULL);
     if (node == NULL)
     {
         return USP_ERR_INVALID_PATH;
@@ -2792,7 +3197,6 @@ int DM_PRIV_FormDB_FromPath(char *path, dm_hash_t *hash, char *instances, int le
         USP_ERR_SetMessage("%s: Parameter (%s) is not stored in the database.", __FUNCTION__, path);
         return USP_ERR_INVALID_PATH_SYNTAX;
     }
-    USP_ASSERT(node->hash != 0);
 
     *hash = node->hash;
     FormInstanceString(&inst, instances, len);
@@ -2864,7 +3268,7 @@ int DM_PRIV_FormPath_FromDB(dm_hash_t hash, char *instances, char *buf, int len)
 dm_node_t *DM_PRIV_FindMatchingChild(dm_node_t *parent, char *name)
 {
     dm_node_t *child;
-    
+
     // Iterate over list of children, seeing if any match
     child = (dm_node_t *) parent->child_nodes.head;
     while (child != NULL)
@@ -2929,14 +3333,14 @@ void DM_PRIV_ApplyPermissions(dm_node_t *node, ctrust_role_t role, unsigned shor
 
     // Apply permissions to this node
     node->permissions[role] = permission_bitmask;
-    
+
     // Iterate over list of children
     child = (dm_node_t *) node->child_nodes.head;
     while (child != NULL)
     {
         // Apply permissions to child node
         child->permissions[role] = permission_bitmask;
-        
+
         // Apply permissions to all children of the child node
         if (child->child_nodes.head != NULL)
         {
@@ -2963,13 +3367,11 @@ void DM_PRIV_ApplyPermissions(dm_node_t *node, ctrust_role_t role, unsigned shor
 int DM_PRIV_ReRegister_DBParam_Default(char *path, char *value)
 {
     dm_node_t *node;
-    dm_instances_t inst;
-    bool is_qualified_instance; // unused (as only relevant for objects)
     dm_param_info_t *info;
 
     // Exit if parameter does not exist in the data model
     // or parameter is specified with incorrect instance order
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL);
     if (node == NULL)
     {
         return USP_ERR_INVALID_PATH;
@@ -2988,7 +3390,6 @@ int DM_PRIV_ReRegister_DBParam_Default(char *path, char *value)
         USP_ERR_SetMessage("%s: Parameter (%s) is not stored in the database.", __FUNCTION__, path);
         return USP_ERR_INVALID_PATH_SYNTAX;
     }
-    USP_ASSERT(node->hash != 0);
 
     // Free the old default value and replace it with the new one
     info = &node->registered.param_info;
@@ -3016,7 +3417,7 @@ int DM_PRIV_ReRegister_DBParam_Default(char *path, char *value)
 void SerializeNativeValue(dm_req_t *req, dm_node_t *node, char *buf, int len)
 {
     unsigned type_flags;
-    
+
     type_flags = node->registered.param_info.type_flags;
 
     // Exit if the type of the parameter is a string. Strings are always returned using the buffer.
@@ -3070,7 +3471,7 @@ unsigned short DM_PRIV_GetPermissions(dm_node_t *node, combined_role_t *combined
 {
     unsigned short permissions = 0;
     ctrust_role_t role;
-    
+
     // If using the internal role, then this overrides all permissions setup and permits all
     // This is necessary because at startup the permission bitmask in the data model is not setup, but we still need to ensure that we can do everything
     if (combined_role == INTERNAL_ROLE)
@@ -3117,7 +3518,7 @@ void FormInstanceString(dm_instances_t *inst, char *buf, int len)
 
     offset = 0;
     *buf = '\0';        // If no instances, make the buffer NULL terminated
-    
+
     // Iterate over all instance numbers in the instance structure, building up the instance staing
     for (i=0; i < inst->order; i++)
     {
@@ -3180,7 +3581,7 @@ int ParseInstanceString(char *instances, dm_instances_t *inst)
         {
             return USP_ERR_INTERNAL_ERROR;
         }
-        
+
         // Store this instance number in the array
         inst->instances[ inst->order++ ] = value;
     }
@@ -3239,7 +3640,7 @@ char *ParseInstanceInteger(char *p, int *p_value)
 **
 ** CreateNode
 **
-** Allocates and initialises a data model node
+** Allocates and initialises a data model node, and adds it to dm_node_map[]
 **
 ** \param   name - portion of the data model path that this node represents
 ** \param   type - type of node (eg object or parameter)
@@ -3252,50 +3653,42 @@ char *ParseInstanceInteger(char *p, int *p_value)
 dm_node_t *CreateNode(char *name, dm_node_type_t type, char *schema_path)
 {
     dm_node_t *node;
+    unsigned squashed_hash;
+    dm_node_t *existing_node;
     dm_node_t *n;
-    node_lookup_t *nl;
-    dm_hash_t hash;
-    int size;
-    
+
     // Allocate memory for the node
     node = USP_MALLOC(sizeof(dm_node_t));
     memset(node, 0, sizeof(dm_node_t));     // NOTE: All roles start from zero permissions
 
     node->link.next = NULL;
     node->link.prev = NULL;
+    node->next_node_map_link = NULL;
     node->type = type;
     node->name = USP_STRDUP(name);
     node->path = USP_STRDUP(schema_path);
     DLLIST_Init(&node->child_nodes);
 
-    // Calculate hash of node (for use in database lookups) if node is a DB parameter
-    if ((type==kDMNodeType_DBParam_ReadWrite) || 
-        (type==kDMNodeType_DBParam_ReadOnly)  ||
-        (type==kDMNodeType_DBParam_ReadOnlyAuto) ||
-        (type==kDMNodeType_DBParam_ReadWriteAuto) ||
-        (type==kDMNodeType_DBParam_Secure))
+    // Calculate hash of path
+    node->hash = TEXT_UTILS_CalcHash(schema_path);
+
+    // Exit if we have a hash collision
+    n = FindNodeFromHash(node->hash);
+    if (n != NULL)
     {
-        hash = TEXT_UTILS_CalcHash(schema_path);
-        USP_ASSERT(hash != 0);
-
-        // Exit if we have a hash collision
-        n = FindNodeFromHash(hash);
-        if (n != NULL)
-        {
-            USP_ERR_SetMessage("%s: Failed to add node %s because it's node hash conflicted with %s", __FUNCTION__, schema_path, n->name);
-            return NULL;
-        }
-        node->hash = hash;
-
-        // Append hash to node lookup
-        size = (node_lookup_count+1) * sizeof(node_lookup_t);
-        node_lookup = USP_REALLOC(node_lookup, size);
-
-        nl = &node_lookup[node_lookup_count];
-        nl->hash = node->hash;
-        nl->node = node;
-        node_lookup_count++;
+        USP_ERR_SetMessage("%s: Failed to add node %s because it's node hash conflicted with %s", __FUNCTION__, schema_path, n->name);
+        USP_FREE(node);
+        return NULL;
     }
+
+    // Push this node at the front of the linked list of nodes matching the squashed hash
+    squashed_hash = ((unsigned)node->hash) % MAX_NODE_MAP_BUCKETS;
+    existing_node = dm_node_map[squashed_hash];
+    if (existing_node != NULL)
+    {
+        node->next_node_map_link = existing_node;
+    }
+    dm_node_map[squashed_hash] = node;
 
     return node;
 }
@@ -3305,7 +3698,7 @@ dm_node_t *CreateNode(char *name, dm_node_type_t type, char *schema_path)
 ** ParseSchemaPath
 **
 ** Splits the given data model schema path into path segments which have a 1-to-1 correspondence with nodes in the data model tree
-** This function differs from ParsePath(), in that it works on paths containing '{i}' instead of instance numbers
+** This function works on paths containing '{i}' instead of instance numbers
 ** NOTE: This function ignores duplicate '.' separators and also trailing '.' (for partial paths)
 **
 ** \param   path - full data model path to split (not altered by this function)
@@ -3358,11 +3751,11 @@ int ParseSchemaPath(char *path, char *path_segments, int path_segment_len, dm_no
                         USP_ERR_SetMessage("%s: More than %d path segments in path=%s", __FUNCTION__, max_segments, path);
                         return -1;
                     }
-    
+
                     seg = &segments[num_segments];
                     seg->name = segment_start;
                     seg->type = kDMNodeType_Object_SingleInstance;  // Assume a single instance object until overridden by trailing '{i}'
-    
+
                     num_segments++;
                 }
             }
@@ -3378,87 +3771,6 @@ int ParseSchemaPath(char *path, char *path_segments, int path_segment_len, dm_no
         seg->type = type;
     }
 
-    return num_segments;
-}
-
-
-/*********************************************************************//**
-**
-** ParsePath
-**
-** Splits the given data model path into path segments which have a 1-to-1 correspondence with nodes in the data model tree
-** This function differs from ParseSchemaPath(), in that it works on paths containing instance numbers instead of '{i}'
-** NOTE: This function ignores duplicate '.' separators and also trailing '.' (for partial paths)
-**
-** \param   path - full data model path to split
-** \param   path_segments - pointer to buffer in which to store the path segment strings
-** \param   path_segment_len - length of buffer in which to store path segment strings
-** \param   segment - pointer to array containing the segments
-** \param   max_segments - maximum number of segments allowed in the array
-** \param   inst - pointer to instances structure to fill in from the parsed path
-**
-** \return  number of segments in the path, or -1 if array was not large enough
-**
-**************************************************************************/
-int ParsePath(char *path, char *path_segments, int path_segment_len, char *segments[], int max_segments, dm_instances_t *inst)
-{
-    int num_segments = 0;
-    char *segment_start;
-    int len;
-    int i;
-    char last_char;
-
-    // Setup default return values
-    memset(inst, 0, sizeof(dm_instances_t));
-    memset(segments, 0, sizeof(segments[0])*max_segments);
-
-    // Create path segment strings
-    len = strncpy_path_segments(path_segments, path, path_segment_len);
-
-    // Scan the path segment strings, storing each segment found
-    num_segments = 0;
-    last_char = '\0';
-    for (i=0; i<len; i++)
-    {
-        // See if found the start of a new segment
-        if ((last_char == '\0') && (path_segments[i] != '\0'))
-        {
-            segment_start = &path_segments[i];
-
-            if (IS_NUMERIC(*segment_start))
-            {
-                // Special case of this segment represents an instance number
-                if (inst->order == MAX_DM_INSTANCE_ORDER)
-                {
-                    USP_ERR_SetMessage("%s: More than %d instance numbers in path", __FUNCTION__, MAX_DM_INSTANCE_ORDER);
-                    return -1;
-                }
-                inst->instances[ inst->order ] = atoi(segment_start);
-                inst->order++;
-            }
-            else
-            {
-                // Normal case, add a segment to the end of the array
-                if (num_segments == max_segments)
-                {
-                    USP_ERR_SetMessage("%s: More than %d path segments in path", __FUNCTION__, max_segments);
-                    return -1;
-                }
-    
-                segments[num_segments] = segment_start;
-                num_segments++;
-            }
-        }
-
-        last_char = path_segments[i];
-    }
-
-    // Set USP error message, if no path segments found
-    if (num_segments == 0)
-    {
-        USP_ERR_SetMessage("%s: Invalid path %s", __FUNCTION__, path);
-    }
-    
     return num_segments;
 }
 
@@ -3530,7 +3842,7 @@ int AddChildParamsDefaultValues(char *path, int path_len, dm_node_t *node, dm_in
 {
     int err;
     dm_node_t *child;
-    
+
     // Iterate over list of children
     child = (dm_node_t *) node->child_nodes.head;
     while (child != NULL)
@@ -3554,7 +3866,7 @@ int AddChildParamsDefaultValues(char *path, int path_len, dm_node_t *node, dm_in
                     {
                         return err;
                     }
-                
+
                     // Intentionally not intending to notify vendor of params which are defaulted,
                     // as we have a notify for when the whole instance has been added anyway
                     // So there is no need here to add the parameters to the pending notify queue
@@ -3572,7 +3884,7 @@ int AddChildParamsDefaultValues(char *path, int path_len, dm_node_t *node, dm_in
 
                     get_cb = child->registered.param_info.get_cb;
                     USP_ASSERT(get_cb != NULL)
-        
+
                     // Append the name of this parameter to the parent path
                     USP_SNPRINTF(&path[path_len], MAX_DM_PATH-path_len, ".%s", child->name);
 
@@ -3598,7 +3910,7 @@ int AddChildParamsDefaultValues(char *path, int path_len, dm_node_t *node, dm_in
                     {
                         return err;
                     }
-                
+
                 }
                 break;
 
@@ -3656,7 +3968,7 @@ int DeleteChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t 
 {
     int err;
     dm_node_t *child;
-    
+
     // Iterate over list of children
     child = (dm_node_t *) node->child_nodes.head;
     while (child != NULL)
@@ -3708,7 +4020,7 @@ int DeleteChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t 
                     }
                 }
                 break;
-                
+
             // Nothing to do for non database parameters
             case kDMNodeType_VendorParam_ReadOnly:
             case kDMNodeType_VendorParam_ReadWrite:
@@ -3757,6 +4069,7 @@ int DeleteChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *n
     int err;
 
     // Get an array of instances for this specific object
+    INT_VECTOR_Init(&iv);
     err = DM_INST_VECTOR_GetInstances(node, inst, &iv);
     if (err != USP_ERR_OK)
     {
@@ -3862,7 +4175,7 @@ void DestroySchemaRecursive(dm_node_t *parent)
         case kDMNodeType_AsyncOperation:
             {
                 dm_oper_info_t *info;
-            
+
                 info = &parent->registered.oper_info;
                 STR_VECTOR_Destroy(&info->input_args);
                 STR_VECTOR_Destroy(&info->output_args);
@@ -3872,8 +4185,8 @@ void DestroySchemaRecursive(dm_node_t *parent)
 
     // Finally free this node itself
     USP_FREE(parent->path);
-    USP_FREE(parent->name);    
-    USP_FREE(parent);    
+    USP_FREE(parent->name);
+    USP_FREE(parent);
 }
 
 /*********************************************************************//**
@@ -3969,14 +4282,57 @@ void DumpSchemaFromRoot(dm_node_t *root, char *name)
 
     // Sort the paths into alphabetical order
     qsort(sv.vector, sv.num_entries, sizeof(char *), SortSchemaPath);
-    
+
     // Print the sorted schema paths
     for (i=0; i < sv.num_entries; i++)
     {
-        USP_DUMP("%s", sv.vector[i]);        
+        USP_DUMP("%s", sv.vector[i]);
     }
-    
+
     STR_VECTOR_Destroy(&sv);
+}
+
+/*********************************************************************//**
+**
+** DumpDataModelNodeMap
+**
+** Dumps the names of all nodes stored in the node map
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void DumpDataModelNodeMap(void)
+{
+    int i;
+    dm_node_t *node;
+    int num_links;
+    int max_num_links = 0;
+    int index_with_max_links = 0;
+
+    USP_DUMP("\nDumping Data Model Node Map...");
+    for (i=0; i<MAX_NODE_MAP_BUCKETS; i++)
+    {
+        node = dm_node_map[i];
+        num_links = 0;
+        while (node != NULL)
+        {
+            USP_DUMP("[%d] %s (hash=0x%08x)", i, node->path, node->hash);
+            node = node->next_node_map_link;
+            num_links++;
+        }
+
+        // Update the maximum number of nodes that had the same squashed_hash value
+        if (num_links > max_num_links)
+        {
+            max_num_links = num_links;
+            index_with_max_links = i;
+        }
+    }
+
+    USP_DUMP("\nMaximum number of nodes mapping into same bucket=%d (at [%d])", max_num_links, index_with_max_links);
+
 }
 
 /*********************************************************************//**
@@ -4034,7 +4390,7 @@ void AddChildNodes(dm_node_t *parent, str_vector_t *sv)
 **
 ** FindNodeFromHash
 **
-** Finds the node that matches the specified hash value
+** Finds the node that matches the specified hash of its data model schema path
 **
 ** \param   hash - hash value of the node path of the node to find
 **
@@ -4043,21 +4399,19 @@ void AddChildNodes(dm_node_t *parent, str_vector_t *sv)
 **************************************************************************/
 dm_node_t *FindNodeFromHash(dm_hash_t hash)
 {
-    node_lookup_t *nl;
-    int i;
+    unsigned squashed_hash;
+    dm_node_t *node;
 
-    // Iterate over all nodes in the node lookup vector, looking for a match
-    for (i=0; i<node_lookup_count; i++)
+    squashed_hash = ((unsigned)hash) % MAX_NODE_MAP_BUCKETS;
+
+    // Find the node in the linked list of nodes which match the squashed hash
+    node = dm_node_map[squashed_hash];
+    while ((node != NULL) && (node->hash != hash))
     {
-        nl = &node_lookup[i];
-        if (nl->hash == hash)
-        {
-            return nl->node;
-        }
+        node = node->next_node_map_link;
     }
 
-    // if the code gets here, then no matching node was found
-    return NULL;
+    return node;
 }
 
 /*********************************************************************//**
@@ -4065,7 +4419,7 @@ dm_node_t *FindNodeFromHash(dm_hash_t hash)
 ** RegisterDefaultControllerTrust
 **
 ** This function is called if no vendor hook overrides it
-** Registers all controller trust roles and permissions 
+** Registers all controller trust roles and permissions
 ** This function is called inbetween VENDOR_Init() and VENDOR_Start()
 **
 ** \param   None
@@ -4090,6 +4444,170 @@ int RegisterDefaultControllerTrust(void)
     {
         USP_ERR_SetMessage("%s() failed", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** GetVendorParam
+**
+** Gets the value of a single vendor parameter, which might need to be obtained by the group get mechanism
+**
+** \param   node - pointer to node representing the parameter to get
+** \param   path - pointer to string containing complete data model path to the parameter
+** \param   inst - pointer to instances structure
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+** \param   req - pointer to structure identifying the parameter
+**
+** \return  None
+**
+**************************************************************************/
+int GetVendorParam(dm_node_t *node, char *path, dm_instances_t *inst, char *buf, int len, dm_req_t *req)
+{
+    int err;
+    dm_get_value_cb_t get_cb;
+    dm_get_group_cb_t get_group_cb;
+    dm_param_info_t *info;
+    kv_vector_t params;
+    kv_pair_t pair;
+
+    // Exit (getting the value) if the vendor parameter was not grouped with any other parameters
+    info = &node->registered.param_info;
+    if (info->group_id == NON_GROUPED)
+    {
+        get_cb = node->registered.param_info.get_cb;
+        USP_ASSERT(get_cb != NULL)
+
+        // Exit if unable to get the value from the vendor code
+        DM_PRIV_RequestInit(req, node, path, inst);
+        USP_ERR_ClearMessage();
+        buf[0] = '\0';
+
+        err = get_cb(req, buf, len);
+        if (err != USP_ERR_OK)
+        {
+            USP_ERR_ReplaceEmptyMessage("%s: Get callback for path %s returned error %d", __FUNCTION__, path, err);
+            return err;
+        }
+
+        // If the parameter value was returned as a native value (in val_union), then convert it to a string
+        SerializeNativeValue(req, node, buf, len);
+
+        return USP_ERR_OK;
+    }
+
+    // If the code gets here, then the parameter is grouped with other parameters
+
+    // Exit if there is no callback defined for this group
+    get_group_cb = group_vendor_hooks[info->group_id].get_group_cb;
+    if (get_group_cb == NULL)
+    {
+        USP_ERR_SetMessage("%s: No registered group callback to get param %s", __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Statically create a kv vector, on the stack for this single parameter
+    // The only item that will need freeing is the value string (if the group callback filled it in)
+    pair.key = path;
+    pair.value = NULL;
+    params.vector = &pair;
+    params.num_entries = 1;
+
+    // Exit if group callback fails
+    err = get_group_cb(info->group_id, &params);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: Get group callback failed for param %s", __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if group callback did not fill in a value for the parameter
+    if (pair.value == NULL)
+    {
+        USP_ERR_SetMessage("%s: Get group callback did not provide a value for param %s", __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Copy the value of the parameter into the return buffer, and then free the dynamically allocated parameter value
+    USP_STRNCPY(buf, pair.value, len);
+    USP_FREE(pair.value);
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** SetVendorParam
+**
+** Sets the value of a single vendor parameter, which might need to be obtained by the group set mechanism
+**
+** \param   node - pointer to node representing the parameter to set
+** \param   path - pointer to string containing complete data model path to the parameter
+** \param   inst - pointer to instances structure
+** \param   value - value to set the parameter to
+** \param   req - pointer to structure identifying the parameter
+**
+** \return  None
+**
+**************************************************************************/
+int SetVendorParam(dm_node_t *node, char *path, dm_instances_t *inst, char *value, dm_req_t *req)
+{
+    int err;
+    dm_set_value_cb_t set_cb;
+    dm_set_group_cb_t set_group_cb;
+    dm_param_info_t *info;
+    kv_vector_t params;
+    kv_pair_t pair;
+    int err_code = USP_ERR_OK;  // assume success
+
+    // Exit (setting the value) if the vendor parameter was not grouped with any other parameters
+    info = &node->registered.param_info;
+    if (info->group_id == NON_GROUPED)
+    {
+        set_cb = node->registered.param_info.set_cb;
+        if (set_cb == NULL)
+        {
+            USP_ERR_SetMessage("%s: No registered callback to set param %s", __FUNCTION__, path);
+            return USP_ERR_INTERNAL_ERROR;
+        }
+
+        USP_ERR_ClearMessage();
+        err = set_cb(req, value);
+        if (err != USP_ERR_OK)
+        {
+            USP_ERR_ReplaceEmptyMessage("%s: Failed to set (new value=%s) on (path=%s)", __FUNCTION__, value, path);
+            return err;
+        }
+
+        return USP_ERR_OK;
+    }
+
+    // If the code gets here, then the parameter is grouped with other parameters
+
+    // Exit if there is no callback defined for this group
+    set_group_cb = group_vendor_hooks[info->group_id].set_group_cb;
+    if (set_group_cb == NULL)
+    {
+        USP_ERR_SetMessage("%s: No registered group callback to set param %s", __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Statically create a kv vector, on the stack for this single parameter
+    // Ownsership of the key-value pair in the vector stays with the caller of this function
+    pair.key = path;
+    pair.value = value;
+    params.vector = &pair;
+    params.num_entries = 1;
+
+    // Exit if group callback fails
+    err = set_group_cb(info->group_id, &params, &info->type_flags, &err_code);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: Set group callback failed for param %s (err_code=%d)", __FUNCTION__, path, err_code);
+        return err;
     }
 
     return USP_ERR_OK;

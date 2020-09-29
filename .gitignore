@@ -22,3 +22,4 @@ ylwrap
 *.o
 *.m4
 .dirstamp
+*.swp

@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -104,7 +104,7 @@ void USP_ERR_SetMessage(char *fmt, ...)
     char *buf_to_use = usp_error;
     int buf_len = sizeof(usp_error);
     char local_buf[USP_ERR_MAXLEN];
-    
+
     // Write the message into a local buffer, if this function is not being called from the data model thread
     if (OS_UTILS_IsDataModelThread(__FUNCTION__, DONT_PRINT_WARNING)==false)
     {
@@ -123,7 +123,7 @@ void USP_ERR_SetMessage(char *fmt, ...)
     {
         USP_LOG_Puts(kLogType_Debug, buf_to_use);
     }
-    
+
     // Print the callstack, if debugging is enabled
     if (enable_callstack_debug)
     {
@@ -175,7 +175,7 @@ void USP_ERR_SetMessage_SqlParam(const char *func, int line, const char *sqlfunc
 **
 ** USP_ERR_ToString
 **
-** Converts an error number into a textual error message
+** Converts a Posix error number into a textual error message
 ** Wrapper function around strerror_r(), to workaround only the XSI version of strerror_r() being available on some platforms
 **
 ** \param   err - error number to convert to a textual representation
@@ -196,6 +196,159 @@ char *USP_ERR_ToString(int err, char *buf, int len)
     // This must return the string directly, because it usually returns a static string rather than copying into the buffer
     return strerror_r(err, buf, len);
 #endif
+}
+
+/*********************************************************************//**
+**
+** USP_ERR_UspErrToString
+**
+** Converts a USP error number into a textual error message
+**
+** \param   err - error number to convert to a textual representation
+**
+** \return  pointer to the error message string
+**
+**************************************************************************/
+char *USP_ERR_UspErrToString(int err)
+{
+    char *s;
+
+    switch(err)
+    {
+        case USP_ERR_GENERAL_FAILURE:
+            s = "General failure";
+            break;
+
+        case USP_ERR_MESSAGE_NOT_UNDERSTOOD:
+            s = "Message not understood";
+            break;
+
+        case USP_ERR_REQUEST_DENIED:
+            s = "Request Denied";
+            break;
+
+        case USP_ERR_INTERNAL_ERROR:
+            s = "Internal error";
+            break;
+
+        case USP_ERR_INVALID_ARGUMENTS:
+            s = "Invalid arguments";
+            break;
+
+        case USP_ERR_RESOURCES_EXCEEDED:
+            s = "Resources exceeded";
+            break;
+
+        case USP_ERR_PERMISSION_DENIED:
+            s = "Permission denied";
+            break;
+
+        case USP_ERR_INVALID_CONFIGURATION:
+            s = "Invalid Configuration";
+            break;
+
+        case USP_ERR_INVALID_PATH_SYNTAX:
+            s = "Invalid path syntax";
+            break;
+
+        case USP_ERR_PARAM_ACTION_FAILED:
+            s = "Parameter action failed";
+            break;
+
+        case USP_ERR_UNSUPPORTED_PARAM:
+            s = "Unsupported parameter";
+            break;
+
+        case USP_ERR_INVALID_TYPE:
+            s = "Invalid type";
+            break;
+
+        case USP_ERR_INVALID_VALUE:
+            s = "Invalid value";
+            break;
+
+        case USP_ERR_PARAM_READ_ONLY:
+            s = "Parameter read only";
+            break;
+
+        case USP_ERR_VALUE_CONFLICT:
+            s = "Value conflict";
+            break;
+
+        case USP_ERR_CRUD_FAILURE:
+            s = "CRUD failure";
+            break;
+
+        case USP_ERR_OBJECT_DOES_NOT_EXIST:
+            s = "Object does not exist";
+            break;
+
+        case USP_ERR_CREATION_FAILURE:
+            s = "Creation failure";
+            break;
+
+        case USP_ERR_NOT_A_TABLE:
+            s = "Not a table";
+            break;
+
+        case USP_ERR_OBJECT_NOT_CREATABLE:
+            s = "Object not creatable";
+            break;
+
+        case USP_ERR_SET_FAILURE:
+            s = "Set failure";
+            break;
+
+        case USP_ERR_REQUIRED_PARAM_FAILED:
+            s = "Required Parameter failed";
+            break;
+
+        case USP_ERR_COMMAND_FAILURE:
+            s = "Command failure";
+            break;
+
+        case USP_ERR_COMMAND_CANCELLED:
+            s = "Command cancelled";
+            break;
+
+        case USP_ERR_OBJECT_NOT_DELETABLE:
+            s = "Object not deletable";
+            break;
+
+        case USP_ERR_UNIQUE_KEY_CONFLICT:
+            s = "Unique key conflict";
+            break;
+
+        case USP_ERR_INVALID_PATH:
+            s = "Invalid path";
+            break;
+
+        case USP_ERR_RECORD_NOT_PARSED:
+            s = "USP Record not parsed";
+            break;
+
+        case USP_ERR_SECURE_SESS_REQUIRED:
+            s = "Secure seesion required";
+            break;
+
+        case USP_ERR_SECURE_SESS_NOT_SUPPORTED:
+            s = "Secure session not supported";
+            break;
+
+        case USP_ERR_SEG_NOT_SUPPORTED:
+            s = "Segmentation and reassembly not supported";
+            break;
+
+        case USP_ERR_RECORD_FIELD_INVALID:
+            s = "USP Record field invalid";
+            break;
+
+        default:
+            s = "Unknown error code";
+            break;
+    }
+
+    return s;
 }
 
 /*********************************************************************//**
@@ -302,20 +455,20 @@ char *USP_ERR_GetMessage(void)
 void USP_ERR_Terminate(char *fmt, ...)
 {
     va_list ap;
-    
+
     // Log the cause of exit
     va_start(ap, fmt);
     vsnprintf(usp_error, sizeof(usp_error), fmt, ap);
     usp_error[sizeof(usp_error)-1] = '\0';
     va_end(ap);
-    
+
     if (usp_log_level >= kLogLevel_Error)
     {
         USP_LOG_Puts(kLogType_Debug, usp_error);
         USP_LOG_Callstack();
         USP_LOG_Puts(kLogType_Debug, "Exiting USP Agent");
     }
-    
+
     abort();    // call abort() rather than exit() so that a core dump is created
 }
 

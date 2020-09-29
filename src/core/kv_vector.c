@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -92,7 +92,7 @@ void KV_VECTOR_Add(kv_vector_t *kvv, char *key, char *value)
 **
 ** KV_VECTOR_Replace
 **
-** Replaces the value associated with the specified key
+** Replaces all values associated with the specified key
 **
 ** \param   kvv - pointer to structure to replace the value in
 ** \param   key - pointer to key, whose value we want to replace
@@ -105,22 +105,58 @@ bool KV_VECTOR_Replace(kv_vector_t *kvv, char *key, char *value)
 {
     int i;
     kv_pair_t *pair;
+    bool is_replaced = false;
 
-    // Iterate over all entries trying to find the matching key
+    // Iterate over all entries, replacing the value of all matching keys
     for (i=0; i < kvv->num_entries; i++)
     {
         pair = &kvv->vector[i];
         if (strcmp(pair->key, key)==0)
         {
             // Found a matching key, so replace its value
-            USP_FREE( pair->value );
+            USP_SAFE_FREE( pair->value );
             pair->value = USP_STRDUP(value);
-            return true;
+            is_replaced = true;
         }
     }
 
     // If the code gets here, then no match was found
-    return false;
+    return is_replaced;
+}
+
+/*********************************************************************//**
+**
+** KV_VECTOR_ReplaceWithHint
+**
+** Replaces the first value associated with the specified key at the
+** suspected location in the vector given by hint
+**
+** \param   kvv - pointer to structure to replace the value in
+** \param   key - pointer to key, whose value we want to replace
+** \param   value - pointer to replacement value
+** \param   hint - index of entry in key value vector at which the key is expected to be located
+**
+** \return  true if the value was replaced, false if the key does not exist in the vector
+**
+**************************************************************************/
+bool KV_VECTOR_ReplaceWithHint(kv_vector_t *kvv, char *key, char *value, int hint)
+{
+    int index;
+    kv_pair_t *pair;
+
+    // Exit if unable to find the matching key (starting at the hint index)
+    index = KV_VECTOR_FindKey(kvv, key, hint);
+    if (index == INVALID)
+    {
+        return false;
+    }
+
+    // Found a matching key, so replace its value
+    pair = &kvv->vector[index];
+    USP_SAFE_FREE( pair->value );
+    pair->value = USP_STRDUP(value);
+
+    return true;
 }
 
 /*********************************************************************//**
@@ -205,9 +241,9 @@ void KV_VECTOR_AddDateTime(kv_vector_t *kvv, char *key, time_t value)
 void KV_VECTOR_AddEnum(kv_vector_t *kvv, char *key, int value, const enum_entry_t *enums, int num_enums)
 {
     char *str;
-    
+
     str = TEXT_UTILS_EnumToString(value, enums, num_enums);
-    
+
     KV_VECTOR_Add(kvv, key, str);
 }
 
@@ -242,7 +278,7 @@ void KV_VECTOR_AddHexNumber(kv_vector_t *kvv, char *key, unsigned char *buf, int
         *p++ = TEXT_UTILS_ValueToHexDigit(buf[i] & 0x0F);
     }
     *p = '\0';
-    
+
     AddKeyValueInternal(kvv, USP_STRDUP(key), value);
 }
 
@@ -396,7 +432,7 @@ char *KV_VECTOR_Get(kv_vector_t *kvv, char *key, char *default_value, int start_
 ** \param   kvv - pointer to key-value pair vector structure
 ** \param   key - pointer to name of key to get the value of
 ** \param   default_value - default value, if not present in the vector
-** \param   value - pointer to variable in which to return the value 
+** \param   value - pointer to variable in which to return the value
 **
 ** \return  USP_ERR_OK if successful
 **          USP_ERR_INVALID_TYPE if unable to convert the key's value (given in the vector) to an unsigned integer
@@ -407,7 +443,7 @@ int KV_VECTOR_GetUnsigned(kv_vector_t *kvv, char *key, unsigned default_value, u
     int index;
     int err;
     char *str_value;
-    
+
     // Exit, returning default value, if unable to find key
     index = KV_VECTOR_FindKey(kvv, key, 0);
     if (index == INVALID)
@@ -421,7 +457,7 @@ int KV_VECTOR_GetUnsigned(kv_vector_t *kvv, char *key, unsigned default_value, u
     err = TEXT_UTILS_StringToUnsigned(str_value, value);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Illegal value (%s) in argument %s", __FUNCTION__, str_value, key); 
+        USP_ERR_SetMessage("%s: Illegal value (%s) in argument %s", __FUNCTION__, str_value, key);
         return err;
     }
 
@@ -440,7 +476,7 @@ int KV_VECTOR_GetUnsigned(kv_vector_t *kvv, char *key, unsigned default_value, u
 ** \param   default_value - default value, if not present in the vector
 ** \param   min - minimum allowed value
 ** \param   min - maximum allowed value
-** \param   value - pointer to variable in which to return the value 
+** \param   value - pointer to variable in which to return the value
 **
 ** \return  USP_ERR_OK if successful
 **          USP_ERR_INVALID_TYPE if unable to convert the key's value (given in the vector) to an unsigned integer
@@ -477,7 +513,7 @@ int KV_VECTOR_GetUnsignedWithinRange(kv_vector_t *kvv, char *key, unsigned defau
 ** \param   kvv - pointer to key-value pair vector structure
 ** \param   key - pointer to name of key to get the value of
 ** \param   default_value - default value, if not present in the vector
-** \param   value - pointer to variable in which to return the value 
+** \param   value - pointer to variable in which to return the value
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -487,7 +523,7 @@ int KV_VECTOR_GetBool(kv_vector_t *kvv, char *key, bool default_value, bool *val
     int index;
     int err;
     char *str_value;
-    
+
     // Exit, returning default value, if unable to find key
     index = KV_VECTOR_FindKey(kvv, key, 0);
     if (index == INVALID)
@@ -501,7 +537,7 @@ int KV_VECTOR_GetBool(kv_vector_t *kvv, char *key, bool default_value, bool *val
     err = TEXT_UTILS_StringToBool(str_value, value);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Illegal value (%s) in argument %s", __FUNCTION__, str_value, key); 
+        USP_ERR_SetMessage("%s: Illegal value (%s) in argument %s", __FUNCTION__, str_value, key);
         return err;
     }
 
@@ -527,7 +563,7 @@ int KV_VECTOR_GetDateTime(kv_vector_t *kvv, char *key, char *default_value, time
     int index;
     int err;
     char *str_value;
-    
+
     // Get the value of the key, or default the value if not present in the vector
     index = KV_VECTOR_FindKey(kvv, key, 0);
     str_value = (index == INVALID) ? default_value : kvv->vector[index].value;
@@ -536,7 +572,7 @@ int KV_VECTOR_GetDateTime(kv_vector_t *kvv, char *key, char *default_value, time
     err = TEXT_UTILS_StringToDateTime(str_value, value);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Illegal value (%s) in argument %s", __FUNCTION__, str_value, key); 
+        USP_ERR_SetMessage("%s: Illegal value (%s) in argument %s", __FUNCTION__, str_value, key);
         return err;
     }
 
@@ -563,7 +599,7 @@ int KV_VECTOR_GetHexNumber(kv_vector_t *kvv, char *key, unsigned char *buf, int 
     int index;
     int err;
     char *str_value;
-    
+
     // Exit if key is not present, return the default values
     index = KV_VECTOR_FindKey(kvv, key, 0);
     if (index == INVALID)
@@ -605,7 +641,7 @@ int KV_VECTOR_GetEnum(kv_vector_t *kvv, char *key, void *value, int default_valu
     int index;
     char *str_value;
     int enum_value;
-    
+
     // Exit if key is not present, return the default value
     index = KV_VECTOR_FindKey(kvv, key, 0);
     if (index == INVALID)
@@ -619,7 +655,7 @@ int KV_VECTOR_GetEnum(kv_vector_t *kvv, char *key, void *value, int default_valu
     enum_value = TEXT_UTILS_StringToEnum(str_value, enums, num_enums);
     if (enum_value == INVALID)
     {
-        USP_ERR_SetMessage("%s: Illegal value (%s) in argument %s", __FUNCTION__, str_value, key); 
+        USP_ERR_SetMessage("%s: Illegal value (%s) in argument %s", __FUNCTION__, str_value, key);
         return USP_ERR_INVALID_VALUE;
     }
 
@@ -666,7 +702,7 @@ int KV_VECTOR_ValidateArguments(kv_vector_t *args, str_vector_t *expected_schema
     // Iterate over all args, checking that it matches a name registered in the schema
     for (i=0; i < args->num_entries; i++)
     {
-        // Convert the argument to its schema form       
+        // Convert the argument to its schema form
         kv = &args->vector[i];
         TEXT_UTILS_PathToSchemaForm(kv->key, converted_path, sizeof(converted_path));
 

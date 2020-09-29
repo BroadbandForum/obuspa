@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -59,6 +59,7 @@
 #include "text_utils.h"
 #include "expr_vector.h"
 #include "json.h"
+#include "group_get_vector.h"
 
 //------------------------------------------------------------------------------
 // List of notification types that USP Agent currently supports
@@ -150,8 +151,8 @@ void ProcessObjectLifeEventSubscription(subs_t *sub);
 void ProcessAllValueChangeSubscriptions(void);
 void ProcessValueChangeSubscription(subs_t *sub);
 void SendValueChangeNotify(subs_t *sub, char *path, char *value);
-void ResolveAllPathExpressions(char *source_path, str_vector_t *path_expressions, str_vector_t *resolved_paths, resolve_op_t op, int cont_instance);
-void GetAllPathExpressionParameterValues(subs_t *sub, str_vector_t *path_expressions, kv_vector_t *param_values, char *source_path);
+void ResolveAllPathExpressions(int subs_instance, str_vector_t *path_expressions, str_vector_t *resolved_paths, int_vector_t *group_ids, resolve_op_t op, int cont_instance);
+void GetAllPathExpressionParameterValues(subs_t *sub, str_vector_t *path_expressions, kv_vector_t *param_values);
 char *SerializeToJSONObject(kv_vector_t *param_values);
 void SendOperationCompleteNotify(subs_t *sub, char *command, char *command_key, int err_code, char *err_msg, kv_vector_t *output_args);
 void SendNotify(Usp__Msg *req, subs_t *sub, char *path);
@@ -159,6 +160,7 @@ void SeedLastValueChangeValues(void);
 bool DoesSubscriptionSendNotification(subs_t *sub, char *event_name);
 bool DoesSubscriptionMatchEvent(subs_t *subs, char *event_name);
 bool HasControllerGotEventPermission(int cont_instance, char *event_name);
+void RefreshInstancesForObjLifetimeSubscriptions(void);
 
 
 /*********************************************************************//**
@@ -177,10 +179,10 @@ int DEVICE_SUBSCRIPTION_Init(void)
     int err = USP_ERR_OK;
 
     // Register parameters implemented by Subscription table
-    err |= USP_REGISTER_Object(DEVICE_SUBS_ROOT ".{i}", NULL, NULL, NotifySubsAdded, 
+    err |= USP_REGISTER_Object(DEVICE_SUBS_ROOT ".{i}", NULL, NULL, NotifySubsAdded,
                                                         NULL, NULL, NotifySubsDeleted);
     err |= USP_REGISTER_Param_NumEntries(DEVICE_SUBS_ROOT "NumberOfEntries", "Device.LocalAgent.Subscription.{i}");
-    err |= USP_REGISTER_DBParam_Alias(DEVICE_SUBS_ROOT ".{i}.Alias", NULL); 
+    err |= USP_REGISTER_DBParam_Alias(DEVICE_SUBS_ROOT ".{i}.Alias", NULL);
 
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.Enable", "false", NULL, NotifyChange_SubsEnable, DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.ID", "", Validate_SubsID, NotifyChange_SubsID, DM_STRING);
@@ -199,9 +201,9 @@ int DEVICE_SUBSCRIPTION_Init(void)
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_SUBS_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
 
     // Register parameters implemented by Boot Parameters table
-    err |= USP_REGISTER_Object("Device.LocalAgent.Controller.{i}.BootParameter.{i}", NULL, NULL, NULL, 
+    err |= USP_REGISTER_Object("Device.LocalAgent.Controller.{i}.BootParameter.{i}", NULL, NULL, NULL,
                                                                                      NULL, NULL, NULL);
-    err |= USP_REGISTER_DBParam_Alias("Device.LocalAgent.Controller.{i}.BootParameter.{i}.Alias", NULL); 
+    err |= USP_REGISTER_DBParam_Alias("Device.LocalAgent.Controller.{i}.BootParameter.{i}.Alias", NULL);
 
     err |= USP_REGISTER_DBParam_ReadWrite("Device.LocalAgent.Controller.{i}.BootParameter.{i}.Enable", "false", NULL, NULL, DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.LocalAgent.Controller.{i}.BootParameter.{i}.ParameterName", "", Validate_BootParamName, NULL, DM_STRING);
@@ -219,7 +221,7 @@ int DEVICE_SUBSCRIPTION_Init(void)
         return err;
     }
 
-    
+
     SUBS_VECTOR_Init(&subscriptions);
     SUBS_RETRY_Init();
 
@@ -256,10 +258,11 @@ int DEVICE_SUBSCRIPTION_Start(void)
     char path[MAX_DM_PATH];
 
     // Exit if unable to get the object instance numbers present in the subscription table
+    INT_VECTOR_Init(&iv);
     err = DATA_MODEL_GetInstances(DEVICE_SUBS_ROOT, &iv);
     if (err != USP_ERR_OK)
     {
-        return err;
+        goto exit;
     }
 
     // Add all subscriptions in the subscription table to the subscriptions vector
@@ -341,10 +344,14 @@ void DEVICE_SUBSCRIPTION_Update(int id)
     // Poll all value change subscriptions for change
     ProcessAllValueChangeSubscriptions();
 
+    // Ensure that objects that require their instances to be refreshed by polling are refreshed
+    // (This may result in object creation/deletion events when DEVICE_SUBSCRIPTION_ProcessAllObjectLifeEventSubscriptions is called)
+    RefreshInstancesForObjLifetimeSubscriptions();
+
     // Determine the period for value change polling
     poll_period = VALUE_CHANGE_POLL_PERIOD;
 
-    
+
     // Restart the timer to cause this function to be called periodically
     SYNC_TIMER_Reload(DEVICE_SUBSCRIPTION_Update, 0, cur_time + poll_period);
 }
@@ -408,14 +415,12 @@ void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, 
     {
         // Validate the names of the event arguments
         dm_node_t *node;
-        dm_instances_t inst;
         dm_event_info_t *info;
-        bool is_qualified_instance;
         int err;
-    
-        node = DM_PRIV_GetNodeFromPath(event_name, &inst, &is_qualified_instance);
+
+        node = DM_PRIV_GetNodeFromPath(event_name, NULL, NULL);
         USP_ASSERT(node != NULL);
-    
+
         info = &node->registered.event_info;
         err = KV_VECTOR_ValidateArguments(output_args, &info->event_args);
         if (err != USP_ERR_OK)
@@ -483,7 +488,7 @@ void DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths(void)
             // NOTE: We use kResolveOp_SubsDel because we want to determine all current instances of objects with the path expression
             if (sub->notify_type == kSubNotifyType_ObjectDeletion)
             {
-                ResolveAllPathExpressions(DEVICE_SUBS_ROOT, &sub->path_expressions, &sub->resolved_paths, kResolveOp_SubsDel, sub->cont_instance);
+                ResolveAllPathExpressions(sub->instance, &sub->path_expressions, &sub->resolved_paths, NULL, kResolveOp_SubsDel, sub->cont_instance);
             }
         }
     }
@@ -496,7 +501,7 @@ void DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths(void)
 ** DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent
 **
 ** Called to notify this module that an object instance has been added or deleted from the data model
-** This function simply adds the object life event to a queue, which will be serviced later 
+** This function simply adds the object life event to a queue, which will be serviced later
 ** by ProcessAllLifeEventSubscriptions()
 ** We use a queue because we want any USP subscription notification messages to be sent after
 ** the response to the USP add or delete request
@@ -570,7 +575,7 @@ void DEVICE_SUBSCRIPTION_ProcessAllObjectLifeEventSubscriptions(void)
     object_life_events.vector = NULL;
     object_life_events.num_entries = 0;
 
-    // Reset the flag that allows us to check that the ObjectDeletion paths have been 
+    // Reset the flag that allows us to check that the ObjectDeletion paths have been
     // resolved before the object has been deleted from the data model
     object_deletion_paths_resolved = false;
 }
@@ -619,6 +624,35 @@ void DEVICE_SUBSCRIPTION_SendPeriodicEvent(int cont_instance)
 
 /*********************************************************************//**
 **
+** DEVICE_SUBSCRIPTION_NotifyControllerDeleted
+**
+** Deletes all subscriptions owned by a controller, after the controller has been deleted
+**
+** \param   cont_instance - instance number of the controller in Device.LocalAgent.Controller.{i}
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_SUBSCRIPTION_NotifyControllerDeleted(int cont_instance)
+{
+    int i;
+    subs_t *sub;
+    char path[MAX_DM_PATH];
+
+    // Iterate over all subscriptions, deleting all that match the controller
+    for (i=0; i < subscriptions.num_entries; i++)
+    {
+        sub = &subscriptions.vector[i];
+        if (sub->cont_instance == cont_instance)
+        {
+            USP_SNPRINTF(path, sizeof(path), "%s.%d", device_subs_root, sub->instance);
+            DATA_MODEL_DeleteInstance(path, 0);        // NOTE: This will cascade to delete from subscriptions vector via the delete hook callback
+        }
+    }
+}
+
+/*********************************************************************//**
+**
 ** DEVICE_SUBSCRIPTION_Dump
 **
 ** Convenience function to dump out the internal subscriptions vector
@@ -637,7 +671,7 @@ void DEVICE_SUBSCRIPTION_Dump(void)
 **
 ** ProcessSubscriptionAdded
 **
-** Reads the specified subscription from the database and 
+** Reads the specified subscription from the database and
 ** adds it to the subscription vector and activates processing associated with it
 **
 ** \param   instance - instance number of the subscription in the data model
@@ -658,7 +692,7 @@ int ProcessSubscriptionAdded(int instance)
     KV_VECTOR_Init(&sub.last_values);
     STR_VECTOR_Init(&sub.resolved_paths);
 
-    // Exit if unable to calculate the expiry time for this subscription    
+    // Exit if unable to calculate the expiry time for this subscription
     // NOTE: The subscription is not deleted by this function, but by the polling mechanism
     err = CalcExpiryTime(instance, &sub.expiry_time);
     if (err != USP_ERR_OK)
@@ -683,7 +717,6 @@ int ProcessSubscriptionAdded(int instance)
     }
 
     // Exit if no recipient is setup
-    // NOTE: Recipient could be an empty string if the controller was deleted but it's subscriptions were not
     if (controller_path[0] == '\0')
     {
         USP_ERR_SetMessage("%s: No recipient controller found in %s", __FUNCTION__, path);
@@ -692,6 +725,7 @@ int ProcessSubscriptionAdded(int instance)
     }
 
     // Exit if unable to extract the instance number of the controller that created this subscription
+    // NOTE: If the controller was deleted, then this subscription will get deleted by the caller of this function
     err = DM_ACCESS_ValidateReference(controller_path, "Device.LocalAgent.Controller.{i}", &sub.cont_instance);
     if (err != USP_ERR_OK)
     {
@@ -747,8 +781,7 @@ exit:
         // Get the initial value of all parameters, if this is a value change subscription that has just been enabled
         if ((sub.enable==true) && (sub.notify_type == kSubNotifyType_ValueChange))
         {
-            USP_SNPRINTF(path, sizeof(path), "%s.%d", device_subs_root, sub.instance);
-            GetAllPathExpressionParameterValues(&sub, &sub.path_expressions, &sub.last_values, path);
+            GetAllPathExpressionParameterValues(&sub, &sub.path_expressions, &sub.last_values);
         }
 
         // We have successfully retrieved a subscription, so add it to the vector
@@ -880,7 +913,6 @@ int NotifyChange_SubsEnable(dm_req_t *req, char *value)
 {
     subs_t *sub;
     bool cur_enable;
-    char source_path[MAX_DM_PATH];
 
     // Change the subscription's enable state
     sub = SUBS_VECTOR_GetSubsByInstance(&subscriptions, inst1);
@@ -892,8 +924,7 @@ int NotifyChange_SubsEnable(dm_req_t *req, char *value)
         // Get the initial value of all parameters, if this is a value change subscription that has just been enabled
         if ((cur_enable == false) && (val_bool == true) && (sub->notify_type == kSubNotifyType_ValueChange))
         {
-            USP_SNPRINTF(source_path, sizeof(source_path), "%s.%d", device_subs_root, sub->instance);
-            GetAllPathExpressionParameterValues(sub, &sub->path_expressions, &sub->last_values, source_path);
+            GetAllPathExpressionParameterValues(sub, &sub->path_expressions, &sub->last_values);
         }
     }
 
@@ -917,7 +948,6 @@ int NotifyChange_NotifyType(dm_req_t *req, char *value)
     subs_notify_t new_notify_type;
     subs_notify_t cur_notify_type;
     subs_t *sub;
-    char source_path[MAX_DM_PATH];
 
     // Convert this parameter's value to the notify type enumeration
     new_notify_type = TEXT_UTILS_StringToEnum(value, notify_types, NUM_ELEM(notify_types));
@@ -935,8 +965,7 @@ int NotifyChange_NotifyType(dm_req_t *req, char *value)
         if ((sub->enable == true) && (cur_notify_type != kSubNotifyType_ValueChange)
                                   && (new_notify_type == kSubNotifyType_ValueChange))
         {
-            USP_SNPRINTF(source_path, sizeof(source_path), "%s.%d", device_subs_root, sub->instance);
-            GetAllPathExpressionParameterValues(sub, &sub->path_expressions, &sub->last_values, source_path);
+            GetAllPathExpressionParameterValues(sub, &sub->path_expressions, &sub->last_values);
         }
 
     }
@@ -962,7 +991,7 @@ int NotifyChange_SubsID(dm_req_t *req, char *value)
     // Determine which subscription this change affects
     sub = SUBS_VECTOR_GetSubsByInstance(&subscriptions, inst1);
     USP_ASSERT(sub != NULL);
-    
+
     // Update the Subscription ID for this subscription.
     // This will take effect at the next poll interval
     USP_FREE(sub->subscription_id);
@@ -1023,7 +1052,7 @@ int NotifyChange_SubsTimeToLive(dm_req_t *req, char *value)
     sub = SUBS_VECTOR_GetSubsByInstance(&subscriptions, inst1);
     USP_ASSERT(sub != NULL);
 
-    // Update the expiry time for this subscription    
+    // Update the expiry time for this subscription
     err = CalcExpiryTime(inst1, &sub->expiry_time);
 
     // Delete this subscription, if it has now expired
@@ -1060,7 +1089,7 @@ int NotifyChange_NotifRetry(dm_req_t *req, char *value)
     // Determine which subscription this change affects
     sub = SUBS_VECTOR_GetSubsByInstance(&subscriptions, inst1);
     USP_ASSERT(sub != NULL);
-    
+
     // Update the notification_retry for this subscription.
     // This will take effect the next time a NotifyRequest is fired off from this subscription
     err = TEXT_UTILS_StringToBool(value, &sub->notification_retry);
@@ -1088,7 +1117,7 @@ int NotifyChange_NotifExpiration(dm_req_t *req, char *value)
     // Determine which subscription this change affects
     sub = SUBS_VECTOR_GetSubsByInstance(&subscriptions, inst1);
     USP_ASSERT(sub != NULL);
-    
+
     // Update the retry_expiry_period for this subscription.
     // This will take effect the next time a NotifyRequest is fired off from this subscription
     err = TEXT_UTILS_StringToUnsigned(value, &sub->retry_expiry_period);
@@ -1320,7 +1349,7 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
     combined_role_t combined_role;
     resolve_op_t op;
 
-    // Convert the notify type to a path resolver operation, so that we can check that 
+    // Convert the notify type to a path resolver operation, so that we can check that
     // ReferenceList matches a node of the specified type, and that the controller has permission
     // to set the notification
     switch(notify_type)
@@ -1328,23 +1357,23 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
         case kSubNotifyType_ValueChange:
             op = kResolveOp_SubsValChange;
             break;
-    
+
         case kSubNotifyType_ObjectCreation:
             op = kResolveOp_SubsAdd;
             break;
-        
+
         case kSubNotifyType_ObjectDeletion:
             op = kResolveOp_SubsDel;
             break;
-            
+
         case kSubNotifyType_OperationComplete:
             op = kResolveOp_SubsOper;
             break;
-            
+
         case kSubNotifyType_Event:
             op = kResolveOp_SubsEvent;
             break;
-    
+
         default:
         case kSubNotifyType_None:
             // If a notify type has not been set yet, then we cannot validate whether the controller is permitted
@@ -1354,7 +1383,7 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
             return USP_ERR_OK;
             break;
     }
-    
+
     // Split the reference list into a vector of path expressions
     STR_VECTOR_Init(&path_expressions);
     TEXT_UTILS_SplitString(ref_list, &path_expressions, ",");
@@ -1374,7 +1403,7 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
         }
 
         // Exit if path expression is invalid
-        err = PATH_RESOLVER_ResolveDevicePath(path, NULL, op, NULL, &combined_role, 0);
+        err = PATH_RESOLVER_ResolveDevicePath(path, NULL, NULL, op, NULL, &combined_role, 0);
         if (err != USP_ERR_OK)
         {
             goto exit;
@@ -1527,10 +1556,11 @@ int DeleteNonPersistentSubscriptions(void)
     }
 
     // Exit if unable to get the object instance numbers present in the subscription table
+    INT_VECTOR_Init(&iv);
     err = DATA_MODEL_GetInstances(DEVICE_SUBS_ROOT, &iv);
     if (err != USP_ERR_OK)
     {
-        return err;
+        goto exit;
     }
 
     // Remove any expired or non-persistent subscriptions
@@ -1549,7 +1579,7 @@ int DeleteNonPersistentSubscriptions(void)
             goto exit;
         }
 
-        // Exit if unable to calculate the expiry time for this subscription    
+        // Exit if unable to calculate the expiry time for this subscription
         err = CalcExpiryTime(instance, &expiry_time);
         if (err != USP_ERR_OK)
         {
@@ -1641,9 +1671,9 @@ void ProcessObjectLifeEventSubscription(subs_t *sub)
     // NOTE: We use kResolveOp_SubsAdd because this is the op that is used when validating the ReferenceList parameter of the Subscription table
     if (sub->notify_type == kSubNotifyType_ObjectCreation)
     {
-        ResolveAllPathExpressions(DEVICE_SUBS_ROOT, &sub->path_expressions, &sub->resolved_paths, kResolveOp_SubsAdd, sub->cont_instance);
+        ResolveAllPathExpressions(sub->instance, &sub->path_expressions, &sub->resolved_paths, NULL, kResolveOp_SubsAdd, sub->cont_instance);
     }
-    
+
     // Iterate over all object life events which have occurred recently
     for (i=0; i < object_life_events.num_entries; i++)
     {
@@ -1668,7 +1698,7 @@ void ProcessObjectLifeEventSubscription(subs_t *sub)
             {
                 req = MSG_HANDLER_CreateNotifyReq_ObjectDeletion(ole->obj_path, sub->subscription_id, sub->notification_retry);
             }
-            
+
             // Send the Notify Request
             SendNotify(req, sub, ole->obj_path);
             usp__msg__free_unpacked(req, pbuf_allocator);
@@ -1686,7 +1716,7 @@ exit:
 **
 ** Called to Periodically poll all value change notifications
 **
-** \param   timer - pointer to timer which initiated this call
+** \param   None
 **
 ** \return  None
 **
@@ -1726,12 +1756,10 @@ void ProcessValueChangeSubscription(subs_t *sub)
     int index;
     int hint_index;
     char *value;
-    char source_path[MAX_DM_PATH];
 
     // Get the current values of all parameters associated with this subscription
-    USP_SNPRINTF(source_path, sizeof(source_path), "%s.%d", device_subs_root, sub->instance);
-    GetAllPathExpressionParameterValues(sub, &sub->path_expressions, &cur_values, source_path);
-    
+    GetAllPathExpressionParameterValues(sub, &sub->path_expressions, &cur_values);
+
     // Determine whether any of the values have changed from last time
     hint_index = 0;
     for (i=0; i < cur_values.num_entries; i++)
@@ -1775,45 +1803,32 @@ void ProcessValueChangeSubscription(subs_t *sub)
 ** \param   path_expressions - vector of path expressions to get the values of
 ** \param   param_values - vector in which parameter values are returned (key=parameter name, value=parameter value)
 **                         NOTE: This function overwrites any contents in this vector
-** \param   source_path - string naming the table entry that the path expression came from. Used only for debug.
 **
 ** \return  None
 **
 **************************************************************************/
-void GetAllPathExpressionParameterValues(subs_t *sub, str_vector_t *path_expressions, kv_vector_t *param_values, char *source_path)
+void GetAllPathExpressionParameterValues(subs_t *sub, str_vector_t *path_expressions, kv_vector_t *param_values)
 {
-    int i;
-    int err;
     str_vector_t params;
-    kv_pair_t *pair;
-    char buf[MAX_DM_VALUE_LEN];
+    int_vector_t group_ids;
+    group_get_vector_t ggv;
 
-    // Form a vector list containing all the parameters to get the value of
-    ResolveAllPathExpressions(source_path, path_expressions, &params, kResolveOp_SubsValChange, sub->cont_instance);
+    // Form a vector list containing all the parameters to get the value of (and their associated group_id)
+    ResolveAllPathExpressions(sub->instance, path_expressions, &params, &group_ids, kResolveOp_SubsValChange, sub->cont_instance);
 
-    // Convert the vector list into the keys in a key-value pair vector.
-    // NOTE: We do not have to call STR_VECTOR_Destroy(&params) because STR_VECTOR_ConvertToKeyValueVector() destroys the string vector
-    STR_VECTOR_ConvertToKeyValueVector(&params, param_values);
+    // Add the parameters to get to the group get vector
+    GROUP_GET_VECTOR_Init(&ggv);
+    GROUP_GET_VECTOR_AddParams(&ggv, &params, &group_ids);
 
-    // Iterate over all parameters in the key-value pair vector, getting their values from the data model
-    for (i=0; i < param_values->num_entries; i++)
-    {
-        pair = &param_values->vector[i];
-        USP_ASSERT(pair->value == NULL);
+    // Destroy the params and group_ids vectors (since their contents have been moved to the group get vector)
+    USP_SAFE_FREE(params.vector);
+    INT_VECTOR_Destroy(&group_ids);
 
-        // Get the value of the parameter.
-        buf[0] = '\0';
-        err = DATA_MODEL_GetParameterValue(pair->key, buf, sizeof(buf), 0);
-        if (err == USP_ERR_OK)
-        {
-            pair->value = USP_STRDUP(buf);
-        }
-        else
-        {
-            // Intentionally ignoring errors by returning an empty string if they occur
-            pair->value = USP_STRDUP("");
-        }
-    }
+    // Get the values of all the parameters
+    GROUP_GET_VECTOR_GetValues(&ggv);
+
+    // Convert to key-value pair vector, destroying the group get vector in the process
+    GROUP_GET_VECTOR_ConvertToKeyValueVector(&ggv, param_values);
 }
 
 /*********************************************************************//**
@@ -1822,16 +1837,20 @@ void GetAllPathExpressionParameterValues(subs_t *sub, str_vector_t *path_express
 **
 ** Creates a single list of resolved paths, given a list of path expressions
 **
-** \param   source_path - string naming the table entry that the path expression came from. Used only for debug.
+** \param   sub_instance - Instance number of the subscription in Device.LocalAgent.Subscription.{i}. Used only for debug.
 ** \param   path_expressions - list of path expressions to resolve
-** \param   resolved_paths - pointer to string vector in which to return all resolved path expressions
+** \param   resolved_paths - pointer to string vector in which to return all resolved path expressions.
+**                           or NULL if we are only interested in whether the expression exists in the schema
+** \param   group_ids - pointer to vector in which to return the group_id of the parameters
+**                      or NULL if the caller is not interested in this
+**                      NOTE: values in resolved_paths and group_ids relate by index
 ** \param   op - Operation being performed
 ** \param   cont_instance - Controller Instance number - used to determine the role to use for the recipient controller
 **
 ** \return  None
 **
 **************************************************************************/
-void ResolveAllPathExpressions(char *source_path, str_vector_t *path_expressions, str_vector_t *resolved_paths, resolve_op_t op, int cont_instance)
+void ResolveAllPathExpressions(int subs_instance, str_vector_t *path_expressions, str_vector_t *resolved_paths, int_vector_t *group_ids, resolve_op_t op, int cont_instance)
 {
     char *expr;
     int i;
@@ -1839,7 +1858,16 @@ void ResolveAllPathExpressions(char *source_path, str_vector_t *path_expressions
     combined_role_t combined_role;
 
     // Default to no resolved paths
-    STR_VECTOR_Init(resolved_paths);
+    if (resolved_paths != NULL)
+    {
+        STR_VECTOR_Init(resolved_paths);
+    }
+
+    // Default to no group_ids
+    if (group_ids != NULL)
+    {
+        INT_VECTOR_Init(group_ids);
+    }
 
     // Exit if we cannot retrieve the role to use for this endpoint
     err = DEVICE_CONTROLLER_GetCombinedRole(cont_instance, &combined_role);
@@ -1852,11 +1880,11 @@ void ResolveAllPathExpressions(char *source_path, str_vector_t *path_expressions
     for (i=0; i < path_expressions->num_entries; i++)
     {
         expr = path_expressions->vector[i];
-        err = PATH_RESOLVER_ResolveDevicePath(expr, resolved_paths, op, NULL, &combined_role, 0);
+        err = PATH_RESOLVER_ResolveDevicePath(expr, resolved_paths, group_ids, op, NULL, &combined_role, 0);
         if (err != USP_ERR_OK)
         {
             // NOTE: Just logging the error, but ignoring it. It should not have occured (should have been caught by Validate_SubsRefList call)
-            USP_LOG_Warning("%s: Path expression (%s) contained in %s is invalid", __FUNCTION__, expr, source_path);
+            USP_LOG_Warning("%s: Path expression (%s) contained in %s.%d is invalid", __FUNCTION__, expr, device_subs_root, subs_instance);
         }
     }
 }
@@ -1935,10 +1963,11 @@ void SendBootNotify(subs_t *sub)
 
     // Exit if unable to get the object instance numbers present in the boot parameters table
     USP_SNPRINTF(path, sizeof(path), "%s.BootParameter", controller);
+    INT_VECTOR_Init(&iv);
     err = DATA_MODEL_GetInstances(path, &iv);
     if (err != USP_ERR_OK)
     {
-        return;
+        goto exit;
     }
 
     // Form a list of enabled path expressions to get by reading them from the BootParameters table
@@ -1966,11 +1995,9 @@ void SendBootNotify(subs_t *sub)
         // Add the path expression to the list of path expressions to get
         STR_VECTOR_Add(&path_expr, expr);
     }
-    INT_VECTOR_Destroy(&iv);
 
     // Get the values of all parameters specified by the list of path expressions into the param_values vector
-    USP_SNPRINTF(path, sizeof(path), "%s.%d", device_subs_root, sub->instance);
-    GetAllPathExpressionParameterValues(sub, &path_expr, &param_values, path);
+    GetAllPathExpressionParameterValues(sub, &path_expr, &param_values);
     STR_VECTOR_Destroy(&path_expr);
 
     // Create a JSON object containing the boot params (and associated values)
@@ -1987,8 +2014,12 @@ void SendBootNotify(subs_t *sub)
     KV_VECTOR_Destroy(&event_params);
 
     // Send the Notify Request
+    USP_SNPRINTF(path, sizeof(path), "%s.%d", device_subs_root, sub->instance);
     SendNotify(req, sub, path);
     usp__msg__free_unpacked(req, pbuf_allocator);
+
+exit:
+    INT_VECTOR_Destroy(&iv);
 }
 
 /*********************************************************************//**
@@ -2050,7 +2081,7 @@ char *SerializeToJSONObject(kv_vector_t *param_values)
     buf = json_stringify(top, NULL);
 
     // Clean up the JSON tree
-    json_delete(top);        // Other JsonNodes which are children of this top level tree will be deleted 
+    json_delete(top);        // Other JsonNodes which are children of this top level tree will be deleted
 
     return buf;
 }
@@ -2078,7 +2109,7 @@ void SendOperationCompleteNotify(subs_t *sub, char *command, char *command_key, 
     // Form the Operation Complete NotifyRequest message as a protobuf structure
     if (err_code == USP_ERR_OK)
     {
-        req = MSG_HANDLER_CreateNotifyReq_OperCompleteSuccess(output_args, command, command_key, 
+        req = MSG_HANDLER_CreateNotifyReq_OperCompleteSuccess(output_args, command, command_key,
                                                               sub->subscription_id, sub->notification_retry);
     }
     else
@@ -2151,7 +2182,7 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
         // Add this message to the list of notification requests to retry
         // NOTE: Ownership of the serialized USP message passes to the subs retry module
         msg_id = req->header->msg_id;
-        SUBS_RETRY_Add(sub->instance, msg_id, sub->subscription_id, dest_endpoint, path, 
+        SUBS_RETRY_Add(sub->instance, msg_id, sub->subscription_id, dest_endpoint, path,
                        pbuf, pbuf_len, retry_expiry_time);
     }
     else
@@ -2252,7 +2283,7 @@ bool DoesSubscriptionMatchEvent(subs_t *sub, char *event_name)
 
     // Resolve a list of paths that the subscription references
     // NOTE: Resolution excludes paths for which the controller does not have permission to be notified of events
-    ResolveAllPathExpressions(DEVICE_SUBS_ROOT, &sub->path_expressions, &resolved_paths, op, sub->cont_instance);
+    ResolveAllPathExpressions(sub->instance, &sub->path_expressions, &resolved_paths, NULL, op, sub->cont_instance);
 
     // Exit if the specified path is present in the subscription
     index = STR_VECTOR_Find(&resolved_paths, event_name);
@@ -2292,9 +2323,9 @@ bool HasControllerGotEventPermission(int cont_instance, char *event_name)
     {
         return false;
     }
-    
+
     // Determine permissions that this controller has for the operation that occurred
-    // NOTE: Ignoring error messgae. If the event is not present in the data model, then the controller will not have permissions anyway
+    // NOTE: Ignoring error message. If the event is not present in the data model, then the controller will not have permissions anyway
     DATA_MODEL_GetPermissions(event_name, &combined_role, &perm);
 
     // Exit if controller has permission for this notification
@@ -2305,5 +2336,36 @@ bool HasControllerGotEventPermission(int cont_instance, char *event_name)
 
     // If the code gets here, then the controller did not have permission for the event
     return false;
+}
+
+/*********************************************************************//**
+**
+** RefreshInstancesForObjLifetimeSubscriptions
+**
+** This function calls the refresh_instances callback for all top-level multi-instance objects that require it
+** and which have an object creation/deletion subscription against them
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void RefreshInstancesForObjLifetimeSubscriptions(void)
+{
+    int i;
+    subs_t *sub;
+    resolve_op_t op;
+
+    // Simply resolving the path expressions for ObjectCreation/Deletion subscriptions will result in the refresh_instances callback being called if necessary
+    // (because the path resolver checks whether the instance being resolved exists, or gets the instances to resolve a wildcard etc)
+    for (i=0; i < subscriptions.num_entries; i++)
+    {
+        sub = &subscriptions.vector[i];
+        if ((sub->enable) && ((sub->notify_type == kSubNotifyType_ObjectCreation) || (sub->notify_type == kSubNotifyType_ObjectDeletion)) )
+        {
+            op = (sub->notify_type == kSubNotifyType_ObjectCreation) ? kResolveOp_SubsAdd : kResolveOp_SubsDel;
+            ResolveAllPathExpressions(sub->instance, &sub->path_expressions, NULL, NULL, op, sub->cont_instance);
+        }
+    }
 }
 

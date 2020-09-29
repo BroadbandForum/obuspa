@@ -2,32 +2,32 @@
  *
  * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -143,7 +143,7 @@ void EXPR_VECTOR_ToKeyValueVector(expr_vector_t *ev, kv_vector_t *kvv)
     {
         return;
     }
-    
+
     // Allocate memory to store the key-value vector
     kvv->vector = USP_MALLOC(num_entries*sizeof(kv_pair_t));
     kvv->num_entries = num_entries;
@@ -341,7 +341,7 @@ bool IsOperatorInArray(expr_op_t expr_op, expr_op_t *valid_ops, int num_valid_op
 ** NOTE: This function assumes that leading and trailing whitespace has already been removed from the input buffer
 **
 ** \param   buf - pointer to a buffer containing the expression component
-** \param   p_relative_path - pointer to variable in which to return a pointer to the 
+** \param   p_relative_path - pointer to variable in which to return a pointer to the
 **                          relative path string contained in the supplied buffer
 ** \param   p_op - pointer to variable in which to return the parsed operator
 ** \param   p_value - pointer to variable in which to return a pointer to the value
@@ -357,7 +357,7 @@ int ParseExprComponent(char *buf, char **p_relative_path, expr_op_t *p_op, char 
     char *expr_param;
     char *expr_const;
     int len;
-    
+
     // Split the buffer into 2 strings on the operator. Exiting if unable to find an operator.
     after_op = SplitOnOperator(buf, p_op);
     if (after_op == NULL)
@@ -401,7 +401,7 @@ int ParseExprComponent(char *buf, char **p_relative_path, expr_op_t *p_op, char 
             expr_const++;
         }
     }
-    
+
     // Exit if expression param contains illegal characters (these characters should be % encoded)
     if (strcspn(expr_param, " \t\"\'") != strlen(expr_param))
     {
@@ -417,12 +417,12 @@ int ParseExprComponent(char *buf, char **p_relative_path, expr_op_t *p_op, char 
     }
 
     // Convert % escaped characters in the expression constant to their equivalent value
-    expr_const = TEXT_UTILS_PercentDecodeString(expr_const);
+    TEXT_UTILS_PercentDecodeString(expr_const);
 
     // If the code gets here, then the values were extracted successfully
     *p_relative_path = expr_param;
     *p_value = expr_const;
-    
+
     return USP_ERR_OK;
 }
 
@@ -431,7 +431,7 @@ int ParseExprComponent(char *buf, char **p_relative_path, expr_op_t *p_op, char 
 ** SplitOnOperator
 **
 ** This function finds an expression operator in a buffer
-** It then splits the buffer at the expression operator, and returns a 
+** It then splits the buffer at the expression operator, and returns a
 ** pointer to the string following the expression operator in the buffer
 **
 ** \param   buf - pointer to a buffer containing an expression component
@@ -443,7 +443,7 @@ int ParseExprComponent(char *buf, char **p_relative_path, expr_op_t *p_op, char 
 char *SplitOnOperator(char *buf, expr_op_t *p_op)
 {
     char *op;
-    
+
     // Exit if found the "==" operator
     // NOTE: We test for this before trying to find the '=' operator
     op = strstr(buf, "==");
@@ -570,9 +570,9 @@ void TestParseExprComponent(void)
             if ((strcmp(relative_path, parse_expr_comp_test_cases[i+1]) != 0) ||
                 (strcmp(value, parse_expr_comp_test_cases[i+2]) != 0))
             {
-                printf("ERROR: [%d] Test case result for '%s' is {'%s','%s'} (expected {'%s','%s'})\n", 
-                       i/3, parse_expr_comp_test_cases[i], 
-                       relative_path, value, 
+                printf("ERROR: [%d] Test case result for '%s' is {'%s','%s'} (expected {'%s','%s'})\n",
+                       i/3, parse_expr_comp_test_cases[i],
+                       relative_path, value,
                        parse_expr_comp_test_cases[i+1], parse_expr_comp_test_cases[i+2]);
             }
             else
@@ -586,8 +586,8 @@ void TestParseExprComponent(void)
             if ((parse_expr_comp_test_cases[i+1] != NULL) ||
                 (parse_expr_comp_test_cases[i+2] != NULL))
             {
-                printf("ERROR: [%d] Test case result for '%s' is {'%s','%s'} (expected an error returned)\n", 
-                       i/3, parse_expr_comp_test_cases[i], 
+                printf("ERROR: [%d] Test case result for '%s' is {'%s','%s'} (expected an error returned)\n",
+                       i/3, parse_expr_comp_test_cases[i],
                        relative_path, value);
             }
             else

@@ -1,33 +1,34 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2020,  BT PLC
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -69,7 +70,7 @@ typedef struct
 {
     int instance;      // instance of the MTP in the Device.LocalAgent.MTP.{i} table
     bool enable;
-    mtp_protocol_t protocol;    
+    mtp_protocol_t protocol;
 
     // NOTE: The following parameters are not a union because the data model allows us to setup both STOMP and CoAP params at the same time, and just select between them using the protocol parameter
     int stomp_connection_instance; // Instance number of the STOMP connection which this MTP refers to (ie Device.STOMP.Connection.{i})
@@ -78,6 +79,12 @@ typedef struct
 #ifdef ENABLE_COAP
     coap_config_t  coap;     // Configuration settings for CoAP server
 #endif
+
+#ifdef ENABLE_MQTT
+    int mqtt_connection_instance; // Instance number of the MQTT connection which this MTP refers to (ie Device.MQTT.Client.{i})
+    char *mqtt_agent_topic;    // name of the queue on the above MQTT connection, on which this agent listens
+    mqtt_qos_t mqtt_publish_qos;
+#endif
 } agent_mtp_t;
 
 // Array of agent MTPs
@@ -85,12 +92,15 @@ static agent_mtp_t agent_mtps[MAX_AGENT_MTPS];
 
 //------------------------------------------------------------------------------
 // Table used to convert from a textual representation of an MTP protocol to an enumeration
-const enum_entry_t mtp_protocols[kMtpProtocol_Max] = 
+const enum_entry_t mtp_protocols[kMtpProtocol_Max] =
 {
     { kMtpProtocol_None, "" },
     { kMtpProtocol_STOMP, "STOMP" },
 #ifdef ENABLE_COAP
     { kMtpProtocol_CoAP, "CoAP" },
+#endif
+#ifdef ENABLE_MQTT
+    { kMtpProtocol_MQTT, "MQTT" },
 #endif
 };
 
@@ -122,6 +132,17 @@ agent_mtp_t *FindUnusedAgentMtp(void);
 void DestroyAgentMtp(agent_mtp_t *mtp);
 agent_mtp_t *FindAgentMtpByInstance(int instance);
 
+#ifdef ENABLE_MQTT
+//MQTT
+int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value);
+int Validate_AgentMtpProtocol(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpMqtt_ResponseTopicConfigured(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpMqttReference(dm_req_t *req, char *value);
+int Validate_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value);
+#endif
+
 #ifdef ENABLE_COAP
 //------------------------------------------------------------------------------
 // Typedef used to call either COAP_SERVER_Start() or COAP_SERVER_Stop()
@@ -131,7 +152,6 @@ int NotifyChange_AgentMtpCoAPPort(dm_req_t *req, char *value);
 int NotifyChange_AgentMtpCoAPPath(dm_req_t *req, char *value);
 int NotifyChange_AgentMtpCoAPEncryption(dm_req_t *req, char *value);
 int ControlCoapServer(agent_mtp_t *mtp, control_coapserver_t control_coapserver);
-int Get_CoapInterfaces(dm_req_t *req, char *buf, int len);
 #endif
 
 /*********************************************************************//**
@@ -160,10 +180,10 @@ int DEVICE_MTP_Init(void)
     }
 
     // Register parameters implemented by this component
-    err |= USP_REGISTER_Object(DEVICE_AGENT_MTP_ROOT ".{i}", ValidateAdd_AgentMtp, NULL, Notify_AgentMtpAdded, 
+    err |= USP_REGISTER_Object(DEVICE_AGENT_MTP_ROOT ".{i}", ValidateAdd_AgentMtp, NULL, Notify_AgentMtpAdded,
                                                              NULL, NULL, Notify_AgentMtpDeleted);
     err |= USP_REGISTER_Param_NumEntries("Device.LocalAgent.MTPNumberOfEntries", DEVICE_AGENT_MTP_ROOT ".{i}");
-    err |= USP_REGISTER_DBParam_Alias(DEVICE_AGENT_MTP_ROOT ".{i}.Alias", NULL); 
+    err |= USP_REGISTER_DBParam_Alias(DEVICE_AGENT_MTP_ROOT ".{i}.Alias", NULL);
 
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Protocol", "STOMP", Validate_AgentMtpProtocol, NotifyChange_AgentMtpProtocol, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Enable", "false", NULL, NotifyChange_AgentMtpEnable, DM_BOOL);
@@ -174,7 +194,12 @@ int DEVICE_MTP_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.CoAP.Port", "5683", DM_ACCESS_ValidatePort, NotifyChange_AgentMtpCoAPPort, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.CoAP.Path", "", NULL, NotifyChange_AgentMtpCoAPPath, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.CoAP.EnableEncryption", "true", NULL, NotifyChange_AgentMtpCoAPEncryption, DM_BOOL);
-    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_AGENT_MTP_ROOT ".{i}.CoAP.Interfaces", Get_CoapInterfaces, DM_STRING);
+#endif
+
+#ifdef ENABLE_MQTT
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.Reference", "", DEVICE_MTP_ValidateMqttReference, NotifyChange_AgentMtpMqttReference, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.ResponseTopicConfigured", "", NULL, NotifyChange_AgentMtpMqtt_ResponseTopicConfigured, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.PublishQoS", "2", Validate_AgentMtpMQTTPublishQoS, NotifyChange_AgentMtpMQTTPublishQoS, DM_UINT);
 #endif
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_AGENT_MTP_ROOT ".{i}.Status", Get_MtpStatus, DM_STRING);
 
@@ -208,10 +233,11 @@ int DEVICE_MTP_Start(void)
     char path[MAX_DM_PATH];
 
     // Exit if unable to get the object instance numbers present in the agent MTP table
+    INT_VECTOR_Init(&iv);
     err = DATA_MODEL_GetInstances(DEVICE_AGENT_MTP_ROOT, &iv);
     if (err != USP_ERR_OK)
     {
-        return err;
+        goto exit;
     }
 
     // Issue a warning, if no local agent MTPs are present in database
@@ -301,7 +327,7 @@ char *DEVICE_MTP_GetAgentStompQueue(int instance)
     for (i=0; i<MAX_AGENT_MTPS; i++)
     {
         mtp = &agent_mtps[i];
-        if ((mtp->instance != INVALID) && (mtp->enable == true) && 
+        if ((mtp->instance != INVALID) && (mtp->enable == true) &&
             (mtp->stomp_connection_instance == instance) && (mtp->protocol == kMtpProtocol_STOMP) &&
             (mtp->stomp_agent_queue[0] != '\0'))
         {
@@ -364,7 +390,7 @@ int DEVICE_MTP_ValidateStompReference(dm_req_t *req, char *value)
 ** DEVICE_MTP_GetStompReference
 **
 ** Gets the instance number in the STOMP connection table by dereferencing the specified path
-** NOTE: If the path is invalid, or the instance does not exist, then INVALID is 
+** NOTE: If the path is invalid, or the instance does not exist, then INVALID is
 **       returned for the instance number, along with an error
 **
 ** \param   path - path of parameter which contains the reference
@@ -451,12 +477,12 @@ void DEVICE_MTP_NotifyStompConnDeleted(int stomp_instance)
 int ValidateAdd_AgentMtp(dm_req_t *req)
 {
     agent_mtp_t *mtp;
-        
+
     // Exit if unable to find a free MTP slot
     mtp = FindUnusedAgentMtp();
     if (mtp == NULL)
     {
-        return USP_ERR_RESOURCES_EXCEEDED;        
+        return USP_ERR_RESOURCES_EXCEEDED;
     }
 
     return USP_ERR_OK;
@@ -525,6 +551,16 @@ int Notify_AgentMtpDeleted(dm_req_t *req)
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
             ControlCoapServer(mtp, COAP_SERVER_Stop);
+            break;
+#endif
+
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+            // Schedule a reconnect after the present response has been sent
+            if (mtp->mqtt_connection_instance != INVALID)
+            {
+                DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
+            }
             break;
 #endif
         default:
@@ -606,10 +642,10 @@ int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value)
                 DEVICE_STOMP_ScheduleReconnect(mtp->stomp_connection_instance);
             }
             break;
- 
+
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
-{            
+{
             // Enable or disable the CoAP server based on the new value
             int err;
             if (val_bool)
@@ -633,7 +669,19 @@ int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value)
 }
             break;
 #endif
- 
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+            // Store the new value
+            mtp->enable = val_bool;
+
+            // Always schedule a reconnect for the affected MQTT connection instance
+            // If this MTP has been disabled, then the reconnect will fail unless another MTP specifies the agent queue to subscribe to
+            if (mtp->mqtt_connection_instance != INVALID)
+            {
+                DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
+            }
+            break;
+#endif
         default:
             TERMINATE_BAD_CASE(mtp->protocol);
             break;
@@ -696,6 +744,14 @@ int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value)
     }
 #endif
 
+#ifdef ENABLE_MQTT
+    // Schedule the affected MQTT connection to reconnect (because it might have lost or gained a agent queue to subscribe to)
+    if ((mtp->enable) && (mtp->mqtt_connection_instance != INVALID))
+    {
+        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
+    }
+#endif
+
     // Cache the changed value
     mtp->protocol = new_protocol;
 
@@ -754,7 +810,7 @@ int NotifyChange_AgentMtpCoAPPort(dm_req_t *req, char *value)
     {
         return err;
     }
-    
+
     // Store the new port
     mtp->coap.port = val_uint;
 
@@ -801,7 +857,7 @@ int NotifyChange_AgentMtpCoAPPath(dm_req_t *req, char *value)
     {
         return err;
     }
-    
+
     // Store the changed resource
     USP_SAFE_FREE(mtp->coap.resource);
     mtp->coap.resource = USP_STRDUP(value);
@@ -849,7 +905,7 @@ int NotifyChange_AgentMtpCoAPEncryption(dm_req_t *req, char *value)
     {
         return err;
     }
-    
+
     // Store the changed encryption status
     mtp->coap.enable_encryption = val_bool;
 
@@ -863,96 +919,6 @@ int NotifyChange_AgentMtpCoAPEncryption(dm_req_t *req, char *value)
     return USP_ERR_OK;
 }
 
-/*********************************************************************//**
-**
-** Get_CoapInterfaces
-**
-** Gets the value of Device.LocalAgent.MTP.{i}.CoAP.Interfaces
-**
-** \param   req - pointer to structure identifying the parameter
-** \param   buf - pointer to buffer in which to return the parameter's value
-** \param   len - length of return buffer
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int Get_CoapInterfaces(dm_req_t *req, char *buf, int len)
-{
-    char *interfaces = COAP_LISTEN_INTERFACES;
-    char path[MAX_DM_PATH];
-    char name[MAX_DM_SHORT_VALUE_LEN];
-    int_vector_t iv;
-    str_vector_t sv;
-    int instance;
-    int index;
-    int size;
-    int err;
-    int i;
-
-    // Exit if our CoAP server is listening on all network interfaces
-    if ((interfaces[0] == '\0') || (strcmp(interfaces, "all")==0))
-    {
-        buf[0] = '\0';
-        return USP_ERR_OK;
-    }
-
-    // Initialise vectors, so that if we exit prematurely, they can be torn down safely
-    INT_VECTOR_Init(&iv);
-    STR_VECTOR_Init(&sv);
-
-    // Split the string into the names of each interface
-    TEXT_UTILS_SplitString(interfaces, &sv, ",");
-
-    // Exit if unable to get all network interface instances in the data model
-    err = DATA_MODEL_GetInstances("Device.IP.Interface.", &iv);
-    if (err != USP_ERR_OK)
-    {
-        goto exit;
-    }
-
-    // Iterate over all instantiated network interfaces
-    for (i=0; i < iv.num_entries; i++)
-    {
-        // Exit if unable to get the name of the interface
-        instance = iv.vector[i];
-        USP_SNPRINTF(path, sizeof(path), "Device.IP.Interface.%d.Name", instance);
-        err = DATA_MODEL_GetParameterValue(path, name, sizeof(name), 0);
-        if (err != USP_ERR_OK)
-        {
-            goto exit;
-        }
-
-        // If this interface name matches one of the interfaces that we have a CoAP server on, then add it to the returned string
-        index = STR_VECTOR_Find(&sv, name);
-        if (index != INVALID)
-        {
-            // Add a comma separating this entry in the list from the last
-            if ((i != 0) && (len > 0))
-            {
-                *buf = ',';
-                buf++;
-                len--;
-            }
-
-            // Add the path to the data model object representing this interface
-            #define INTERFACE_PATH  "Device.IP.Interface.%d"
-            if (len >= sizeof(INTERFACE_PATH))
-            {
-                size = USP_SNPRINTF(buf, len, "Device.IP.Interface.%d", instance);
-                buf += size;
-                len -= size;
-            }
-        }
-    }
-
-    err = USP_ERR_OK;
-
-exit:
-    STR_VECTOR_Destroy(&sv);
-    INT_VECTOR_Destroy(&iv);
-
-    return err;
-}
 
 /*********************************************************************//**
 **
@@ -987,7 +953,7 @@ int ControlCoapServer(agent_mtp_t *mtp, control_coapserver_t control_coapserver)
 
     // Split the comma separated list into each individual network interface
     TEXT_UTILS_SplitString(interfaces_to_use, &sv, ",");
-    
+
     // Exit if there are not enough coap server slots for the number of network interfaces required
     if (sv.num_entries > MAX_COAP_SERVERS)
     {
@@ -1112,7 +1078,7 @@ int NotifyChange_AgentMtpStompDestination(dm_req_t *req, char *value)
     // Set the new value
     USP_SAFE_FREE(mtp->stomp_agent_queue);
     mtp->stomp_agent_queue = USP_STRDUP(value);
-    
+
     return USP_ERR_OK;
 }
 
@@ -1147,10 +1113,16 @@ int Get_MtpStatus(dm_req_t *req, char *buf, int len)
             case kMtpProtocol_STOMP:
                 status = DEVICE_STOMP_GetMtpStatus(mtp->stomp_connection_instance);
                 break;
-     
+
 #ifdef ENABLE_COAP
             case kMtpProtocol_CoAP:
                 status = COAP_SERVER_GetStatus(mtp->instance);
+                break;
+#endif
+
+#ifdef ENABLE_MQTT
+            case kMtpProtocol_MQTT:
+                status = DEVICE_MQTT_GetMtpStatus(mtp->mqtt_connection_instance);
                 break;
 #endif
 
@@ -1227,13 +1199,16 @@ int ProcessAgentMtpAdded(int instance)
     mtp = FindUnusedAgentMtp();
     if (mtp == NULL)
     {
-        return USP_ERR_RESOURCES_EXCEEDED;        
+        return USP_ERR_RESOURCES_EXCEEDED;
     }
 
     // Initialise to defaults
     memset(mtp, 0, sizeof(agent_mtp_t));
     mtp->instance = instance;
     mtp->stomp_connection_instance = INVALID;
+#ifdef ENABLE_MQTT
+    mtp->mqtt_connection_instance = INVALID;
+#endif
     mtp->instance = instance;
 
     // Exit if unable to determine whether this agent MTP was enabled or not
@@ -1263,7 +1238,7 @@ int ProcessAgentMtpAdded(int instance)
     {
         goto exit;
     }
-    
+
     // Exit if unable to get the name of the agent's STOMP queue
     USP_SNPRINTF(path, sizeof(path), "%s.%d.STOMP.Destination", device_agent_mtp_root, instance);
     err = DM_ACCESS_GetString(path, &mtp->stomp_agent_queue);
@@ -1271,6 +1246,32 @@ int ProcessAgentMtpAdded(int instance)
     {
         goto exit;
     }
+
+#ifdef ENABLE_MQTT
+    // Exit if there was an error in the reference to the entry in the MQTT client table
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MQTT.Reference", device_agent_mtp_root, instance);
+    err = DEVICE_MTP_GetMqttReference(path, &mtp->mqtt_connection_instance);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to get the name of the agent's MQTT topic
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MQTT.ResponseTopicConfigured", device_agent_mtp_root, instance);
+    err = DM_ACCESS_GetString(path, &mtp->mqtt_agent_topic);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if there was an error in the pusblish qos to the entry in the MQTT client table
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MQTT.PublishQoS", device_agent_mtp_root, instance);
+    err = DM_ACCESS_GetUnsigned(path, (unsigned int*)&mtp->mqtt_publish_qos);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+#endif
 
 #ifdef ENABLE_COAP
     // Exit if unable to get the listening port to use for CoAP
@@ -1322,6 +1323,14 @@ exit:
     {
         DEVICE_STOMP_ScheduleReconnect(mtp->stomp_connection_instance);
     }
+
+#ifdef ENABLE_MQTT
+    // Schedule a MQTT reconnect, if this MTP affects an existing MQTT client
+    if ((mtp->enable) && (mtp->protocol==kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance != INVALID))
+    {
+        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
+    }
+#endif
 
     return err;
 }
@@ -1381,7 +1390,10 @@ void DestroyAgentMtp(agent_mtp_t *mtp)
     USP_SAFE_FREE(mtp->coap.resource);
     mtp->coap.port = 0;
 #endif
-    
+#ifdef ENABLE_MQTT
+    mtp->mqtt_connection_instance = INVALID;
+    USP_SAFE_FREE(mtp->mqtt_agent_topic);
+#endif
 }
 
 /*********************************************************************//**
@@ -1414,4 +1426,300 @@ agent_mtp_t *FindAgentMtpByInstance(int instance)
     // If the code gets here, then no matching MTP was found
     return NULL;
 }
+#ifdef ENABLE_MQTT
+/******************************************************************//**
+**
+** DEVICE_MTP_GetAgentMqttResponseTopic
+**
+** Gets the name of the MQTT queue to use for this agent on a particular MQTT client connection
+**
+** \param   instance - instance number of MQTT Clients Connection in the Device.MQTT.Client.{i} table
+**
+** \return  pointer to queue name, or NULL if unable to resolve the MQTT connection
+**
+**************************************************************************/
+char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance)
+{
+    int i;
+    agent_mtp_t *mtp;
+
+    // Iterate over all agent MTPs, finding the first one that matches the specified MQTT client
+    for (i=0; i<MAX_AGENT_MTPS; i++)
+    {
+        mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->enable == true) &&
+            (mtp->mqtt_connection_instance == instance) && (mtp->protocol == kMtpProtocol_MQTT) &&
+            (mtp->mqtt_agent_topic[0] != '\0'))
+        {
+            return mtp->mqtt_agent_topic;
+        }
+    }
+
+    // If the code gets here, then no match has been found
+    return NULL;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_MTP_ValidateMqttReference
+**
+** Validates Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Reference
+** and       Device.LocalAgent.MTP.{i}.MQTT.Reference
+** by checking that it refers to a valid reference in the Device.MQTT.Client table
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value)
+{
+    int err;
+    int mqtt_connection_instance;
+
+    // Exit if the MQTT Reference refers to nothing. This can occur if a MQTT client being referred to is deleted.
+    if (*value == '\0')
+    {
+        return USP_ERR_OK;
+    }
+
+    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", &mqtt_connection_instance);
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_MTP_GetMqttReference
+**
+** Gets the instance number in the MQTT client table by dereferencing the specified path
+** NOTE: If the path is invalid, or the instance does not exist, then INVALID is
+**       returned for the instance number, along with an error
+**
+** \param   path - path of parameter which contains the reference
+** \param   mqtt_connection_instance - pointer to variable in which to return the instance number in the MQTT client table
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DEVICE_MTP_GetMqttReference(char *path, int *mqtt_connection_instance)
+{
+    int err;
+    char value[MAX_DM_PATH];
+
+    // Set default return value
+    *mqtt_connection_instance = INVALID;
+
+    // Exit if unable to get the reference to the entry in the MQTT client table
+    // NOTE: This will return the default of an empty string if not present in the DB
+    err = DATA_MODEL_GetParameterValue(path, value, sizeof(value), 0);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if the reference has not been setup yet
+    if (*value == '\0')
+    {
+        *mqtt_connection_instance = INVALID;
+        return USP_ERR_OK;
+    }
+
+    // Exit if unable to determine MQTT client table reference
+    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", mqtt_connection_instance);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_MTP_NotifyMqttConnDeleted
+**
+** Called when a MQTT client is deleted
+** This code unpicks all references to the MQTT client existing in the LocalAgent MTP table
+**
+** \param   mqtt_instance - instance in Device.MQTT.Client which has been deleted
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance)
+{
+    int i;
+    agent_mtp_t *mtp;
+    char path[MAX_DM_PATH];
+
+    // Iterate over all agent MTPs, clearing out all references to the deleted MQTT client
+    for (i=0; i<MAX_AGENT_MTPS; i++)
+    {
+        mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
+        {
+            USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.MTP.%d.MQTT.Reference", mtp->instance);
+            DATA_MODEL_SetParameterValue(path, "", 0);
+        }
+    }
+}
+
+/*********************************************************************//**
+**
+** NotifyChange_AgentMtpMqttReference
+**
+** Function called when Device.LocalAgent.MTP.{i}.MQTT.Reference is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_AgentMtpMqttReference(dm_req_t *req, char *value)
+{
+    int err;
+    agent_mtp_t *mtp;
+    char path[MAX_DM_PATH];
+    int last_connection_instance;
+    int new_connection_instance;
+
+    // Determine MTP to be updated
+    mtp = FindAgentMtpByInstance(inst1);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if unable to extract the new value
+    new_connection_instance = INVALID;
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MQTT.Reference", device_agent_mtp_root, inst1);
+    err = DEVICE_MTP_GetMqttReference(path, &new_connection_instance);
+    if (err != USP_ERR_OK)
+    {
+        mtp->mqtt_connection_instance = INVALID;
+        return err;
+    }
+
+    // Set the new value. This is done before scheduling a reconnect so that the reconnect uses these parameters
+    last_connection_instance = mtp->mqtt_connection_instance;
+    mtp->mqtt_connection_instance = new_connection_instance;
+
+    // Schedule a reconnect after the present response has been sent, if the value has changed
+    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
+        (last_connection_instance != new_connection_instance))
+    {
+        if (last_connection_instance != INVALID)
+        {
+            DEVICE_MQTT_ScheduleReconnect(last_connection_instance);
+        }
+
+        if (new_connection_instance != INVALID)
+        {
+            DEVICE_MQTT_ScheduleReconnect(new_connection_instance);
+        }
+    }
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** NotifyChange_AgentMtpMqtt_ResponseTopicConfigured
+**
+** Function called when Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_AgentMtpMqtt_ResponseTopicConfigured(dm_req_t *req, char *value)
+{
+    agent_mtp_t *mtp;
+    bool schedule_reconnect = false;
+
+    // Determine MTP to be updated
+    mtp = FindAgentMtpByInstance(inst1);
+    USP_ASSERT(mtp != NULL);
+
+    // Determine whether to reconnect
+    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
+        (strcmp(mtp->mqtt_agent_topic, value) != 0))
+    {
+        if (mtp->mqtt_connection_instance != INVALID)
+        {
+            schedule_reconnect = true;
+        }
+    }
+
+    // Set the new value
+    // This is done before scheduling a reconnect, so that the reconnect is done with the new parameters
+    USP_SAFE_FREE(mtp->mqtt_agent_topic);
+    mtp->mqtt_agent_topic = USP_STRDUP(value);
+
+    if (schedule_reconnect)
+    {
+        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
+    }
+
+    return USP_ERR_OK;
+}
+
+
+/*********************************************************************//**
+**
+** Validate_AgentMtpMQTTPublishQoS
+**
+** Validates Device.LocalAgent.MTP.{i}.MQTT.PublishQoS by checking if valid number
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value)
+{
+    return DM_ACCESS_ValidateRange_Unsigned(req, 0, 2);
+}
+
+/*********************************************************************//**
+**** NotifyChange_AgentMtpMQTTPublishQoS
+**
+** Function called when Device.LocalAgent.MTP.{i}.MQTT.PublishQoS is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value)
+{
+    agent_mtp_t *mtp;
+    int last_publish_qos;
+    int new_publish_qos;
+
+    // Determine MTP to be updated
+    mtp = FindAgentMtpByInstance(inst1);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if unable to extract the new value
+    new_publish_qos = val_uint;
+
+    // Set the new value. This is done before scheduling a reconnect so that the reconnect uses these parameters
+    last_publish_qos = mtp->mqtt_publish_qos;
+    mtp->mqtt_publish_qos = new_publish_qos;
+
+    // Schedule a reconnect after the present response has been sent, if the value has changed
+    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
+        (last_publish_qos != new_publish_qos))
+    {
+        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
+    }
+
+    return USP_ERR_OK;
+}
+#endif
 

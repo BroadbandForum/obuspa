@@ -1,33 +1,34 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2020,  BT PLC
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -84,6 +85,7 @@ typedef enum
     kDmExecMsg_StompHandshakeComplete, // Sent from the MTP thread to notify the controller trust role to use for all controllers connected to the specified stomp connection
     kDmExecMsg_MtpThreadExited,    // Sent to signal that the MTP thread has exited as requested by a scheduled exit
     kDmExecMsg_BdcTransferResult,  // Sent to signal that the BDC thread has sent (or failed to send) a report
+    kDmExecMsg_MqttHandshakeComplete, // Sent from the MTP thread to notify the controller trust role to use for all controllers connected to the specified mqtt client
 } dm_exec_msg_type_t;
 
 
@@ -110,13 +112,6 @@ typedef struct
     char *status;
 } oper_status_msg_t;
 
-// Activate firmware parameters in data model message
-typedef struct
-{
-    int instance;
-    int slot;
-    bool is_permitted;
-} activate_permission_msg_t;
 
 // Process USP Record parameters in data model message
 typedef struct
@@ -135,6 +130,15 @@ typedef struct
     ctrust_role_t role;
     char *allowed_controllers;
 } stomp_complete_msg_t;
+
+// Notify controller trust role for all controllers connected to the specified MQTT client
+typedef struct
+{
+    int mqtt_instance;
+    ctrust_role_t role;
+    char *allowed_controllers;
+} mqtt_complete_msg_t;
+
 
 // Object added parameters in data model message
 typedef struct
@@ -177,16 +181,16 @@ typedef struct
         oper_complete_msg_t oper_complete;
         event_complete_msg_t event_complete;
         oper_status_msg_t oper_status;
-        activate_permission_msg_t activate_permission;
         obj_added_msg_t obj_added;
         obj_deleted_msg_t obj_deleted;
         process_usp_record_msg_t usp_record;
         stomp_complete_msg_t stomp_complete;
+        mqtt_complete_msg_t mqtt_complete;
         mgmt_ip_addr_msg_t mgmt_ip_addr;
         mtp_thread_exited_msg_t mtp_thread_exited;
         bdc_transfer_result_msg_t bdc_transfer_result;
     } params;
-    
+
 } dm_exec_msg_t;
 
 //------------------------------------------------------------------------------------
@@ -283,7 +287,7 @@ int USP_SIGNAL_OperationComplete(int instance, int err_code, char *err_msg, kv_v
     int bytes_sent;
 
     // Exit if this function has been called with a mismatch between err_code and err_msg
-    if ( ((err_code == USP_ERR_OK) && (err_msg != NULL)) || 
+    if ( ((err_code == USP_ERR_OK) && (err_msg != NULL)) ||
          ((err_code != USP_ERR_OK) && (err_msg == NULL)) )
     {
         USP_LOG_Error("%s: Mismatch in calling arguments err_code=%d, but err_msg='%s'", __FUNCTION__, err_code, err_msg);
@@ -570,6 +574,8 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role
     pur->mtp_reply_to.coap_resource = USP_STRDUP(mrt->coap_resource);
     pur->mtp_reply_to.coap_encryption = mrt->coap_encryption;
     pur->mtp_reply_to.coap_reset_session_hint = mrt->coap_reset_session_hint;
+    pur->mtp_reply_to.mqtt_topic = USP_STRDUP(mrt->mqtt_topic);
+    pur->mtp_reply_to.mqtt_instance = mrt->mqtt_instance;
 
     // Send the message
     bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
@@ -631,6 +637,55 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role, 
 
 /*********************************************************************//**
 **
+** DM_EXEC_PostMqttHandshakeComplete
+**
+** Posts the role associated with a Stomp connection, after the STOMP initial TLS handshake has completed
+** This notifies the DataModel of the role to use for each controller connected to a STOMP connection
+** This message will unblock processing of Boot! event and subscriptions, which are held up until the controller
+** trust role associated with each controller is known (otherwise they would use the wrong role when getting data)
+** Note: Restarting of async operations are also held up, because we want them to occur after the Boot! event
+**
+** \param   stomp_instance - instance number of STOMP connection in Device.STOMP.Connection.{i}
+** \param   role - Role to use for controllers connected to the specified STOMP connection
+** \param   allowed_controllers - URN pattern describing the endpoint_id of allowed controllers
+**
+** \return  None
+**
+**************************************************************************/
+void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, ctrust_role_t role, char *allowed_controllers)
+{
+    dm_exec_msg_t  msg;
+    mqtt_complete_msg_t *mcm;
+    int bytes_sent;
+
+    // Exit if message queue is not setup yet
+    if (mq_tx_socket == -1)
+    {
+        USP_LOG_Error("%s is being called before data model has been initialised", __FUNCTION__);
+        return;
+    }
+
+    // Form message
+    memset(&msg, 0, sizeof(msg));
+    msg.type = kDmExecMsg_MqttHandshakeComplete;
+    mcm = &msg.params.mqtt_complete;
+    mcm->mqtt_instance = mqtt_instance;
+    mcm->role = role;
+    mcm->allowed_controllers = (allowed_controllers != NULL) ? USP_STRDUP(allowed_controllers) : NULL;
+
+    // Send the message
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    if (bytes_sent != sizeof(msg))
+    {
+        char buf[USP_ERR_MAXLEN];
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        return;
+    }
+}
+
+
+/*********************************************************************//**
+**
 ** DM_EXEC_PostMtpThreadExited
 **
 ** Signals that the MTP thread has exited, this will be because an exit was scheduled
@@ -659,7 +714,7 @@ void DM_EXEC_PostMtpThreadExited(unsigned flags)
     msg.type = kDmExecMsg_MtpThreadExited;
     tem = &msg.params.mtp_thread_exited;
     tem->flags = flags;
-    
+
     // Send the message
     bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
     if (bytes_sent != sizeof(msg))
@@ -734,7 +789,7 @@ int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transf
 void DM_EXEC_EnableNotifications(void)
 {
     static bool is_notifications_enabled = false;
-    
+
     // Exit if the notifications are already enabled
     if (is_notifications_enabled)
     {
@@ -783,6 +838,13 @@ void *DM_EXEC_Main(void *args)
         USP_LOG_Error("%s: CLI_SERVER_Init() failed. Aborting Data Model thread", __FUNCTION__);
         return NULL;
     }
+#ifdef ENABLE_MQTT
+    // Enable notifications now, if we don't have to wait for a MQTT handshake message (and wouldn't get one anyway)
+    if (DEVICE_MQTT_CountEnabledConnections() == 0)
+    {
+        DM_EXEC_EnableNotifications();
+    }
+#endif
 
     // Enable notifications now, if we don't have to wait for a STOMP handshake message (and wouldn't get one anyway)
     if (DEVICE_STOMP_CountEnabledConnections() == 0)
@@ -851,7 +913,7 @@ void *DM_EXEC_Main(void *args)
 void UpdateSockSet(socket_set_t *set)
 {
     int delay_ms;
-    
+
     SOCKET_SET_Clear(set);
 
     // Add the CLI server socket to the socket set
@@ -880,7 +942,7 @@ void ProcessSocketActivity(socket_set_t *set)
 {
     // Process any pending message queue activity first - this allows internal state to be updated before controllers query it
     ProcessMessageQueueSocketActivity(set);
- 
+
     // Process the socket, if there is any activity from a CLI client
     CLI_SERVER_ProcessSocketActivity(set);
 }
@@ -911,6 +973,9 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
     mtp_thread_exited_msg_t *tem;
     bdc_transfer_result_msg_t *btr;
     mtp_reply_to_t *mrt;
+#ifdef ENABLE_MQTT
+    mqtt_complete_msg_t *mcm;
+#endif
 
     // Exit if there is no activity on the message queue socket
     if (SOCKET_SET_IsReadyToRead(mq_rx_socket, set) == 0)
@@ -941,18 +1006,27 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             USP_SAFE_FREE(mrt->stomp_err_id);
             USP_SAFE_FREE(mrt->coap_host);
             USP_SAFE_FREE(mrt->coap_resource);
+            USP_SAFE_FREE(mrt->mqtt_topic);
             break;
 
         case kDmExecMsg_StompHandshakeComplete:
             scm = &msg.params.stomp_complete;
             DEVICE_CONTROLLER_SetRolesFromStomp(scm->stomp_instance, scm->role, scm->allowed_controllers);
             DM_EXEC_EnableNotifications();
-    
+
             // Free all arguments passed in this message
             USP_SAFE_FREE(scm->allowed_controllers);
             break;
-            
+#ifdef ENABLE_MQTT
+        case kDmExecMsg_MqttHandshakeComplete:
+            mcm = &msg.params.mqtt_complete;
+            DEVICE_CONTROLLER_SetRolesFromMqtt(mcm->mqtt_instance, mcm->role, mcm->allowed_controllers);
+            DM_EXEC_EnableNotifications();
 
+            // Free all arguments passed in this message
+            USP_SAFE_FREE(mcm->allowed_controllers);
+            break;
+#endif
         case kDmExecMsg_OperComplete:
             ocm = &msg.params.oper_complete;
             DEVICE_REQUEST_OperationComplete(ocm->instance, ocm->err_code, ocm->err_msg, ocm->output_args);
@@ -963,7 +1037,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
                 KV_VECTOR_Destroy(ocm->output_args);
                 USP_SAFE_FREE(ocm->output_args);
             }
-            
+
             USP_SAFE_FREE(ocm->err_msg);
             break;
 
@@ -977,7 +1051,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
                 KV_VECTOR_Destroy(ecm->output_args);
                 USP_SAFE_FREE(ecm->output_args);
             }
-            
+
             USP_SAFE_FREE(ecm->event_name);
             break;
 
@@ -1029,7 +1103,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         case kDmExecMsg_BdcTransferResult:
             btr = &msg.params.bdc_transfer_result;
             DEVICE_BULKDATA_NotifyTransferResult(btr->profile_id, btr->transfer_result);
-            break;    
+            break;
 
         default:
             TERMINATE_BAD_CASE(msg.type);

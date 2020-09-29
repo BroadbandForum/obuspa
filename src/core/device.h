@@ -1,33 +1,34 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2020, BT PLC
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -50,6 +51,7 @@
 #include "mtp_exec.h"
 #include "subs_vector.h"
 #include "usp-msg.pb-c.h"
+#include "mqtt.h"
 
 //------------------------------------------------------------------------------
 // Enumeration of what to do when USP Agent exits gracefully (ie after all USP responses have been sent)
@@ -94,14 +96,19 @@ typedef struct
     int stomp_instance;
     char *stomp_err_id;         // if the USP record or USP message are formed incorrectly, this is used to identify the STOMP frame that was in error to the controller
 
+    // Following member variables only set if reply_to was specified and USP message was received over MQTT
+    char *mqtt_topic;
+    int mqtt_instance;
+
+
     // Following member variables only set if reply_to was specified and USP message was received over CoAP
     char *coap_host;                    // Percent encoded hostname
     int coap_port;
     char *coap_resource;                // Percent encoded resource name
     bool coap_encryption;
-    bool coap_reset_session_hint;       // Set if an existing DTLS session with this host should be reset. 
-                                        // If we know that the USP request came in on a new DTLS session, then it is likely 
-                                        // that the USP response must be sent back on a new DTLS session also. Wihout this, 
+    bool coap_reset_session_hint;       // Set if an existing DTLS session with this host should be reset.
+                                        // If we know that the USP request came in on a new DTLS session, then it is likely
+                                        // that the USP response must be sent back on a new DTLS session also. Wihout this,
                                         // the CoAP retry mechanism will cause the DTLS session to restart, but it is a while
                                         // before the retry is triggered, so this hint speeds up communications
 } mtp_reply_to_t;
@@ -112,8 +119,10 @@ typedef int ssl_verify_callback_t(int preverify_ok, X509_STORE_CTX *x509_ctx);
 
 //------------------------------------------------------------------------------
 // Data model components API
+#ifndef REMOVE_DEVICE_TIME
 int DEVICE_TIME_Init(void);
 int DEVICE_TIME_Start(void);
+#endif
 int DEVICE_LOCAL_AGENT_Init(void);
 int DEVICE_LOCAL_AGENT_SetDefaults(void);
 int DEVICE_LOCAL_AGENT_Start(void);
@@ -162,6 +171,7 @@ void DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(char *obj_path, subs_notify_t not
 void DEVICE_SUBSCRIPTION_ProcessAllObjectLifeEventSubscriptions(void);
 void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, kv_vector_t *output_args);
 void DEVICE_SUBSCRIPTION_SendPeriodicEvent(int cont_instance);
+void DEVICE_SUBSCRIPTION_NotifyControllerDeleted(int cont_instance);
 void DEVICE_SUBSCRIPTION_Dump(void);
 int DEVICE_SECURITY_Init(void);
 int DEVICE_SECURITY_Start(void);
@@ -170,6 +180,7 @@ int DEVICE_SECURITY_GetControllerTrust(STACK_OF(X509) *cert_chain, ctrust_role_t
 bool DEVICE_SECURITY_IsClientCertAvailable(void);
 SSL_CTX *DEVICE_SECURITY_CreateSSLContext(const SSL_METHOD *method, int verify_mode, ssl_verify_callback_t verify_callback);
 int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify_callback_t verify_callback);
+int DEVICE_SECURITY_TrustCertVerifyCallbackWithCertChain(int preverify_ok, X509_STORE_CTX *x509_ctx, STACK_OF(X509) **p_cert_chain);
 void DEVICE_SECURITY_GetClientCertStatus(bool *available, bool *matches_endpoint);
 int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
 int DEVICE_SECURITY_BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
@@ -196,11 +207,29 @@ void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bdc_transfer_result_t 
 int DEVICE_SELF_TEST_Init(void);
 #endif
 
+int DEVICE_MQTT_Init(void);
+int DEVICE_MQTT_Start(void);
+void DEVICE_MQTT_Stop(void);
+int DEVICE_MQTT_StartAllClients(void);
+int EnableMQTTClient(mqtt_conn_params_t *mp, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS]);
+void DEVICE_MQTT_ScheduleReconnect(int instance);
+mtp_status_t DEVICE_MQTT_GetMtpStatus(int instance);
+char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance);
+int DEVICE_MQTT_CountEnabledConnections(void);
+int DEVICE_MTP_GetMqttReference(char *path, int *mqtt_connection_instance);
+void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance);
+void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance);
+int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value);
+int DEVICE_MQTT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *topic, char *response_topic, unsigned char *pbuf, int pbuf_len);
+void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role, char *allowed_controllers);
+char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance);
+
 //------------------------------------------------------------------------------
 // Tables used to convert to/from an enumeration to/from a string
 extern const enum_entry_t mtp_protocols[kMtpProtocol_Max];
 
 extern const enum_entry_t notify_types[kSubNotifyType_Max];
+extern const enum_entry_t mqtt_protocol[kMqttProtocol_Max];
 //------------------------------------------------------------------------------
 // Pointers to strings containing paths in the data model
 extern char *device_req_root;

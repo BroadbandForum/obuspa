@@ -2,32 +2,32 @@
  *
  * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -196,35 +196,35 @@ void PrintProtobufFieldRecursive(const ProtobufCFieldDescriptor *fields, void *p
         case PROTOBUF_C_TYPE_SFIXED32:   /**< signed int32 (4 bytes) */
             USP_PROTOCOL("%*s%s: %d", indent, "", fields->name, *((int32_t *)p_value));
             break;
-    
+
         case PROTOBUF_C_TYPE_INT64:      /**< int64 */
         case PROTOBUF_C_TYPE_SINT64:     /**< signed int64 */
         case PROTOBUF_C_TYPE_SFIXED64:   /**< signed int64 (8 bytes) */
             USP_PROTOCOL("%*s%s: %ld", indent, "", fields->name, *((long int *)p_value));
             break;
-    
+
         case PROTOBUF_C_TYPE_UINT32:     /**< unsigned int32 */
         case PROTOBUF_C_TYPE_FIXED32:    /**< unsigned int32 (4 bytes) */
             USP_PROTOCOL("%*s%s: %u", indent, "", fields->name, *((uint32_t *)p_value));
             break;
-    
+
         case PROTOBUF_C_TYPE_UINT64:     /**< unsigned int64 */
         case PROTOBUF_C_TYPE_FIXED64:    /**< unsigned int64 (8 bytes) */
             USP_PROTOCOL("%*s%s: %lu", indent, "", fields->name, *((long unsigned *)p_value));
             break;
-    
+
         case PROTOBUF_C_TYPE_FLOAT:      /**< float */
             USP_PROTOCOL("%*s%s: %f", indent, "", fields->name, *((float *)p_value));
             break;
-    
+
         case PROTOBUF_C_TYPE_DOUBLE:     /**< double */
             USP_PROTOCOL("%*s%s: %lf", indent, "", fields->name, *((double *)p_value));
             break;
-    
+
         case PROTOBUF_C_TYPE_BOOL:       /**< boolean */
             USP_PROTOCOL("%*s%s: %s", indent, "", fields->name, (*((protobuf_c_boolean *)p_value)) ? "true" : "false");
             break;
-    
+
         case PROTOBUF_C_TYPE_ENUM:       /**< enumerated type */
             index = *((int *)p_value);
             enum_desc = (ProtobufCEnumDescriptor *) fields->descriptor;
@@ -238,7 +238,7 @@ void PrintProtobufFieldRecursive(const ProtobufCFieldDescriptor *fields, void *p
                 }
             }
             break;
-    
+
         case PROTOBUF_C_TYPE_STRING:     /**< UTF-8 or ASCII string */
             str = *((char **)p_value);
             if (str != NULL)
@@ -246,11 +246,11 @@ void PrintProtobufFieldRecursive(const ProtobufCFieldDescriptor *fields, void *p
                 USP_PROTOCOL("%*s%s: \"%s\"", indent, "", fields->name, str);
             }
             break;
-    
+
         case PROTOBUF_C_TYPE_BYTES:      /**< arbitrary byte sequence */
             // We do not print anything out here. This will get triggered by USP Agent when printing out a USP Record, for the encapsulated USP Message.
             break;
- 
+
         case PROTOBUF_C_TYPE_MESSAGE:    /**< nested message */
             USP_PROTOCOL("%*s%s {", indent, "", fields->name);
             PrintProtobufCMessageRecursive( *((ProtobufCMessage **)p_value), indent+INDENTATION );

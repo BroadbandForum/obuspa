@@ -2,32 +2,32 @@
  *
  * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2017-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -122,14 +122,14 @@ int COAP_Init(void)
 {
     int err;
 
-    // Exit if unable to initialise CoAP servers    
+    // Exit if unable to initialise CoAP servers
     err = COAP_SERVER_Init();
     if (err != USP_ERR_OK)
     {
         return err;
     }
 
-    // Exit if unable to initialise CoAP clients    
+    // Exit if unable to initialise CoAP clients
     err = COAP_CLIENT_Init();
     if (err != USP_ERR_OK)
     {
@@ -366,13 +366,13 @@ int COAP_ReceivePdu(SSL *ssl, BIO *rbio, int socket_fd, unsigned char *buf, int 
 
                 return bytes_read;
                 break;
-            
+
             case SSL_ERROR_ZERO_RETURN:
                 // Exit if CoAP server has disconnected
                 // NOTE: I don't think this case will ever get executed because it would have been caught earlier at the (bytes_read==0) test
                 return -1;
                 break;
-            
+
             case SSL_ERROR_WANT_READ:
             case SSL_ERROR_WANT_WRITE:
             case SSL_ERROR_WANT_CONNECT:
@@ -381,7 +381,7 @@ int COAP_ReceivePdu(SSL *ssl, BIO *rbio, int socket_fd, unsigned char *buf, int 
                 usleep(SSL_RETRY_SLEEP);
                 retry_count++;
                 break;
-            
+
             default:
             case SSL_ERROR_SYSCALL:
             case SSL_ERROR_SSL:
@@ -739,7 +739,7 @@ unsigned COAP_ParsePdu(unsigned char *buf, int len, parsed_pdu_t *pp)
 
     // Copy the token
     READ_N_BYTES(pp->token, buf, pp->token_size, len);
-    
+
     // Parse all options
     memset(&walker, 0, sizeof(walker));
     walker.buf = buf;
@@ -823,7 +823,7 @@ void COAP_UnlockMutex(void)
 void COAP_SetErrMessage(char *fmt, ...)
 {
     va_list ap;
-    
+
     // Write the error message into the buffer, ensuring it is always zero terminated
     va_start(ap, fmt);
     vsnprintf(coap_err_message, sizeof(coap_err_message), fmt, ap);
@@ -1067,7 +1067,7 @@ int ParseCoapOption(int option, unsigned char *buf, int len, parsed_pdu_t *pp)
         case kPduOption_Block2:
             // Ignore the Block2 option. It is used in requests to suggest a block size for the response. But USP uses POST, without piggybacked responses.
             break;
-        
+
         case kPduOption_Size1:
             pp->options_present |= SIZE1_PRESENT;
             pp->total_size = ReadUnsignedOptionValue(buf, len);
@@ -1126,7 +1126,7 @@ void AppendUriPath(char *path, int path_len, char *segment, int seg_len)
     // Form the path segment as a NULL terminated string, with leading '/' separator in local buffer
     buf[0] = '/';
     TEXT_UTILS_StrncpyLen(&buf[1], sizeof(buf)-1, segment, seg_len);  // Minus 1 because of '/' separator at the beginning
-    
+
     // Append path segment in local buffer to URI path
     len = strlen(path);
     USP_STRNCPY(&path[len], buf, path_len-len);
@@ -1183,7 +1183,7 @@ void ParseBlock1Option(unsigned char *buf, int len, parsed_pdu_t *pp)
             break;
     }
 
-    // Convert the enumerated block size back into an integer    
+    // Convert the enumerated block size back into an integer
     pp->block_size = CalcBlockSize_Pdu2Int(pdu_block_size);
 }
 
@@ -1194,7 +1194,7 @@ void ParseBlock1Option(unsigned char *buf, int len, parsed_pdu_t *pp)
 ** Parses the URI Query option into an mtp_reply_to structure
 ** The format of the URI Query option is:
 **    reply_to=coap[s]:// hostname [':' port] '/' resource
-** 
+**
 ** NOTE: On exit, the strings in the mtp_reply_to structure will point to within the uri_query (input) buffer
 **
 ** \param   uri_query - pointer to buffer containing the URI query option to parse
@@ -1354,7 +1354,7 @@ pdu_block_size_t CalcBlockSize_Int2Pdu(int block_size)
         case 16:
             pdu_block_size = kPduBlockSize_16;
             break;
-            
+
         default:
             TERMINATE_BAD_CASE(block_size);
             break;

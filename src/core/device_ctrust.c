@@ -2,32 +2,32 @@
  *
  * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2017-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -173,7 +173,7 @@ int DEVICE_CTRUST_Init(void)
     char *name_unique_key[]  = { "Name" };
     char *order_unique_key[]  = { "Order" };
     char *cred_unique_key[]  = { "Credential" };
-    
+
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_ROLE_ROOT, alias_unique_key, NUM_ELEM(alias_unique_key));
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_ROLE_ROOT, name_unique_key, NUM_ELEM(name_unique_key));
 
@@ -279,7 +279,7 @@ int DEVICE_CTRUST_AddCertRole(int cert_instance, ctrust_role_t role)
     int new_num_entries;
     credential_t *cp;
     char path[MAX_DM_PATH];
-    
+
     // First increase the size of the vector
     new_num_entries = num_credentials + 1;
     credentials = USP_REALLOC(credentials, new_num_entries*sizeof(credential_t));
@@ -410,7 +410,7 @@ int DEVICE_CTRUST_AddPermissions(ctrust_role_t role, char *path_expr, unsigned s
     // Determine which role to add permissions to
     USP_ASSERT(role < kCTrustRole_Max);
     rp = &roles[role];
-    
+
     // Increase the size of the permissions vector for this role
     new_num_entries = rp->num_permissions + 1;
     rp->permissions = USP_REALLOC(rp->permissions, new_num_entries*sizeof(permission_t));
@@ -526,7 +526,7 @@ int Get_RoleName(dm_req_t *req, char *buf, int len)
         // This is the default value, if the vendor has not set a name for this role
         *buf = '\0';
     }
-    
+
     return USP_ERR_OK;
 }
 

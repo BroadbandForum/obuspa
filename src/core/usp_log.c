@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
+ * Copyright (C) 2019-2020, Broadband Forum
  * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -49,7 +49,9 @@
 #include <dlfcn.h>
 #include <openssl/err.h>
 
+#ifdef HAVE_EXECINFO_H
 #include <execinfo.h>
+#endif
 
 #include "common_defs.h"
 #include "cli.h"
@@ -61,7 +63,7 @@
 static FILE *log_fd;
 
 //------------------------------------------------------------------------------------
-// Global variables controlling logging 
+// Global variables controlling logging
 log_level_t usp_log_level = kLogLevel_Error;    // Verbosity level
 bool enable_protocol_trace = false;             // Whether protocol tracing should be sent out or not
 
@@ -109,7 +111,7 @@ int USP_LOG_SetFile(char *file)
         log_fd = NULL;
         return USP_ERR_OK;
     }
-    
+
     // Exit if stdout
     if (strcmp(file, "stdout")==0)
     {
@@ -139,11 +141,12 @@ int USP_LOG_SetFile(char *file)
 ** \return  None
 **
 **************************************************************************/
+#ifdef HAVE_EXECINFO_H
 void USP_LOG_Callstack(void)
 {
     #define MAX_CALLSTACK  30
     void *callstack[MAX_CALLSTACK];
-    int stack_size; 
+    int stack_size;
     int i;
     int symbols_found;
     const char *func_name;
@@ -170,6 +173,11 @@ void USP_LOG_Callstack(void)
         }
     }
 }
+#else
+void USP_LOG_Callstack(void)
+{
+}
+#endif
 
 /*********************************************************************//**
 **
@@ -194,12 +202,12 @@ void USP_LOG_HexBuffer(char *title, unsigned char *buf, int len)
     #define NUM_COLUMNS 16      // NOTE: If you change this then you also need to change the row printf, and possibly the switch statement
     residual = len % NUM_COLUMNS;
     num_rows = len / NUM_COLUMNS;
-    
+
     USP_LOG_Info("%s", title);
     for (i=0; i<num_rows; i++)
     {
         j = i*NUM_COLUMNS;
-        USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, ", 
+        USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, ",
                       buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5], buf[j+6], buf[j+7],
                       buf[j+8], buf[j+9], buf[j+10], buf[j+11], buf[j+12], buf[j+13], buf[j+14], buf[j+15] );
     }
@@ -217,78 +225,78 @@ void USP_LOG_HexBuffer(char *title, unsigned char *buf, int len)
             break;
 
         case 2:
-            USP_LOG_Info("0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x,",
                           buf[j], buf[j+1] );
             break;
 
         case 3:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2] );
             break;
 
         case 4:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3] );
             break;
 
         case 5:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4] );
             break;
 
         case 6:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5] );
             break;
 
         case 7:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5], buf[j+6] );
             break;
 
         case 8:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5], buf[j+6], buf[j+7] );
             break;
 
         case 9:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5], buf[j+6], buf[j+7],
                           buf[j+8] );
             break;
 
         case 10:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5], buf[j+6], buf[j+7],
                           buf[j+8], buf[j+9] );
             break;
 
         case 11:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5], buf[j+6], buf[j+7],
                           buf[j+8], buf[j+9], buf[j+10] );
             break;
 
         case 12:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5], buf[j+6], buf[j+7],
                           buf[j+8], buf[j+9], buf[j+10], buf[j+11] );
             break;
 
         case 13:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5], buf[j+6], buf[j+7],
                           buf[j+8], buf[j+9], buf[j+10], buf[j+11], buf[j+12] );
             break;
 
         case 14:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5], buf[j+6], buf[j+7],
                           buf[j+8], buf[j+9], buf[j+10], buf[j+11], buf[j+12], buf[j+13] );
             break;
 
         case 15:
-            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,", 
+            USP_LOG_Info("0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x, 0x%02x,",
                           buf[j], buf[j+1], buf[j+2], buf[j+3], buf[j+4], buf[j+5], buf[j+6], buf[j+7],
                           buf[j+8], buf[j+9], buf[j+10], buf[j+11], buf[j+12], buf[j+13], buf[j+14] );
             break;
@@ -319,7 +327,7 @@ void USP_LOG_ErrorSSL(const char *func_name, char *failure_string, int ret, int 
     str = USP_ERR_ToString(errno, errno_str, sizeof(errno_str));
     ssl_errno = ERR_get_error();
     ERR_error_string_n(ssl_errno, ssl_str, sizeof(ssl_str));
-    USP_LOG_Warning("%s: %s: SSL ret=%d, error=%d, errno=%d (%s), ssl err=%s", 
+    USP_LOG_Warning("%s: %s: SSL ret=%d, error=%d, errno=%d (%s), ssl err=%s",
               func_name, failure_string, ret, err, errno, str, ssl_str);
 }
 
@@ -381,7 +389,7 @@ void USP_LOG_Printf(log_type_t log_type, char *fmt, ...)
 {
     va_list ap;
     char buf[USP_ERR_MAXLEN];
-    
+
     // Print the message to the buffer
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -414,7 +422,7 @@ void USP_LOG_Puts(log_type_t log_type, char *str)
                 CLI_SERVER_SendResponse("\n");
             }
             else
-            {    
+            {
                 LogMessageToFile(log_fd, str);
             }
             break;
@@ -438,7 +446,7 @@ void USP_LOG_Puts(log_type_t log_type, char *str)
             }
             break;
     }
-}    
+}
 
 /*********************************************************************//**
 **
@@ -495,7 +503,7 @@ void CloseLog(void)
         return;
     }
 
-    // If the code gets here, then the log file is a file on the file system, so close it    
+    // If the code gets here, then the log file is a file on the file system, so close it
     fclose(log_fd);
     log_fd = NULL;
 }
@@ -506,7 +514,7 @@ void CloseLog(void)
 **
 ** Safe version of snprintf, that ensures buffer is always zero terminated, and does not overrun
 ** Always returns length of the string in the buffer (possibly truncated).
-** This is different from ordinary snprintf() which (if the string was truncated) 
+** This is different from ordinary snprintf() which (if the string was truncated)
 ** returns the number of characters which we'd like to print in the buffer
 **
 ** \param   buf - pointer to buffer in which to write the string
@@ -520,7 +528,7 @@ int USP_SNPRINTF(char *buf, size_t size, const char *fmt, ...)
 {
     va_list ap;
     int len;
-    
+
     // Print the message to the buffer
     va_start(ap, fmt);
     len = vsnprintf(buf, size, fmt, ap);

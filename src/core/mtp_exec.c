@@ -2,32 +2,33 @@
  *
  * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2020, BT PLC
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -50,6 +51,10 @@
 
 #ifdef ENABLE_COAP
 #include "usp_coap.h"
+#endif
+
+#ifdef ENABLE_MQTT
+#include "mqtt.h"
 #endif
 
 //------------------------------------------------------------------------------
@@ -83,6 +88,21 @@ static int mtp_coap_mq_sockets[2] = {-1, -1};
 // Flag set to true if the MTP thread has exited
 // This gets set after a scheduled exit due to a stop command, Reboot or FactoryReset operation
 bool is_coap_mtp_thread_exited = false;
+#endif
+
+#ifdef ENABLE_MQTT
+//------------------------------------------------------------------------------
+// Unix domain socket pair used to implement a wakeup message queue
+// One socket is always used for sending, and the other always used for receiving
+static int mtp_mqtt_mq_sockets[2] = {-1, -1};
+
+#define mq_mqtt_rx_socket  mtp_mqtt_mq_sockets[0]
+#define mq_mqtt_tx_socket  mtp_mqtt_mq_sockets[1]
+
+//------------------------------------------------------------------------------
+// Flag set to true if the MTP thread has exited
+// This gets set after a scheduled exit due to a stop command, Reboot or FactoryReset operation
+bool is_mqtt_mtp_thread_exited = false;
 #endif
 
 //------------------------------------------------------------------------------
@@ -124,6 +144,16 @@ int MTP_EXEC_Init(void)
     }
 #endif
 
+#ifdef ENABLE_MQTT
+    // Exit if unable to initialize the unix domain socket pair used to implement a wakeup message queue
+    err = socketpair(AF_UNIX, SOCK_DGRAM, 0, mtp_mqtt_mq_sockets);
+    if (err != 0)
+    {
+        USP_ERR_ERRNO("socketpair", errno);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+#endif
+
     return USP_ERR_OK;
 }
 
@@ -143,7 +173,7 @@ void MTP_EXEC_StompWakeup(void)
     #define WAKEUP_MESSAGE 'W'
     char msg = WAKEUP_MESSAGE;
     int bytes_sent;
-    
+
     // Send the message
     bytes_sent = send(mq_stomp_tx_socket, &msg, sizeof(msg), 0);
     if (bytes_sent != sizeof(msg))
@@ -182,6 +212,33 @@ void MTP_EXEC_CoapWakeup(void)
 }
 #endif
 
+#ifdef ENABLE_MQTT
+/*********************************************************************//**
+**
+** MTP_EXEC_MqttWakeup
+**
+** Posts a message on each MTP thread's queue, to cause it to wakeup from the select()
+**
+** \param   None
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+void MTP_EXEC_MqttWakeup(void)
+{
+    char msg = WAKEUP_MESSAGE;
+    int bytes_sent;
+
+    // Send the message
+    bytes_sent = send(mq_mqtt_tx_socket, &msg, sizeof(msg), 0);
+    if (bytes_sent != sizeof(msg))
+    {
+        char buf[USP_ERR_MAXLEN];
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        return;
+    }
+}
+#endif
 /*********************************************************************//**
 **
 ** MTP_EXEC_ScheduleExit
@@ -216,14 +273,16 @@ void MTP_EXEC_ScheduleExit(void)
 **************************************************************************/
 void MTP_EXEC_ActivateScheduledActions(void)
 {
+    bool any_mtp_exited = is_stomp_mtp_thread_exited;
 #ifdef ENABLE_COAP
-    #define either_mtp_exited    (is_stomp_mtp_thread_exited || is_coap_mtp_thread_exited)
-#else
-    #define either_mtp_exited    (is_stomp_mtp_thread_exited)
+    any_mtp_exited = any_mtp_exited || is_coap_mtp_thread_exited;
+#endif
+#ifdef ENABLE_MQTT
+    any_mtp_exited = any_mtp_exited || is_mqtt_mtp_thread_exited;
 #endif
 
-    // Exit if either MTP thread has already exited (because if they have, there is no need to schedule any further actions)
-    if (either_mtp_exited)
+    // Exit if any MTP thread has already exited (because if they have, there is no need to schedule any further actions)
+    if (any_mtp_exited)
     {
         return;
     }
@@ -236,10 +295,16 @@ void MTP_EXEC_ActivateScheduledActions(void)
 #ifdef ENABLE_COAP
         MTP_EXEC_CoapWakeup();
 #endif
+#ifdef ENABLE_MQTT
+        MTP_EXEC_MqttWakeup();
+#endif
     }
 
     // Activate all scheduled reconnects, if signalled
     STOMP_ActivateScheduledActions();
+#ifdef ENABLE_MQTT
+    MQTT_ActivateScheduledActions();
+#endif
 }
 
 /*********************************************************************//**
@@ -277,8 +342,6 @@ void *MTP_EXEC_StompMain(void *args)
                 return NULL;
                 break;
 
-                break;
-
             case 0:
                 // No controllers with any activity, but we still may need to process a timeout, so fall-through
             default:
@@ -308,6 +371,72 @@ void *MTP_EXEC_StompMain(void *args)
         }
     }
 }
+
+#ifdef ENABLE_MQTT
+/*********************************************************************//**
+**
+** MTP_EXEC_MqttMain
+**
+** Main loop of MTP thread for MQTT
+**
+** \param   args - arguments (currently unused)
+**
+** \return  None
+**
+**************************************************************************/
+void *MTP_EXEC_MqttMain(void *args)
+{
+    int num_sockets;
+    socket_set_t set;
+
+    while(FOREVER)
+    {
+        // Create the set of all sockets to receive/transmit on (with timeout)
+        SOCKET_SET_Clear(&set);
+        MQTT_UpdateAllSockSet(&set);
+        SOCKET_SET_AddSocketToReceiveFrom(mq_mqtt_rx_socket, MAX_SOCKET_TIMEOUT, &set);
+
+        // Wait for read/write activity on sockets or timeout
+        num_sockets = SOCKET_SET_Select(&set);
+
+        // Process socket activity
+        switch(num_sockets)
+        {
+            case -1:
+                // An unrecoverable error has occurred
+                USP_LOG_Error("%s: Unrecoverable socket select() error. Aborting MTP thread", __FUNCTION__);
+                return NULL;
+                break;
+            case 0:
+                // No controllers with any activity, but we still may need to process a timeout, so fall-through
+            default:
+                // Process the wakeup queue
+                ProcessMtpWakeupQueueSocketActivity(&set, mq_mqtt_rx_socket);
+
+                // Process activity on all MQTT message queues
+                MQTT_ProcessAllSocketActivity(&set);
+                break;
+        }
+
+        // Exit this thread, if an exit is scheduled and all responses have been sent
+        if (mtp_exit_scheduled == kScheduledAction_Activated)
+        {
+            if (MQTT_AreAllResponsesSent())
+            {
+                // Free all memory associated with MTP layer
+                MQTT_Destroy();
+
+                // Prevent the data model from making any other changes to the MTP thread
+                is_mqtt_mtp_thread_exited = true;
+
+                // Signal the data model thread that this thread has exited
+                DM_EXEC_PostMtpThreadExited(MQTT_EXITED);
+                return NULL;
+            }
+        }
+    }
+}
+#endif // ENABLE_MQTT
 
 #ifdef ENABLE_COAP
 /*********************************************************************//**

@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -51,10 +51,23 @@
 #include "path_resolver.h"
 #include "device.h"
 #include "text_utils.h"
+#include "group_get_vector.h"
+
+//------------------------------------------------------------------------------
+// Structure used to marshall entries in get group vector for a path expression
+typedef struct
+{
+    int separator_split;    // Used to split resolved parameter path into resolved object and resolved sub-path. It is a count of number of dot separators included in the 'object' portion of the path
+    int index;              // start index of parameters in get group vector for this path expression
+    int num_entries;        // number of entries in the get group vector for this path expression
+    int err_code;           // error code if path resolution failed for this path expression
+    char *err_msg;          // error message if path resolution failed for this path expression
+} get_expr_info_t;
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
-void GetSinglePath(Usp__Msg *resp, char *path_expression);
+void ExpandGetPathExpression(int get_expr_index, char *path_expr, get_expr_info_t *gi, group_get_vector_t *ggv);
+void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *gi, group_get_vector_t *ggv, Usp__Msg *resp);
 void AddResolvedPathResult(Usp__GetResp__RequestedPathResult *req_path_result, char *path, char *value, int separator_split);
 Usp__GetResp__ResolvedPathResult *FindResolvedPath(Usp__GetResp__RequestedPathResult *req_path_result, char *obj_path);
 Usp__Msg *CreateGetResp(char *msg_id);
@@ -63,8 +76,6 @@ Usp__GetResp__ResolvedPathResult *AddReqPathRes_ResolvedPathResult(Usp__GetResp_
 
 Usp__GetResp__ResolvedPathResult__ResultParamsEntry *
 AddResolvedPathRes_ParamsEntry(Usp__GetResp__ResolvedPathResult *resolved_path_res, char *param_name, char *value);
-void DestroyCurReqPathResult(Usp__Msg *resp, Usp__GetResp__RequestedPathResult *expected_req_path_result);
-void DestroyResolvedPathResult(Usp__GetResp__ResolvedPathResult *resolved_path_res_entry);
 
 /*********************************************************************//**
 **
@@ -81,10 +92,13 @@ void DestroyResolvedPathResult(Usp__GetResp__ResolvedPathResult *resolved_path_r
 **************************************************************************/
 void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt)
 {
-    int i;
-    char **param_paths;
-    int num_param_paths;
+    int i;              // Used to iterate over path expressions in the USP get request message
+    char **path_exprs;
+    int num_path_expr;
     Usp__Msg *resp = NULL;
+    int size;
+    group_get_vector_t ggv;
+    get_expr_info_t *get_expr_info;
 
     // Exit if message is invalid or failed to parse
     // This code checks the parsed message enums and pointers for expectations and validity
@@ -102,18 +116,42 @@ void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_reply_t
     resp = CreateGetResp(usp->header->msg_id);
 
     // Exit if there are no parameters to get
-    param_paths = usp->body->request->get->param_paths;
-    num_param_paths = usp->body->request->get->n_param_paths;
-    if ((param_paths == NULL) || (num_param_paths == 0))
+    path_exprs = usp->body->request->get->param_paths;
+    num_path_expr = usp->body->request->get->n_param_paths;
+    if ((path_exprs == NULL) || (num_path_expr == 0))
     {
         goto exit;
     }
 
-    // Iterate over all parameter paths in the get
-    for (i=0; i<num_param_paths; i++)
+    // Allocate vector to store marshalling info for each path expression
+    size = num_path_expr*sizeof(get_expr_info_t);
+    get_expr_info = USP_MALLOC(size);
+    memset(get_expr_info, 0, size);
+
+    // Iterate over all input get expressions, adding them to the get_expr_info and group get vectors
+    GROUP_GET_VECTOR_Init(&ggv);
+    for (i=0; i < num_path_expr; i++)
     {
-        GetSinglePath(resp, param_paths[i]);
+        ExpandGetPathExpression(i, path_exprs[i], &get_expr_info[i], &ggv);
     }
+
+    // Get all parameters
+    GROUP_GET_VECTOR_GetValues(&ggv);
+
+    // Iterate over all input get expressions, consulting the group get vector to form the USP Get response message
+    for (i=0; i < num_path_expr; i++)
+    {
+        FormPathExprResponse(i, path_exprs[i], &get_expr_info[i], &ggv, resp);
+    }
+
+    GROUP_GET_VECTOR_Destroy(&ggv);
+
+    // Clean up get_expr_info vector
+    for (i=0; i < num_path_expr; i++)
+    {
+        USP_SAFE_FREE(get_expr_info[i].err_msg);
+    }
+    USP_FREE(get_expr_info);
 
 exit:
     MSG_HANDLER_QueueMessage(controller_endpoint, resp, mrt);
@@ -122,72 +160,117 @@ exit:
 
 /*********************************************************************//**
 **
-** GetSinglePath
+** ExpandGetPathExpression
 **
-** Resolves the specified path expression into multiple parameters, and gets the value of each,
-** adding the results to the GetResponse object
+** Expands the specified path expression into the group get vector and get_expr_info vectors
 **
-** \param   resp - pointer to GetResponse object
-** \param   path_expression - pointer to a path expression string to resolve
+** \param   get_expr_index - index of the path expression in the USP Get request message
+** \param   path_expr - USP path expression specifying which parameters to get
+** \param   gi - pointer to info about specified path expression
+** \param   ggv - pointer to group get vector to add params found in this path expression to
 **
-** \return  None - This function handles all erors by putting error messages in the get response
+** \return  None
 **
 **************************************************************************/
-void GetSinglePath(Usp__Msg *resp, char *path_expression)
+void ExpandGetPathExpression(int get_expr_index, char *path_expr, get_expr_info_t *gi, group_get_vector_t *ggv)
 {
-    int i;
     int err;
     str_vector_t params;
-    Usp__GetResp__RequestedPathResult *req_path_result;
-    char value[MAX_DM_VALUE_LEN];
-    int separator_split;
+    int_vector_t group_ids;
     combined_role_t combined_role;
 
-    // Exit if the search path is not in the schema or the search path was invalid or an error occured in evaluating the search path (eg a parameter get failed)
+    // Exit if the search path is not in the schema or the search path was invalid or an error occurred in evaluating the search path (eg a parameter get failed)
     // The get response will contain an error message in this case
     STR_VECTOR_Init(&params);
+    INT_VECTOR_Init(&group_ids);
     MSG_HANDLER_GetMsgRole(&combined_role);
-    err = PATH_RESOLVER_ResolveDevicePath(path_expression, &params, kResolveOp_Get, &separator_split, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(path_expr, &params, &group_ids, kResolveOp_Get, &gi->separator_split, &combined_role, 0);
     if (err != USP_ERR_OK)
     {
-        req_path_result = AddGetResp_ReqPathRes(resp, path_expression, err, USP_ERR_GetMessage());
-        (void)req_path_result; // Keep Clang static analyser happy
-        goto exit;
+        gi->err_code = err;
+        gi->err_msg = USP_STRDUP(USP_ERR_GetMessage());
+        STR_VECTOR_Destroy(&params);
+        INT_VECTOR_Destroy(&group_ids);
+        return;
     }
 
-    // Add a requested path result to the Get Response message
-    req_path_result = AddGetResp_ReqPathRes(resp, path_expression, USP_ERR_OK, "");
+    // Save the range of indexes for this path expression
+    gi->index = ggv->num_entries;
+    gi->num_entries = params.num_entries;
 
-    // Exit if no matching parameters were found in the data model
-    if (params.num_entries==0)
+    // Exit if no params were found
+    if (params.num_entries == 0)
     {
-        // The get response should contain an empty results list in this case
-        // So do not set the error message
-        //USP_ERR_SetMessage("%s: Invalid instance number or no instances found of '%s'", __FUNCTION__, path_expression);
-        goto exit;
+        STR_VECTOR_Destroy(&params);
+        INT_VECTOR_Destroy(&group_ids);
+        return;
     }
 
-    // Iterate over all resolved params adding their value to the result_params
-    for (i=0; i < params.num_entries; i++)
+    // Move these params and group_ids to the group get vector
+    // NOTE: Ownership of the strings in the params vector transfers to the group get vector
+    GROUP_GET_VECTOR_AddParams(ggv, &params, &group_ids);
+
+    // Clean up
+    INT_VECTOR_Destroy(&group_ids);
+
+    // Since we have moved the contents of the params vector to the get group vector, we can just free the params vector (not its content)
+    USP_SAFE_FREE(params.vector);
+}
+
+/*********************************************************************//**
+**
+** FormPathExprResponse
+**
+** Forms the USP response for the specified path expression
+**
+** \param   get_expr_index - index order of the path expression in the USP get request
+** \param   path_expr - USP path expression specifying which parameters to get
+** \param   gi - pointer to info about specified path expression
+** \param   ggv - pointer to group get vector containing paths and values of params which were retrieved
+** \param   resp - pointer to GetResponse object
+**
+** \return  None
+**
+**************************************************************************/
+void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *gi, group_get_vector_t *ggv, Usp__Msg *resp)
+{
+    int i;
+    Usp__GetResp__RequestedPathResult *req_path_result;
+    group_get_entry_t *gge;
+
+    // Exit if the path resolution failed for this path expression, putting the error message in the get response
+    if (gi->err_code != USP_ERR_OK)
     {
-        // Exit if unable to get the value of a parameter
-        // The get response will contain only an error message in this case
-        err = DATA_MODEL_GetParameterValue(params.vector[i], value, sizeof(value), 0);
-        if (err != USP_ERR_OK)
+        (void)AddGetResp_ReqPathRes(resp, path_expr, gi->err_code, gi->err_msg);
+        return;
+    }
+
+    // Exit if this path expression failed to resolve to any parameters. In this case just add a requested path response
+    if (gi->num_entries == 0)
+    {
+        (void)AddGetResp_ReqPathRes(resp, path_expr, USP_ERR_OK, "");
+        return;
+    }
+
+    // If there was an error in getting any of the parameters associated with the path expression,
+    // then just add the first error, without any of the parameter values, for this path expression result
+    for (i=0; i < gi->num_entries; i++)
+    {
+        gge = &ggv->vector[gi->index + i];
+        if (gge->err_code != USP_ERR_OK)
         {
-            DestroyCurReqPathResult(resp, req_path_result);
-            req_path_result = AddGetResp_ReqPathRes(resp, path_expression, err, USP_ERR_GetMessage());
-            (void)req_path_result;  // Keep Clang static analyser happy
-            goto exit;
+            (void)AddGetResp_ReqPathRes(resp, path_expr, gge->err_code, gge->err_msg);
+            return;
         }
-
-        // Add a param map entry to the requested path result
-        AddResolvedPathResult(req_path_result, params.vector[i], value, separator_split);
     }
 
-
-exit:
-    STR_VECTOR_Destroy(&params);
+    // If the code gets here, then the value of all parameters were retrieved successfully, so add their values to the result_params
+    req_path_result = AddGetResp_ReqPathRes(resp, path_expr, USP_ERR_OK, "");
+    for (i=0; i < gi->num_entries; i++)
+    {
+        gge = &ggv->vector[gi->index + i];
+        AddResolvedPathResult(req_path_result, gge->path, gge->value, gi->separator_split);
+    }
 }
 
 /*********************************************************************//**
@@ -217,7 +300,7 @@ void AddResolvedPathResult(Usp__GetResp__RequestedPathResult *req_path_result, c
     // Split the parameter into the parent object path and the name of the parameter within the object
     param_name = TEXT_UTILS_SplitPathAtSeparator(path, obj_path, sizeof(obj_path), separator_split);
 
-    // Add a resolved path result, if we don't alredy have one for the specified parent object
+    // Add a resolved path result, if we don't already have one for the specified parent object
     resolved_path_res = FindResolvedPath(req_path_result, obj_path);
     if (resolved_path_res == NULL)
     {
@@ -313,7 +396,7 @@ Usp__Msg *CreateGetResp(char *msg_id)
     get_resp->req_path_results = NULL;
 
     return resp;
-}    
+}
 
 /*********************************************************************//**
 **
@@ -434,73 +517,7 @@ AddResolvedPathRes_ParamsEntry(Usp__GetResp__ResolvedPathResult *resolved_path_r
     return res_params_entry;
 }
 
-/*********************************************************************//**
-**
-** Frees all memory assocaited with the current (last) Requested Path Result
-** and removes it from response object
-**
-** \param   resp - pointer to GetResponse object
-** \param   expected_req_path_result - pointer to requested_path_result to delete (This is used purely for checking that the code is correct)
-**
-** \return  None
-**
-**************************************************************************/
-void DestroyCurReqPathResult(Usp__Msg *resp, Usp__GetResp__RequestedPathResult *expected_req_path_result)
-{
-    int i;
-    Usp__GetResp *get_resp;
-    Usp__GetResp__RequestedPathResult *req_path_result;
-    Usp__GetResp__ResolvedPathResult *resolved_path_res_entry;
 
-    // Remove the last requested path result from the list array
-    get_resp = resp->body->response->get_resp;
-    req_path_result = get_resp->req_path_results[ get_resp->n_req_path_results - 1];
-    USP_ASSERT(expected_req_path_result == req_path_result);
-    get_resp->req_path_results[ get_resp->n_req_path_results - 1] = NULL;
-    get_resp->n_req_path_results--;
-
-    // Iterate over all resolved path results for this requested path result
-    for (i=0; i < req_path_result->n_resolved_path_results; i++)
-    {
-        resolved_path_res_entry = req_path_result->resolved_path_results[i];
-        DestroyResolvedPathResult(resolved_path_res_entry);
-    }
-
-    // Destroy the requested path result itself
-    USP_FREE(req_path_result->resolved_path_results);
-    USP_FREE(req_path_result->err_msg);
-    USP_FREE(req_path_result->requested_path);
-    USP_FREE(req_path_result);
-}
-
-/*********************************************************************//**
-**
-** Destroys the specified Resolved Path Result
-**
-** \param   resolved_path_res_entry - Resolved path result to destroy
-**
-** \return  None
-**
-**************************************************************************/
-void DestroyResolvedPathResult(Usp__GetResp__ResolvedPathResult *resolved_path_res_entry)
-{
-    int i;
-    Usp__GetResp__ResolvedPathResult__ResultParamsEntry *res_params_entry;
-
-    // Iterate over all result param map entries, destroying them
-    for (i=0; i<resolved_path_res_entry->n_result_params; i++)
-    {
-        res_params_entry = resolved_path_res_entry->result_params[i];
-        USP_FREE(res_params_entry->key);
-        USP_FREE(res_params_entry->value);
-        USP_FREE(res_params_entry);
-    }
-
-    // Destroy the Resolved Path Result Entry
-    USP_FREE(resolved_path_res_entry->resolved_path);
-    USP_FREE(resolved_path_res_entry->result_params);
-    USP_FREE(resolved_path_res_entry);
-}
 
 
 

@@ -2,32 +2,32 @@
  *
  * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -115,15 +115,6 @@ int DM_TRANS_Start(dm_trans_vector_t *trans)
         }
     }
 
-#ifdef ENABLE_HIDL
-    // Exit if unable to start a HIDL client transaction 
-    err = HIDL_StartTransaction();
-    if (err != USP_ERR_OK)
-    {    
-        DM_TRANS_Abort();
-        return err;
-    }
-#endif
 
     return USP_ERR_OK;
 }
@@ -237,15 +228,6 @@ int DM_TRANS_Commit(void)
 
     USP_ASSERT(cur_transaction != NULL);
 
-#ifdef ENABLE_HIDL
-    // Exit if unable to commit a HIDL client transaction 
-    err = HIDL_CommitTransaction();
-    if (err != USP_ERR_OK)
-    {    
-        DM_TRANS_Abort();
-        return err;
-    }
-#endif
 
     // Exit if unable to commit the vendor's database successfully, aborting the transaction
     commit_trans_cb = vendor_hook_callbacks.commit_trans_cb;
@@ -258,7 +240,7 @@ int DM_TRANS_Commit(void)
             return err;
         }
     }
-    
+
     // Exit if unable to commit the database successfully, aborting the transaction
     err = DATABASE_CommitTransaction();
     if (err != USP_ERR_OK)
@@ -342,7 +324,7 @@ int DM_TRANS_Commit(void)
                 TERMINATE_BAD_CASE(dt->op);
                 break;
         }
-        
+
         // Continue calling all notifies, even if one returned an error
         if (err != USP_ERR_OK)
         {
@@ -384,7 +366,7 @@ int DM_TRANS_Abort(void)
     dm_vendor_abort_trans_cb_t   abort_trans_cb;
 
     // Exit if no tranasaction to abort
-    // This situation could occur if DM_TRANS_Commit() fails and internally calls DM_TRANS_Abort(), 
+    // This situation could occur if DM_TRANS_Commit() fails and internally calls DM_TRANS_Abort(),
     // then the caller of DM_TRANS_Commit() also calls DM_TRANS_Abort()
     if (cur_transaction == NULL)
     {
@@ -403,12 +385,12 @@ int DM_TRANS_Abort(void)
         {
             node = dt->node;
             USP_ASSERT(node != NULL);
-            
+
             // Form object instances array
             memset(&inst, 0, sizeof(inst));
             memcpy(&inst, &dt->inst, sizeof(dt->inst));
             memcpy(&inst.nodes, &node->instance_nodes, node->order*sizeof(dm_node_t *));
-    
+
             if (dt->op == kDMOp_Add)
             {
                 // Remove an aborted added object
@@ -427,15 +409,6 @@ int DM_TRANS_Abort(void)
 
     cur_transaction = NULL;
 
-#ifdef ENABLE_HIDL
-    // Exit if unable to abort a HIDL client transaction 
-    err = HIDL_AbortTransaction();
-    if (err != USP_ERR_OK)
-    {    
-        DATABASE_AbortTransaction();
-        return err;
-    }
-#endif
 
     // Exit if unable to abort the vendor's database transaction (if registered)
     abort_trans_cb = vendor_hook_callbacks.abort_trans_cb;
@@ -448,14 +421,14 @@ int DM_TRANS_Abort(void)
             return err;
         }
     }
-    
+
     // Exit if unable to abort our database's transaction
     err = DATABASE_AbortTransaction();
     if (err != USP_ERR_OK)
     {
         return err;
     }
-    
+
     return USP_ERR_OK;
 }
 
@@ -502,7 +475,7 @@ void ClearTransaction(dm_trans_vector_t *trans)
     {
         goto exit;
     }
-    
+
     // Free all dynamically allocated strings referenced by the vector
     for (i=0; i < trans->num_entries; i++)
     {

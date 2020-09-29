@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -136,7 +136,7 @@ void MSG_HANDLER_HandleNotifyResp(Usp__Msg *usp, char *controller_endpoint, mtp_
     USP_ASSERT(usp->header != NULL);
     if ((usp->body == NULL) || (usp->body->msg_body_case != USP__BODY__MSG_BODY_RESPONSE) ||
         (usp->body->response == NULL) || (usp->body->response->resp_type_case != USP__RESPONSE__RESP_TYPE_NOTIFY_RESP) ||
-        (usp->body->response->notify_resp == NULL) || 
+        (usp->body->response->notify_resp == NULL) ||
         (usp->header->msg_id == NULL) || (usp->body->response->notify_resp->subscription_id == NULL))
     {
         USP_ERR_SetMessage("%s: Incoming message is invalid or inconsistent", __FUNCTION__);
@@ -184,7 +184,7 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_ObjectCreation(char *obj_path, char *subsc
     req->body->request->notify->obj_creation = obj_creation;
 
     // Fill in the name of the created object
-    obj_creation->obj_path = USP_STRDUP(obj_path);
+    obj_creation->obj_path = TEXT_UTILS_StrDupWithTrailingDot(obj_path);
 
     // Exit if unable to get the unique keys
     err = DATA_MODEL_GetUniqueKeyParams(obj_path, &unique_key_params, INTERNAL_ROLE);
@@ -235,10 +235,10 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_ObjectDeletion(char *obj_path, char *subsc
     usp__notify__object_deletion__init(obj_deletion);
     req->body->request->notify->obj_deletion = obj_deletion;
 
-    // NOTE: The ObjectDeletion notify message differs from the ObjectCreation notify message, 
+    // NOTE: The ObjectDeletion notify message differs from the ObjectCreation notify message,
     // in that it does not contain the unique key values identifying the object
 
-    // Fill in the named of the deleted object
+    // Fill in the name of the deleted object
     obj_deletion->obj_path = TEXT_UTILS_StrDupWithTrailingDot(obj_path);
 
     return req;
@@ -276,7 +276,7 @@ void AddObjCreation_UniqueKeys(Usp__Notify__ObjectCreation *obj_creation, kv_vec
         entry = USP_MALLOC(sizeof(Usp__Notify__ObjectCreation__UniqueKeysEntry));
         usp__notify__object_creation__unique_keys_entry__init(entry);
         obj_creation->unique_keys[i] = entry;
-        
+
         // Move the key and value from the key-value vector to the map entry
         kv = &kvv->vector[i];
         entry->key = kv->key;
@@ -305,7 +305,7 @@ void AddObjCreation_UniqueKeys(Usp__Notify__ObjectCreation *obj_creation, kv_vec
 ** \return  Pointer to message created
 **
 **************************************************************************/
-Usp__Msg *MSG_HANDLER_CreateNotifyReq_OperCompleteSuccess(kv_vector_t *output_args, char *command, char *command_key,  
+Usp__Msg *MSG_HANDLER_CreateNotifyReq_OperCompleteSuccess(kv_vector_t *output_args, char *command, char *command_key,
                                                           char *subscription_id, bool send_resp)
 {
     Usp__Msg *req;
@@ -462,7 +462,7 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_Event(char *event_name, kv_vector_t *param
         // Attach the param map entry into the param map array
         event->params[i] = entry;
     }
-    
+
     return req;
 }
 
@@ -567,7 +567,7 @@ Usp__Msg *CreateNotify(char *msg_id, char *subscription_id, bool send_resp, Usp_
     notify->notification_case = notification_case;
 
     return req;
-}    
+}
 
 /*********************************************************************//**
 **

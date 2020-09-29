@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -143,7 +143,7 @@ int DM_ACCESS_GetInteger(char *path, int *value)
     err = TEXT_UTILS_StringToInteger(buf, value);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Illegal value (%s) in parameter %s", __FUNCTION__, buf, path); 
+        USP_ERR_SetMessage("%s: Illegal value (%s) in parameter %s", __FUNCTION__, buf, path);
         return err;
     }
 
@@ -177,7 +177,7 @@ int DM_ACCESS_GetUnsigned(char *path, unsigned *value)
     err = TEXT_UTILS_StringToUnsigned(buf, value);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Illegal value (%s) in parameter %s", __FUNCTION__, buf, path); 
+        USP_ERR_SetMessage("%s: Illegal value (%s) in parameter %s", __FUNCTION__, buf, path);
         return err;
     }
 
@@ -213,7 +213,7 @@ int DM_ACCESS_GetBool(char *path, bool *value)
     err = TEXT_UTILS_StringToBool(buf, value);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Illegal value (%s) in parameter %s", __FUNCTION__, buf, path); 
+        USP_ERR_SetMessage("%s: Illegal value (%s) in parameter %s", __FUNCTION__, buf, path);
         return err;
     }
 
@@ -252,11 +252,11 @@ int DM_ACCESS_GetEnum(char *path, void *value, const enum_entry_t *enums, int nu
     e = TEXT_UTILS_StringToEnum(buf, enums, num_enums);
     if (e == INVALID)
     {
-        USP_ERR_SetMessage("%s: Unknown or unsupported enumeration (%s) in parameter %s", __FUNCTION__, buf, path); 
+        USP_ERR_SetMessage("%s: Unknown or unsupported enumeration (%s) in parameter %s", __FUNCTION__, buf, path);
         return USP_ERR_INVALID_VALUE;
     }
     *((int *)value) = e;
-    
+
     return USP_ERR_OK;
 }
 
@@ -289,7 +289,7 @@ int DM_ACCESS_GetDateTime(char *path, time_t *value)
     err = TEXT_UTILS_StringToDateTime(buf, value);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Illegal value (%s) in parameter %s", __FUNCTION__, buf, path); 
+        USP_ERR_SetMessage("%s: Illegal value (%s) in parameter %s", __FUNCTION__, buf, path);
         return err;
     }
 
@@ -359,7 +359,7 @@ int DM_ACCESS_GetIpAddr(char *path, nu_ipaddr_t *ip_addr)
     {
         return err;
     }
-    
+
     return USP_ERR_OK;
 }
 
@@ -408,14 +408,14 @@ int DM_ACCESS_ValidateBool(dm_req_t *req, char *value)
 {
     int err;
     bool b;
-    
+
     err = TEXT_UTILS_StringToBool(value, &b);
     if (err != USP_ERR_OK)
     {
         USP_ERR_SetMessage("%s: Expected a boolean for param=%s (got=%s)", __FUNCTION__, req->path, value);
         return USP_ERR_INVALID_TYPE;
     }
-    
+
     return err;
 }
 
@@ -478,7 +478,7 @@ int DM_ACCESS_ValidateRange_Unsigned(dm_req_t *req, unsigned min_value, unsigned
         USP_ERR_SetMessage("%s: %s must be in the range [%u:%u], got %u", __FUNCTION__, name, min_value, max_value, val_uint);
         return USP_ERR_INVALID_VALUE;
     }
-    
+
     return USP_ERR_OK;
 }
 
@@ -516,7 +516,7 @@ int DM_ACCESS_ValidateRange_Signed(dm_req_t *req, int min_value, int max_value)
         USP_ERR_SetMessage("%s: %s must be in the range [%d:%d], got %d", __FUNCTION__, name, min_value, max_value, val_int);
         return USP_ERR_INVALID_VALUE;
     }
-    
+
     return USP_ERR_OK;
 }
 
@@ -525,7 +525,7 @@ int DM_ACCESS_ValidateRange_Signed(dm_req_t *req, int min_value, int max_value)
 ** DM_ACCESS_ValidateReference
 **
 ** Validates that specified reference is to an instance which exists in the specified table
-** NOTE: This code assumes that the specified table is not nested multi instance
+** NOTE: The specified table must be a multi-instance or nested multi-instance table that exists in the data model
 **
 ** \param   reference - path to the instance in the specified table
 ** \param   table - data model schema path of table eg Device.STOMP.Connection.{i}
@@ -540,6 +540,7 @@ int DM_ACCESS_ValidateReference(char *reference, char *table, int *instance)
     char *schema_path;
     dm_req_instances_t inst;
     bool instances_exist;
+    dm_node_t *node;
 
     // Exit if the reference is not present in the data model
     err = DATA_MODEL_SplitPath(reference, &schema_path, &inst, &instances_exist);
@@ -548,16 +549,34 @@ int DM_ACCESS_ValidateReference(char *reference, char *table, int *instance)
         return err;
     }
 
-    // Exit if the reference is to the wrong table, or the instances do not exist - this could occur at bootup
-    if ((instances_exist == false) || (strcmp(schema_path, table) != 0))
+    // Exit if the reference is to the wrong table
+    if (strcmp(schema_path, table) != 0)
+    {
+        USP_ERR_SetMessage("%s: Reference (%s) is to the wrong data model table (expecting %s)", __FUNCTION__, reference, table);
+        return USP_ERR_INVALID_VALUE;
+    }
+
+    // Determine the expected number of instance numbers in the specified table
+    node = DM_PRIV_GetNodeFromPath(table, NULL, NULL);
+    USP_ASSERT(node != NULL);       // These asserts check that the caller provided a multi-instance table that exists in the supported data model
+    USP_ASSERT(node->order > 0);
+
+    // Exit if the reference does not have the expected number of instance numbers in the path
+    if (inst.order != node->order)
+    {
+        USP_ERR_SetMessage("%s: Reference (%s) does not contain trailing instance number", __FUNCTION__, reference);
+        return USP_ERR_INVALID_VALUE;
+    }
+
+    // Exit if the reference is to a object instance which is not instantiated - this could occur at bootup
+    if (instances_exist == false)
     {
         USP_ERR_SetMessage("%s: Reference (%s) is not instantiated", __FUNCTION__, reference);
         return USP_ERR_INVALID_VALUE;
     }
 
-    // Extract the instance number of the reference in the table
-    USP_ASSERT(inst.order==1);
-    *instance = inst.instances[0];
+    // Extract the trailing instance number of the reference in the table
+    *instance = inst.instances[inst.order-1];
 
     // If code gets here, then the reference was valid
     return USP_ERR_OK;
@@ -635,7 +654,7 @@ int DM_ACCESS_CompareString(char *lhs, expr_op_t op, char *rhs, bool *result)
             err = USP_ERR_INVALID_PATH_SYNTAX;
             break;
 
-        default:        
+        default:
             TERMINATE_BAD_CASE(op);
             break;
     }
@@ -670,7 +689,7 @@ int DM_ACCESS_CompareNumber(char *lhs, expr_op_t op, char *rhs, bool *result)
     num_converted = sscanf(lhs, "%Lf", &lh_value);
     if (num_converted == 0)
     {
-        USP_ERR_SetMessage("%s: Expecting expression parameter's value ('%s') to be a number", __FUNCTION__, lhs); 
+        USP_ERR_SetMessage("%s: Expecting expression parameter's value ('%s') to be a number", __FUNCTION__, lhs);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -707,21 +726,21 @@ int DM_ACCESS_CompareNumber(char *lhs, expr_op_t op, char *rhs, bool *result)
                 *result = true;
             }
             break;
-            
+
         case kExprOp_GreaterThanOrEqual:
             if (lh_value >= rh_value)
             {
                 *result = true;
             }
             break;
-            
+
         case kExprOp_LessThan:
             if (lh_value < rh_value)
             {
                 *result = true;
             }
             break;
-            
+
         case kExprOp_GreaterThan:
             if (lh_value > rh_value)
             {
@@ -729,7 +748,7 @@ int DM_ACCESS_CompareNumber(char *lhs, expr_op_t op, char *rhs, bool *result)
             }
             break;
 
-        default:        
+        default:
             TERMINATE_BAD_CASE(op);
             break;
     }
@@ -756,13 +775,13 @@ int DM_ACCESS_CompareBool(char *lhs, expr_op_t op, char *rhs, bool *result)
     bool lh_value;
     bool rh_value;
     int err;
-    
+
     // Exit if the left hand operand could not be converted
     // NOTE: This is unexpected behaviour, as the left hand operand will have previously been read from the data model
     err = TEXT_UTILS_StringToBool(lhs, &lh_value);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Expecting expression parameter's value ('%s') to be a boolean", __FUNCTION__, lhs); 
+        USP_ERR_SetMessage("%s: Expecting expression parameter's value ('%s') to be a boolean", __FUNCTION__, lhs);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -828,13 +847,13 @@ int DM_ACCESS_CompareDateTime(char *lhs, expr_op_t op, char *rhs, bool *result)
     time_t lh_value;
     time_t rh_value;
     int err;
-    
+
     // Exit if the left hand operand could not be converted
     // NOTE: This is unexpected behaviour, as the left hand operand will have previously been read from the data model
     err = TEXT_UTILS_StringToDateTime(lhs, &lh_value);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Expecting expression parameter's value ('%s') to be an ISO8601 dateTime", __FUNCTION__, lhs); 
+        USP_ERR_SetMessage("%s: Expecting expression parameter's value ('%s') to be an ISO8601 dateTime", __FUNCTION__, lhs);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -871,21 +890,21 @@ int DM_ACCESS_CompareDateTime(char *lhs, expr_op_t op, char *rhs, bool *result)
                 *result = true;
             }
             break;
-            
+
         case kExprOp_GreaterThanOrEqual:
             if (lh_value >= rh_value)
             {
                 *result = true;
             }
             break;
-            
+
         case kExprOp_LessThan:
             if (lh_value < rh_value)
             {
                 *result = true;
             }
             break;
-            
+
         case kExprOp_GreaterThan:
             if (lh_value > rh_value)
             {
@@ -893,7 +912,7 @@ int DM_ACCESS_CompareDateTime(char *lhs, expr_op_t op, char *rhs, bool *result)
             }
             break;
 
-        default:        
+        default:
             TERMINATE_BAD_CASE(op);
             break;
     }

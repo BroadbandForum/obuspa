@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2017-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2017-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -68,6 +68,7 @@
 #include "text_utils.h"
 #include "nu_ipaddr.h"
 #include "iso8601.h"
+#include "usp-record.pb-c.h"
 
 //------------------------------------------------------------------------
 // Structure storing the last CoAP response PDU sent. Used to send the same response
@@ -88,8 +89,8 @@ typedef struct
     BIO *rbio;              // SSL BIO used to read DTLS packets
     BIO *wbio;              // SSL BIO used to write DTLS packets
 
-    bool is_first_usp_msg;  // Set if this is the first USP request message received since the server was reset. 
-                            // This is used as a hint to reset our CoAP client sending the USP response 
+    bool is_first_usp_msg;  // Set if this is the first USP request message received since the server was reset.
+                            // This is used as a hint to reset our CoAP client sending the USP response
                             // (because the request was received on a new DTLS session, the response will likely need to be too)
 
     STACK_OF(X509) *cert_chain; // Full SSL certificate chain for the CoAP connection, collected in the SSL verify callback
@@ -198,7 +199,7 @@ int COAP_SERVER_Init(void)
 {
     int i;
     coap_server_t *cs;
-    
+
     // Initialise the CoAP server array
     memset(coap_servers, 0, sizeof(coap_servers));
     for (i=0; i<MAX_COAP_SERVERS; i++)
@@ -234,7 +235,7 @@ int COAP_SERVER_InitStart(void)
     }
 
     // Create the DTLS server SSL context with trust store and client cert loaded
-    coap_server_ssl_ctx = DEVICE_SECURITY_CreateSSLContext(DTLS_server_method(), 
+    coap_server_ssl_ctx = DEVICE_SECURITY_CreateSSLContext(DTLS_server_method(),
                                                            SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE /*| SSL_VERIFY_FAIL_IF_NO_PEER_CERT*/,
                                                            DEVICE_SECURITY_TrustCertVerifyCallback);
     if (coap_server_ssl_ctx == NULL)
@@ -267,7 +268,7 @@ void COAP_SERVER_Destroy(void)
 {
     int i;
     coap_server_t *cs;
-    
+
     // Free all CoAP servers
     for (i=0; i<MAX_COAP_SERVERS; i++)
     {
@@ -379,7 +380,7 @@ int COAP_SERVER_Stop(int instance, char *interface, coap_config_t *unused)
     USP_LOG_Info("%s: Stopping CoAP server [%d]", __FUNCTION__, instance);
 
     (void)unused;   // Prevent compiler warnings about unused variables
-    
+
     COAP_LockMutex();
 
     // Exit if MTP thread has exited
@@ -397,7 +398,7 @@ int COAP_SERVER_Stop(int instance, char *interface, coap_config_t *unused)
         return USP_ERR_OK;
     }
 
-    // Free all dynamically allocated buffers    
+    // Free all dynamically allocated buffers
     USP_SAFE_FREE(cs->listen_resource);
 
     // Close all session sockets and any associated SSL, BIO objects and buffers
@@ -643,7 +644,7 @@ int StartCoapListenSock(coap_server_t *cs)
     {
         goto exit;
     }
-    
+
     // Exit if unable to determine which address family to use when creating the listening socket
     err = nu_ipaddr_get_family(&nu_intf_addr, &family);
     if (err != USP_ERR_OK)
@@ -687,7 +688,7 @@ int StartCoapListenSock(coap_server_t *cs)
     err = USP_ERR_OK;
 
 exit:
-    // If an error occurred, mark the server as not listening on any address, this will cause UpdateCoapServerInterfaces() 
+    // If an error occurred, mark the server as not listening on any address, this will cause UpdateCoapServerInterfaces()
     // to periodically try to restart the server, when the interface has an IP address
     if (err != USP_ERR_OK)
     {
@@ -1058,7 +1059,7 @@ int PerformSessionDtlsConnect(coap_server_session_t *css)
 **************************************************************************/
 void StopCoapSession(coap_server_session_t *css)
 {
-    pdu_response_t *last_resp;    
+    pdu_response_t *last_resp;
 
     // Free the USP record that has been received, setting state back, so that we can start receiving a new one
     FreeReceivedUspRecord(css);
@@ -1242,7 +1243,7 @@ exit:
             mtp_reply_to.coap_host = addr_buf;
 
             // The USP response message to this request should be sent back on a new DTLS session, if this USP request was received on a new DTLS session
-            mtp_reply_to.coap_reset_session_hint = css->is_first_usp_msg & cs->enable_encryption; 
+            mtp_reply_to.coap_reset_session_hint = css->is_first_usp_msg & cs->enable_encryption;
             css->is_first_usp_msg = false;
 
             // Post the USP record for processing
@@ -1330,6 +1331,22 @@ unsigned CalcCoapServerActions(coap_server_t *cs, coap_server_session_t *css, pa
     else
     {
         action_flags = HandleSubsequentCoapBlock(cs, css, pp);
+    }
+
+    // Change the response to send an ACK (4.00 Bad Request) if the USP Record could not be unpacked
+    if (action_flags & USP_RECORD_COMPLETE)
+    {
+        UspRecord__Record *rec;
+        rec = usp_record__record__unpack(pbuf_allocator, css->usp_buf_len, css->usp_buf);
+        if (rec == NULL)
+        {
+            COAP_SetErrMessage("%s: usp_record__session_record__unpack failed. Ignoring USP Message", __FUNCTION__);
+            action_flags = SEND_ACK | INDICATE_BAD_REQUEST;
+        }
+        else
+        {
+            usp_record__record__free_unpacked(rec, pbuf_allocator);
+        }
     }
 
     return action_flags;
@@ -1589,7 +1606,7 @@ unsigned AppendCoapPayload(coap_server_session_t *css, parsed_pdu_t *pp)
 **
 ** IsReplyToValid
 **
-** Validates that the host in the URI query Option's 'reply-to' matches the 
+** Validates that the host in the URI query Option's 'reply-to' matches the
 ** IP address of the USP controller that sent the message (containing the 'reply-to')
 ** This is necessary to prevent an errant USP controller using an Agent to perform a DoS attack
 **
@@ -1629,7 +1646,7 @@ bool IsReplyToValid(coap_server_session_t *css, parsed_pdu_t *pp)
         if (err != USP_ERR_OK)
         {
             return false;
-        }        
+        }
 
         // Exit if unable to lookup hostname
         err = tw_ulib_diags_lookup_host(host, AF_UNSPEC, prefer_ipv6, &interface_addr, &reply_addr);
@@ -1640,7 +1657,7 @@ bool IsReplyToValid(coap_server_session_t *css, parsed_pdu_t *pp)
         }
     }
 
-    // Exit if the address given in the reply-to does not match the address of the USP controller 
+    // Exit if the address given in the reply-to does not match the address of the USP controller
     // that sent the message containing the reply-to
     if (memcmp(&reply_addr, &css->peer_addr, sizeof(nu_ipaddr_t)) != 0)
     {
@@ -2196,7 +2213,7 @@ int CalcUriQueryOption(int socket_fd, bool encryption_preference, char *buf, int
 
     // Percent encode our resource name
     TEXT_UTILS_PercentEncodeString(cs->listen_resource, resource_name, sizeof(resource_name), '/');
-    
+
     // Fill in the URI query option. This specifies where the USP controller should send responses to
     // NOTE: We use src_addr instead of cs->listen_addr in the reply-to because our CoAP server might be listening on "any" interface
     protocol = (cs->enable_encryption) ? "coaps" : "coap";

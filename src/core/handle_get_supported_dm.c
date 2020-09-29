@@ -1,33 +1,33 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
- * 
+ * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2016-2020  CommScope, Inc
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
@@ -64,7 +64,6 @@
 void ProcessSupportedPathInstances(char *schema_path, unsigned gs_flags, Usp__GetSupportedDMResp *gs_resp);
 Usp__Msg *CreateGetSupportedDMResp(char *msg_id);
 void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResult *ror, unsigned gs_flags, combined_role_t *combined_role);
-dm_node_t *GetNodeFromSchemaPath(char *schema_path);
 Usp__GetSupportedDMResp__RequestedObjectResult *
 AddGetSupportedDM_ReqObjResult(Usp__GetSupportedDMResp *gs_resp, char *requested_path, int err, char *err_msg, char *bbf_uri);
 Usp__GetSupportedDMResp__SupportedObjectResult *
@@ -72,7 +71,6 @@ AddReqObjResult_SupportedObjResult(Usp__GetSupportedDMResp__RequestedObjectResul
 void AddSupportedObjResult_SupportedCommandResult(Usp__GetSupportedDMResp__SupportedObjectResult *sor, dm_node_t *node);
 void AddSupportedObjResult_SupportedEventResult(Usp__GetSupportedDMResp__SupportedObjectResult *sor, dm_node_t *node);
 void AddSupportedObjResult_SupportedParamResult(Usp__GetSupportedDMResp__SupportedObjectResult *sor, dm_node_t *node, unsigned short permissions);
-dm_node_t *GetNodeFromSchemaPath(char *schema_path);
 Usp__GetSupportedDMResp__ObjAccessType  CalcDMSchemaObjAccess(bool is_add_allowed, bool is_del_allowed);
 Usp__GetSupportedDMResp__ParamAccessType  CalcDMSchemaParamAccess(bool is_read_allowed, bool is_write_allowed);
 
@@ -151,10 +149,10 @@ void ProcessSupportedPathInstances(char *schema_path, unsigned gs_flags, Usp__Ge
     combined_role_t combined_role;
 
     // Exit if unable to find a node matching the specified schema path
-    node = GetNodeFromSchemaPath(schema_path);
+    node = DM_PRIV_GetNodeFromPath(schema_path, NULL, NULL);
     if (node == NULL)
     {
-        ror = AddGetSupportedDM_ReqObjResult(gs_resp, schema_path, USP_ERR_OBJECT_DOES_NOT_EXIST, USP_ERR_GetMessage(), BBF_DATA_MODEL_URI);
+        ror = AddGetSupportedDM_ReqObjResult(gs_resp, schema_path, USP_ERR_INVALID_PATH, USP_ERR_GetMessage(), BBF_DATA_MODEL_URI);
         (void)ror; // Keep Clang static analyser happy
         return;
     }
@@ -163,7 +161,7 @@ void ProcessSupportedPathInstances(char *schema_path, unsigned gs_flags, Usp__Ge
     if (IsObject(node) == false)
     {
         USP_ERR_SetMessage("%s: Schema path (%s) does not represent an object", __FUNCTION__, schema_path);
-        ror = AddGetSupportedDM_ReqObjResult(gs_resp, schema_path, USP_ERR_OBJECT_DOES_NOT_EXIST, USP_ERR_GetMessage(), BBF_DATA_MODEL_URI);
+        ror = AddGetSupportedDM_ReqObjResult(gs_resp, schema_path, USP_ERR_INVALID_PATH, USP_ERR_GetMessage(), BBF_DATA_MODEL_URI);
         (void)ror; // Keep Clang static analyser happy
         return;
     }
@@ -186,6 +184,7 @@ void ProcessSupportedPathInstances(char *schema_path, unsigned gs_flags, Usp__Ge
 **
 ** \param   parent - pointer to data model node representing schema object to add to the response message
 ** \param   ror - pointer to the RequestedObjResult object in the response message to add ostring vector in which to add the schema paths
+** \param   gs_flags - flags controlling which artifacts to put in the response
 ** \param   combined_role - role to use for permissions when walking the schema
 **
 ** \return  None
@@ -222,6 +221,15 @@ void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResul
                 {
                     WalkSchema(child, ror, gs_flags, combined_role);
                 }
+                else
+                {
+                    // FirstLevelOnly==true shows immediate child objects only
+                    child_perm  = DM_PRIV_GetPermissions(parent, combined_role);
+                    if (child_perm & PERMIT_OBJ_INFO)
+                    {
+                        (void)AddReqObjResult_SupportedObjResult(ror, child, child_perm);
+                    }
+                }
                 break;
 
             case kDMNodeType_Param_ConstantValue:
@@ -241,7 +249,7 @@ void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResul
 
             case kDMNodeType_SyncOperation:
             case kDMNodeType_AsyncOperation:
-                if ((gs_flags & RETURN_COMMANDS) && 
+                if ((gs_flags & RETURN_COMMANDS) &&
                     (parent_perm & PERMIT_OBJ_INFO) && (parent_perm & PERMIT_CMD_INFO) &&
                     (child_perm & PERMIT_OPER))
                 {
@@ -250,7 +258,7 @@ void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResul
                 break;
 
             case kDMNodeType_Event:
-                if ((gs_flags & RETURN_EVENTS) && 
+                if ((gs_flags & RETURN_EVENTS) &&
                     (parent_perm & PERMIT_OBJ_INFO) && (parent_perm & PERMIT_CMD_INFO) &&
                     (child_perm & PERMIT_SUBS_EVT_OPER_COMP))
                 {
@@ -266,56 +274,6 @@ void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResul
         // Move to next sibling in the data model tree
         child = (dm_node_t *) child->link.next;
     }
-}
-
-
-/*********************************************************************//**
-**
-** GetNodeFromSchemaPath
-**
-** Process each requested path
-**
-** \param   schema_path - Data model schema path to find the DM node of
-**
-** \return  pointer to ata model node, or NULL if no matching node found
-**
-**************************************************************************/
-dm_node_t *GetNodeFromSchemaPath(char *schema_path)
-{
-    char *p;
-    char path[MAX_DM_PATH];
-    dm_instances_t inst;
-    bool is_qualified_instance;
-    dm_node_t *node;
-
-    // This function is a bit of a hack
-    // We do not have a function that converts from a supported DM (schema) path to a DM node
-    // However we do have a function which converts from an instantiated DM path to a DM node (ignoring instance number validity)
-    // So we first convert the supported DM path to an instantiated DM path, using dummy instance numbers
-
-    // Replace the schema path instance separators '{i}' with a dummy instance number '111'
-    USP_STRNCPY(path, schema_path, sizeof(path));
-    p = path;
-    while (*p != '\0')
-    {
-        if (strncmp(p, "{i}", 3) == 0)
-        {
-            // Replace '{i}' with '111'
-            *p++ = '1';
-            *p++ = '1';
-            *p++ = '1';
-        }
-        else
-        {
-            // Skip to next character
-            p++;
-        }
-    }    
-
-    // Get the DM node matching this instantiated DM path
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
-    
-    return node;
 }
 
 /*********************************************************************//**
@@ -368,7 +326,7 @@ Usp__Msg *CreateGetSupportedDMResp(char *msg_id)
     response->get_supported_dm_resp = get_sup_resp;
 
     return resp;
-}    
+}
 
 /*********************************************************************//**
 **
@@ -461,7 +419,7 @@ AddReqObjResult_SupportedObjResult(Usp__GetSupportedDMResp__RequestedObjectResul
         {
             is_add_allowed = true;
         }
-        
+
         if ((node->registered.object_info.validate_del_cb != USP_HOOK_DenyDeleteInstance) && (permissions & PERMIT_DEL))
         {
             is_del_allowed = true;

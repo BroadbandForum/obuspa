@@ -2,41 +2,41 @@
  *
  * Copyright (C) 2019, Broadband Forum
  * Copyright (C) 2007-2019  CommScope, Inc
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
- * 
+ *
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 
+ *
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 
+ *
  * 3. Neither the name of the copyright holder nor the names of its
  *    contributors may be used to endorse or promote products derived from
  *    this software without specific prior written permission.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
  * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
  * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
  * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
-/** 
+/**
  * @file nu_ipaddr.c
  *
  * Implements a class that wraps IPv4/v6 address functionality
- * 
+ *
  */
 
 #include <sys/types.h>
@@ -86,7 +86,7 @@ int tw_ulib_get_dev_ipaddr(const char *dev, char *addr, size_t asiz, bool prefer
 **
 ** \param   addr - IP address to determine the address family of
 ** \param   familyp - pointer to variable in which to return the address family
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -115,7 +115,7 @@ nu_ipaddr_get_family(const nu_ipaddr_t *addr, sa_family_t *familyp)
 **
 ** \param   addr - IP address to convert to an IPv4 in_addr structure
 ** \param   p - pointer to structure in which to return IPv4 in_addr
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -146,7 +146,7 @@ nu_ipaddr_to_inaddr(const nu_ipaddr_t *addr, struct in_addr *p)
 **
 ** \param   addr - IP address to convert to an IPv6 in_addr structure
 ** \param   p - pointer to structure in which to return IPv6 in6_addr
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -159,7 +159,7 @@ nu_ipaddr_to_in6addr(const nu_ipaddr_t *addr, struct in6_addr *p)
         USP_ERR_SetMessage("%s: Failed trying to convert an IPv4 address to an IPv6 address", __FUNCTION__);
     	return USP_ERR_INTERNAL_ERROR;
 	}
-	
+
     memcpy(p, addr, sizeof(*p));
 #else /* IPV6_NUIPADDR */
     p->s6_addr32[0] = 0;
@@ -184,7 +184,7 @@ nu_ipaddr_to_in6addr(const nu_ipaddr_t *addr, struct in6_addr *p)
 ** \param   sa - pointer to structure in which to return sockaddr
 ** \param   len_p - pointer to variable in which to return the length of the sockaddr structure.
 **                  NOTE: This may be specified as NULL, if the length is not required
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -209,7 +209,7 @@ nu_ipaddr_to_sockaddr(const nu_ipaddr_t *addr, int port, struct sockaddr_storage
         if (err != USP_ERR_OK) {
             return err;
         }
-        
+
         if (len_p != NULL) {
             *len_p = sizeof(struct sockaddr_in6);
         }
@@ -240,7 +240,7 @@ nu_ipaddr_to_sockaddr(const nu_ipaddr_t *addr, int port, struct sockaddr_storage
 ** \param   addr - IP address to convert to a string
 ** \param   buf - pointer to buffer in which to return the string
 ** \param   bufsiz - size of buffer in which to return the string. This must be at least NU_IPADDRSTRLEN bytes long.
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -267,7 +267,7 @@ nu_ipaddr_to_str(const nu_ipaddr_t *addr, char *buf, int buflen)
 	/* nu_ipaddr_t is only v4 */
 	family = AF_INET;
 #endif /* !IPV6_NUIPADDR */
-	
+
 	cp = inet_ntop(family, addr, buf, buflen);
 	if (cp == NULL) {
         USP_ERR_ERRNO("inet_ntop", errno);
@@ -286,7 +286,7 @@ nu_ipaddr_to_str(const nu_ipaddr_t *addr, char *buf, int buflen)
 ** \param   addr - IP address to convert to a string
 ** \param   buf - pointer to buffer in which to return the string
 ** \param   bufsiz - size of buffer in which to return the string. This must be at least NU_IPADDRSTRLEN bytes long.
-**          
+**
 ** \return  buf if successfully converted, 'UNKNOWN' otherwise
 **
 **************************************************************************/
@@ -312,7 +312,7 @@ char *nu_ipaddr_str(const nu_ipaddr_t *addr, char *buf, int buflen)
 **
 ** \param   str - pointer to string containing IP Address to convert
 ** \param   addr - pointer to structure in which to return the nu_ipaddr_t
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -327,7 +327,7 @@ nu_ipaddr_from_str(const char *str, nu_ipaddr_t *addr)
 	void *inptr;
 	sa_family_t family;
 	int err, i;
-	
+
 	/* skip leading space */
 	for (p = str; *p != '\0'; p++) {
 		if (!isspace(p[0])) {
@@ -346,7 +346,7 @@ nu_ipaddr_from_str(const char *str, nu_ipaddr_t *addr)
 	} else {
 	begin = p;
 	}
-	
+
 	/* determine family */
 	family = AF_INET;
 	inptr = &in;
@@ -361,7 +361,7 @@ nu_ipaddr_from_str(const char *str, nu_ipaddr_t *addr)
 			inptr = &in6;
 			break;
 		}
-		
+
 		/* invalid character. Stop */
 		break;
 	}
@@ -393,11 +393,11 @@ nu_ipaddr_from_str(const char *str, nu_ipaddr_t *addr)
 **  nu_ipaddr_from_sockaddr_storage
 **
 **  Converts a sockaddr_storage structure to a nu_ipaddr_t structure and (optionally) a port
-**  
+**
 ** \param   p - pointer to sockaddr_storage structure to convert to a nu_ipaddr_t.
 ** \param   addr - pointer to structure in which to return the nu_ipaddr_t
 ** \param   port - pointer to variable in which to return the IP port, or NULL, if this is not required
-**          
+**
 ** \return  USP_ERR_OK if successful
 **          USP_ERR_INTERNAL_ERROR if address family was not supported.
 **          NOTE: This function may be called with unsupported address families. The caller must handle this.
@@ -440,7 +440,7 @@ nu_ipaddr_from_sockaddr_storage(const struct sockaddr_storage *p, nu_ipaddr_t *a
         {
             return err;
         }
-        
+
 	    if (port != NULL)
 	    {
 	        *port = ntohs(sin6->sin6_port);
@@ -459,10 +459,10 @@ nu_ipaddr_from_sockaddr_storage(const struct sockaddr_storage *p, nu_ipaddr_t *a
 **  nu_ipaddr_from_inaddr
 **
 **  Converts an (IPv4) in_addr structure to a nu_ipaddr_t structure
-**  
+**
 ** \param   p - pointer to in_addr structure to convert to a nu_ipaddr_t. NOTE: in_addr structures are always in network byte order
 ** \param   addr - pointer to structure in which to return the nu_ipaddr_t
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -490,10 +490,10 @@ nu_ipaddr_from_inaddr(const struct in_addr *p, nu_ipaddr_t *addr)
 **  nu_ipaddr_from_in6addr
 **
 **  Converts an (IPv6) in6_addr structure to a nu_ipaddr_t structure
-**  
+**
 ** \param   p - pointer to in6_addr structure to convert to a nu_ipaddr_t
 ** \param   addr - pointer to structure in which to return the nu_ipaddr_t
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -527,15 +527,15 @@ nu_ipaddr_from_in6addr(const struct in6_addr *p, nu_ipaddr_t *addr)
 **  nu_ipaddr_equal
 **
 **  Determines whether two nu_ipaddr_t structures are equal
-**  
+**
 ** \param   a1 - pointer to first nu_ipaddr_t structure
 ** \param   a1 - pointer to second nu_ipaddr_t structure
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
 int
-nu_ipaddr_equal(const nu_ipaddr_t *a1, const nu_ipaddr_t *a2, 
+nu_ipaddr_equal(const nu_ipaddr_t *a1, const nu_ipaddr_t *a2,
 		bool *equalp)
 {
 #if IPV6_NUIPADDR
@@ -554,10 +554,10 @@ nu_ipaddr_equal(const nu_ipaddr_t *a1, const nu_ipaddr_t *a2,
 **  nu_ipaddr_copy
 **
 **  Copies from a src nu_ipaddr_t structure to a dest
-**  
+**
 ** \param   dst - pointer to destination nu_ipaddr_t structure
 ** \param   src - pointer to source nu_ipaddr_t structure
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -573,9 +573,9 @@ nu_ipaddr_copy(nu_ipaddr_t *dest, const nu_ipaddr_t *src)
 **  nu_ipaddr_set_zero
 **
 **  Sets the specified nu_ipaddr_t to be the 'zero' IP address
-**  
+**
 ** \param   addr - pointer to structure to set to the 'zero' IP address
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -600,9 +600,9 @@ nu_ipaddr_set_zero(nu_ipaddr_t *addr)
 **
 **  Returns whether the specified nu_ipaddr_t is the 'zero' IP address
 **  The 'zero' IP address is used as a magic number by clients to denote an invalid/uninitialised IP Address
-**  
+**
 ** \param   addr - pointer to nu_ipaddr_t
-**          
+**
 ** \return  true if the specified nu_ipaddr_t is the 'zero' IP address, false otherwise
 **
 **************************************************************************/
@@ -635,7 +635,7 @@ nu_ipaddr_is_zero(const nu_ipaddr_t *addr)
 **
 ** \param   dest - destination address of the packet
 ** \param   if_addr - pointer to structure in which to return the interface address
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -707,13 +707,13 @@ exit:
 **
 **  nu_ipaddr_get_interface_addr_from_sock_fd
 **
-**  Determines the ip address of the interface on which a packet will be sent, 
+**  Determines the ip address of the interface on which a packet will be sent,
 **  based on a socket that has connected to a destination address
 **
 ** \param   sock_fd - socket
 ** \param   buf - pointer to buffer in which to return the string
 ** \param   bufsiz - size of buffer in which to return the string. This must be at least NU_IPADDRSTRLEN bytes long.
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -759,7 +759,7 @@ int nu_ipaddr_get_interface_addr_from_sock_fd(int sock_fd, char *buf, int bufsiz
 ** \param   src_addr - source address of a network interface on the device
 ** \param   name - pointer to buffer in which to return the name of the interface that has the specified source address
 ** \param   name_len - size of buffer in which to return the name of the interface that has the specified source address
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -942,7 +942,7 @@ int nu_ipaddr_has_interface_addr_changed(char *dev, char *expected_addr, bool *h
 
     // If the code gets here, then no match was found, so the IP address of the interface has changed
     result = true;
-    
+
 exit:
     freeifaddrs(ifaddr_list);
 
@@ -991,7 +991,7 @@ int nu_ipaddr_get_ip_supported_families(bool *ipv4_supported, bool *ipv6_support
                 case AF_INET:
                     *ipv4_supported = true;
                     break;
-                    
+
                 case AF_INET6:
                     // We are only interested in globally routable IPv6 addresses
                     #define NOT_GLOBAL_UNICAST(addr) \
@@ -1004,7 +1004,7 @@ int nu_ipaddr_get_ip_supported_families(bool *ipv4_supported, bool *ipv6_support
                         *ipv6_supported = true;
                     }
                     break;
-    
+
                 default:
                     // Skip all other protocols
                     break;
@@ -1065,14 +1065,14 @@ bool nu_ipaddr_is_valid_interface(const char *dev)
 **  ProtocolVersion selects which DNS record is used when performing the Host lookup for the diagnostic
 **
 ** \param   address_family - address family to convert to a protocol version string
-**          
+**
 ** \return  String form of specified IP address family
 **
 **************************************************************************/
 char *tw_ulib_diags_family_to_protocol_version(int address_family)
 {
     char *protocol_version;
-    
+
     switch(address_family)
     {
         case AF_INET:
@@ -1103,16 +1103,16 @@ char *tw_ulib_diags_family_to_protocol_version(int address_family)
 **  Note the chosen IP address is determined by the following order :-
 **          1) Which globally routable IP addresses the device has
 **          2) The address family that the ACS requires (acs_family_pref)
-**          3) The local interface IP address that the ACS requires (this may be more specific than the ACS address family 
+**          3) The local interface IP address that the ACS requires (this may be more specific than the ACS address family
                in the case of address family=ANY, but CPE only has IPv4 or IPv6 address on the ACS specified interface)
 **          3) Our dual stack preference
-**  
+**
 ** \param   host - pointer to string containing hostname to lookup
 ** \param   acs_family_pref - The address family that the ACS requires for the Hostname resolution (AF_UNSPEC = don't care)
 ** \param   prefer_ipv6 - Set to true if we prefer an IPv6 address (and CPE is dual stack, so we have a choice)
 ** \param   acs_ipaddr_to_bind_to - IP address that the ACS has specified that should be used to contact the remote host (don't care = NULL or the zero address)
 ** \param   dst - pointer to structure in which to return the IP address of the remote host
-**          
+**
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
@@ -1182,7 +1182,7 @@ tw_ulib_diags_lookup_host(const char *host, int acs_family_pref, bool prefer_ipv
                 {
                     a = (struct sockaddr_in *) iterator->ai_addr;
                     err = nu_ipaddr_from_inaddr(&a->sin_addr, dst);
-    
+
                     if (err != USP_ERR_OK)
                     {
                         USP_ERR_SetMessage("%s(%s): nu_ipaddr_from_inaddr() failed: %s", __FUNCTION__, host, strerror(err));
@@ -1194,13 +1194,13 @@ tw_ulib_diags_lookup_host(const char *host, int acs_family_pref, bool prefer_ipv
                     }
                 }
                 break;
-        
+
             case AF_INET6:
                 if (ipv6_supported)
                 {
                     a6 = (struct sockaddr_in6 *) iterator->ai_addr;
                     err = nu_ipaddr_from_in6addr(&a6->sin6_addr, dst);
-    
+
                     if (err != USP_ERR_OK)
                     {
                         USP_ERR_SetMessage("%s(%s): nu_ipaddr_from_in6addr() failed: %s", __FUNCTION__, host, strerror(err));
@@ -1241,7 +1241,7 @@ tw_ulib_diags_lookup_host(const char *host, int acs_family_pref, bool prefer_ipv
         err = USP_ERR_INTERNAL_ERROR;
         goto exit;
     }
-    
+
 exit:
     (void) freeaddrinfo(addr_list);
     return err;
