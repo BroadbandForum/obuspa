@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2019  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -454,6 +454,50 @@ int USP_ARG_GetUnsigned(kv_vector_t *kvv, char *key, unsigned default_value, uns
 int USP_ARG_GetUnsignedWithinRange(kv_vector_t *kvv, char *key, unsigned default_value, unsigned min, unsigned max, unsigned *value)
 {
     return KV_VECTOR_GetUnsignedWithinRange(kvv, key, default_value, min, max, value);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_GetInt
+**
+** Gets the value of the specified parameter from the vector as an integer
+**
+** \param   kvv - pointer to key-value pair vector structure
+** \param   key - pointer to name of key to get the value of
+** \param   default_value - default value, if not present in the vector
+** \param   value - pointer to variable in which to return the value
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INVALID_TYPE if unable to convert the key's value (given in the vector) to an integer
+**
+**************************************************************************/
+int USP_ARG_GetInt(kv_vector_t *kvv, char *key, int default_value, int *value)
+{
+    return KV_VECTOR_GetInt(kvv, key, default_value, value);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_GetIntWithinRange
+**
+** Gets the value of the specified parameter from the vector as an integer,
+** checking that it is within the specified range
+**
+** \param   kvv - pointer to key-value pair vector structure
+** \param   key - pointer to name of key to get the value of
+** \param   default_value - default value, if not present in the vector
+** \param   min - minimum allowed value
+** \param   min - maximum allowed value
+** \param   value - pointer to variable in which to return the value
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INVALID_TYPE if unable to convert the key's value (given in the vector) to an integer
+**          USP_ERR_INVALID_VALUE if value is out of range
+**
+**************************************************************************/
+int USP_ARG_GetIntWithinRange(kv_vector_t *kvv, char *key, int default_value, int min, int max, int *value)
+{
+    return KV_VECTOR_GetIntWithinRange(kvv, key, default_value, min, max, value);
 }
 
 /*********************************************************************//**

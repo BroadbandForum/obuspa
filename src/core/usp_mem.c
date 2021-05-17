@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -592,11 +592,12 @@ int USP_MEM_PrintAll(void)
     }
 
     // Iterate over the memory info array, printing out all entries
+    // NOTE: The sync timer vector is deallocated after the leak report has been printed, so to avoid it erroneously reporting as a memory leak, we ignore it here
     OS_UTILS_LockMutex(&mem_access_mutex);
     for (i=0; i<MAX_MINFO_ENTRIES; i++)
     {
         mi = &minfo[i];
-        if ((mi->ptr != NULL) && (mi->func != sync_timer_add_str))
+        if ((mi->ptr != NULL) && (strcmp(mi->func, sync_timer_add_str) != 0))
         {
             count++;
 

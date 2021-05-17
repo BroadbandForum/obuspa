@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2019-2021, Broadband Forum
  * Copyright (C) 2016-2020  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -75,6 +75,8 @@ int KV_VECTOR_ValidateArguments(kv_vector_t *args, str_vector_t *expected_schema
 char *KV_VECTOR_Get(kv_vector_t *kvv, char *key, char *default_value, int start_index);
 int KV_VECTOR_GetUnsigned(kv_vector_t *kvv, char *key, unsigned default_value, unsigned *value);
 int KV_VECTOR_GetUnsignedWithinRange(kv_vector_t *kvv, char *key, unsigned default_value, unsigned min, unsigned max, unsigned *value);
+int KV_VECTOR_GetInt(kv_vector_t *kvv, char *key, int default_value, int *value);
+int KV_VECTOR_GetIntWithinRange(kv_vector_t *kvv, char *key, int default_value, int min, int max, int *value);
 int KV_VECTOR_GetBool(kv_vector_t *kvv, char *key, bool default_value, bool *value);
 int KV_VECTOR_GetDateTime(kv_vector_t *kvv, char *key, char *default_value, time_t *value);
 int KV_VECTOR_GetHexNumber(kv_vector_t *kvv, char *key, unsigned char *buf, int len, int *bytes_copied);

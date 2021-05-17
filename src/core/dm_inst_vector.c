@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -525,7 +525,7 @@ void DM_INST_VECTOR_Dump(dm_instances_vector_t *div)
         inst = &div->vector[i];
         USP_ASSERT(inst->order >= 1);
         node = inst->nodes[inst->order - 1];
-        DM_PRIV_FormPath_FromDM(node, inst, path, sizeof(path));
+        DM_PRIV_FormInstantiatedPath(node->path, inst, path, sizeof(path));
 
         USP_DUMP("%s", path);
     }
@@ -750,6 +750,7 @@ void AddObjectInstanceIfPermitted(dm_instances_t *inst, str_vector_t *sv, combin
     dm_node_t *node;
     unsigned short permission_bitmask;
     char path[MAX_DM_PATH];
+    int err;
 
     // Exit if the current role does not have permission to return this object instance in the string vector
     node = inst->nodes[inst->order-1];
@@ -760,7 +761,11 @@ void AddObjectInstanceIfPermitted(dm_instances_t *inst, str_vector_t *sv, combin
     }
 
     // Convert the dm_instances_t structure into a path
-    DM_PRIV_FormPath_FromDM(node, inst, path, sizeof(path));
+    err = DM_PRIV_FormInstantiatedPath(node->path, inst, path, sizeof(path));
+    if (err != USP_ERR_OK)
+    {
+        return;
+    }
 
     // Add the path to the string vector
     STR_VECTOR_Add(sv, path);
@@ -859,8 +864,11 @@ int RefreshInstVector(dm_node_t *top_node, bool notify_subscriptions)
         if (IsExistInInstVector(inst, old_instances)==false)
         {
             node = inst->nodes[inst->order-1];
-            DM_PRIV_FormPath_FromDM(node, inst, path, sizeof(path));
-            DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(path, kSubNotifyType_ObjectCreation);
+            err = DM_PRIV_FormInstantiatedPath(node->path, inst, path, sizeof(path));
+            if (err == USP_ERR_OK)
+            {
+                DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(path, kSubNotifyType_ObjectCreation);
+            }
         }
     }
 
@@ -888,8 +896,11 @@ int RefreshInstVector(dm_node_t *top_node, bool notify_subscriptions)
         {
             inst = &deleted_instances.vector[i];
             node = inst->nodes[inst->order-1];
-            DM_PRIV_FormPath_FromDM(node, inst, path, sizeof(path));
-            DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(path, kSubNotifyType_ObjectDeletion);
+            err = DM_PRIV_FormInstantiatedPath(node->path, inst, path, sizeof(path));
+            if (err == USP_ERR_OK)
+            {
+                DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(path, kSubNotifyType_ObjectDeletion);
+            }
         }
     }
     DM_INST_VECTOR_Destroy(&deleted_instances);

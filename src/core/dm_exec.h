@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -49,21 +49,6 @@
 #define COAP_EXITED  0x00000002
 #define MQTT_EXITED  0x00000004
 
-// TODO: Make this actually extendable - this is not sustainable with more MTPs
-#ifdef ENABLE_COAP
-	#ifdef ENABLE_MQTT
-		#define ALL_MTP_EXITED (STOMP_EXITED | COAP_EXITED | MQTT_EXITED)
-	#else
-		#define ALL_MTP_EXITED (STOMP_EXITED | COAP_EXITED)
-	#endif
-#else
-	#ifdef ENABLE_MQTT
-		#define ALL_MTP_EXITED (STOMP_EXITED | MQTT_EXITED)
-	#else
-		#define ALL_MTP_EXITED (STOMP_EXITED)
-	#endif
-#endif
-
 //------------------------------------------------------------------------------
 // API functions
 int DM_EXEC_Init(void);
@@ -74,6 +59,8 @@ void DM_EXEC_PostMqttHandshakeComplete(int stomp_instance, ctrust_role_t role, c
 void DM_EXEC_PostMtpThreadExited(unsigned flags);
 void DM_EXEC_HandleStompHandshakeComplete(int stomp_instance, ctrust_role_t role, char *allowed_controllers);
 int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
+void DM_EXEC_HandleScheduledExit(void);
+bool DM_EXEC_IsNotificationsEnabled(void);
 void *DM_EXEC_Main(void *args);
 //------------------------------------------------------------------------------
 

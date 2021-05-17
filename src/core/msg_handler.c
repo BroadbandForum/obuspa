@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -61,6 +61,10 @@ static int cur_msg_controller_instance = INVALID;
 // Role to use with current USP message
 // This is saved off before handling each message, as each message handler needs it fairly deeply in its processing
 static combined_role_t cur_msg_combined_role = { ROLE_DEFAULT, ROLE_DEFAULT};
+
+//------------------------------------------------------------------------
+// Role to use with current USP message
+static controller_info_t cur_msg_controller_info;
 
 //------------------------------------------------------------------------
 // Array used to convert from an enumeration to it's string representation
@@ -469,6 +473,22 @@ void MSG_HANDLER_GetMsgRole(combined_role_t *combined_role)
 
 /*********************************************************************//**
 **
+** MSG_HANDLER_GetControllerInfo
+**
+** Gets the controller info structure for the current message being processed
+**
+** \param   controller_info - pointer to controller info structure
+**
+** \return  None
+**
+**************************************************************************/
+void MSG_HANDLER_GetControllerInfo(controller_info_t *controller_info)
+{
+    *controller_info = cur_msg_controller_info;
+}
+
+/*********************************************************************//**
+**
 ** MSG_HANDLER_GetMsgControllerEndpointId
 **
 ** Gets the endpoint_id of the controller that sent the message which is currently being processed
@@ -701,6 +721,8 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_pro
 {
     int err;
 
+    cur_msg_controller_info.endpoint_id = endpoint_id;
+
     // Get the combined role for this endpoint_id
     err = DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(endpoint_id, &cur_msg_combined_role);
     if (err != USP_ERR_OK)
@@ -713,11 +735,13 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_pro
 
     switch(protocol)
     {
+#ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
             // If the message was received over STOMP, then the inherited role will have been saved in DEVICE_CONTROLLER
             // when the STOMP handshake completed and will already equal the role passed with the USP message
             USP_ASSERT(cur_msg_combined_role.inherited == role);
             break;
+#endif
 
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:

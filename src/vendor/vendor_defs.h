@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -83,6 +83,10 @@
 // Location of unix domain stream file used for CLI communication between client and server
 #define CLI_UNIX_DOMAIN_FILE                "/tmp/usp_cli"
 
+// Location of file or directory containing certificates to report in Device.Security.Certificate
+// NOTE: These certificates are not added to the agent's trust store
+#define SYSTEM_CERT_PATH                     ""      /* "/etc/ssl/certs" */
+
 //-----------------------------------------------------------------------------------------
 // Definitions associated with grouped parameter get/set
 // Each group represents a software component that can set/get a list of data model parameters in a single operation via RPC/messaging
@@ -123,6 +127,10 @@
 // Letting the Linux routing tables decide is better for devices that can connect to the STOMP server through either
 // WiFi or ethernet, and either of these interfaces could be down at any one time
 #define CONNECT_ONLY_OVER_WAN_INTERFACE
+
+//-----------------------------------------------------------------------------------------
+// Uncomment the following define for the GetResponse to contain a resolved_path_result for every object (and sub object)
+//#define GET_RESPONSE_SIMPLE_FORMAT
 
 //-----------------------------------------------------------------------------------------
 // OUI (Organization Unique Identifier) to use for this CPE. This code will be unique to the manufacturer

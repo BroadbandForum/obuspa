@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -64,6 +64,7 @@ int DATABASE_CommitTransaction(void);
 int DATABASE_AbortTransaction(void);
 void DATABASE_Dump(void);
 int DATABASE_ReadDataModelInstanceNumbers(bool remove_unknown_params);
+db_hash_t DATABASE_GetMigratedHash(db_hash_t hash);
 
 #endif
 

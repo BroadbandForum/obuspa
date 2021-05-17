@@ -80,6 +80,7 @@
 #define USP_ERR_OBJECT_NOT_DELETABLE      7024       // Attempted to delete an object which was non-deletable, or object failed to be deleted
 #define USP_ERR_UNIQUE_KEY_CONFLICT       7025       // unique keys would conflict
 #define USP_ERR_INVALID_PATH              7026       // Path is not present in the data model schema
+#define USP_ERR_INVALID_COMMAND_ARGS      7027       // Command failed due to invalid arguments
 
 // Brokered USP Record Errors
 #define USP_ERR_RECORD_NOT_PARSED         7100       // Record could not be parsed

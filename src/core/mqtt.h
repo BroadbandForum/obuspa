@@ -1,7 +1,8 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2020, BT PLC
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2020-2021, BT PLC
+ * Copyright (C) 2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -83,7 +84,6 @@ typedef enum
 {
     kMqttTSprotocol_tcpip = 0,
     kMqttTSprotocol_tls,
-    kMqttTSprotocol_websocket,
     kMqttTSprotocol_Max,
 } mqtt_tsprotocol_t;
 
@@ -245,20 +245,6 @@ int MQTT_DisableClient(int instance, bool purge_queued_messages);
 **************************************************************************/
 int MQTT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *topic,
         unsigned char *pbuf, int pbuf_len);
-
-
-/*********************************************************************//**
-** MQTT_UpdateRetryParams
-**
-** Called by DEVICE_MQTT, if any of the retry parameters are changed
-**
-** \param instance - Instance number of the MQTT connection in Device.MQTT.Client.{i}
-** \param retry_params - pointer to structure containing parameters controlling a retry
-**
-** \return USP_ERR_OK on success, USP_ERR_XXX otherwise. If connection fails, it will be retried later
-**
-**************************************************************************/
-void MQTT_UpdateRetryParams(int instance, mqtt_retry_params_t *retry_params);
 
 
 /*********************************************************************//**

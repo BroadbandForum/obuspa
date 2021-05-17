@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -424,6 +424,46 @@ int TEXT_UTILS_StringToIpAddr(char *str, nu_ipaddr_t *ip_addr)
     }
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** TEXT_UTILS_ListToString
+**
+** Forms a comma separated string from a array of items
+**
+** \param   items - array of items to put in the destination string
+** \param   num_items - number of items in the array
+** \param   buf - pointer to buffer in which to return the string
+** \param   len - length of buffer in which to return the string
+**
+** \return  None
+**
+**************************************************************************/
+void TEXT_UTILS_ListToString(char **items, int num_items, char *buf, int len)
+{
+    int i;
+    int chars_written;
+
+    // Default to empty string, if no items
+    *buf = '\0';
+
+    // Iterate over all items to add
+    for (i=0; i<num_items; i++)
+    {
+        // Add comma before every item (apart from the first)
+        if (i != 0)
+        {
+            chars_written = USP_SNPRINTF(buf, len, "%s", ", ");
+            buf += chars_written;
+            len -= chars_written;
+        }
+
+        // Add the item
+        chars_written = USP_SNPRINTF(buf, len, "%s", items[i]);
+        buf += chars_written;
+        len -= chars_written;
+    }
 }
 
 /*********************************************************************//**
@@ -861,20 +901,20 @@ char *TEXT_UTILS_TrimBuffer(char *buf)
 **
 ** TEXT_UTILS_PercentEncodeString
 **
-** Converts any non-reserved characters in the input string to percent escaped characters in the output buffer
+** Converts any non-alphanumeric characters, which are also not in the specified set of safe characters, to percent encoded characters
 **
 ** \param   src - pointer to buffer containing string to percent encode
 ** \param   dst - pointer to buffer in which to store the percent encoded output string
 ** \param   dst_len - length of buffer in which to store the percent encoded output string
-** \param   safe_char - character which should not be percent encoded
+** \param   safe_chars - characters which should not be percent encoded (these are in addition to alphanumeric chars, which are never percent encoded)
 **
 ** \return  None
 **
 **************************************************************************/
-void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char safe_char)
+void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char *safe_chars)
 {
     char c;
-    bool is_unreserved;
+    bool is_percent_encode;
     int num_required;
 
     // Reserve space in the destination buffer for a trailing NULL terminator
@@ -884,32 +924,33 @@ void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char safe
     c = *src++;
     while (c != '\0')
     {
-        // Determine if character is a unreserved character
-        is_unreserved =  IS_ALPHA_NUMERIC(c) || (c=='.') || (c=='~');
-
-        // Override for safe character, this is always left unencoded
-        if (c == safe_char)
+        // Determine if character should be percent encoded
+        if ((IS_ALPHA_NUMERIC(c) == false) && (strchr(safe_chars, c) == NULL))
         {
-            is_unreserved = true;
+            is_percent_encode = true;
+        }
+        else
+        {
+            is_percent_encode = false;
         }
 
         // Exit loop if there is not enough space for the (potentially escaped) character in the output buffer
-        num_required = (is_unreserved) ? 1 : 3;
+        num_required = (is_percent_encode) ? 3 : 1;
         if (dst_len < num_required)
         {
             goto exit;
         }
 
-        if (is_unreserved)
-        {
-            // Unreserved characters do not have to be percent encoded
-            *dst++ = c;
-        }
-        else
+        // Write the character to the output buffer
+        if (is_percent_encode)
         {
             *dst++ = '%';
             *dst++ = TEXT_UTILS_ValueToHexDigit( BITS(7, 4, c));
             *dst++ = TEXT_UTILS_ValueToHexDigit( BITS(3, 0, c));
+        }
+        else
+        {
+            *dst++ = c;
         }
 
         // Decrement space left in the output buffer and move to next input character
@@ -1049,39 +1090,6 @@ void TEXT_UTILS_ReplaceCharInString(char *src, char match_char, char *replacemen
 
     // Ensure destination string is always NULL terminated
     *dst = '\0';
-}
-
-/*********************************************************************//**
-**
-** TEXT_UTILS_IsSymbol
-**
-** Determines whether the specified string is a valid symbol (ie contains only alpha-numeric characters)
-**
-** \param   buf - pointer to buffer containing symbol to validate
-**
-** \return  true if the symbol is valid, false otherwise
-**
-**************************************************************************/
-bool TEXT_UTILS_IsSymbol(char *buf)
-{
-    int len;
-    int i;
-    char c;
-
-    // Iterate over all characters in the symbol, testing them for validity
-    len = strlen(buf);
-    for (i=0; i<len; i++)
-    {
-        // Exit if encountered an illegal character
-        c = buf[i];
-        if (IS_ALPHA_NUMERIC(c) == false)
-        {
-            return false;
-        }
-    }
-
-    // If the code gets here, then all characters in the symbol were valid
-    return true;
 }
 
 /*********************************************************************//**
@@ -1720,7 +1728,8 @@ void TestPercentEncodeString(void)
     for (i=0; i < NUM_ELEM(percent_encode_string_test_cases); i+=2)
     {
         strcpy(buf, percent_encode_string_test_cases[i]);
-        TEXT_UTILS_PercentEncodeString(percent_encode_string_test_cases[i], buf, sizeof(buf), '/');
+        TEXT_UTILS_PercentEncodeString(percent_encode_string_test_cases[i], buf, sizeof(buf), ".~-_/");
+
         if (strcmp(buf, percent_encode_string_test_cases[i+1]) != 0)
         {
             printf("ERROR: [%d] Test case result for '%s' is '%s' (expected '%s')\n", i/2, percent_encode_string_test_cases[i], buf, percent_encode_string_test_cases[i+1]);

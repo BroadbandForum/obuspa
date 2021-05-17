@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -79,8 +79,10 @@ typedef struct
     mtp_protocol_t protocol;
 
     // NOTE: The following is not a union, because the data model would allow both MTP.{i}.STOMP and MTP.{i}.CoAP objects to be seeded at the same time - with protocol choosing which one is active
+#ifndef DISABLE_STOMP
     int stomp_connection_instance;
     char *stomp_controller_queue;
+#endif
 
 #ifdef ENABLE_COAP
     char *coap_controller_host;
@@ -118,6 +120,9 @@ static controller_t controllers[MAX_CONTROLLERS];
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
+int SendOnBoardRequest(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
+int ExecuteSendOnBoardRequest(controller_t* controller);
+void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller);
 void PeriodicNotificationExec(int id);
 int ValidateAdd_Controller(dm_req_t *req);
 int ValidateAdd_ControllerMtp(dm_req_t *req);
@@ -135,8 +140,6 @@ int Notify_ControllerEnable(dm_req_t *req, char *value);
 int Notify_ControllerEndpointID(dm_req_t *req, char *value);
 int Notify_ControllerMtpEnable(dm_req_t *req, char *value);
 int Notify_ControllerMtpProtocol(dm_req_t *req, char *value);
-int Notify_ControllerMtpStompReference(dm_req_t *req, char *value);
-int Notify_ControllerMtpStompDestination(dm_req_t *req, char *value);
 int Notify_PeriodicNotifInterval(dm_req_t *req, char *value);
 int Notify_PeriodicNotifTime(dm_req_t *req, char *value);
 int Notify_ControllerRetryMinimumWaitInterval(dm_req_t *req, char *value);
@@ -154,8 +157,6 @@ controller_mtp_t *FindFirstEnabledMtp(controller_t *cont, mtp_protocol_t preferr
 controller_mtp_t *FindControllerMtpByInstance(controller_t *cont, int mtp_instance);
 void DestroyController(controller_t *cont);
 void DestroyControllerMtp(controller_mtp_t *mtp);
-int ValidateStompMtpUniquenessReq(dm_req_t *req);
-int ValidateStompMtpUniqueness(controller_t *cont, int mtp_instance);
 int ValidateEndpointIdUniqueness(char *endpoint_id, int instance);
 time_t CalcNextPeriodicTime(time_t cur_time, time_t periodic_base, int periodic_interval);
 void UpdateFirstPeriodicNotificationTime(void);
@@ -163,6 +164,13 @@ int Validate_ControllerAssignedRole(dm_req_t *req, char *value);
 int Notify_ControllerAssignedRole(dm_req_t *req, char *value);
 int UpdateAssignedRole(controller_t *cont, char *reference);
 int ValidateMtpUniquenessReq(mtp_protocol_t protocol, dm_req_t* req);
+
+#ifndef DISABLE_STOMP
+int Notify_ControllerMtpStompReference(dm_req_t *req, char *value);
+int Notify_ControllerMtpStompDestination(dm_req_t *req, char *value);
+int ValidateStompMtpUniquenessReq(dm_req_t *req);
+int ValidateStompMtpUniqueness(controller_t *cont, int mtp_instance);
+#endif
 
 #ifdef ENABLE_COAP
 int Notify_ControllerMtpCoapHost(dm_req_t *req, char *value);
@@ -237,12 +245,16 @@ int DEVICE_CONTROLLER_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.ControllerCode", "", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.ProvisioningCode", "", NULL, NULL, DM_STRING);
 
+    err |= USP_REGISTER_SyncOperation(DEVICE_CONT_ROOT ".{i}.SendOnBoardRequest()", SendOnBoardRequest);
+
     err |= USP_REGISTER_Param_NumEntries(DEVICE_CONT_ROOT ".{i}.MTPNumberOfEntries", "Device.LocalAgent.Controller.{i}.MTP.{i}");
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.Enable", "false", Validate_ControllerMtpEnable, Notify_ControllerMtpEnable, DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.Protocol", "CoAP", Validate_ControllerMtpProtocol, Notify_ControllerMtpProtocol, DM_STRING);
 
+#ifndef DISABLE_STOMP
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.STOMP.Reference", "", DEVICE_MTP_ValidateStompReference, Notify_ControllerMtpStompReference, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.STOMP.Destination", "", NULL, Notify_ControllerMtpStompDestination, DM_STRING);
+#endif
 
 #ifdef ENABLE_COAP
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.CoAP.Host", "", NULL, Notify_ControllerMtpCoapHost, DM_STRING);
@@ -514,6 +526,7 @@ int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_ro
     return USP_ERR_OK;
 }
 
+#ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
 ** DEVICE_CONTROLLER_SetRolesFromStomp
@@ -555,6 +568,7 @@ void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role,
         }
     }
 }
+#endif
 
 /*********************************************************************//**
 **
@@ -578,13 +592,7 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
     int err = USP_ERR_INTERNAL_ERROR;
     controller_t *cont;
     controller_mtp_t *mtp;
-    char *agent_queue;
     mtp_reply_to_t dest;
-    char raw_err_id_header[256];        // header's contents before colons have been escaped (to '\c')
-    char err_id_header[256];            // header's contents after colons have been escaped (to '\c')
-#ifdef ENABLE_MQTT
-    char *response_topic;
-#endif
 
     // Take a copy of the MTP destination parameters we've been given
     // because we may modify it (and we don't want the caller to free anything we put in it, as they are owned by the data model)
@@ -606,12 +614,14 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
         return USP_ERR_INTERNAL_ERROR;
     }
 
+    // --------------------------------------------------------------------
     // If 'reply-to' was not specified, then use the data model to fill in where the response should be sent
     // This is always the case for notifications, since they are not a response to any incoming USP message
     if (mrt->is_reply_to_specified == false)
     {
         switch(mtp->protocol)
         {
+#ifndef DISABLE_STOMP
             case kMtpProtocol_STOMP:
                 if (mtp->stomp_connection_instance == INVALID)
                 {
@@ -623,6 +633,7 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
                 dest.stomp_instance = mtp->stomp_connection_instance;
                 dest.stomp_dest = mtp->stomp_controller_queue;
                 break;
+#endif
 
 #ifdef ENABLE_COAP
             case kMtpProtocol_CoAP:
@@ -654,18 +665,25 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
         }
     }
 
+    // --------------------------------------------------------------------
     // Send the response
     switch(dest.protocol)
     {
+#ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
-            agent_queue = DEVICE_MTP_GetAgentStompQueue(dest.stomp_instance);
+        {
+            char raw_err_id_header[256];        // header's contents before colons have been escaped (to '\c')
+            char err_id_header[256];            // header's contents after colons have been escaped (to '\c')
+            char *agent_queue = DEVICE_MTP_GetAgentStompQueue(dest.stomp_instance);
 
             // Form the colon escaped contents of the 'usp-err-id' header
             USP_SNPRINTF(raw_err_id_header, sizeof(raw_err_id_header), "%s/%s", endpoint_id, usp_msg_id);
             TEXT_UTILS_ReplaceCharInString(raw_err_id_header, ':', "\\c", err_id_header, sizeof(err_id_header));
 
             err = DEVICE_STOMP_QueueBinaryMessage(usp_msg_type, dest.stomp_instance, dest.stomp_dest, agent_queue, pbuf, pbuf_len, err_id_header, expiry_time);
+        }
             break;
+#endif
 
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
@@ -675,8 +693,10 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
 
 #ifdef ENABLE_MQTT
         case kMtpProtocol_MQTT:
-            response_topic = DEVICE_MTP_GetAgentMqttResponseTopic(dest.mqtt_instance);
+        {
+            char *response_topic = DEVICE_MTP_GetAgentMqttResponseTopic(dest.mqtt_instance);
             err = DEVICE_MQTT_QueueBinaryMessage(usp_msg_type, dest.mqtt_instance, dest.mqtt_topic, response_topic, pbuf, pbuf_len);
+        }
             break;
 #endif
         default:
@@ -687,6 +707,7 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
     return err;
 }
 
+#ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
 ** DEVICE_CONTROLLER_NotifyStompConnDeleted
@@ -725,6 +746,150 @@ void DEVICE_CONTROLLER_NotifyStompConnDeleted(int stomp_instance)
             }
         }
     }
+}
+#endif
+
+/*********************************************************************//**
+**
+** SendOnBoardRequest
+**
+** Called when sync command Device.LocalAgent.Controller.{i}.SendOnBoardRequest() is executed
+**
+** \param   req - pointer to structure identifying the command
+** \param   command_key - not used, OnBoardRequest notification doesn't have a command key field
+** \param   input_args - not used, the command doesn't receive parameters
+** \param   output_args - not used, the command doesn't return values
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int SendOnBoardRequest(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args)
+{
+    int err = USP_ERR_OK;
+
+    controller_t* controller = FindControllerByInstance(inst1);
+    if (controller == NULL)
+    {
+        USP_ERR_SetMessage("%s: Controller instance %d not found", __FUNCTION__, inst1);
+        err = USP_ERR_INVALID_ARGUMENTS;
+        goto exit;
+    }
+
+    // Execute operation
+    err = ExecuteSendOnBoardRequest(controller);
+    if (err != USP_ERR_OK)
+    {
+        err = USP_ERR_COMMAND_FAILURE;
+        goto exit;
+    }
+
+exit:
+    // Log output results
+    USP_LOG_Info("=== SendOnBoardRequest Operation completed with result=%d ===", err);
+
+    //
+    return err;
+}
+
+/*********************************************************************//**
+**
+** ExecuteSendOnBoardRequest
+**
+** Creates OnBoardRequest Notify request
+**
+** \param   controller - point to the controller responsible for sending the OnBoardRequest notification
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ExecuteSendOnBoardRequest(controller_t* controller)
+{
+    Usp__Msg *req;
+
+    // Only send the OnBoardRequest if the controller is enabled, according to R-NOT.5
+    if (controller->enable)
+    {
+        char oui[MAX_DM_SHORT_VALUE_LEN];
+        char product_class[MAX_DM_SHORT_VALUE_LEN];
+        char serial_number[MAX_DM_SHORT_VALUE_LEN];
+
+        int err = USP_ERR_OK;
+        err = DATA_MODEL_GetParameterValue("Device.DeviceInfo.ManufacturerOUI", oui, sizeof(oui), 0);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
+        err = DATA_MODEL_GetParameterValue("Device.DeviceInfo.ProductClass", product_class, sizeof(product_class), 0);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
+        err = DATA_MODEL_GetParameterValue("Device.DeviceInfo.SerialNumber", serial_number, sizeof(serial_number), 0);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
+        // Create the notify message
+        req = MSG_HANDLER_CreateNotifyReq_OnBoard(oui, product_class, serial_number, false);
+
+        // Send the Notify Request
+        SendOnBoardRequestNotify(req, controller);
+        usp__msg__free_unpacked(req, pbuf_allocator);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** SendOnBoardRequestNotify
+**
+** Sends OnBoardRequest Notify
+**
+** \param   req - USP OnBoardRequest notify message
+** \param   controller - point to the controller responsible for sending the OnBoardRequest notification
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
+{
+    unsigned char *pbuf;
+    int pbuf_len;
+    int size;
+    time_t retry_expiry_time;
+    char *dest_endpoint;
+    mtp_reply_to_t mtp_reply_to = {0};  // Ensures mtp_reply_to.is_reply_to_specified=false
+
+    // Exit if unable to determine the endpoint of the controller
+    // This could occur if the controller had been deleted
+    dest_endpoint = DEVICE_CONTROLLER_FindEndpointIdByInstance(controller->instance);
+    if (dest_endpoint == NULL)
+    {
+        USP_LOG_Error("%s: SendOnBoardRequest dest_endpoint is NULL", __FUNCTION__);
+        return;
+    }
+    USP_LOG_Debug("SendOnBoardRequest dest_endpoint=%s", dest_endpoint);
+
+    // Serialize the protobuf structure into a binary format buffer
+    pbuf_len = usp__msg__get_packed_size(req);
+    pbuf = USP_MALLOC(pbuf_len);
+    size = usp__msg__pack(req, pbuf);
+    USP_ASSERT(size == pbuf_len);          // If these are not equal, then we may have had a buffer overrun, so terminate
+
+    // Determine the time at which we should give up retrying, or expire the message in the MTP's send queue
+    retry_expiry_time = END_OF_TIME;       // default to never expire
+
+    // Send the message
+    // NOTE: Intentionally ignoring error here. If the controller has been disabled or deleted, then
+    // allow the subs retry code to remove any previous attempts from the retry array
+    MSG_HANDLER_QueueUspRecord(USP__HEADER__MSG_TYPE__NOTIFY, dest_endpoint, pbuf, pbuf_len, req->header->msg_id, &mtp_reply_to, retry_expiry_time);
+
+    // Free the serialized USP message as we don't need it for subs retry
+    USP_FREE(pbuf);
 }
 
 /*********************************************************************//**
@@ -1374,6 +1539,7 @@ int Notify_ControllerMtpProtocol(dm_req_t *req, char *value)
     return USP_ERR_OK;
 }
 
+#ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
 ** Notify_ControllerMtpStompReference
@@ -1434,6 +1600,7 @@ int Notify_ControllerMtpStompDestination(dm_req_t *req, char *value)
 
     return USP_ERR_OK;
 }
+#endif
 
 #ifdef ENABLE_COAP
 /*********************************************************************//**
@@ -1929,6 +2096,15 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
         goto exit;
     }
 
+    // Exit if unable to get the enable for this MTP
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.Enable", device_cont_root, cont->instance, mtp_instance);
+    err = DM_ACCESS_GetBool(path, &mtp->enable);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+#ifndef DISABLE_STOMP
     // Exit if this MTP is not the only STOMP MTP for this controller
     if (mtp->protocol == kMtpProtocol_STOMP)
     {
@@ -1937,14 +2113,6 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
         {
             goto exit;
         }
-    }
-
-    // Exit if unable to get the enable for this MTP
-    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.Enable", device_cont_root, cont->instance, mtp_instance);
-    err = DM_ACCESS_GetBool(path, &mtp->enable);
-    if (err != USP_ERR_OK)
-    {
-        goto exit;
     }
 
     // Exit if there was an error in the reference to the entry in the STOMP connection table
@@ -1963,6 +2131,7 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     {
         return err;
     }
+#endif
 
 #ifdef ENABLE_COAP
     // Exit if unable to get the name of the controller's CoAP host name
@@ -2062,8 +2231,8 @@ exit:
 **
 ** Given a reference value, sets the assigned_role stored in the controller array
 **
-** \param   req - pointer to structure identifying the path
-** \param   value - new value of this parameter
+** \param   cont - pointer to controller in the controller array, whose role we are updating
+** \param   reference - path to instance in Device.LocalAgent.ControllerTrust.Role table
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -2415,9 +2584,12 @@ void DestroyControllerMtp(controller_mtp_t *mtp)
     mtp->instance = INVALID;      // Mark controller slot as free
     mtp->protocol = kMtpProtocol_None;
     mtp->enable = false;
-    mtp->stomp_connection_instance = INVALID;
 
+#ifndef DISABLE_STOMP
+    mtp->stomp_connection_instance = INVALID;
     USP_SAFE_FREE(mtp->stomp_controller_queue);
+#endif
+
 #ifdef ENABLE_COAP
     USP_SAFE_FREE(mtp->coap_controller_host);
     USP_SAFE_FREE(mtp->coap.resource);
@@ -2430,6 +2602,7 @@ void DestroyControllerMtp(controller_mtp_t *mtp)
 #endif
 }
 
+#ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
 ** ValidateStompMtpUniquenessReq
@@ -2508,6 +2681,7 @@ int ValidateStompMtpUniqueness(controller_t *cont, int mtp_instance)
     // If the code gets here, then only the instance being validated is STOMP and enabled
     return USP_ERR_OK;
 }
+#endif
 
 /*********************************************************************//**
 **
@@ -2968,9 +3142,11 @@ int ValidateMtpUniquenessReq(mtp_protocol_t protocol, dm_req_t* req)
 
     switch(protocol)
     {
+#ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
             err = ValidateStompMtpUniquenessReq(req);
             break;
+#endif
 #ifdef ENABLE_MQTT
         case kMtpProtocol_MQTT:
             err = ValidateMqttMtpUniquenessReq(req);

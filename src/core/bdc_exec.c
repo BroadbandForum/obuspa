@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -162,7 +162,7 @@ int BDC_EXEC_Init(void)
 **
 ** BDC_EXEC_PostReportToSend
 **
-** Posts a message to BDC Exec thread to cuase it to send a BDC report to a BDC server
+** Posts a message to BDC Exec thread to cause it to send a BDC report to a BDC server
 ** NOTE: All dynamically allocated memory passed to this function as input arguments
 **       changes to be owned by BDC Exec
 **
@@ -209,7 +209,7 @@ int BDC_EXEC_PostReportToSend(int profile_id, char *full_url, char *query_string
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
 
-        // Free all buffers whose ownership has passed to BDC exec
+        // Free all buffers whose ownership has not passed to BDC exec
         FreeBdcExecMsgContents(&msg);
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -258,8 +258,6 @@ void *BDC_EXEC_Main(void *args)
                 // An unrecoverable error has occurred
                 USP_LOG_Error("%s: Unrecoverable socket select() error. Aborting Data Model thread", __FUNCTION__);
                 return NULL;
-                break;
-
                 break;
 
             case 0:

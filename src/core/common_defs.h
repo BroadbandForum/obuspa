@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -62,8 +62,7 @@
 // Whether a character is an alphanumeric symbol character
 #define IS_ALPHA(c)  ( ((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) )
 #define IS_NUMERIC(c)  ((c >= '0') && (c <= '9'))
-#define IS_DASH(c)     ((c == '_') || (c == '-'))
-#define IS_ALPHA_NUMERIC(c)  ( IS_ALPHA(c) || IS_NUMERIC(c) || IS_DASH(c) )
+#define IS_ALPHA_NUMERIC(c)  ( IS_ALPHA(c) || IS_NUMERIC(c) )
 
 // Magic values used to denote invalid
 #define INVALID (-1)

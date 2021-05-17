@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -269,7 +269,14 @@ void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *
     for (i=0; i < gi->num_entries; i++)
     {
         gge = &ggv->vector[gi->index + i];
+
+#ifdef GET_RESPONSE_SIMPLE_FORMAT
+        // Simple format contains a resolved_path_result for every object (and sub object)
+        AddResolvedPathResult(req_path_result, gge->path, gge->value, 0);
+#else
+        // Original format contains a resolved_path_result from the first point in the path expression that is resolved
         AddResolvedPathResult(req_path_result, gge->path, gge->value, gi->separator_split);
+#endif
     }
 }
 

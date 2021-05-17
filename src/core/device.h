@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2019-2021, Broadband Forum
  * Copyright (C) 2016-2020  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
@@ -71,6 +71,13 @@ typedef struct
 } combined_role_t;
 
 #define INTERNAL_ROLE             NULL   // Role used internally by Data Model. This always permits all operations (Even at bootup, when the permissions table has not been seeded yet)
+
+//------------------------------------------------------------------------------
+// Controller information to be used inside USP message processing
+typedef struct
+{
+    char *endpoint_id;
+} controller_info_t;
 
 //------------------------------------------------------------------------------
 // Structure containing cause of last boot cycle
@@ -184,6 +191,8 @@ int DEVICE_SECURITY_TrustCertVerifyCallbackWithCertChain(int preverify_ok, X509_
 void DEVICE_SECURITY_GetClientCertStatus(bool *available, bool *matches_endpoint);
 int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
 int DEVICE_SECURITY_BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
+int DEVICE_SECURITY_AddCertHostnameValidation(SSL* ssl, const char* name, size_t length);
+int DEVICE_SECURITY_AddCertHostnameValidationCtx(SSL_CTX* ssl_ctx, const char* name, size_t length);
 int DEVICE_CTRUST_Init(void);
 int DEVICE_CTRUST_Start(void);
 void DEVICE_CTRUST_Stop(void);

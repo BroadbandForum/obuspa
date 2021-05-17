@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2017-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2017-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -2211,8 +2211,9 @@ int CalcUriQueryOption(int socket_fd, bool encryption_preference, char *buf, int
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Percent encode our resource name
-    TEXT_UTILS_PercentEncodeString(cs->listen_resource, resource_name, sizeof(resource_name), '/');
+    // Percent encode our resource name according to step 6 in section 6.5 (Composing URIs from Options) of RFC7252
+    TEXT_UTILS_PercentEncodeString(cs->listen_resource, resource_name, sizeof(resource_name), ".~-_!$&'()*+,;=:@/");
+
 
     // Fill in the URI query option. This specifies where the USP controller should send responses to
     // NOTE: We use src_addr instead of cs->listen_addr in the reply-to because our CoAP server might be listening on "any" interface

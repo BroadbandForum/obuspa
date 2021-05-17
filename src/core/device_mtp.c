@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -73,8 +73,10 @@ typedef struct
     mtp_protocol_t protocol;
 
     // NOTE: The following parameters are not a union because the data model allows us to setup both STOMP and CoAP params at the same time, and just select between them using the protocol parameter
+#ifndef DISABLE_STOMP
     int stomp_connection_instance; // Instance number of the STOMP connection which this MTP refers to (ie Device.STOMP.Connection.{i})
     char *stomp_agent_queue;    // name of the queue on the above STOMP connection, on which this agent listens
+#endif
 
 #ifdef ENABLE_COAP
     coap_config_t  coap;     // Configuration settings for CoAP server
@@ -95,7 +97,9 @@ static agent_mtp_t agent_mtps[MAX_AGENT_MTPS];
 const enum_entry_t mtp_protocols[kMtpProtocol_Max] =
 {
     { kMtpProtocol_None, "" },
+#ifndef DISABLE_STOMP
     { kMtpProtocol_STOMP, "STOMP" },
+#endif
 #ifdef ENABLE_COAP
     { kMtpProtocol_CoAP, "CoAP" },
 #endif
@@ -119,18 +123,21 @@ int ValidateAdd_AgentMtp(dm_req_t *req);
 int Notify_AgentMtpAdded(dm_req_t *req);
 int Notify_AgentMtpDeleted(dm_req_t *req);
 int Validate_AgentMtpProtocol(dm_req_t *req, char *value);
-int Validate_AgentMtpStompReference(dm_req_t *req, char *value);
-int Validate_AgentMtpStompDestination(dm_req_t *req, char *value);
 int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value);
 int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value);
-int NotifyChange_AgentMtpStompReference(dm_req_t *req, char *value);
-int NotifyChange_AgentMtpStompDestination(dm_req_t *req, char *value);
 int Get_MtpStatus(dm_req_t *req, char *buf, int len);
-int Get_StompDestFromServer(dm_req_t *req, char *buf, int len);
 int ProcessAgentMtpAdded(int instance);
 agent_mtp_t *FindUnusedAgentMtp(void);
 void DestroyAgentMtp(agent_mtp_t *mtp);
 agent_mtp_t *FindAgentMtpByInstance(int instance);
+
+#ifndef DISABLE_STOMP
+int Validate_AgentMtpStompReference(dm_req_t *req, char *value);
+int Validate_AgentMtpStompDestination(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpStompReference(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpStompDestination(dm_req_t *req, char *value);
+int Get_StompDestFromServer(dm_req_t *req, char *buf, int len);
+#endif
 
 #ifdef ENABLE_MQTT
 //MQTT
@@ -187,9 +194,13 @@ int DEVICE_MTP_Init(void)
 
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Protocol", "STOMP", Validate_AgentMtpProtocol, NotifyChange_AgentMtpProtocol, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Enable", "false", NULL, NotifyChange_AgentMtpEnable, DM_BOOL);
+
+#ifndef DISABLE_STOMP
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.STOMP.Reference", "", DEVICE_MTP_ValidateStompReference, NotifyChange_AgentMtpStompReference, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.STOMP.Destination", "", NULL, NotifyChange_AgentMtpStompDestination, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_AGENT_MTP_ROOT ".{i}.STOMP.DestinationFromServer", Get_StompDestFromServer, DM_STRING);
+#endif
+
 #ifdef ENABLE_COAP
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.CoAP.Port", "5683", DM_ACCESS_ValidatePort, NotifyChange_AgentMtpCoAPPort, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.CoAP.Path", "", NULL, NotifyChange_AgentMtpCoAPPath, DM_STRING);
@@ -301,7 +312,7 @@ void DEVICE_MTP_Stop(void)
     }
 }
 
-
+#ifndef DISABLE_STOMP
 /******************************************************************//**
 **
 ** DEVICE_MTP_GetAgentStompQueue
@@ -338,6 +349,7 @@ char *DEVICE_MTP_GetAgentStompQueue(int instance)
     // If the code gets here, then no match has been found
     return NULL;
 }
+#endif
 
 /******************************************************************//**
 **
@@ -355,6 +367,7 @@ char *DEVICE_MTP_EnumToString(mtp_protocol_t protocol)
     return TEXT_UTILS_EnumToString(protocol, mtp_protocols, NUM_ELEM(mtp_protocols));
 }
 
+#ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
 ** DEVICE_MTP_ValidateStompReference
@@ -462,6 +475,7 @@ void DEVICE_MTP_NotifyStompConnDeleted(int stomp_instance)
         }
     }
 }
+#endif
 
 /*********************************************************************//**
 **
@@ -540,6 +554,7 @@ int Notify_AgentMtpDeleted(dm_req_t *req)
     // If the code gets here, then we are deleting an enabled MTP, so first turn off the protocol being used
     switch(mtp->protocol)
     {
+#ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
             // Schedule a reconnect after the present response has been sent
             if (mtp->stomp_connection_instance != INVALID)
@@ -547,6 +562,7 @@ int Notify_AgentMtpDeleted(dm_req_t *req)
                 DEVICE_STOMP_ScheduleReconnect(mtp->stomp_connection_instance);
             }
             break;
+#endif
 
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
@@ -631,6 +647,7 @@ int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value)
     // Update the protocol based on the change
     switch(mtp->protocol)
     {
+#ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
             // Store the new value
             mtp->enable = val_bool;
@@ -642,6 +659,7 @@ int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value)
                 DEVICE_STOMP_ScheduleReconnect(mtp->stomp_connection_instance);
             }
             break;
+#endif
 
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
@@ -730,7 +748,7 @@ int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value)
         return USP_ERR_OK;
     }
 
-    // If the code gets here, then the protocol has changed from STOMP to CoAP, or vice versa
+    // If the code gets here, then the protocol has changed
 
 #ifdef ENABLE_COAP
     // If the existing protocol is CoAP, stop its server
@@ -755,11 +773,13 @@ int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value)
     // Cache the changed value
     mtp->protocol = new_protocol;
 
+#ifndef DISABLE_STOMP
     // Schedule the affected STOMP connection to reconnect (because it might have lost or gained a agent queue to subscribe to)
     if ((mtp->enable) && (mtp->stomp_connection_instance != INVALID))
     {
         DEVICE_STOMP_ScheduleReconnect(mtp->stomp_connection_instance);
     }
+#endif
 
 #ifdef ENABLE_COAP
     // If the new protocol is CoAP, start its server
@@ -989,6 +1009,7 @@ exit:
 
 #endif // ENABLE_COAP
 
+#ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
 ** NotifyChange_AgentMtpStompReference
@@ -1081,6 +1102,7 @@ int NotifyChange_AgentMtpStompDestination(dm_req_t *req, char *value)
 
     return USP_ERR_OK;
 }
+#endif
 
 /*********************************************************************//**
 **
@@ -1110,9 +1132,11 @@ int Get_MtpStatus(dm_req_t *req, char *buf, int len)
     {
         switch(mtp->protocol)
         {
+#ifndef DISABLE_STOMP
             case kMtpProtocol_STOMP:
                 status = DEVICE_STOMP_GetMtpStatus(mtp->stomp_connection_instance);
                 break;
+#endif
 
 #ifdef ENABLE_COAP
             case kMtpProtocol_CoAP:
@@ -1145,6 +1169,7 @@ int Get_MtpStatus(dm_req_t *req, char *buf, int len)
     return USP_ERR_OK;
 }
 
+#ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
 ** Get_StompDestFromServer
@@ -1177,6 +1202,7 @@ int Get_StompDestFromServer(dm_req_t *req, char *buf, int len)
 
     return USP_ERR_OK;
 }
+#endif
 
 /*********************************************************************//**
 **
@@ -1205,7 +1231,9 @@ int ProcessAgentMtpAdded(int instance)
     // Initialise to defaults
     memset(mtp, 0, sizeof(agent_mtp_t));
     mtp->instance = instance;
+#ifndef DISABLE_STOMP
     mtp->stomp_connection_instance = INVALID;
+#endif
 #ifdef ENABLE_MQTT
     mtp->mqtt_connection_instance = INVALID;
 #endif
@@ -1231,6 +1259,7 @@ int ProcessAgentMtpAdded(int instance)
     // This is because the data model allows us to setup both STOMP and CoAP params at the same time, and just select between them using the protocol parameter
     // If the parameter is not present in the database, then it's default value will be read
 
+#ifndef DISABLE_STOMP
     // Exit if there was an error in the reference to the entry in the STOMP connection table
     USP_SNPRINTF(path, sizeof(path), "%s.%d.STOMP.Reference", device_agent_mtp_root, instance);
     err = DEVICE_MTP_GetStompReference(path, &mtp->stomp_connection_instance);
@@ -1246,6 +1275,7 @@ int ProcessAgentMtpAdded(int instance)
     {
         goto exit;
     }
+#endif
 
 #ifdef ENABLE_MQTT
     // Exit if there was an error in the reference to the entry in the MQTT client table
@@ -1318,11 +1348,13 @@ exit:
         DestroyAgentMtp(mtp);
     }
 
+#ifndef DISABLE_STOMP
     // Schedule a STOMP reconnect, if this MTP affects an existing STOMP connection
     if ((mtp->enable) && (mtp->protocol==kMtpProtocol_STOMP) && (mtp->stomp_connection_instance != INVALID))
     {
         DEVICE_STOMP_ScheduleReconnect(mtp->stomp_connection_instance);
     }
+#endif
 
 #ifdef ENABLE_MQTT
     // Schedule a MQTT reconnect, if this MTP affects an existing MQTT client
@@ -1383,13 +1415,17 @@ void DestroyAgentMtp(agent_mtp_t *mtp)
     mtp->instance = INVALID;      // Mark agent MTP slot as free
     mtp->protocol = kMtpProtocol_None;
     mtp->enable = false;
-    mtp->stomp_connection_instance = INVALID;
 
+#ifndef DISABLE_STOMP
+    mtp->stomp_connection_instance = INVALID;
     USP_SAFE_FREE(mtp->stomp_agent_queue);
+#endif
+
 #ifdef ENABLE_COAP
     USP_SAFE_FREE(mtp->coap.resource);
     mtp->coap.port = 0;
 #endif
+
 #ifdef ENABLE_MQTT
     mtp->mqtt_connection_instance = INVALID;
     USP_SAFE_FREE(mtp->mqtt_agent_topic);

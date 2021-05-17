@@ -2,6 +2,7 @@
  *
  * Copyright (C) 2019-2020, Broadband Forum
  * Copyright (C) 2020, BT PLC
+ * Copyright (C) 2020  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -45,7 +46,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <mosquitto.h>
 #include "device.h"
 #include "dm_exec.h"
 #include "os_utils.h"
@@ -53,6 +53,7 @@
 #include <math.h>
 #include "retry_wait.h"
 #include "text_utils.h"
+#include "msg_handler.h"
 
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
@@ -61,13 +62,15 @@
 
 #ifdef ENABLE_MQTT
 
+#include <mosquitto.h>
+
 // Defines for MQTT Property Values
 #define PUBLISH 0x30
 #define CONTENT_TYPE 3
 #define RESPONSE_TOPIC 8
 #define ASSIGNED_CLIENT_IDENTIFIER 18
 #define REQUEST_RESPONSE_INFORMATION 25
-#define RESPONSE_INFORMATION 25
+#define RESPONSE_INFORMATION 26
 #define USER_PROPERTY 38
 
 
@@ -379,8 +382,9 @@ int EnableMosquitto(mqtt_client_t *client)
 int ConnectSetEncryption(mqtt_client_t *client)
 {
     USP_ASSERT(client->ssl_ctx != NULL);
+    int err;
 
-    int err = DEVICE_SECURITY_LoadTrustStore(client->ssl_ctx, SSL_VERIFY_PEER, client->verify_callback);
+    err = DEVICE_SECURITY_LoadTrustStore(client->ssl_ctx, SSL_VERIFY_PEER, client->verify_callback);
     if (err != USP_ERR_OK)
     {
         USP_LOG_Error("%s: Failed to load the trust store", __FUNCTION__);
@@ -389,6 +393,14 @@ int ConnectSetEncryption(mqtt_client_t *client)
     else
     {
         USP_LOG_Debug("%s: Loaded the trust store!", __FUNCTION__);
+    }
+
+    err = DEVICE_SECURITY_AddCertHostnameValidationCtx(client->ssl_ctx, client->conn_params.host,
+                                                        strlen(client->conn_params.host));
+    if (err != USP_ERR_OK)
+    {
+        USP_LOG_Error("%s: Adding SSL hostname validation failed.", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
     }
 
     // Set TLS using SSL_CTX in lib mosquitto
@@ -610,13 +622,14 @@ int Unsubscribe(mqtt_client_t *client, mqtt_subscription_t *sub)
 
 int SubscribeToAll(mqtt_client_t *client)
 {
+    int err = USP_ERR_OK;
+    int i;
+
     // Let the DM know we're ready for sending messages
     DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->role, client->allowed_controllers);
 
-    int err = USP_ERR_OK;
-
     // Now we have the proplist, send the subscribe
-    for (int i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
+    for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         mqtt_subscription_t *sub = &client->subscriptions[i];
         if (sub->enabled == true)
@@ -694,6 +707,8 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
     USP_ASSERT(msg != NULL);
     USP_ASSERT(msg->topic != NULL);
 
+    MSG_HANDLER_LogMessageToSend(msg->usp_msg_type, msg->pbuf, msg->pbuf_len, kMtpProtocol_MQTT, client->conn_params.host, NULL, kMtpContentType_UspRecord);
+
     int version = client->conn_params.version;
     if (version == kMqttProtocol_5_0)
     {
@@ -741,7 +756,8 @@ void HandleMqttError(mqtt_client_t *client, mqtt_failure_t failure_code, const c
         MoveState(&client->state, kMqttState_ErrorRetrying, message);
     }
 
-    USP_LOG_Debug("%s: Got error: %d, reason: %s", __FUNCTION__, failure_code, message);
+    USP_LOG_Debug("%s: Got error: %d, reason: %s, retry_count: %d", __FUNCTION__, failure_code, message,
+            client->retry_count);
 
     time_t cur_time = time(NULL);
     // Flow is:
@@ -868,9 +884,10 @@ bool IsUspRecordInMqttQueue(mqtt_client_t *client, unsigned char *pbuf, int pbuf
 
 mqtt_client_t *FindMqttClientByInstance(int instance)
 {
+    int i;
     mqtt_client_t *client;
 
-    for (int i = 0; i < MAX_MQTT_CLIENTS; i++)
+    for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
         client = &mqtt_clients[i];
 
@@ -885,13 +902,14 @@ mqtt_client_t *FindMqttClientByInstance(int instance)
 
 mqtt_subscription_t *FindMqttSubscriptionByInstance(int clientinstance, int subinstance)
 {
+    int i;
     mqtt_client_t *client;
     mqtt_subscription_t *subs;
 
     client = FindMqttClientByInstance(clientinstance);
     USP_ASSERT(client != NULL);
 
-    for (int i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
+    for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         subs = &client->subscriptions[i];
 
@@ -906,9 +924,10 @@ mqtt_subscription_t *FindMqttSubscriptionByInstance(int clientinstance, int subi
 
 mqtt_client_t *FindMqttClientByMosquitto(struct mosquitto *mosq)
 {
+    int i;
     mqtt_client_t *client;
 
-    for (int i = 0; i < MAX_MQTT_CLIENTS; i++)
+    for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
         client = &mqtt_clients[i];
         if (client->mosq == mosq)
@@ -922,12 +941,14 @@ mqtt_client_t *FindMqttClientByMosquitto(struct mosquitto *mosq)
 
 mqtt_subscription_t *FindSubscriptionByMid(mqtt_client_t *client, int mid)
 {
+    int i;
+
     if (client == NULL)
     {
         return NULL;
     }
 
-    for (int i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
+    for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         if (client->subscriptions[i].mid == mid)
         {
@@ -961,6 +982,16 @@ void MQTT_SubscriptionDestroy(mqtt_subscription_t *sub)
     USP_SAFE_FREE(sub->topic);
     memset(sub, 0, sizeof(mqtt_subscription_t));
     sub->instance = INVALID;
+}
+
+// Handler to reset the retry counts for backoff
+void ResetRetryCount(mqtt_client_t* client)
+{
+    if (client)
+    {
+        client->retry_time = 0;
+        client->retry_count = 0;
+    }
 }
 
 void ParamReplace(mqtt_conn_params_t *dest, mqtt_conn_params_t *src)
@@ -1058,7 +1089,8 @@ void MessageV5Callback(struct mosquitto *mosq, void *userdata, const struct mosq
     }
     else
     {
-        USP_LOG_Info("%s: Received Message: Topic: %s Payload: %s", __FUNCTION__, message->topic, (char*)message->payload);
+        USP_LOG_Info("%s: Received Message: Topic: %s", __FUNCTION__, message->topic);
+        //USP_LOG_Info("%s: Received Message: Payload: %s", __FUNCTION__, (char*)message->payload);
 
         if (client->state == kMqttState_Running)
         {
@@ -1117,9 +1149,6 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
         USP_LOG_Error("%s: Failed to find client instance by id %d", __FUNCTION__, instance);
         goto exit;
     }
-
-    client->retry_time = 0;
-    client->retry_count = 0;
 
     if (client->state != kMqttState_AwaitingConnect && client->state != kMqttState_ErrorRetrying)
     {
@@ -1189,6 +1218,8 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
         client->conn_params.client_id = USP_STRDUP(client_id_ptr);
         USP_LOG_Debug("Received client id \"%s\"", client->conn_params.client_id);
 
+        ResetRetryCount(client);
+
         MoveState(&client->state, kMqttState_Running, "Connect Callback Received");
         SubscribeToAll(client);
     }
@@ -1212,9 +1243,6 @@ void ConnectCallback(struct mosquitto *mosq, void *userdata, int result)
         USP_LOG_Error("%s: Failed to find client instance by id %d", __FUNCTION__, instance);
         goto exit;
     }
-
-    client->retry_time = 0;
-    client->retry_count = 0;
 
     if (client->state != kMqttState_AwaitingConnect && client->state != kMqttState_ErrorRetrying)
     {
@@ -1245,6 +1273,8 @@ void ConnectCallback(struct mosquitto *mosq, void *userdata, int result)
             USP_LOG_Error("%s: No cert chain, so cannot get controller trust", __FUNCTION__);
         }
 
+
+        ResetRetryCount(client);
 
         MoveState(&client->state, kMqttState_Running, "Connect Callback Received");
         SubscribeToAll(client);
@@ -1369,14 +1399,15 @@ exit:
 
 void ReplaceTopicSlash(char* topic)
 {
-    USP_ASSERT(topic != NULL);
-
+    int i;
     char* sep = "%2F";
     int sep_len = strlen(sep);
     int topic_len = strlen(topic);
     char new_topic[topic_len];
     memset(new_topic, 0, topic_len);
     char* ptr = new_topic;
+
+    USP_ASSERT(topic != NULL);
 
     // Split the string
     str_vector_t sv;
@@ -1390,7 +1421,7 @@ void ReplaceTopicSlash(char* topic)
     }
 
     // Now do the middle, adding all the string together with / in between
-    for (int i = 0; i < sv.num_entries; i++)
+    for (i = 0; i < sv.num_entries; i++)
     {
         strcpy(ptr, sv.vector[i]);
         ptr += strlen(sv.vector[i]);
@@ -1580,6 +1611,8 @@ void InitSubscription(mqtt_subscription_t *sub)
 
 void InitClient(mqtt_client_t *client, int index)
 {
+    int i;
+
     memset(client, 0, sizeof(mqtt_client_t));
 
     MQTT_InitConnParams(&client->conn_params);
@@ -1587,7 +1620,6 @@ void InitClient(mqtt_client_t *client, int index)
 
     client->state = kMqttState_Idle;
     client->mosq = NULL;
-    client->retry_time = 0;
     client->role = ROLE_DEFAULT;
     client->scheduled_action = kScheduledAction_Off;
     client->cert_chain = NULL;
@@ -1595,10 +1627,11 @@ void InitClient(mqtt_client_t *client, int index)
     client->socket_fd = INVALID;
     client->allowed_controllers = NULL;
     client->ssl_ctx = DEVICE_SECURITY_CreateSSLContext(SSLv23_client_method(), SSL_VERIFY_PEER, client->verify_callback);
+    ResetRetryCount(client);
 
     USP_ASSERT(client->ssl_ctx != NULL);
 
-    for (int i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
+    for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         InitSubscription(&client->subscriptions[i]);
     }
@@ -1608,10 +1641,12 @@ void InitClient(mqtt_client_t *client, int index)
 
 void DestroyClient(mqtt_client_t *client)
 {
+    int i;
+
     MQTT_DestroyConnParams(&client->conn_params);
     MQTT_DestroyConnParams(&client->next_params);
 
-    for (int i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
+    for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         MQTT_SubscriptionDestroy(&client->subscriptions[i]);
     }
@@ -1642,10 +1677,11 @@ void DestroyClient(mqtt_client_t *client)
 // Public API functions
 int MQTT_Init(void)
 {
+    int i;
     int err = USP_ERR_OK;
     mosquitto_lib_init();
 
-    for (int i = 0; i < MAX_MQTT_CLIENTS; i++)
+    for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
         InitClient(&mqtt_clients[i], i);
     }
@@ -1660,8 +1696,10 @@ int MQTT_Init(void)
 
 void MQTT_Destroy(void)
 {
+    int i;
+
     mqtt_client_t* client = NULL;
-    for (int i = 0; i < MAX_MQTT_CLIENTS; i++)
+    for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
         client = &mqtt_clients[i];
         if (client->conn_params.instance != INVALID ||
@@ -1736,6 +1774,7 @@ int EnableClient(mqtt_client_t* client)
 
 int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS])
 {
+    int i;
     int err = USP_ERR_OK;
     mqtt_client_t *client = NULL;
 
@@ -1765,10 +1804,12 @@ int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subsc
     }
 
     ParamReplace(&client->conn_params, mqtt_params);
-    for (int i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
+    for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         MQTT_SubscriptionReplace(&client->subscriptions[i], &subscriptions[i]);
     }
+
+    ResetRetryCount(client);
 
     if (client->conn_params.enable)
     {
@@ -1906,6 +1947,8 @@ exit:
 
 void MQTT_ProcessAllSocketActivity(socket_set_t* set)
 {
+    int i;
+
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
     if (is_mqtt_mtp_thread_exited)
@@ -1914,7 +1957,7 @@ void MQTT_ProcessAllSocketActivity(socket_set_t* set)
     }
 
     mqtt_client_t* client = NULL;
-    for (int i = 0; i < MAX_MQTT_CLIENTS; i++)
+    for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
         client = &mqtt_clients[i];
 
@@ -1968,6 +2011,8 @@ exit:
 
 void MQTT_UpdateAllSockSet(socket_set_t *set)
 {
+    int i;
+
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
     if (is_mqtt_mtp_thread_exited)
@@ -1983,7 +2028,7 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
 
     // Iterate over all mqtt clients currently enabled
     mqtt_client_t* client = NULL;
-    for (int i = 0; i < MAX_MQTT_CLIENTS; i++)
+    for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
         client = &mqtt_clients[i];
         if (client->conn_params.instance != INVALID)
@@ -2028,6 +2073,7 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
                             // Use the correct configuration, and set retry to now
                             // Triggers reconnect straight away
                             ParamReplace(&client->conn_params, &client->next_params);
+                            ResetRetryCount(client);
                             client->retry_time = cur_time;
                         }
 
@@ -2072,16 +2118,6 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);
 }
 
-void MQTT_UpdateRetryParams(int instance, mqtt_retry_params_t *retry_params)
-{
-    mqtt_client_t* client = FindMqttClientByInstance(instance);
-
-    if (client && retry_params)
-    {
-        memcpy(&client->conn_params.retry, retry_params, sizeof(mqtt_retry_params_t));
-    }
-}
-
 void MQTT_ScheduleReconnect(mqtt_conn_params_t *mqtt_params)
 {
     mqtt_client_t *client = NULL;
@@ -2120,6 +2156,7 @@ exit:
 
 void MQTT_ActivateScheduledActions(void)
 {
+    int i;
     mqtt_client_t* client;
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
@@ -2129,7 +2166,7 @@ void MQTT_ActivateScheduledActions(void)
         return;
     }
 
-    for (int i=0; i < MAX_MQTT_CLIENTS; i++)
+    for (i=0; i < MAX_MQTT_CLIENTS; i++)
     {
         client = &mqtt_clients[i];
         if (client->scheduled_action == kScheduledAction_Signalled)
@@ -2218,6 +2255,7 @@ const char *MQTT_GetClientStatus(int instance)
 
 bool MQTT_AreAllResponsesSent(void)
 {
+    int i;
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
     bool responses_sent = true;
@@ -2232,7 +2270,7 @@ bool MQTT_AreAllResponsesSent(void)
 
     mqtt_client_t *client = NULL;
 
-    for (int i = 0; i < MAX_MQTT_CLIENTS; i++)
+    for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
         client = &mqtt_clients[i];
         if (client->conn_params.instance != INVALID)

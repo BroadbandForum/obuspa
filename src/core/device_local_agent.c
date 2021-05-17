@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -43,6 +43,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "common_defs.h"
 #include "usp_api.h"
@@ -54,6 +55,8 @@
 #include "nu_ipaddr.h"
 #include "text_utils.h"
 #include "uptime.h"
+#include "iso8601.h"
+#include "os_utils.h"
 
 
 
@@ -93,6 +96,23 @@ static reboot_info_t reboot_info;
 char *dual_stack_preference_path = "Internal.DualStackPreference";
 static bool dual_stack_prefer_ipv6 = false;
 
+
+//------------------------------------------------------------------------------
+// Structure containing input conditions for ScheduleTimer task
+typedef struct
+{
+    int request_instance;
+    time_t time_ref;
+    unsigned delay_seconds;
+} sched_timer_input_cond_t;
+
+//------------------------------------------------------------------------------------
+// Array of valid input arguments for ScheduleTimer() operation
+static char *sched_timer_input_args[] =
+{
+    "DelaySeconds",
+};
+
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int Validate_DualStackPreference(dm_req_t *req, char *value);
@@ -105,6 +125,9 @@ int GetDefaultSerialNumber(char *buf, int len);
 int GetDefaultEndpointID(char *buf, int len, char *oui, char *serial_number);
 int PopulateRebootInfo(void);
 int GetActiveSoftwareVersion(dm_req_t *req, char *buf, int len);
+int Start_ScheduleTimer(dm_req_t *req, kv_vector_t *input_args, int instance);
+void *ScheduleTimerThreadMain(void *param);
+int Restart_ScheduleTimer(dm_req_t *req, int instance, bool *is_restart, int *err_code, char *err_msg, int err_msg_len, kv_vector_t *output_args);
 #ifndef REMOVE_DEVICE_INFO
 int GetHardwareVersion(dm_req_t *req, char *buf, int len);
 #endif
@@ -124,6 +147,9 @@ int GetHardwareVersion(dm_req_t *req, char *buf, int len);
 int DEVICE_LOCAL_AGENT_Init(void)
 {
     int err = USP_ERR_OK;
+    int num_protocols = 0;
+    char *protocols[kMtpProtocol_Max];
+    char supported_protocols[MAX_DM_SHORT_VALUE_LEN];
 
     // Initialise last reboot cause structure
     memset(&reboot_info, 0, sizeof(reboot_info));
@@ -133,22 +159,29 @@ int DEVICE_LOCAL_AGENT_Init(void)
     err = USP_ERR_OK;
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.LocalAgent.UpTime", GetUpTime, DM_UINT);
 
-    // Determine which protocol is used
-    // TODO: Make this more flexible, maybe don't use macros?
-    #ifdef ENABLE_MQTT
-        #ifdef ENABLE_COAP
-            #define SUPPORTED_PROTOCOLS "STOMP, CoAP, MQTT"
-        #else
-            #define SUPPORTED_PROTOCOLS "STOMP, MQTT"
-        #endif
-    #elif defined(ENABLE_COAP)
-        #define SUPPORTED_PROTOCOLS      "STOMP, CoAP"
-    #else
-        #define SUPPORTED_PROTOCOLS      "STOMP"
+    // Form string containing list of supported protocols
+    #ifndef DISABLE_STOMP
+    protocols[num_protocols++] = "STOMP";
     #endif
 
-    err |= USP_REGISTER_Param_Constant("Device.LocalAgent.SupportedProtocols", SUPPORTED_PROTOCOLS, DM_STRING);
+    #ifdef ENABLE_COAP
+    protocols[num_protocols++] = "CoAP";
+    #endif
+
+    #ifdef ENABLE_MQTT
+    protocols[num_protocols++] = "MQTT";
+    #endif
+
+    USP_ASSERT(num_protocols <= kMtpProtocol_Max);
+    TEXT_UTILS_ListToString(protocols, num_protocols, supported_protocols, sizeof(supported_protocols));
+
+    // Register supported protocols and software version
+    err |= USP_REGISTER_Param_Constant("Device.LocalAgent.SupportedProtocols", supported_protocols, DM_STRING);
     err |= USP_REGISTER_Param_Constant("Device.LocalAgent.SoftwareVersion", AGENT_SOFTWARE_VERSION, DM_STRING);
+
+    // Register ScheduleTimer operation
+    err |= USP_REGISTER_AsyncOperation("Device.ScheduleTimer()", Start_ScheduleTimer, Restart_ScheduleTimer);
+    err |= USP_REGISTER_OperationArguments("Device.ScheduleTimer()", sched_timer_input_args, NUM_ELEM(sched_timer_input_args), NULL, 0);
 
     // Register Reset and Reboot operations
     err |= USP_REGISTER_SyncOperation("Device.Reboot()", ScheduleReboot);
@@ -708,7 +741,7 @@ int GetDefaultSerialNumber(char *buf, int len)
 ** Gets the default endpoint_id for this CPE
 ** This is the value of endpoint_id if it is not overriden by a value in the USP DB
 **
-** \param   endpoint_id - pointer to buffer in which to return the endpoint_id of this CPE
+** \param   buf - pointer to buffer in which to return the endpoint_id of this CPE
 ** \param   len - length of endpoint_id return buffer
 ** \param   oui - pointer to string containing oui of device
 ** \param   serial_number - pointer to string containing serial number of device
@@ -720,6 +753,8 @@ int GetDefaultEndpointID(char *buf, int len, char *oui, char *serial_number)
 {
     int err;
     dm_vendor_get_agent_endpoint_id_cb_t   get_agent_endpoint_id_cb;
+    char oui_encoded[MAX_DM_SHORT_VALUE_LEN];
+    char serial_number_encoded[MAX_DM_SHORT_VALUE_LEN];
 
     // Exit if endpoint_id is determined by a vendor hook
     get_agent_endpoint_id_cb = vendor_hook_callbacks.get_agent_endpoint_id_cb;
@@ -735,9 +770,13 @@ int GetDefaultEndpointID(char *buf, int len, char *oui, char *serial_number)
         return USP_ERR_OK;
     }
 
-    // Otherwise form the EndpointID from the retrieved OUI-SerialNumber
-    USP_ASSERT(serial_number[0] != '\0');
-    USP_SNPRINTF(buf, len, "os::%s-%s", oui, serial_number);
+    // Percent encode the OUI and serial number
+    #define SAFE_CHARS "-._"
+    TEXT_UTILS_PercentEncodeString(oui, oui_encoded, sizeof(oui_encoded), SAFE_CHARS);
+    TEXT_UTILS_PercentEncodeString(serial_number, serial_number_encoded, sizeof(serial_number_encoded), SAFE_CHARS);
+
+    // Form the final endpoint_id
+    USP_SNPRINTF(buf, len, "os::%s-%s", oui_encoded, serial_number_encoded);
 
     return USP_ERR_OK;
 }
@@ -939,3 +978,138 @@ int GetHardwareVersion(dm_req_t *req, char *buf, int len)
     return USP_ERR_OK;
 }
 #endif // REMOVE_DEVICE_INFO
+
+/*********************************************************************//**
+**
+** Start_ScheduleTimer
+**
+** Starts the ScheduleTimer() operation
+**
+** \param   req - pointer to structure identifying the operation in the data model
+** \param   input_args - vector containing input arguments and their values
+** \param   instance - instance number of this operation in the Device.LocalAgent.Request table
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Start_ScheduleTimer(dm_req_t *req, kv_vector_t *input_args, int instance)
+{
+    int err;
+    sched_timer_input_cond_t *cond = NULL;
+    char buf[MAX_ISO8601_LEN];
+
+    // Allocate input conditions to pass to thread
+    cond = USP_MALLOC(sizeof(sched_timer_input_cond_t));
+    memset(cond, 0, sizeof(sched_timer_input_cond_t));
+    cond->request_instance = instance;
+
+    // Exit if an error in reading DelaySeconds, or DelaySeconds is not specified
+    #define INVALID_DELAY_SECONDS 0xFFFFFFFF
+    err = USP_ARG_GetUnsigned(input_args, "DelaySeconds", INVALID_DELAY_SECONDS, &cond->delay_seconds);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    if (cond->delay_seconds == INVALID_DELAY_SECONDS)
+    {
+        USP_ERR_SetMessage("%s: DelaySeconds argument not specified", __FUNCTION__);
+        err = USP_ERR_COMMAND_FAILURE;
+        goto exit;
+    }
+
+    // Exit if unable to extract the time at which this operation was issued
+    // NOTE: This may not be the current time, if this operation is being restarted after a reboot that interrupted it
+    err = USP_ARG_GetDateTime(input_args, SAVED_TIME_REF_ARG_NAME, iso8601_cur_time(buf, sizeof(buf)), &cond->time_ref);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Log the input conditions for the operation
+    USP_LOG_Info("=== ScheduleTimer Conditions ===");
+    USP_LOG_Info("TimeRef: %s", iso8601_from_unix_time(cond->time_ref, buf, sizeof(buf)) );
+    USP_LOG_Info("DelaySeconds: %d", cond->delay_seconds);
+
+    // Exit if unable to start a thread to perform this operation
+    // NOTE: ownership of input conditions passes to the thread
+    err = OS_UTILS_CreateThread(ScheduleTimerThreadMain, cond);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+exit:
+    // Exit if an error occurred (freeing the input conditions)
+    if (err != USP_ERR_OK)
+    {
+        USP_FREE(cond);
+        return USP_ERR_COMMAND_FAILURE;
+    }
+
+    // Ownership of the input conditions has passed to the thread
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Restart_ScheduleTimer
+**
+** This function is called at bootup to determine whether to restart the ScheduleTimer() Async Operations
+**
+** \param   req - pointer to structure containing path information
+** \param   instance - instance number of this operation in the Request table
+** \param   is_restart - pointer to variable in which to return whether the operation should be restarted or not
+**
+**                     The following parameters are only used if the operation should not be restarted
+**                     They determine the values placed in the operation complete message
+** \param   err_code - pointer to variable in which to return an error code
+** \param   err_msg - pointer to buffer in which to return an error message (only used if error code is failed)
+** \param   err_msg_len - length of buffer in which to return an error message (only used if error code is failed)
+** \param   output_args - pointer to structure in which to return output arguments for the operation
+**
+** \return  USP_ERR_OK if validated successfully
+**
+**************************************************************************/
+int Restart_ScheduleTimer(dm_req_t *req, int instance, bool *is_restart, int *err_code, char *err_msg, int err_msg_len, kv_vector_t *output_args)
+{
+    *is_restart = true;
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** ScheduleTimerThreadMain
+**
+** Main function for ScheduleTimer Asynchronous operation thread
+**
+** \param   param - pointer to input conditions
+**
+** \return  NULL
+**
+**************************************************************************/
+void *ScheduleTimerThreadMain(void *param)
+{
+    time_t cur_time;
+    int delay;
+    sched_timer_input_cond_t *cond = (sched_timer_input_cond_t *) param;
+
+    // Calculate time left to delay for
+    // NOTE: This number might be negative if the timer was scheduled to fire when the device was turned off
+    cur_time = time(NULL);
+    delay = (int)(cond->time_ref - cur_time) + cond->delay_seconds;
+
+    // Wait until the timer is scheduled to fire
+    if (delay > 0)
+    {
+        sleep(delay);
+    }
+
+    USP_LOG_Info("=== ScheduleTimer completed ===");
+    USP_SIGNAL_OperationComplete(cond->request_instance, USP_ERR_OK, NULL, NULL);
+
+    // Free the input conditions that were passed into this function as an argument
+    USP_FREE(cond);
+
+    return NULL;
+}

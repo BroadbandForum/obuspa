@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -381,7 +381,7 @@ int KV_VECTOR_FindKey(kv_vector_t *kvv, char *key, int start_index)
     }
 
     // Iterate from 0 to just before start_index
-    for (i=0; i < start_index-1; i++)
+    for (i=0; i < start_index; i++)
     {
         pair = &kvv->vector[i];
         if (strcmp(pair->key, key)==0)
@@ -489,6 +489,87 @@ int KV_VECTOR_GetUnsignedWithinRange(kv_vector_t *kvv, char *key, unsigned defau
 
     // Exit if unable to convert the value
     err = KV_VECTOR_GetUnsigned(kvv, key, default_value, value);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if value is not in range
+    if ((*value < min) || (*value > max))
+    {
+        USP_ERR_SetMessage("%s: Input argument (%s=%u) is out of range [%u:%u]", __FUNCTION__, key, *value, min, max);
+        return USP_ERR_INVALID_VALUE;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** KV_VECTOR_GetInt
+**
+** Gets the value of the specified parameter from the vector as an integer
+**
+** \param   kvv - pointer to key-value pair vector structure
+** \param   key - pointer to name of key to get the value of
+** \param   default_value - default value, if not present in the vector
+** \param   value - pointer to variable in which to return the value
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INVALID_TYPE if unable to convert the key's value (given in the vector) to an integer
+**
+**************************************************************************/
+int KV_VECTOR_GetInt(kv_vector_t *kvv, char *key, int default_value, int *value)
+{
+    int index;
+    int err;
+    char *str_value;
+
+    // Exit, returning default value, if unable to find key
+    index = KV_VECTOR_FindKey(kvv, key, 0);
+    if (index == INVALID)
+    {
+        *value = default_value;
+        return USP_ERR_OK;
+    }
+
+    // Exit if the key's value could not be converted
+    str_value = kvv->vector[index].value;
+    err = TEXT_UTILS_StringToInteger(str_value, value);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: Illegal value (%s) in argument %s", __FUNCTION__, str_value, key);
+        return err;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** KV_VECTOR_GetIntWithinRange
+**
+** Gets the value of the specified parameter from the vector as an integer,
+** checking that it is within the specified range
+**
+** \param   kvv - pointer to key-value pair vector structure
+** \param   key - pointer to name of key to get the value of
+** \param   default_value - default value, if not present in the vector
+** \param   min - minimum allowed value
+** \param   min - maximum allowed value
+** \param   value - pointer to variable in which to return the value
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INVALID_TYPE if unable to convert the key's value (given in the vector) to an integer
+**          USP_ERR_INVALID_VALUE if value is out of range
+**
+**************************************************************************/
+int KV_VECTOR_GetIntWithinRange(kv_vector_t *kvv, char *key, int default_value, int min, int max, int *value)
+{
+    int err;
+
+    // Exit if unable to convert the value
+    err = KV_VECTOR_GetInt(kvv, key, default_value, value);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -687,12 +768,12 @@ int KV_VECTOR_ValidateArguments(kv_vector_t *args, str_vector_t *expected_schema
     kv_pair_t *kv;
 
     // Iterate over all keys in the vector, seeing if each one has any duplicates
-    // NOTE: we do not have to check the last key for duplicates, as it will not be a duplicate if none of the proceeding keys have matched it
+    // NOTE: we do not have to check the last key for duplicates, as it will not be a duplicate if none of the preceeding keys have matched it
     for (i=0; i< args->num_entries-1; i++)
     {
         kv = &args->vector[i];
         index = KV_VECTOR_FindKey(args, kv->key, i+1);
-        if (index != INVALID)
+        if (index != i)
         {
             USP_ERR_SetMessage("%s: Duplicate input argument (%s) found", __FUNCTION__, kv->key);
             return USP_ERR_INVALID_ARGUMENTS;

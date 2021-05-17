@@ -141,7 +141,7 @@ Usp__Msg *CreateGetSupportedProtocolResp(char *msg_id)
     response->resp_type_case = USP__RESPONSE__RESP_TYPE_GET_SUPPORTED_PROTOCOL_RESP;
 
     response->get_supported_protocol_resp = get_sup_resp;
-    get_sup_resp->agent_supported_protocol_versions = USP_STRDUP("1.0");
+    get_sup_resp->agent_supported_protocol_versions = USP_STRDUP(AGENT_SUPPORTED_PROTOCOL_VERSIONS);
 
     return resp;
 }

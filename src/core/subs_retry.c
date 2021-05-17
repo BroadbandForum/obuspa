@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -253,11 +253,11 @@ void SUBS_RETRY_Remove(char *msg_id, char *subscription_id)
     subs_retry_t *sr;
 
     // Iterate over all retry entries, finding the first entry that matches the one the controller is responding to
+    // NOTE: USP Spec 1.2 clarified that subscription_id should be ignored, so only msg_id needs to match
     for (i=0; i < subs_retry.num_entries; i++)
     {
         sr = &subs_retry.vector[i];
-        if ((strcmp(sr->msg_id, msg_id) == 0) &&
-            (strcmp(sr->subscription_id, subscription_id)==0))
+        if (strcmp(sr->msg_id, msg_id) == 0)
         {
             // Remove this entry. We have had a response from the controller, so do not have to retry it anymore
             USP_LOG_Info("%s: Removing Notification retry for msg_id=%s (NotifyResponse received)", __FUNCTION__, msg_id);

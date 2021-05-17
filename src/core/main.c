@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -279,11 +279,13 @@ int main(int argc, char *argv[])
     }
 
     // Exit if unable to spawn off a thread to service the MTPs
+#ifndef DISABLE_STOMP
     err = OS_UTILS_CreateThread(MTP_EXEC_StompMain, NULL);
     if (err != USP_ERR_OK)
     {
         goto exit;
     }
+#endif
 
 #ifdef ENABLE_COAP
     err = OS_UTILS_CreateThread(MTP_EXEC_CoapMain, NULL);
@@ -389,6 +391,7 @@ int MAIN_Start(char *db_file, bool enable_mem_info)
         return err;
     }
 
+#ifndef DISABLE_STOMP
     // Start the STOMP connections. This must be done here, before other parts of the data model that require stomp connections
     // to queue messages (eg object creation/deletion notifications)
     err = DEVICE_STOMP_StartAllConnections();
@@ -396,6 +399,7 @@ int MAIN_Start(char *db_file, bool enable_mem_info)
     {
         return err;
     }
+#endif
 
 #ifdef ENABLE_MQTT
     // Start the MQTT connections. This must be done here, before other parts of the data model that require MQTT clients

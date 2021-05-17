@@ -319,7 +319,7 @@ void DEVICE_REQUEST_UpdateOperationStatus(int instance, char *status)
 ** DEVICE_REQUEST_RestartAsyncOperations
 **
 ** Called after bootup to restart all async operations that should be restarted
-** Also any operations which required a reboot to complete send their completion events here
+** Also any operations which required a reboot to complete send their completion events from here
 **
 ** \param   None
 **
@@ -521,6 +521,8 @@ int RestartAsyncOperation(char *path, int instance)
     char err_msg[USP_ERR_MAXLEN];
 
     // Exit if unable to read the input arguments of the operation (which were persisted when it was first started)
+    // NOTE: The persisted input arguments contain SAVED_TIME_REF_ARG_NAME, so that any delta time arguments can
+    // be calculated relative to time at which the operate was received
     err = ReadOperationArgs(instance, &input_args, "Input");
     if (err != USP_ERR_OK)
     {

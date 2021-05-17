@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -113,7 +113,6 @@ void FormInstanceString(dm_instances_t *inst, char *buf, int len);
 dm_node_t *CreateNode(char *name, dm_node_type_t type, char *schema_path);
 int ParseSchemaPath(char *path, char *path_segments, int path_segment_len, dm_node_type_t type, dm_path_segment *segments, int max_segments);
 dm_node_t *FindNodeFromHash(dm_hash_t hash);
-int ParseInstanceString(char *instances, dm_instances_t *inst);
 char *ParseInstanceInteger(char *p, int *p_value);
 int AddChildParamsDefaultValues(char *path, int path_len, dm_node_t *node, dm_instances_t *inst);
 int DeleteChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *inst);
@@ -162,17 +161,21 @@ int DATA_MODEL_Init(void)
     is_executing_within_dm_init = true;
     err = USP_ERR_OK;
     err |= DEVICE_LOCAL_AGENT_Init();
+    err |= DEVICE_SECURITY_Init();
 #ifndef REMOVE_DEVICE_TIME
     err |= DEVICE_TIME_Init();
 #endif
     err |= DEVICE_CONTROLLER_Init();
     err |= DEVICE_MTP_Init();
+
+#ifndef DISABLE_STOMP
     err |= DEVICE_STOMP_Init();
+#endif
+
 #ifdef ENABLE_MQTT
     err |= DEVICE_MQTT_Init();
 #endif
     err |= DEVICE_SUBSCRIPTION_Init();
-    err |= DEVICE_SECURITY_Init();
     err |= DEVICE_CTRUST_Init();
     err |= DEVICE_REQUEST_Init();
     err |= DEVICE_BULKDATA_Init();
@@ -287,7 +290,10 @@ int DATA_MODEL_Start(void)
 #endif
     err |= DEVICE_CONTROLLER_Start();
     err |= DEVICE_SECURITY_Start();
+#ifndef DISABLE_STOMP
     err |= DEVICE_STOMP_Start();          // NOTE: This must come after DEVICE_SECURITY_Start(), as it assumes the trust store and client certs have been locally cached
+#endif
+
 #ifdef ENABLE_COAP
     err |= COAP_Start();                  // NOTE: This must come after DEVICE_SECURITY_Start(), as it assumes the trust store and client certs have been locally cached
 #endif
@@ -342,7 +348,9 @@ void DATA_MODEL_Stop(void)
     DEVICE_SUBSCRIPTION_Stop();
     DEVICE_CONTROLLER_Stop();
     DEVICE_MTP_Stop();
+#ifndef DISABLE_STOMP
     DEVICE_STOMP_Stop();
+#endif
 #ifdef ENABLE_MQTT
     DEVICE_MQTT_Stop();
 #endif
@@ -1392,6 +1400,7 @@ int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_
             if (err != USP_ERR_OK)
             {
                 USP_ERR_ReplaceEmptyMessage("%s: Synchronous operation (%s) failed", __FUNCTION__, path);
+                goto exit;
             }
 
             #ifdef VALIDATE_OUTPUT_ARG_NAMES
@@ -1412,6 +1421,11 @@ int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_
             {
                 goto exit;
             }
+
+            // Add a time reference to the input args for the time at which this operation was issued
+            // This is necessary so that when restarting an interrupted operation after a reboot
+            // the correct absolute times are calculated, if the input args contained relative time args (eg 'delay')
+            USP_ARG_AddDateTime(input_args, SAVED_TIME_REF_ARG_NAME, time(NULL));
 
             // Persist the input arguments (if this operation might be restarted at bootup)
             if (info->restart_cb != NULL)
@@ -1885,7 +1899,7 @@ int DATA_MODEL_AddParameterInstances(dm_hash_t hash, char *instances)
 
     // Exit if unable to parse the instance numbers from the string
     memset(&inst, 0, sizeof(inst));
-    err = ParseInstanceString(instances, &inst);
+    err = DM_PRIV_ParseInstanceString(instances, &inst);
     if (err != USP_ERR_OK)
     {
         USP_ERR_SetMessage("%s: Instance numbers ('%s') for hash=%d are invalid", __FUNCTION__, instances, hash);
@@ -2757,28 +2771,23 @@ void DM_PRIV_RequestInit(dm_req_t *req, dm_node_t *node, char *path, dm_instance
 
 /*********************************************************************//**
 **
-** DM_PRIV_GetNodeFromPath
+** DM_PRIV_CalcHashFromPath
 **
-** Returns the node associated with the given instantiated data model path
-** NOTE: Checks that path is specified with the correct number of {i} instance numbers in it
-** NOTE: Does not check that the instance numbers are present in the data model
+** Returns the hash associated with the given instantiated data model path and extracts instance numbers
+** NOTE: Does not check that the path exists in the supported data model, so this function allows the hash
+**       of legacy paths that are not now present in the data model to be calculated
 **
-** \param   path - full data model path of the parameter or object to return the node of
+** \param   path - full data model path of the parameter or object to calculate the hash of
 **                 This may be an instantiated or schema path or may use wildcards instead of instance numbers (if so, inst and is_qualified_instance must be NULL).
 ** \param   inst - pointer to instances structure, filled in from parsing the path
 **                 NOTE: This parameter may be NULL if instances are not required
 **
-** \param   is_qualified_instance - Pointer to boolean in which to return whether the instances
-**                                  structure contains all instance numbers for the parameter/object being addressed
-**                                  It will be false only if the path represents a multi-instance object
-**                                  without instance number (unqualified)
-**                                  NOTE: This parameter may be NULL if checking is not required
+** \param   p_hash - pointer to variable in which to return the calculated hash
 **
-** \return  pointer to node, or NULL if matching node not found or specified object instance is not present
-**          NOTE: Sets USP error message if path is in error
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-dm_node_t *DM_PRIV_GetNodeFromPath(char *path, dm_instances_t *inst, bool *is_qualified_instance)
+int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash)
 {
     dm_hash_t hash = OFFSET_BASIS;
     char c;
@@ -2787,7 +2796,6 @@ dm_node_t *DM_PRIV_GetNodeFromPath(char *path, dm_instances_t *inst, bool *is_qu
     char t;
     int num_digits;
     unsigned number;
-    dm_node_t *node;
 
     // Setup default return values
     // NOTE: It is important that this structure does not contain uninitialised values, otherwise more than one entry may be added to the DM_INST_VECTOR
@@ -2845,7 +2853,7 @@ dm_node_t *DM_PRIV_GetNodeFromPath(char *path, dm_instances_t *inst, bool *is_qu
                     if (inst->order == MAX_DM_INSTANCE_ORDER)
                     {
                         USP_ERR_SetMessage("%s: More than %d instance numbers in path", __FUNCTION__, MAX_DM_INSTANCE_ORDER);
-                        return NULL;
+                        return USP_ERR_INTERNAL_ERROR;
                     }
                     inst->instances[ inst->order ] = number;
                     inst->order++;
@@ -2876,6 +2884,46 @@ dm_node_t *DM_PRIV_GetNodeFromPath(char *path, dm_instances_t *inst, bool *is_qu
         // Otherwise add the current character to the hash
         ADD_TO_HASH(c, hash);
         c = *p++;
+    }
+
+    *p_hash = hash;
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DM_PRIV_GetNodeFromPath
+**
+** Returns the node associated with the given instantiated data model path
+** NOTE: Checks that path is specified with the correct number of {i} instance numbers in it
+** NOTE: Does not check that the instance numbers are present in the data model
+**
+** \param   path - full data model path of the parameter or object to return the node of
+**                 This may be an instantiated or schema path or may use wildcards instead of instance numbers (if so, inst and is_qualified_instance must be NULL).
+** \param   inst - pointer to instances structure, filled in from parsing the path
+**                 NOTE: This parameter may be NULL if instances are not required
+**
+** \param   is_qualified_instance - Pointer to boolean in which to return whether the instances
+**                                  structure contains all instance numbers for the parameter/object being addressed
+**                                  It will be false only if the path represents a multi-instance object
+**                                  without instance number (unqualified)
+**                                  NOTE: This parameter may be NULL if checking is not required
+**
+** \return  pointer to node, or NULL if matching node not found or specified object instance is not present
+**          NOTE: Sets USP error message if path is in error
+**
+**************************************************************************/
+dm_node_t *DM_PRIV_GetNodeFromPath(char *path, dm_instances_t *inst, bool *is_qualified_instance)
+{
+    dm_hash_t hash;
+    dm_node_t *node;
+    int err;
+
+    // Exit if unable to calculate the hash for the path
+    err = DM_PRIV_CalcHashFromPath(path, inst, &hash);
+    if (err != USP_ERR_OK)
+    {
+        return NULL;
     }
 
     // If unable to find the node using the given path...
@@ -3098,40 +3146,45 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
 
 /*********************************************************************//**
 **
-** DM_PRIV_FormPath_FromDM
+** DM_PRIV_FormInstantiatedPath
 **
-** Forms a data model path string from data model node and parsed instance array
-** This function is called by the database code to dump the contents of the database
-** It is also called when handling the GetInstances message
+** Forms a data model instantiated path string from data model schema path and parsed instance array
+** This function replaces each '{i}' in the schema_path with the relevant instance number from the inst structure
 **
-** \param   node - pointer to node representing parameter or object to print the name of
-** \param   inst - pointer to instance structure specifying the instances in the path to the node
+** \param   schema_path - supported data model path to interpolate with instance numbers
+** \param   inst - pointer to instance structure specifying the instances in the path
 **                 NOTE: Only the instance numbers are used in this structure, the nodes are not
 ** \param   buf - pointer to buffer in which to store the parameter/object
 ** \param   len - length of buffer
 **
-** \return  pointer to start of buffer (allowing this function to be passed to printf)
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-char *DM_PRIV_FormPath_FromDM(dm_node_t *node, dm_instances_t *inst, char *buf, int len)
+int DM_PRIV_FormInstantiatedPath(char *schema_path, dm_instances_t *inst, char *buf, int len)
 {
     char *src;
     char *dest;
     int i;      // iterates through the dm_instances array when '{i}' is encountered in the schema path
     int num_chars_written;
 
-
     // Iterate over the schema path, copying it to the buffer, but replacing '{i}' with instance numbers
     i = 0;
     *buf = '\0';
-    src = node->path;
+    src = schema_path;
     dest = buf;
     while (*src != '\0')
     {
         if (strncmp(src, MULTI_SEPARATOR, sizeof(MULTI_SEPARATOR)-1) == 0)
         {
+            // Exit if the number of '{i}' separators in this string exceed the instance numbers in the array
+            if (i == inst->order)
+            {
+                USP_ERR_SetMessage("%s: Cannot form instantiated path for %s as only %d instance numbers provided", __FUNCTION__, schema_path, inst->order);
+                *buf = '\0';
+                return USP_ERR_INTERNAL_ERROR;
+            }
+
             // Replace the {i} separator with the instance number from the array
-            USP_ASSERT(i < inst->order);
             num_chars_written = USP_SNPRINTF(dest, len, "%d", inst->instances[i]);
             dest += num_chars_written;
             len -= num_chars_written;
@@ -3149,8 +3202,17 @@ char *DM_PRIV_FormPath_FromDM(dm_node_t *node, dm_instances_t *inst, char *buf, 
         }
     }
 
+    // Exit if not all instance numbers have not been consumed
+    if (i != inst->order)
+    {
+        *buf = '\0';
+        USP_ERR_SetMessage("%s: Cannot form instantiated path for %s as too many instance numbers provided (%d)", __FUNCTION__, schema_path, inst->order);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+
     *dest = '\0';   // ensures that buffer is always zero terminated
-    return buf;
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -3175,6 +3237,8 @@ int DM_PRIV_FormDB_FromPath(char *path, dm_hash_t *hash, char *instances, int le
 {
     dm_node_t *node;
     dm_instances_t inst;
+    dm_hash_t migrated_hash;
+    dm_node_t *migrated_node;
 
     // Exit if parameter does not exist in the data model
     // or parameter is specified with incorrect instance order
@@ -3182,6 +3246,22 @@ int DM_PRIV_FormDB_FromPath(char *path, dm_hash_t *hash, char *instances, int le
     if (node == NULL)
     {
         return USP_ERR_INVALID_PATH;
+    }
+
+    // If the path has been migrated to a new path, then determine the new node to use in the database
+    // This code ensures that factory reset databases set using dbset commands or '-r' option seed the new parameters in the USP DB
+    migrated_hash = (dm_hash_t) DATABASE_GetMigratedHash((db_hash_t) node->hash);
+    if (migrated_hash != node->hash)
+    {
+        // Exit if parameter does not exist in the data model
+        migrated_node = FindNodeFromHash(migrated_hash);
+        if (migrated_node == NULL)
+        {
+            USP_ERR_SetMessage("%s: Migrated Parameter (hash=%d) does not exist in the data model schema", __FUNCTION__, migrated_hash);
+            return USP_ERR_INVALID_PATH;
+        }
+        USP_LOG_Warning("%s: WARNING: '%s' is deprecated, please use '%s' instead", __FUNCTION__, node->path, migrated_node->path);
+        node = migrated_node;
     }
 
     // Exit if path is not to a parameter
@@ -3235,7 +3315,7 @@ int DM_PRIV_FormPath_FromDB(dm_hash_t hash, char *instances, char *buf, int len)
 
     // Exit if unable to parse the instance numbers from the string
     memset(&inst, 0, sizeof(inst));
-    err = ParseInstanceString(instances, &inst);
+    err = DM_PRIV_ParseInstanceString(instances, &inst);
     if (err != USP_ERR_OK)
     {
         USP_ERR_SetMessage("%s: Instance numbers ('%s') for hash=%d are invalid", __FUNCTION__, instances, hash);
@@ -3249,7 +3329,13 @@ int DM_PRIV_FormPath_FromDB(dm_hash_t hash, char *instances, char *buf, int len)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    DM_PRIV_FormPath_FromDM(node, &inst, buf, len);
+    // Exit if unable to form the instantiated path
+    err = DM_PRIV_FormInstantiatedPath(node->path, &inst, buf, len);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     return USP_ERR_OK;
 }
 
@@ -3546,7 +3632,7 @@ void FormInstanceString(dm_instances_t *inst, char *buf, int len)
 
 /*********************************************************************//**
 **
-** ParseInstanceString
+** DM_PRIV_ParseInstanceString
 **
 ** Parses a string containing the instance numbers into the inst structure
 ** eg Device.WiFi.EndPoint.1.Profile.5.Enable would have an instance string of "1.5"
@@ -3557,7 +3643,7 @@ void FormInstanceString(dm_instances_t *inst, char *buf, int len)
 ** \return  USP_ERR_OK if successful, USP_ERR_INTERNAL_ERROR otherwise
 **
 **************************************************************************/
-int ParseInstanceString(char *instances, dm_instances_t *inst)
+int DM_PRIV_ParseInstanceString(char *instances, dm_instances_t *inst)
 {
     char *p;
     int value;
@@ -3849,6 +3935,7 @@ int AddChildParamsDefaultValues(char *path, int path_len, dm_node_t *node, dm_in
     {
         switch(child->type)
         {
+            case kDMNodeType_DBParam_ReadOnly:
             case kDMNodeType_DBParam_ReadWrite:
             case kDMNodeType_DBParam_Secure:
                 {
@@ -3929,7 +4016,6 @@ int AddChildParamsDefaultValues(char *path, int path_len, dm_node_t *node, dm_in
 
             // Nothing to do for non database writable parameters
             default:
-            case kDMNodeType_DBParam_ReadOnly:
             case kDMNodeType_VendorParam_ReadOnly:
             case kDMNodeType_VendorParam_ReadWrite:
             case kDMNodeType_Param_ConstantValue:

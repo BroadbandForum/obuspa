@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2017-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2017-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,7 +35,7 @@
 /**
  * \file device_security.c
  *
- * Implements the Device.Security data model object
+ * Implements the Device.LocalAgent.Certificate and the Device.Security data model object
  *
  */
 
@@ -49,7 +49,10 @@
 #include <openssl/x509v3.h>
 #include <openssl/safestack.h>
 #include <unistd.h>
-
+#include <dirent.h>
+#include <stdio.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
 #include "common_defs.h"
 #include "stomp.h"
@@ -59,6 +62,7 @@
 #include "dm_access.h"
 #include "vendor_api.h"
 #include "iso8601.h"
+#include "text_utils.h"
 
 
 //-----------------------------------------------------------------------------------------
@@ -79,6 +83,11 @@ char *usp_trust_store_file = NULL;
 static const char device_cert_root[] = DEVICE_CERT_ROOT;
 
 //------------------------------------------------------------------------------
+// Location of the Device.LocalAgent.Certificate table within the data model
+#define DEVICE_LA_CERT_ROOT "Device.LocalAgent.Certificate"
+static const char device_la_cert_root[] = DEVICE_LA_CERT_ROOT;
+
+//------------------------------------------------------------------------------
 // Client certificate and associated private key obtained either from the get_agent_cert vendor hook, or from a file (specified by the '--authcert' option)
 // NOTE: If the client cert is obtained via the load_agent_cert vendor hook, then the client cert will not be cached here.
 static X509 *agent_cert = NULL;
@@ -97,10 +106,34 @@ typedef struct
 static client_cert_t client_cert;
 
 //------------------------------------------------------------------------------
-// Vector holding information about each trusted certificate
+// Enumeration defining what a certificate is used for
+typedef enum
+{
+    kCertUsage_TrustCert,
+    kCertUsage_ClientCert,
+    kCertUsage_SystemCert,
+} cert_usage_t;
+
+//------------------------------------------------------------------------------
+// Table used to convert from an enumeration of certificate usage to a textual representation
+const enum_entry_t cert_usages[] =
+{
+    { kCertUsage_TrustCert,     "TrustCerts" },
+    { kCertUsage_ClientCert,    "ClientCert" },
+    { kCertUsage_SystemCert,    "SystemCerts" },
+};
+
+//------------------------------------------------------------------------------
+// Vector holding information about each certificate in Device.Security.Certificate
+// Some certificates in this array are also present in Device.LocalAgent.Certificate
 typedef struct
 {
-    X509 *cert;                 // Copy of the certificate in the trust store. This is used to seed curl's trust store in DEVICE_SECURITY_SetCurlTrustStore()
+    int instance;               // Instance number of this certificate in Device.Security.Certificate
+    int la_instance;            // Instance number of this certificate in Device.LocalAgent.Certificate (if applicable)
+
+    cert_usage_t cert_usage;    // Defines what the cert is used for
+    X509 *cert;                 // Points to a copy of the certificate (only if this is a trust store cert, NULL otherwise)
+                                // This is used to seed curl's trust store in DEVICE_SECURITY_SetCurlTrustStore()
 
     char *subject;              // Free with OPENSSL_free()
     char *issuer;               // Free with OPENSSL_free()
@@ -111,38 +144,79 @@ typedef struct
     char *subject_alt;          // Free with USP_FREE()
     char *signature_algorithm;  // Free with USP_FREE()
     cert_hash_t hash;           // Hash of the DER (binary) form of the certificate
-} trust_cert_t;
+} cert_t;
 
-static trust_cert_t *trust_certs = NULL;
+static cert_t *all_certs = NULL;
+static int num_all_certs = 0;
 static int num_trust_certs = 0;
 
+//------------------------------------------------------------------------------------
+// Enumeration for FingerprintAlgorithm input argument of GetFingerprint() command
+typedef enum
+{
+    kFpAlg_None,
+    kFpAlg_SHA1,
+    kFpAlg_SHA224,
+    kFpAlg_SHA256,
+    kFpAlg_SHA384,
+    kFpAlg_SHA512
+} fp_alg_t;
+
 //------------------------------------------------------------------------------
-// Array holding trust store certificates, parsed from a file that was specified by the '-t' command line option
-// This overrides any certificates specified by the get_trust_store_cb vendor hook
-#define MAX_CERTS_IN_TRUST_STORE_FILE 16
-trust_store_t trust_store_from_file[MAX_CERTS_IN_TRUST_STORE_FILE];
-int num_trust_store_from_file_certs = 0;
+// Table used to convert from an enumeration of an MTP status to a textual representation
+const enum_entry_t fp_algs[] =
+{
+    { kFpAlg_SHA1,      "SHA-1"   },
+    { kFpAlg_SHA224,    "SHA-224" },
+    { kFpAlg_SHA256,    "SHA-256" },
+    { kFpAlg_SHA384,    "SHA-384" },
+    { kFpAlg_SHA512,    "SHA-512" },
+};
+
+//------------------------------------------------------------------------------------
+// Array of valid input arguments for GetFingerprint()
+static char *fp_input_args[] =
+{
+    "FingerprintAlgorithm"
+};
+
+//------------------------------------------------------------------------------------
+// Array of valid output arguments for GetFingerprint()
+static char *fp_output_args[] =
+{
+    "Fingerprint"
+};
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
-int GetTrustCert_Count(dm_req_t *req, char *buf, int len);
-int GetTrustCert_LastModif(dm_req_t *req, char *buf, int len);
-int GetTrustCert_SerialNumber(dm_req_t *req, char *buf, int len);
-int GetTrustCert_Issuer(dm_req_t *req, char *buf, int len);
-int GetTrustCert_NotBefore(dm_req_t *req, char *buf, int len);
-int GetTrustCert_NotAfter(dm_req_t *req, char *buf, int len);
-int GetTrustCert_Subject(dm_req_t *req, char *buf, int len);
-int GetTrustCert_SubjectAlt(dm_req_t *req, char *buf, int len);
-int GetTrustCert_SignatureAlgorithm(dm_req_t *req, char *buf, int len);
-trust_cert_t *FindTrustCertByReq(dm_req_t *req);
+void LoadCerts_FromPath(char *path, cert_usage_t cert_usage, ctrust_role_t role);
+void LoadCerts_FromFile(char *file_path, cert_usage_t cert_usage, ctrust_role_t role);
+void LoadCerts_FromDir(char *dir_path, cert_usage_t cert_usage, ctrust_role_t role);
+int Get_NumCerts(dm_req_t *req, char *buf, int len);
+int Get_NumTrustCerts(dm_req_t *req, char *buf, int len);
+int GetCert_LastModif(dm_req_t *req, char *buf, int len);
+int GetCert_SerialNumber(dm_req_t *req, char *buf, int len);
+int GetCert_Issuer(dm_req_t *req, char *buf, int len);
+int GetCert_NotBefore(dm_req_t *req, char *buf, int len);
+int GetCert_NotAfter(dm_req_t *req, char *buf, int len);
+int GetCert_Subject(dm_req_t *req, char *buf, int len);
+int GetCert_SubjectAlt(dm_req_t *req, char *buf, int len);
+int GetCert_SignatureAlgorithm(dm_req_t *req, char *buf, int len);
+int GetLaCert_SerialNumber(dm_req_t *req, char *buf, int len);
+int GetLaCert_Issuer(dm_req_t *req, char *buf, int len);
+cert_t *Find_SecurityCertByReq(dm_req_t *req);
+cert_t *Find_LocalAgentCertByReq(dm_req_t *req);
+cert_t *Find_LocalAgentCertByHash(cert_hash_t hash);
+cert_t *Find_CertByHash(cert_hash_t hash);
 int LoadTrustStore(void);
-int LoadTrustCert(const unsigned char *cert_data, int cert_len, ctrust_role_t role);
 int LoadClientCert(SSL_CTX *ctx);
 int GetClientCert(X509 **p_cert, EVP_PKEY **p_pkey);
-int GetClientCertFromFile(char *cert_file, X509 **p_cert, EVP_PKEY **p_pkey);
+int GetCertFromFile(char *cert_file, X509 **p_cert, EVP_PKEY **p_pkey);
 int GetClientCertFromMemory(X509 **p_cert, EVP_PKEY **p_pkey);
 int AddClientCert(SSL_CTX *ctx);
-int AddTrustCert(X509 *cert, ctrust_role_t role);
+int AddCert(X509 *cert, cert_usage_t cert_usage, ctrust_role_t role);
+void DestroyCert(cert_t *ct);
+X509 *Cert_FromDER(const unsigned char *cert_data, int cert_len);
 int ParseCert_Subject(X509 *cert, char **p_subject);
 int ParseCert_Issuer(X509 *cert, char **p_issuer);
 int ParseCert_LastModif(X509 *cert, time_t *last_modif);
@@ -153,14 +227,13 @@ time_t Asn1Time_To_UnixTime(ASN1_TIME *cert_time);
 int ParseCert_SubjectAlt(X509 *cert, char **p_subject_alt);
 int ParseCert_SignatureAlg(X509 *cert, char **p_sig_alg);
 int CalcCertHash(X509 *cert, cert_hash_t *p_hash);
-int FindMatchingTrustCert(cert_hash_t hash);
 bool IsSystemTimeReliable(void);
 void LogCertChain(STACK_OF(X509) *cert_chain);
 void LogTrustCerts(void);
 void LogCert_DER(X509 *cert);
 const trust_store_t *GetTrustStoreFromFile(int *num_trusted_certs);
 const trust_store_t *Read_TrustStoreFromFile(int *num_trusted_certs);
-void Free_TrustStoreFromFile(void);
+int Operate_GetFingerprint(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
 
 /*********************************************************************//**
 **
@@ -177,22 +250,45 @@ int DEVICE_SECURITY_Init(void)
 {
     int err = USP_ERR_OK;
 
-    // Register parameters implemented by this component
-    err |= USP_REGISTER_VendorParam_ReadOnly("Device.Security.CertificateNumberOfEntries", GetTrustCert_Count, DM_UINT);
+    // Register Device.Security.Certificate parameters
+    err |= USP_REGISTER_VendorParam_ReadOnly("Device.Security.CertificateNumberOfEntries", Get_NumCerts, DM_UINT);
     err |= USP_REGISTER_Object(DEVICE_CERT_ROOT ".{i}", USP_HOOK_DenyAddInstance, NULL, NULL,   // This table is read only
                                                         USP_HOOK_DenyDeleteInstance, NULL, NULL);
-    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.LastModif", GetTrustCert_LastModif, DM_DATETIME);
-    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.SerialNumber", GetTrustCert_SerialNumber, DM_STRING);
-    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.Issuer", GetTrustCert_Issuer, DM_STRING);
-    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.NotBefore", GetTrustCert_NotBefore, DM_DATETIME);
-    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.NotAfter", GetTrustCert_NotAfter, DM_DATETIME);
-    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.Subject", GetTrustCert_Subject, DM_STRING);
-    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.SubjectAlt", GetTrustCert_SubjectAlt, DM_STRING);
-    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.SignatureAlgorithm", GetTrustCert_SignatureAlgorithm, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.Alias", DM_ACCESS_PopulateAliasParam, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.LastModif", GetCert_LastModif, DM_DATETIME);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.SerialNumber", GetCert_SerialNumber, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.Issuer", GetCert_Issuer, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.NotBefore", GetCert_NotBefore, DM_DATETIME);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.NotAfter", GetCert_NotAfter, DM_DATETIME);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.Subject", GetCert_Subject, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.SubjectAlt", GetCert_SubjectAlt, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.SignatureAlgorithm", GetCert_SignatureAlgorithm, DM_STRING);
+
+    // Register Device.LocalAgent.Certificate parameters
+    err |= USP_REGISTER_Object(DEVICE_LA_CERT_ROOT ".{i}", USP_HOOK_DenyAddInstance, NULL, NULL,   // This table is read only
+                                                        USP_HOOK_DenyDeleteInstance, NULL, NULL);
+    err |= USP_REGISTER_VendorParam_ReadOnly("Device.LocalAgent.CertificateNumberOfEntries", Get_NumTrustCerts, DM_STRING);
+
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_LA_CERT_ROOT ".{i}.Alias", DM_ACCESS_PopulateAliasParam, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_LA_CERT_ROOT ".{i}.SerialNumber", GetLaCert_SerialNumber, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_LA_CERT_ROOT ".{i}.Issuer", GetLaCert_Issuer, DM_STRING);
+
+    // Register Device.LocalAgent.Certificate.{i}.GetFingerprint operation
+    err |= USP_REGISTER_SyncOperation(DEVICE_LA_CERT_ROOT ".{i}.GetFingerprint()", Operate_GetFingerprint);
+    err |= USP_REGISTER_OperationArguments(DEVICE_LA_CERT_ROOT ".{i}.GetFingerprint()", fp_input_args, NUM_ELEM(fp_input_args),
+                                                                                        fp_output_args, NUM_ELEM(fp_output_args));
+    err |= USP_REGISTER_Param_Constant("Device.LocalAgent.SupportedFingerprintAlgorithms", "SHA-1,SHA-224,SHA-256,SHA-384,SHA-512", DM_STRING);
 
     // Register unique keys for tables
     char *unique_keys[] = { "SerialNumber", "Issuer" };
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_CERT_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
+    err |= USP_REGISTER_Object_UniqueKey(DEVICE_LA_CERT_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
+
+    // Exit if any errors occurred
+    if (err != USP_ERR_OK)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
 
     // Exit if any errors occurred
     if (err != USP_ERR_OK)
@@ -230,11 +326,17 @@ int DEVICE_SECURITY_Start(void)
     SSL_CTX *temp_ssl_ctx = NULL;   // Temporary SSL context: required because the load_agent_cert vendor hook only loads into an SSL context
     load_agent_cert_cb_t load_agent_cert_cb;
 
-    // Exit if failed to load certificate trust store
+    // Exit if failed to load certificate trust store provided by vendor hook
     err = LoadTrustStore();
     if (err != USP_ERR_OK)
     {
         goto exit;
+    }
+
+    // Add trust store certificates specified by '-t' option
+    if (usp_trust_store_file != NULL)
+    {
+        LoadCerts_FromPath(usp_trust_store_file, kCertUsage_TrustCert, kCTrustRole_FullAccess);
     }
 
     // Exit if unable to create a temporary SSL context.
@@ -278,10 +380,15 @@ int DEVICE_SECURITY_Start(void)
 
 exit:
     // Free the temporary SSL Context
+    // NOTE: This does not free the X509 certificate pointed to by the agent_cert, as the
+    // X509 object contains a reference counter, and it still has a count for the instance created in LoadClientCert()
     if (temp_ssl_ctx != NULL)
     {
         SSL_CTX_free(temp_ssl_ctx);
     }
+
+    // Load the certificates contained in the system cert directory
+    LoadCerts_FromPath(SYSTEM_CERT_PATH, kCertUsage_SystemCert, INVALID_ROLE);
 
     return err;
 }
@@ -300,20 +407,15 @@ exit:
 void DEVICE_SECURITY_Stop(void)
 {
     int i;
-    trust_cert_t *tc;
+    cert_t *ct;
 
-    // Iterate over all trust certs, freeing all memory
-    for (i=0; i<num_trust_certs; i++)
+    // Iterate over all certs, freeing all memory
+    for (i=0; i<num_all_certs; i++)
     {
-        tc = &trust_certs[i];
-        X509_free(tc->cert);
-        OPENSSL_free(tc->subject);
-        OPENSSL_free(tc->issuer);
-        OPENSSL_free(tc->serial_number);
-        USP_SAFE_FREE(tc->subject_alt);
-        USP_SAFE_FREE(tc->signature_algorithm);
+        ct = &all_certs[i];
+        DestroyCert(ct);
     }
-    USP_SAFE_FREE(trust_certs);
+    USP_SAFE_FREE(all_certs);
 
     // Free the client certificate
     if (agent_cert != NULL)
@@ -331,9 +433,6 @@ void DEVICE_SECURITY_Stop(void)
         OPENSSL_free(client_cert.serial_number);
         OPENSSL_free(client_cert.issuer);
     }
-
-    // Free all DER format trust store certificates read from a file specified by the '-t' command line option
-    Free_TrustStoreFromFile();
 
     // No explicit cleanup of OpenSSL is required.
     // Cleanup routines are now NoOps which have been deprecated. See OpenSSL Changes between 1.0.2h and 1.1.0  [25 Aug 2016]
@@ -365,7 +464,7 @@ int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, ctrust_role_t 
     X509 *ca_cert;
     X509 *broker_cert;
     cert_hash_t hash;
-    int instance;
+    cert_t *ct;
 
     // The cert at position[0] will be the STOMP broker cert
     // The cert at position[1] will be the CA cert that validates the broker cert
@@ -410,22 +509,22 @@ int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, ctrust_role_t 
         return err;
     }
 
-    // Exit if unable to find the entry in Device.Security.Certificate.{i} that matches the trust store cert in our SSL chain of trust
-    // NOTE: This should never occur, as we load the trust certs that Open SSL uses
-    instance = FindMatchingTrustCert(hash);
-    if (instance == INVALID)
+    // Exit if unable to find the entry in Device.LocalAgent.Certificate.{i} that matches the trust store cert in our SSL chain of trust
+    // NOTE: This should never fail, as we load the trust certs that Open SSL uses
+    ct = Find_LocalAgentCertByHash(hash);
+    if (ct == NULL)
     {
-        USP_LOG_Error("%s: CA cert in chain of trust, not found in Device.Security.Certificate", __FUNCTION__);
+        USP_LOG_Error("%s: CA cert in chain of trust, not found in Device.LocalAgent.Certificate", __FUNCTION__);
         LogCertChain(cert_chain);
         LogTrustCerts();
         return USP_ERR_INTERNAL_ERROR;
     }
 
     // Exit if unable to get a role associated with the certificate
-    *role = DEVICE_CTRUST_GetCertRole(instance);
+    *role = DEVICE_CTRUST_GetCertRole(ct->la_instance);
     if (*role == INVALID_ROLE)
     {
-        USP_LOG_Error("%s: CA cert in chain of trust (Instance=%d) did not have an associated role in Device.LocalAgent.ControllerTrust.Credential.{i}", __FUNCTION__, instance);
+        USP_LOG_Error("%s: CA cert in chain of trust (Device.LocalAgent.Certificate.%d) did not have an associated role in Device.LocalAgent.ControllerTrust.Credential.{i}", __FUNCTION__, ct->la_instance);
         LogCertChain(cert_chain);
         LogTrustCerts();
         return USP_ERR_INTERNAL_ERROR;
@@ -496,7 +595,7 @@ int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify
 {
     X509_STORE *trust_store;
     load_agent_cert_cb_t load_agent_cert_cb;
-    trust_cert_t *tc;
+    cert_t *ct;
     int i;
     int err;
 
@@ -509,14 +608,19 @@ int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify
     }
 
     // Add all certificates in our trust store to the SSL context's trust store
-    for (i=0; i<num_trust_certs; i++)
+    // NOTE: X509 objects have a reference counter, calling X509_STORE_add_cert() just increases the reference count
+    for (i=0; i<num_all_certs; i++)
     {
-        tc = &trust_certs[i];
-        err = X509_STORE_add_cert(trust_store, tc->cert);
-        if (err == 0)
+        ct = &all_certs[i];
+        if (ct->cert_usage == kCertUsage_TrustCert)
         {
-            USP_LOG_Error("%s: X509_STORE_add_cert() failed", __FUNCTION__);
-            return USP_ERR_INTERNAL_ERROR;
+            USP_ASSERT(ct->cert != NULL);
+            err = X509_STORE_add_cert(trust_store, ct->cert);
+            if (err == 0)
+            {
+                USP_LOG_Error("%s: X509_STORE_add_cert() failed", __FUNCTION__);
+                return USP_ERR_INTERNAL_ERROR;
+            }
         }
     }
 
@@ -540,6 +644,7 @@ int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify
     if ((agent_cert != NULL) && (agent_pkey != NULL))
     {
         // Exit if unable to add this agent's certificate
+        // NOTE: X509 objects have a reference counter, calling SSL_CTX_use_certificate() just increases the reference count
         err = SSL_CTX_use_certificate(ssl_ctx, agent_cert);
         if (err != 1)
         {
@@ -548,6 +653,7 @@ int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify
         }
 
         // Exit if unable to add the private key
+        // NOTE: Private key objects have a reference counter, calling SSL_CTX_use_PrivateKey() just increases the reference count
         err = SSL_CTX_use_PrivateKey(ssl_ctx, agent_pkey);
         if (err != 1)
         {
@@ -583,7 +689,24 @@ void DEVICE_SECURITY_GetClientCertStatus(bool *available, bool *matches_endpoint
 }
 
 
-// Basically the same as the below, but with a cert chain being passed in
+/*********************************************************************//**
+**
+** DEVICE_SECURITY_TrustCertVerifyCallbackWithCertChain
+**
+** Called back from OpenSSL for each certificate in the received server certificate chain of trust
+** This function allows the caller to provide the certificate chain, instead of deriving it from
+** the parent ssl itself. This is also called by the normal TrustCertVerifyCallback once it retrieves
+** the cert chain.
+** This function is used to ignore certificate validation errors caused by system time being incorrect
+**
+** \param   preverify_ok - set to 1, if the current certificate passed, set to 0 if it did not
+** \param   x509_ctx - pointer to context for certificate chain verification
+** \param   p_cert_chain - double pointer to a STACK_OF_X509 cert chain
+**
+** \return  1 if certificate chain should be trusted
+**          0 if certificate chain should not be trusted, and connection dropped
+**
+**************************************************************************/
 int DEVICE_SECURITY_TrustCertVerifyCallbackWithCertChain(int preverify_ok, X509_STORE_CTX *x509_ctx, STACK_OF_X509 **p_cert_chain)
 {
     int cert_err;
@@ -769,6 +892,279 @@ int DEVICE_SECURITY_BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE
 
 /*********************************************************************//**
 **
+** DEVICE_SECURITY_AddCertHostnameValidation
+**
+**
+** Called to add automatic hostname validation in later versions of OpenSSL.
+** Will silently return success if unsupported.
+** Both this, and the function DEVICE_SECURITY_AddCertHostnameValidationCtx are
+** required as STOMP uses a single ctx for all connections.
+**
+** \param   ssl - an SSL object
+** \param   name - string of the (host)name
+** \param   length - name length
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DEVICE_SECURITY_AddCertHostnameValidation(SSL* ssl, const char* name, size_t length)
+{
+#if OPENSSL_VERSION_NUMBER >= 0x1000200FL // SSL version 1.0.2
+{
+    // Enable automatic hostname validation in later versions of OpenSSL
+    // Exit if unable to get the verify parameter object, which we are going to set properties on
+    X509_VERIFY_PARAM *verify_object;
+    verify_object = SSL_get0_param(ssl);
+    if (verify_object == NULL)
+    {
+        USP_LOG_Error("%s: SSL_get0_param() failed", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Set the properties on the verify object
+    // These fail the cert if the server hostname doesn't match the SubjectAltName (SAN) in the cert
+    // If SAN is not present, the cert is failed if hostname doesn't match the CommonName (CN) in the cert
+    // If neither SAN, nor CN are present in the cert, then the cert will automatically be failed by the verify object set
+    // For wildcarded hostnames in the cert, the '*' must be a subdomain (eg *.foo.com, *.foo.bar.com, but not *.com)
+    // and Partial Wildcards eg f*oo.bar.com are not allowed ('*' must represent a full subdomain)
+    X509_VERIFY_PARAM_set_hostflags(verify_object, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+    X509_VERIFY_PARAM_set1_host(verify_object, name, length);
+}
+#endif
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_SECURITY_AddCertHostnameValidationCtx
+**
+** Called to add automatic hostname validation in later versions of OpenSSL.
+** Will silently return success if unsupported.
+** This version takes an SSL CTX object, instead of SSL.
+**
+** \param   ssl_ctx - an SSL CTX object
+** \param   name - string of the (host)name
+** \param   length - name length
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DEVICE_SECURITY_AddCertHostnameValidationCtx(SSL_CTX* ssl_ctx, const char* name, size_t length)
+{
+#if OPENSSL_VERSION_NUMBER >= 0x1000200FL // SSL version 1.0.2
+    if (ssl_ctx == NULL)
+    {
+        USP_LOG_Error("%s: SSL_CTX is NULL", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    X509_VERIFY_PARAM* verify_object;
+    verify_object = SSL_CTX_get0_param(ssl_ctx);
+    if (verify_object == NULL)
+    {
+        USP_LOG_Error("%s: SSL_CTX_get0_param() failed", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Set the properties on the verify object
+    // These fail the cert if the server hostname doesn't match the SubjectAltName (SAN) in the cert
+    // If SAN is not present, the cert is failed if hostname doesn't match the CommonName (CN) in the cert
+    // If neither SAN, nor CN are present in the cert, then the cert will automatically be failed by the verify object set
+    // For wildcarded hostnames in the cert, the '*' must be a subdomain (eg *.foo.com, *.foo.bar.com, but not *.com)
+    // and Partial Wildcards eg f*oo.bar.com are not allowed ('*' must represent a full subdomain)
+    X509_VERIFY_PARAM_set_hostflags(verify_object, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+    X509_VERIFY_PARAM_set1_host(verify_object, name, length);
+#endif
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** LoadCerts_FromPath
+**
+** Called to load all certificates in the specified file or directory into the Device.Security.Certificate table
+**
+** \param   path - file or directory containing system certs
+** \param   cert_usage - type of certificates to add
+** \param   role - if the certificates are trust certs, then this is the role that the certs permit to a broker cert
+**
+** \return  None - errors are ignored
+**
+**************************************************************************/
+void LoadCerts_FromPath(char *path, cert_usage_t cert_usage, ctrust_role_t role)
+{
+    int err;
+    struct stat info;
+    mode_t type;
+
+    // Exit if no path specified
+    if (*path == '\0')
+    {
+        return;
+    }
+
+    // Exit if unable to determine whether the path is for a file or a directory
+    err = stat(path, &info);
+    if (err != 0)
+    {
+        char buf[256];
+        USP_SNPRINTF(buf, sizeof(buf), "Unable to access %s : stat", path);
+        USP_ERR_ERRNO(buf, errno);
+        return;
+    }
+
+    // Process the certs contained in the path, based on whether the path is a file or directory
+    type = info.st_mode & S_IFMT;
+    if ((type == S_IFREG) || (type == S_IFLNK))
+    {
+        LoadCerts_FromFile(path, cert_usage, role);
+    }
+    else if (type == S_IFDIR)
+    {
+        LoadCerts_FromDir(path, cert_usage, role);
+    }
+    else
+    {
+        USP_LOG_Warning("%s: %s is not a file or directory. Ignoring path for %s", __FUNCTION__, path, TEXT_UTILS_EnumToString(cert_usage, cert_usages, NUM_ELEM(cert_usages)) );
+    }
+}
+
+/*********************************************************************//**
+**
+** LoadCerts_FromFile
+**
+** Called to load all certificates contained in the specified directory (in PEM format) into the Device.Security.Certificate table
+**
+** \param   file_path - file containing certs
+** \param   cert_usage - type of certificates to add
+** \param   role - if the certificates are trust certs, then this is the role that the certs permit to a broker cert
+**
+** \return  None - errors are ignored
+**
+**************************************************************************/
+void LoadCerts_FromFile(char *file_path, cert_usage_t cert_usage, ctrust_role_t role)
+{
+    FILE *fp;
+    X509 *cert;
+    int err;
+
+    // Exit if unable to open the file containing the certs in PEM format
+    fp = fopen(file_path, "r");
+    if (fp == NULL)
+    {
+        USP_LOG_Error("%s: Unable to open %s", __FUNCTION__, usp_trust_store_file);
+        return;
+    }
+
+    // Iterate over all certs in the file
+    cert = PEM_read_X509(fp, NULL, NULL, NULL);
+    while (cert != NULL)
+    {
+        // Skip this file if unable to add the certificate
+        // NOTE: Ownership of the X509 cert passes to AddCert(), so no need to free it in this function
+        err = AddCert(cert, cert_usage, role);
+        if (err != USP_ERR_OK)
+        {
+            continue;
+        }
+
+        // Read the next cert. If no more certs in the file, then the pointer returned will be NULL
+        cert = PEM_read_X509(fp, NULL, NULL, NULL);
+    }
+
+    // Close the file
+    fclose(fp);
+}
+
+/*********************************************************************//**
+**
+** LoadCerts_FromDir
+**
+** Called to load all certificates in the specified directory into the Device.Security.Certificate table
+**
+** \param   dir_path - directory containing certs
+** \param   cert_usage - type of certificates to add
+** \param   role - if the certificates are trust certs, then this is the role that the certs permit to a broker cert
+**
+** \return  None - errors are ignored
+**
+**************************************************************************/
+void LoadCerts_FromDir(char *dir_path, cert_usage_t cert_usage, ctrust_role_t role)
+{
+    DIR *dir;
+    struct dirent *entry;
+    struct stat info;
+    int err;
+    char file_path[PATH_MAX];
+    mode_t type;
+    X509 *cert;
+
+    // Exit if unable to open the specified directory to read
+    dir = opendir(dir_path);
+    if (dir == NULL)
+    {
+        USP_ERR_ERRNO("opendir", errno);
+        return;
+    }
+
+    // Iterate over all entries in the directory
+    while (FOREVER)
+    {
+        // Exit loop if unable to retrieve the next entry in the directory
+        errno = 0;
+        entry = readdir(dir);
+        if (errno != 0)
+        {
+            USP_ERR_ERRNO("readdir", errno);
+            break;
+        }
+
+        // Exit loop if iterated over all entries in the directory
+        if (entry == NULL)
+        {
+            break;
+        }
+
+        // Skip this entry, if unable to determine whether this entry is a file
+        USP_SNPRINTF(file_path, sizeof(file_path), "%s/%s", dir_path, entry->d_name);
+        err = stat(file_path, &info);
+        if (err != 0)
+        {
+            USP_ERR_ERRNO(file_path, err);
+            continue;
+        }
+
+        // Skip this entry if it's not a file or symbolic link
+        type = info.st_mode & S_IFMT;
+        if ((type != S_IFREG) && (type != S_IFLNK))
+        {
+            continue;
+        }
+
+        // Skip this file if unable to retrieve the certificate (file must be in PEM format)
+        err = GetCertFromFile(file_path, &cert, NULL);
+        if (err != USP_ERR_OK)
+        {
+            continue;
+        }
+
+        // Skip this file if unable to add the certificate
+        // NOTE: Ownership of the X509 cert passes to AddCert(), so no need to free it in this function
+        err = AddCert(cert, cert_usage, role);
+        if (err != USP_ERR_OK)
+        {
+            continue;
+        }
+    }
+
+    // Close the directory
+    closedir(dir);
+}
+
+/*********************************************************************//**
+**
 ** LoadClientCert
 **
 ** Called to load the client certificate authenticating this agent
@@ -799,6 +1195,7 @@ int LoadClientCert(SSL_CTX *ctx)
     }
 
     // Exit if unable to add this agent's certificate
+    // NOTE: X509 objects have a reference counter, calling SSL_CTX_use_certificate() just increases the reference count
     err = SSL_CTX_use_certificate(ctx, cert);
     if (err != 1)
     {
@@ -807,6 +1204,7 @@ int LoadClientCert(SSL_CTX *ctx)
     }
 
     // Exit if unable to add the private key
+    // NOTE: Private key objects have a reference counter, calling SSL_CTX_use_PrivateKey() just increases the reference count
     err = SSL_CTX_use_PrivateKey(ctx, pkey);
     if (err != 1)
     {
@@ -841,7 +1239,7 @@ int GetClientCert(X509 **p_cert, EVP_PKEY **p_pkey)
     // NOTE: The string compare test is present in order to allow an invocation of USP Agent to specify no auth cert file using -a "null". Useful, if the -a option is always used in all invocations.
     if ((auth_cert_file != NULL) && (*auth_cert_file != '\0') && (strcmp(auth_cert_file, "null") != 0))
     {
-        err = GetClientCertFromFile(auth_cert_file, p_cert, p_pkey);
+        err = GetCertFromFile(auth_cert_file, p_cert, p_pkey);
         return err;
     }
 
@@ -852,18 +1250,18 @@ int GetClientCert(X509 **p_cert, EVP_PKEY **p_pkey)
 
 /*********************************************************************//**
 **
-** GetClientCertFromFile
+** GetCertFromFile
 **
-** Gets a client certificate and associated private key from a file containing both in PEM format
+** Gets a certificate and optionally associated private key from a file containing both in PEM format
 **
 ** \param   cert_file - filesystem path to the file containing the PEM formatted cert data concatenated with the PEM formatted private key
 ** \param   p_cert - pointer to variable in which to return a pointer to the client cert
-** \param   p_pkey - pointer to variable in which to return a pointer to the client cert's private key
+** \param   p_pkey - pointer to variable in which to return a pointer to the client cert's private key or NULL if private key not required
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetClientCertFromFile(char *cert_file, X509 **p_cert, EVP_PKEY **p_pkey)
+int GetCertFromFile(char *cert_file, X509 **p_cert, EVP_PKEY **p_pkey)
 {
     int result;
     BIO *bio = NULL;
@@ -895,25 +1293,35 @@ int GetClientCertFromFile(char *cert_file, X509 **p_cert, EVP_PKEY **p_pkey)
         goto exit;
     }
 
-    // Exit if unable to reset the bio, to go back to the beginning of the file
-    result = BIO_reset(bio);
-    if (result != 0)
-    {
-        USP_ERR_SetMessage("%s: BIO_reset() failed", __FUNCTION__);
-        goto exit;
-    }
+    // Public cert retrieved successfully
+    *p_cert = cert;
 
-    // Exit if unable to parse a EVP_PKEY (private key) structure from the file
-    pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
-    if (pkey == NULL)
+    // Optionally retrieve private key
+    // NOTE: This is only performed for client certs, in which a private key is expected to be present.
+    // Trust store CA certs do not contain private keys
+    if (p_pkey != NULL)
     {
-        USP_ERR_SetMessage("%s: PEM_read_bio_PrivateKey(%s) failed", __FUNCTION__, cert_file);
-        goto exit;
+        // Exit if unable to reset the bio, to go back to the beginning of the file
+        result = BIO_reset(bio);
+        if (result != 0)
+        {
+            USP_ERR_SetMessage("%s: BIO_reset() failed", __FUNCTION__);
+            goto exit;
+        }
+
+        // Exit if unable to parse a EVP_PKEY (private key) structure from the file
+        pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+        if (pkey == NULL)
+        {
+            USP_ERR_SetMessage("%s: PEM_read_bio_PrivateKey(%s) failed", __FUNCTION__, cert_file);
+            goto exit;
+        }
+
+        // Private key retrieved successfully
+        *p_pkey = pkey;
     }
 
     // If the code gets here, then it was successful
-    *p_cert = cert;
-    *p_pkey = pkey;
     err = USP_ERR_OK;
 
 exit:
@@ -1070,14 +1478,17 @@ void LogCertChain(STACK_OF_X509 *cert_chain)
 void LogTrustCerts(void)
 {
     int i;
-    trust_cert_t *tc;
+    cert_t *ct;
 
     USP_LOG_Info("\nTrust Store certificates:");
-    for (i=0; i<num_trust_certs; i++)
+    for (i=0; i<num_all_certs; i++)
     {
-        tc = &trust_certs[i];
-        USP_LOG_Info("[%d] Subject: %s", i, tc->subject);
-        USP_LOG_Info("[%d]      (Issuer: %s)", i, tc->issuer);
+        ct = &all_certs[i];
+        if (ct->cert_usage == kCertUsage_TrustCert)
+        {
+            USP_LOG_Info("[%d] Subject: %s", i, ct->subject);
+            USP_LOG_Info("[%d]      (Issuer: %s)", i, ct->issuer);
+        }
     }
 }
 
@@ -1142,6 +1553,15 @@ int AddClientCert(SSL_CTX *ctx)
     }
     USP_ASSERT(subject_alt != NULL);
 
+    // Exit if unable to add the client certificate into Device.Security.Certificate
+    // NOTE: Ownership of the X509 cert stays with SSL ctx and agent_cert pointer
+    err = AddCert(cert, kCertUsage_ClientCert, INVALID_ROLE);
+    if (err != USP_ERR_OK)
+    {
+        USP_SAFE_FREE(subject_alt);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
     // Determine whether the SubjectAltName field in the certificate matches the URN form of the agent's endpoint_id
     #define URN_PREFIX "urn:bbf:usp:id:"
     #define URN_PREFIX_LEN (sizeof(URN_PREFIX)-1)    // Minus 1 to not include the NULL terminator
@@ -1164,7 +1584,7 @@ int AddClientCert(SSL_CTX *ctx)
 
 /*********************************************************************//**
 **
-** GetTrustCert_Count
+** Get_NumCerts
 **
 ** Gets the value of Device.Security.CertificateNumberOfEntries
 **
@@ -1175,15 +1595,15 @@ int AddClientCert(SSL_CTX *ctx)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetTrustCert_Count(dm_req_t *req, char *buf, int len)
+int Get_NumCerts(dm_req_t *req, char *buf, int len)
 {
-    val_uint = num_trust_certs;
+    val_uint = num_all_certs;
     return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** GetTrustCert_LastModif
+** GetCert_LastModif
 **
 ** Gets the value of Device.Security.Certificate.{i}.LastModif
 **
@@ -1194,19 +1614,20 @@ int GetTrustCert_Count(dm_req_t *req, char *buf, int len)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetTrustCert_LastModif(dm_req_t *req, char *buf, int len)
+int GetCert_LastModif(dm_req_t *req, char *buf, int len)
 {
-    trust_cert_t *tc;
+    cert_t *ct;
 
     // Write the value into the return buffer
-    tc = FindTrustCertByReq(req);
-    val_datetime = tc->last_modif;
+    ct = Find_SecurityCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    val_datetime = ct->last_modif;
     return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** GetTrustCert_SerialNumber
+** GetCert_SerialNumber
 **
 ** Gets the value of Device.Security.Certificate.{i}.SerialNumber
 **
@@ -1217,19 +1638,20 @@ int GetTrustCert_LastModif(dm_req_t *req, char *buf, int len)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetTrustCert_SerialNumber(dm_req_t *req, char *buf, int len)
+int GetCert_SerialNumber(dm_req_t *req, char *buf, int len)
 {
-    trust_cert_t *tc;
+    cert_t *ct;
 
     // Write the value into the return buffer
-    tc = FindTrustCertByReq(req);
-    USP_SNPRINTF(buf, len, "%s", tc->serial_number);
+    ct = Find_SecurityCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    USP_SNPRINTF(buf, len, "%s", ct->serial_number);
     return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** GetTrustCert_Issuer
+** GetCert_Issuer
 **
 ** Gets the value of Device.Security.Certificate.{i}.Issuer
 **
@@ -1240,19 +1662,20 @@ int GetTrustCert_SerialNumber(dm_req_t *req, char *buf, int len)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetTrustCert_Issuer(dm_req_t *req, char *buf, int len)
+int GetCert_Issuer(dm_req_t *req, char *buf, int len)
 {
-    trust_cert_t *tc;
+    cert_t *ct;
 
     // Write the value into the return buffer
-    tc = FindTrustCertByReq(req);
-    USP_SNPRINTF(buf, len, "%s", tc->issuer);
+    ct = Find_SecurityCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    USP_SNPRINTF(buf, len, "%s", ct->issuer);
     return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** GetTrustCert_NotBefore
+** GetCert_NotBefore
 **
 ** Gets the value of Device.Security.Certificate.{i}.NotBefore
 **
@@ -1263,19 +1686,20 @@ int GetTrustCert_Issuer(dm_req_t *req, char *buf, int len)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetTrustCert_NotBefore(dm_req_t *req, char *buf, int len)
+int GetCert_NotBefore(dm_req_t *req, char *buf, int len)
 {
-    trust_cert_t *tc;
+    cert_t *ct;
 
     // Write the value into the return buffer
-    tc = FindTrustCertByReq(req);
-    val_datetime = tc->not_before;
+    ct = Find_SecurityCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    val_datetime = ct->not_before;
     return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** GetTrustCert_NotAfter
+** GetCert_NotAfter
 **
 ** Gets the value of Device.Security.Certificate.{i}.NotAfter
 **
@@ -1286,19 +1710,20 @@ int GetTrustCert_NotBefore(dm_req_t *req, char *buf, int len)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetTrustCert_NotAfter(dm_req_t *req, char *buf, int len)
+int GetCert_NotAfter(dm_req_t *req, char *buf, int len)
 {
-    trust_cert_t *tc;
+    cert_t *ct;
 
     // Write the value into the return buffer
-    tc = FindTrustCertByReq(req);
-    val_datetime = tc->not_after;
+    ct = Find_SecurityCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    val_datetime = ct->not_after;
     return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** GetTrustCert_Subject
+** GetCert_Subject
 **
 ** Gets the value of Device.Security.Certificate.{i}.Subject
 **
@@ -1309,19 +1734,20 @@ int GetTrustCert_NotAfter(dm_req_t *req, char *buf, int len)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetTrustCert_Subject(dm_req_t *req, char *buf, int len)
+int GetCert_Subject(dm_req_t *req, char *buf, int len)
 {
-    trust_cert_t *tc;
+    cert_t *ct;
 
     // Write the value into the return buffer
-    tc = FindTrustCertByReq(req);
-    USP_SNPRINTF(buf, len, "%s", tc->subject);
+    ct = Find_SecurityCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    USP_SNPRINTF(buf, len, "%s", ct->subject);
     return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** GetTrustCert_SubjectAlt
+** GetCert_SubjectAlt
 **
 ** Gets the value of Device.Security.Certificate.{i}.SubjectAlt
 **
@@ -1332,19 +1758,20 @@ int GetTrustCert_Subject(dm_req_t *req, char *buf, int len)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetTrustCert_SubjectAlt(dm_req_t *req, char *buf, int len)
+int GetCert_SubjectAlt(dm_req_t *req, char *buf, int len)
 {
-    trust_cert_t *tc;
+    cert_t *ct;
 
     // Write the value into the return buffer
-    tc = FindTrustCertByReq(req);
-    USP_SNPRINTF(buf, len, "%s", tc->subject_alt);
+    ct = Find_SecurityCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    USP_SNPRINTF(buf, len, "%s", ct->subject_alt);
     return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** GetTrustCert_SignatureAlgorithm
+** GetCert_SignatureAlgorithm
 **
 ** Gets the value of Device.Security.Certificate.{i}.SignatureAlgorithm
 **
@@ -1355,109 +1782,385 @@ int GetTrustCert_SubjectAlt(dm_req_t *req, char *buf, int len)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetTrustCert_SignatureAlgorithm(dm_req_t *req, char *buf, int len)
+int GetCert_SignatureAlgorithm(dm_req_t *req, char *buf, int len)
 {
-    trust_cert_t *tc;
+    cert_t *ct;
 
     // Write the value into the return buffer
-    tc = FindTrustCertByReq(req);
-    USP_SNPRINTF(buf, len, "%s", tc->signature_algorithm);
+    ct = Find_SecurityCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    USP_SNPRINTF(buf, len, "%s", ct->signature_algorithm);
     return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** FindTrustCertByReq
+** Get_NumTrustCerts
 **
-** Returns a pointer to the certificate in our trust store vector, based on the specified instance number
+** Gets the value of Device.LocalAgent.CertificateNumberOfEntries
 **
-** \param   req - pointer to structure identifying the subscription
+** \param   req - pointer to structure identifying the parameter
 ** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
 ** \param   len - length of buffer in which to return the value of the parameter
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-trust_cert_t *FindTrustCertByReq(dm_req_t *req)
+int Get_NumTrustCerts(dm_req_t *req, char *buf, int len)
 {
-    trust_cert_t *tc;
-    int index;
-
-    // Determine which certificate to query
-    index = inst1 - 1;
-    USP_ASSERT((index >= 0) && (index < num_trust_certs));
-    tc = &trust_certs[index];
-
-    return tc;
+    val_uint = num_trust_certs;
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** AddTrustCert
+** GetLaCert_SerialNumber
 **
-** Adds the specified trusted certificate into a vector, along with its parsed details
-** NOTE: Ownership of the certificate structure passes to this function
-** NOTE: This function does not attempt to clean up or free memory if an error occurs.
-**       (the caller will abort USP Agent in this case).
+** Gets the value of Device.LocalAgent.Certificate.{i}.SerialNumber
 **
-** \param   cert - pointer to the certificate structure to add
-** \param   role - role that this CA certificate permits to a broker cert
+** \param   req - pointer to structure identifying the parameter
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int AddTrustCert(X509 *cert, ctrust_role_t role)
+int GetLaCert_SerialNumber(dm_req_t *req, char *buf, int len)
+{
+    cert_t *ct;
+
+    // Write the value into the return buffer
+    ct = Find_LocalAgentCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    USP_SNPRINTF(buf, len, "%s", ct->serial_number);
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** GetLaCert_Issuer
+**
+** Gets the value of Device.LocalAgent.Certificate.{i}.Issuer
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int GetLaCert_Issuer(dm_req_t *req, char *buf, int len)
+{
+    cert_t *ct;
+
+    // Write the value into the return buffer
+    ct = Find_LocalAgentCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    USP_SNPRINTF(buf, len, "%s", ct->issuer);
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Find_SecurityCertByReq
+**
+** Returns a pointer to the certificate with the specified Device.Security.Certificate instance number
+**
+** \param   req - pointer to structure identifying the instance
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+cert_t *Find_SecurityCertByReq(dm_req_t *req)
+{
+    int i;
+    cert_t *ct;
+    int index;
+
+    // Normally the certificates are arranged in instance order in the vector
+    // Exit, if this is the case. NOTE: This is a speedup to avoid having to iterate over all certs (as later on in this function)
+    index = inst1 - 1;
+    USP_ASSERT((index >= 0) && (index < num_all_certs));
+    ct = &all_certs[index];
+    if (ct->instance == inst1)
+    {
+        return ct;
+    }
+
+    // If the certificates are not arranged in instance order, then iterate over all certs,
+    // finding the one with matching instance number
+    for (i=0; i<num_all_certs; i++)
+    {
+        ct = &all_certs[i];
+        if (ct->instance == inst1)
+        {
+            return ct;
+        }
+    }
+
+    return NULL;
+}
+
+/*********************************************************************//**
+**
+** Find_LocalAgentCertByReq
+**
+** Returns a pointer to the certificate with the specified Device.LocalAgent.Certificate instance number
+**
+** \param   req - pointer to structure identifying the instance
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+cert_t *Find_LocalAgentCertByReq(dm_req_t *req)
+{
+    int i;
+    cert_t *ct;
+    int index;
+
+    // Normally the certificates are arranged in instance order in the vector
+    // Exit, if this is the case. NOTE: This is a speedup to avoid having to iterate over all certs (as later on in this function)
+    index = inst1 - 1;
+    USP_ASSERT((index >= 0) && (index < num_trust_certs));
+    ct = &all_certs[index];
+    if (ct->la_instance == inst1)
+    {
+        return ct;
+    }
+
+    // If the certificates are not arranged in instance order, then iterate over all certs,
+    // finding the one with matching instance number
+    for (i=0; i<num_all_certs; i++)
+    {
+        ct = &all_certs[i];
+        if (ct->la_instance == inst1)
+        {
+            return ct;
+        }
+    }
+
+    return NULL;
+}
+
+/*********************************************************************//**
+**
+** Find_LocalAgentCertByHash
+**
+** Finds the certificate in our trust store that matches the given hash
+**
+** \param   hash - hash of the trusted cert we want to find
+**
+** \return  pointer to certificate, or INVALID if not found
+**
+**************************************************************************/
+cert_t *Find_LocalAgentCertByHash(cert_hash_t hash)
+{
+    int i;
+    cert_t *ct;
+
+    // Iterate over all certificates in our trust store
+    for (i=0; i<num_all_certs; i++)
+    {
+        // Exit if we've found a matching certificate
+        ct = &all_certs[i];
+        if ((ct->cert_usage == kCertUsage_TrustCert) && (ct->hash == hash))
+        {
+            return ct;
+        }
+    }
+
+    // If the code gets here, then no match was found
+    return NULL;
+}
+
+/*********************************************************************//**
+**
+** Find_CertByHash
+**
+** Finds the certificate in our vector that matches the given hash
+**
+** \param   hash - hash of the cert we want to find
+**
+** \return  pointer to certificate, or INVALID if not found
+**
+**************************************************************************/
+cert_t *Find_CertByHash(cert_hash_t hash)
+{
+    int i;
+    cert_t *ct;
+
+    // Iterate over all certificates in our trust store
+    for (i=0; i<num_all_certs; i++)
+    {
+        // Exit if we've found a matching certificate
+        ct = &all_certs[i];
+        if (ct->hash == hash)
+        {
+            return ct;
+        }
+    }
+
+    // If the code gets here, then no match was found
+    return NULL;
+}
+
+/*********************************************************************//**
+**
+** AddCert
+**
+** Adds the specified certificate into a vector, along with its parsed details
+**
+** \param   cert - pointer to the certificate to parse.
+**                 NOTE: If the certificate is a trust cert, then ownership of the cert passes to the vector
+**                 NOTE: If the certificate is a client cert, then ownership of the cert stays with the caller
+**                 NOTE: If the certificate is a system cert, then it will be freed by this function
+** \param   cert_usage - type of certificate to add
+** \param   role - if the certificate is a trust cert, then this is the role that this cert permits to a broker cert
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int AddCert(X509 *cert, cert_usage_t cert_usage, ctrust_role_t role)
 {
     int new_num_entries;
-    trust_cert_t *tc;
+    cert_hash_t hash;
+    cert_t *ct;
     int err;
     char path[MAX_DM_PATH];
 
-    // First increase the size of the vector, and initialise the new entry to default values
-    new_num_entries = num_trust_certs + 1;
-    trust_certs = USP_REALLOC(trust_certs, new_num_entries*sizeof(trust_cert_t));
+    // Exit if unable to calculate the hash of the certificate
+    err = CalcCertHash(cert, &hash);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
 
-    tc = &trust_certs[ num_trust_certs ];
-    memset(tc, 0, sizeof(trust_cert_t));
-    num_trust_certs = new_num_entries;
+    // Exit if the certificate is already present in our vector
+    // NOTE: This is likely to be the case if the directory contains symbolic links created by SSL's c_rehash utility
+    ct = Find_CertByHash(hash);
+    if (ct != NULL)
+    {
+        X509_free(cert);
+        return USP_ERR_OK;
+    }
 
-    // Add this certificate into the vector
-    tc->cert = cert;
+    // Certificate is not in the vector, so add it
+    // Increase the size of the vector, and initialise the new entry to default values
+    new_num_entries = num_all_certs + 1;
+    all_certs = USP_REALLOC(all_certs, new_num_entries*sizeof(cert_t));
+
+    ct = &all_certs[ num_all_certs ];
+    memset(ct, 0, sizeof(cert_t));
 
     // Extract the details of the specified certificate
     err = USP_ERR_OK;
-    err |= ParseCert_Subject(cert, &tc->subject);
-    err |= ParseCert_Issuer(cert, &tc->issuer);
-    err |= ParseCert_LastModif(cert, &tc->last_modif);
-    err |= ParseCert_SerialNumber(cert, &tc->serial_number);
-    err |= ParseCert_NotBefore(cert, &tc->not_before);
-    err |= ParseCert_NotAfter(cert, &tc->not_after);
-    err |= ParseCert_SubjectAlt(cert, &tc->subject_alt);
-    err |= ParseCert_SignatureAlg(cert, &tc->signature_algorithm);
-    err |= CalcCertHash(cert, &tc->hash);
+    err |= ParseCert_Subject(cert, &ct->subject);
+    err |= ParseCert_Issuer(cert, &ct->issuer);
+    err |= ParseCert_LastModif(cert, &ct->last_modif);
+    err |= ParseCert_SerialNumber(cert, &ct->serial_number);
+    err |= ParseCert_NotBefore(cert, &ct->not_before);
+    err |= ParseCert_NotAfter(cert, &ct->not_after);
+    err |= ParseCert_SubjectAlt(cert, &ct->subject_alt);
+    err |= ParseCert_SignatureAlg(cert, &ct->signature_algorithm);
+    err |= CalcCertHash(cert, &ct->hash);
 
     // Exit if any error occurred when parsing
     if (err != USP_ERR_OK)
     {
+        DestroyCert(ct);
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Exit if unable to add the instance into the data model
-    USP_SNPRINTF(path, sizeof(path), "%s.%d", device_cert_root, num_trust_certs);
+    // Fill in the other member variables of the certificate structure
+    num_all_certs = new_num_entries;
+    ct->cert_usage = cert_usage;
+    ct->instance = num_all_certs;
+
+    switch(cert_usage)
+    {
+        case kCertUsage_TrustCert:
+            // Save X509 trust certs into the vector
+            num_trust_certs++;
+            ct->cert = cert;
+            ct->la_instance = num_trust_certs;
+            break;
+
+        case kCertUsage_ClientCert:
+            // Client cert is not saved into the vector, but is not freed. Ownership stays with the caller. It is saved in agent_cert pointer.
+            ct->cert = NULL;
+            ct->la_instance = INVALID;
+            break;
+
+        case kCertUsage_SystemCert:
+            // System certs are not saved into the vector, but instead freed (consumed) here
+            X509_free(cert);
+            ct->cert = NULL;
+            ct->la_instance = INVALID;
+            break;
+
+        default:
+            TERMINATE_BAD_CASE(cert_usage);
+            break;
+    }
+
+    // Exit if unable to add the instance into the Device.Security.Certificate table
+    USP_SNPRINTF(path, sizeof(path), "%s.%d", device_cert_root, ct->instance);
     err = DATA_MODEL_InformInstance(path);
     if (err != USP_ERR_OK)
     {
         return err;
     }
 
-    // Exit if unable to add the certificate to the Device.LocalAgent.ControllerTrust.Certificate.{i} table
-    err = DEVICE_CTRUST_AddCertRole(num_trust_certs, role);
-    if (err != USP_ERR_OK)
+    // Trust store certs additionally populate the Device.LocalAgent.Certificate and Device.LocalAgent.ControllerTrust.Credential tables
+    if (cert_usage == kCertUsage_TrustCert)
     {
-        return err;
+        // Exit if unable to add the instance into the Device.LocalAgent.Certificate table
+        USP_SNPRINTF(path, sizeof(path), "%s.%d", device_la_cert_root, ct->la_instance);
+        err = DATA_MODEL_InformInstance(path);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
+        // Exit if unable to add the certificate to the Device.LocalAgent.ControllerTrust.Credential table
+        err = DEVICE_CTRUST_AddCertRole(ct->la_instance, role);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
     }
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DestroyCert
+**
+** Frees all memory allocated to the specified certificate
+**
+** \param   ct - pointer to certificate to free memeber variables of
+**
+** \return  None
+**
+**************************************************************************/
+void DestroyCert(cert_t *ct)
+{
+    if (ct->cert != NULL)
+    {
+        X509_free(ct->cert);
+    }
+
+    #define OPENSSL_SAFE_FREE(x)  if (x != NULL) { OPENSSL_free(x); }
+    OPENSSL_SAFE_FREE(ct->subject);
+    OPENSSL_SAFE_FREE(ct->issuer);
+    OPENSSL_SAFE_FREE(ct->serial_number);
+
+    USP_SAFE_FREE(ct->subject_alt);
+    USP_SAFE_FREE(ct->signature_algorithm);
+
+    // Since all member variables have been freed, zero out their pointers
+    memset(ct, 0, sizeof(cert_t));
 }
 
 /*********************************************************************//**
@@ -2088,143 +2791,7 @@ int CalcCertHash(X509 *cert, cert_hash_t *p_hash)
     return USP_ERR_OK;
 }
 
-/*********************************************************************//**
-**
-** FindMatchingTrustCert
-**
-** Finds the certificate in our trust store that matches the given hash
-**
-** \param   hash - hash of the trusted cert we want to find
-**
-** \return  Instance number of the certificate within Device.Security.Certificate.{i} table, or INVALID if not found
-**
-**************************************************************************/
-int FindMatchingTrustCert(cert_hash_t hash)
-{
-    int i;
-    trust_cert_t *tc;
 
-    // Iterate over all certificates in our trust store
-    for (i=0; i<num_trust_certs; i++)
-    {
-        // Exit if we've found a matching certificate
-        tc = &trust_certs[i];
-        if (tc->hash == hash)
-        {
-            return i+1;
-        }
-    }
-
-    // If the code gets here, then no match was found
-    return INVALID;
-}
-
-
-/*********************************************************************//**
-**
-** Read_TrustStoreFromFile
-**
-** Reads DER formatted certificates from the file specified by the '-t' command line option into a trust_store_t structure
-**
-** \param   num_trusted_certs - pointer to variable in which to return the number of certificates returned
-**
-** \return  Pointer to an array containing the certificates, or NULL if an error occurred
-**
-**************************************************************************/
-const trust_store_t *Read_TrustStoreFromFile(int *num_trusted_certs)
-{
-    trust_store_t *tc;
-    FILE *fp;
-    X509 *cert;
-    int num_certs;
-
-    // Exit if unable to open the file containing the trust store certs in PEM format
-    fp = fopen(usp_trust_store_file, "r");
-    if (fp == NULL)
-    {
-        USP_LOG_Error("%s: Unable to open %s", __FUNCTION__, usp_trust_store_file);
-        return NULL;
-    }
-
-    // Zero out the array which we'll return the certificates in
-    memset(trust_store_from_file, 0, sizeof(trust_store_from_file));
-    num_certs = 0;
-
-    // Iterate over all certs in the file
-    cert = PEM_read_X509(fp, NULL, NULL, NULL);
-    while (cert != NULL)
-    {
-        // Convert the X509 structure to DER form. NOTE: OpenSSL allocates memory for the DER form
-        tc = &trust_store_from_file[num_certs];
-        tc->cert_data = NULL;
-        tc->cert_len = i2d_X509(cert, (unsigned char **) &tc->cert_data);
-        tc->role = kCTrustRole_FullAccess;
-
-        // Free the cert, now we have it in DER form
-        X509_free(cert);
-
-        // Exit if the conversion to DER form failed
-        if ((tc->cert_len < 0) || (tc->cert_data == NULL))
-        {
-            USP_LOG_Error("%s: i2d_X509() failed", __FUNCTION__);
-            Free_TrustStoreFromFile();
-            fclose(fp);
-            return NULL;
-        }
-
-        // Read the next cert. If no more certs in the file, then the pointer returned will be NULL
-        cert = PEM_read_X509(fp, NULL, NULL, NULL);
-
-        // Exit if there is another cert in the file, but we don't have space for it in trust_store_from_file[]
-        num_certs++;
-        if ((cert != NULL) && (num_certs == MAX_CERTS_IN_TRUST_STORE_FILE))
-        {
-            USP_LOG_Error("%s: Too many certificates in %s. Increase MAX_CERTS_IN_TRUST_STORE_FILE from %d", __FUNCTION__, usp_trust_store_file, MAX_CERTS_IN_TRUST_STORE_FILE);
-            Free_TrustStoreFromFile();
-            fclose(fp);
-            return NULL;
-        }
-    }
-
-    // Close the file and store the number of certificates extracted
-    fclose(fp);
-    *num_trusted_certs = num_certs;
-    num_trust_store_from_file_certs = num_certs;
-
-    // Exit if no certificates were found in the file
-    if (num_certs == 0)
-    {
-        USP_LOG_Error("%s: No certificates found in %s", __FUNCTION__, usp_trust_store_file);
-        return NULL;
-    }
-
-    return (const trust_store_t *)trust_store_from_file;
-}
-
-/*********************************************************************//**
-**
-** Free_TrustStoreFromFile
-**
-** Frees all memory associated with trust_store_from_file[]
-** (the trust store loaded from the file specified by the '-t' command line option)
-**
-** \param   None
-**
-** \return  None
-**
-**************************************************************************/
-void Free_TrustStoreFromFile(void)
-{
-    int i;
-    trust_store_t *tc;
-
-    // Iterate over all DER formatted certificates in the array, freeing them
-    for (i=0; i<num_trust_store_from_file_certs; i++)
-    {
-        tc = &trust_store_from_file[i];
-        OPENSSL_free((unsigned char *)tc->cert_data);
-    }
-}
 
 /*********************************************************************//**
 **
@@ -2232,7 +2799,7 @@ void Free_TrustStoreFromFile(void)
 **
 ** Called to load the trusted root certificate store
 **
-** \param   ctx - pointer to SSL context to load the trust store into
+** \param   None
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -2242,16 +2809,13 @@ int LoadTrustStore(void)
     int i;
     int err;
     const trust_store_t *trusted_certs;
-    const trust_store_t *tc;
+    const trust_store_t *tct;
     int num_trusted_certs;
     get_trust_store_cb_t get_trust_store_cb;
+    X509 *cert;
 
-    // Determine function to call to get the trust store
-    if (usp_trust_store_file != NULL)
-    {
-        get_trust_store_cb = Read_TrustStoreFromFile;
-    }
-    else if (vendor_hook_callbacks.get_trust_store_cb != NULL)
+    // Determine vendor hook function to call to get the trust store from in-memmory array
+    if (vendor_hook_callbacks.get_trust_store_cb != NULL)
     {
         get_trust_store_cb = vendor_hook_callbacks.get_trust_store_cb;
     }
@@ -2271,11 +2835,16 @@ int LoadTrustStore(void)
     // Iterate over all trusted certificates, adding them to our trust store
     for (i=0; i<num_trusted_certs; i++)
     {
-        tc = &trusted_certs[i];
-        err = LoadTrustCert(tc->cert_data, tc->cert_len, tc->role);
-        if (err != USP_ERR_OK)
+        tct = &trusted_certs[i];
+        cert = Cert_FromDER(tct->cert_data, tct->cert_len);
+        if (cert != NULL)
         {
-            return err;
+            // NOTE: Ownership of the X509 cert passes to AddCert(), so no need to free it in this function
+            err = AddCert(cert, kCertUsage_TrustCert, tct->role);
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
         }
     }
 
@@ -2285,41 +2854,31 @@ int LoadTrustStore(void)
 
 /*********************************************************************//**
 **
-** LoadTrustCert
+** Cert_FromDER
 **
-** Called to add a certificate to the trusted root certificate store
+** Returns an X509 object by reading it from DER format (binary) certificate array
 **
 ** \param   cert_data - pointer to binary DER format certificate data
 ** \param   cert_len - number of bytes in the DER format certificate data
-** \param   role - controller trust role associated with the certificate
 **
-** \return  USP_ERR_OK if successful
+** \return  pointer to dynamically allocated X509 object, or NULL if failed to convert
 **
 **************************************************************************/
-int LoadTrustCert(const unsigned char *cert_data, int cert_len, ctrust_role_t role)
+X509 *Cert_FromDER(const unsigned char *cert_data, int cert_len)
 {
-    int err;
     const unsigned char *in;
-    X509 *ssl_cert;
+    X509 *cert;
 
     // Exit if unable to convert the DER format byte array into an internal X509 format (DER to internal - d2i)
     in = cert_data;
-    ssl_cert = d2i_X509(NULL, &in, cert_len);
-    if (ssl_cert == NULL)
+    cert = d2i_X509(NULL, &in, cert_len);
+    if (cert == NULL)
     {
         USP_ERR_SetMessage("%s: d2i_X509() failed. Error in trusted root cert array", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
+        return NULL;
     }
 
-    // Exit if unable to add the certificate's details to our vector
-    // NOTE: Ownership of the ssl_cert passes to our vector, so no need to free it in this function
-    err = AddTrustCert(ssl_cert, role);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    return USP_ERR_OK;
+    return cert;
 }
 
 
@@ -2341,5 +2900,107 @@ int LoadTrustCert(const unsigned char *cert_data, int cert_len, ctrust_role_t ro
 bool IsSystemTimeReliable(void)
 {
     return true;
+}
+
+
+/*********************************************************************//**
+**
+** Operate_GetFingerprint
+**
+** Sync Operation handler for the GetFingerprint() operation
+**
+** \param   req - pointer to structure identifying the operation in the data model
+** \param   command_key - pointer to string containing the command key for this operation
+** \param   input_args - vector containing input arguments and their values (unused)
+** \param   output_args - vector to return output arguments in
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Operate_GetFingerprint(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args)
+{
+    int err;
+    int result;
+    cert_t *ct;
+    fp_alg_t alg;
+    int expected_size;
+    unsigned char buf[MAX_DM_VALUE_LEN];
+    unsigned len;
+    const EVP_MD *type;
+
+    // Exit if input argument could not be converted
+    err = KV_VECTOR_GetEnum(input_args, "FingerprintAlgorithm", &alg, kFpAlg_None, fp_algs, NUM_ELEM(fp_algs));
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if no fingerprint algorithm was specified
+    if (alg == kFpAlg_None)
+    {
+        USP_ERR_SetMessage("%s: FingerprintAlgorithm input argument not specified", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Assign SSL object to perform fingerprinting
+    // NOTE: The SSL object is static, so must not be freed
+    switch(alg)
+    {
+        case kFpAlg_SHA1:
+            type = EVP_sha1();
+            expected_size = 160/8;
+            break;
+
+        case kFpAlg_SHA224:
+            type = EVP_sha224();
+            expected_size = 224/8;
+            break;
+
+        case kFpAlg_SHA256:
+            type = EVP_sha256();
+            expected_size = 256/8;
+            break;
+
+        case kFpAlg_SHA384:
+            type = EVP_sha384();
+            expected_size = 384/8;
+            break;
+
+        case kFpAlg_SHA512:
+            type = EVP_sha512();
+            expected_size = 512/8;
+            break;
+
+        default:
+        case kFpAlg_None:
+            TERMINATE_BAD_CASE(alg);
+            return USP_ERR_INVALID_ARGUMENTS;   // NOTE: This statement is never reached due to exit() call in TERMINATE_BAD_CASE. It is here to stop the compiler complaining about type possible being uninitialised further on in the function
+            break;
+    }
+
+    // Determine which cert
+    ct = Find_LocalAgentCertByReq(req);
+    USP_ASSERT(ct != NULL);             // Data model caller should have ensured instance number exists in data model
+    USP_ASSERT(ct->cert != NULL);       // Trust store certs are always saved in the vector
+
+    // Exit if unable to calculate digest
+    result = X509_digest(ct->cert, type, buf, &len);
+    if (result == 0)
+    {
+        USP_ERR_SetMessage("%s: X509_digest(%s) failed", __FUNCTION__, TEXT_UTILS_EnumToString(alg, fp_algs, NUM_ELEM(fp_algs)) );
+        return USP_ERR_COMMAND_FAILURE;
+    }
+
+    // Exit if digest is of unexpected size
+    if (len != expected_size)
+    {
+        USP_ERR_SetMessage("%s: X509_digest(%s) returned digest of unexpected length (got %d bytes, expected %d bytes)", __FUNCTION__, TEXT_UTILS_EnumToString(alg, fp_algs, NUM_ELEM(fp_algs)), len, expected_size);
+        return USP_ERR_COMMAND_FAILURE;
+    }
+
+    // Convert the binary digest into hexadecimal characters
+    KV_VECTOR_AddHexNumber(output_args, "Fingerprint", buf, len);
+
+    return USP_ERR_OK;
 }
 

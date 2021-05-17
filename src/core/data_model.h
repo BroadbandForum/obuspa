@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -324,10 +324,12 @@ int DATA_MODEL_SetParameterInDatabase(char *path, char *value);
 
 int DM_PRIV_InitSetRequest(dm_req_t *req, dm_node_t *node, char *path, dm_instances_t *inst, char *new_value);
 void DM_PRIV_RequestInit(dm_req_t *req, dm_node_t *node, char *path, dm_instances_t *inst);
-char *DM_PRIV_FormPath_FromDM(dm_node_t *node, dm_instances_t *inst, char *buf, int len);
+int DM_PRIV_ParseInstanceString(char *instances, dm_instances_t *inst);
+int DM_PRIV_FormInstantiatedPath(char *schema_path, dm_instances_t *inst, char *buf, int len);
 dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags);
 int DM_PRIV_FormDB_FromPath(char *path, dm_hash_t *hash, char *instances, int len);
 int DM_PRIV_FormPath_FromDB(dm_hash_t hash, char *instances, char *buf, int len);
+int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash);
 dm_node_t *DM_PRIV_GetNodeFromPath(char *path, dm_instances_t *inst, bool *is_qualified_instance);
 dm_node_t *DM_PRIV_FindMatchingChild(dm_node_t *parent, char *name);
 void DM_PRIV_AddUniqueKey(dm_node_t *node, dm_unique_key_t *unique_key);

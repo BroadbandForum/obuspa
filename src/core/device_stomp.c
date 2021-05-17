@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2017-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2017-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,7 +38,7 @@
  * Implements the Device.STOMP data model object
  *
  */
-
+#ifndef DISABLE_STOMP
 #include <time.h>
 #include <string.h>
 #include <limits.h>
@@ -72,6 +72,8 @@ int Notify_StompConnDeleted(dm_req_t *req);
 int Get_StompConnectionStatus(dm_req_t *req, char *buf, int len);
 int Get_StompLastChangeDate(dm_req_t *req, char *buf, int len);
 int Get_StompIsEncrypted(dm_req_t *req, char *buf, int len);
+int Get_StompEnableEncryption(dm_req_t *req, char *buf, int len);
+int Set_StompEnableEncryption(dm_req_t *req, char *buf);
 int Validate_HeartbeatPeriod(dm_req_t *req, char *value);
 int Validate_RetryInitialInterval(dm_req_t *req, char *value);
 int Validate_RetryIntervalMultiplier(dm_req_t *req, char *value);
@@ -140,7 +142,9 @@ int DEVICE_STOMP_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_STOMP_CONN_ROOT ".{i}.Host", "", NULL, NotifyChange_StompHost, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_STOMP_CONN_ROOT ".{i}.Port", "61613", DM_ACCESS_ValidatePort, NotifyChange_StompPort, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_STOMP_CONN_ROOT ".{i}.Username", "", NULL, NotifyChange_StompUsername, DM_STRING);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_STOMP_CONN_ROOT ".{i}.X_ARRIS-COM_EnableEncryption", "true", NULL, NotifyChange_StompEnableEncryption, DM_BOOL);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_STOMP_CONN_ROOT ".{i}.EnableEncryption", "true", NULL, NotifyChange_StompEnableEncryption, DM_BOOL);
+    err |= USP_REGISTER_VendorParam_ReadWrite(DEVICE_STOMP_CONN_ROOT ".{i}.X_ARRIS-COM_EnableEncryption", Get_StompEnableEncryption, Set_StompEnableEncryption, NotifyChange_StompEnableEncryption, DM_BOOL);
+
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_STOMP_CONN_ROOT ".{i}.IsEncrypted", Get_StompIsEncrypted, DM_BOOL);
     err |=    USP_REGISTER_DBParam_Secure(DEVICE_STOMP_CONN_ROOT ".{i}.Password", "", NULL, NotifyChange_StompPassword);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_STOMP_CONN_ROOT ".{i}.VirtualHost", "/", NULL, NotifyChange_VirtualHost, DM_STRING); // NOTE: RabbitMQ doesn't allow the virtual host be be an empty string
@@ -636,6 +640,62 @@ int Get_StompIsEncrypted(dm_req_t *req, char *buf, int len)
     return USP_ERR_OK;
 }
 
+/*********************************************************************//**
+**
+** Get_StompEnableEncryption
+**
+** Gets the value of Device.STOMP.Connection.{i}.X_ARRIS-COM_EnableEncryption
+** This function aliases the legacy parameter 'X_ARRIS-COM_EnableEncryption' to the database parameter 'EnableEncryption'
+**
+** \param   req - pointer to structure identifying the path
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Get_StompEnableEncryption(dm_req_t *req, char *buf, int len)
+{
+    int err;
+    char path[MAX_DM_PATH];
+
+    // Form path to database parameter
+    USP_SNPRINTF(path, sizeof(path), "Device.STOMP.Connection.%d.EnableEncryption", inst1);
+
+    // Get the value
+    err = DATA_MODEL_GetParameterValue(path, buf, len, 0);
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** Set_StompEnableEncryption
+**
+** Sets the value of Device.STOMP.Connection.{i}.X_ARRIS-COM_EnableEncryption
+** This function aliases the legacy parameter 'X_ARRIS-COM_EnableEncryption' to the database parameter 'EnableEncryption'
+**
+** \param   req - pointer to structure identifying the path
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Set_StompEnableEncryption(dm_req_t *req, char *buf)
+{
+    int err;
+    char path[MAX_DM_PATH];
+
+    // Form path to database parameter
+    USP_SNPRINTF(path, sizeof(path), "Device.STOMP.Connection.%d.EnableEncryption", inst1);
+
+    // Set the value
+    err = DATA_MODEL_SetParameterValue(path, buf, 0);
+
+    return err;
+}
+
 
 /*********************************************************************//**
 **
@@ -945,7 +1005,7 @@ int NotifyChange_StompPassword(dm_req_t *req, char *value)
 **
 ** NotifyChange_StompEnableEncryption
 **
-** Function called when Device.STOMP.Connection.{i}.X_ARRIS-COM_EnableEncryption is modified
+** Function called when Device.STOMP.Connection.{i}.EnableEncryption is modified
 **
 ** \param   req - pointer to structure identifying the path
 ** \param   value - new value of this parameter
@@ -1271,7 +1331,7 @@ int ProcessStompConnAdded(int instance)
     }
 
     // Exit if unable to get the encryption enable for this STOMP connection
-    USP_SNPRINTF(path, sizeof(path), "%s.%d.X_ARRIS-COM_EnableEncryption", device_stomp_conn_root, instance);
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.EnableEncryption", device_stomp_conn_root, instance);
     err = DM_ACCESS_GetBool(path, &sp->enable_encryption);
     if (err != USP_ERR_OK)
     {
@@ -1479,3 +1539,4 @@ void ScheduleStompReconnect(stomp_conn_params_t *sp)
     STOMP_ScheduleReconnect(sp, stomp_queue);
 }
 
+#endif // DISABLE_STOMP

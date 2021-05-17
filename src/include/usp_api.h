@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2019  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -367,6 +367,7 @@ int USP_SIGNAL_ObjectDeleted(char *path);
 
 //------------------------------------------------------------------------------
 // Functions for argument list data structure
+#define SAVED_TIME_REF_ARG_NAME "Internal_TimeRef"
 kv_vector_t * USP_ARG_Create(void);
 void USP_ARG_Init(kv_vector_t *kvv);
 void USP_ARG_Add(kv_vector_t *kvv, char *key, char *value);
@@ -378,6 +379,8 @@ void USP_ARG_AddDateTime(kv_vector_t *kvv, char *key, time_t value);
 char *USP_ARG_Get(kv_vector_t *kvv, char *key, char *default_value);
 int USP_ARG_GetUnsigned(kv_vector_t *kvv, char *key, unsigned default_value, unsigned *value);
 int USP_ARG_GetUnsignedWithinRange(kv_vector_t *kvv, char *key, unsigned default_value, unsigned min, unsigned max, unsigned *value);
+int USP_ARG_GetInt(kv_vector_t *kvv, char *key, int default_value, int *value);
+int USP_ARG_GetIntWithinRange(kv_vector_t *kvv, char *key, int default_value, int min, int max, int *value);
 int USP_ARG_GetBool(kv_vector_t *kvv, char *key, bool default_value, bool *value);
 int USP_ARG_GetDateTime(kv_vector_t *kvv, char *key, char *default_value, time_t *value);
 void USP_ARG_Destroy(kv_vector_t *kvv);

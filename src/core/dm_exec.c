@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -203,11 +203,16 @@ static pthread_mutex_t dm_access_mutex;
 unsigned cumulative_mtp_threads_exited = 0;
 
 //------------------------------------------------------------------------------
+// Boolean which is set once the MTP has been connected to successfully
+// The purpose of this flag is to avoid USP notifications getting enqueued before the MTP has been connected to successfully
+// for the first time after bootup
+static bool is_notifications_enabled = false;
+
+//------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void UpdateSockSet(socket_set_t *set);
 void ProcessSocketActivity(socket_set_t *set);
 void ProcessMessageQueueSocketActivity(socket_set_t *set);
-void HandleScheduledExit(void);
 void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt);
 
 /*********************************************************************//**
@@ -689,7 +694,7 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, ctrust_role_t role, ch
 ** DM_EXEC_PostMtpThreadExited
 **
 ** Signals that the MTP thread has exited, this will be because an exit was scheduled
-** (either due to the controller requesting a reboot, or factory reset, or a stomp CLI command being sent)
+** (either due to the controller requesting a reboot, or factory reset, or a stop CLI command being sent)
 **
 ** \param   flags - flags determining which stomp thread exited
 **
@@ -788,8 +793,6 @@ int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transf
 **************************************************************************/
 void DM_EXEC_EnableNotifications(void)
 {
-    static bool is_notifications_enabled = false;
-
     // Exit if the notifications are already enabled
     if (is_notifications_enabled)
     {
@@ -816,6 +819,24 @@ void DM_EXEC_EnableNotifications(void)
 
 /*********************************************************************//**
 **
+** DM_EXEC_IsNotificationsEnabled
+**
+** Returns whether USP notifications may be generated.
+** NOTE: USP notifications are not generated before the Boot! event has been sent
+**       This function is called to avoid a large queue of USP notifications in the case of MTP connection failure
+**
+** \param   None
+**
+** \return  true if USP notifications can be sent
+**
+**************************************************************************/
+bool DM_EXEC_IsNotificationsEnabled(void)
+{
+    return is_notifications_enabled;
+}
+
+/*********************************************************************//**
+**
 ** DM_EXEC_Main
 **
 ** Main loop of the data model thread
@@ -830,6 +851,7 @@ void *DM_EXEC_Main(void *args)
     int err;
     int num_sockets;
     socket_set_t set;
+    int enabled_connections = 0;
 
     // Exit if unable to connect to the unix domain socket used to implement the CLI server
     err = CLI_SERVER_Init();
@@ -838,16 +860,19 @@ void *DM_EXEC_Main(void *args)
         USP_LOG_Error("%s: CLI_SERVER_Init() failed. Aborting Data Model thread", __FUNCTION__);
         return NULL;
     }
-#ifdef ENABLE_MQTT
-    // Enable notifications now, if we don't have to wait for a MQTT handshake message (and wouldn't get one anyway)
-    if (DEVICE_MQTT_CountEnabledConnections() == 0)
-    {
-        DM_EXEC_EnableNotifications();
-    }
+
+    // Determine whether we have to wait for a STOMP or MQTT connection, before enabling notifications
+    // This is necessary because the contents of the Boot! event may be dependant on the permissions that the USP Controller has, and we'll only know this after connecting to it
+#ifndef DISABLE_STOMP
+    enabled_connections += DEVICE_STOMP_CountEnabledConnections();
 #endif
 
-    // Enable notifications now, if we don't have to wait for a STOMP handshake message (and wouldn't get one anyway)
-    if (DEVICE_STOMP_CountEnabledConnections() == 0)
+#ifdef ENABLE_MQTT
+    enabled_connections += DEVICE_MQTT_CountEnabledConnections();
+#endif
+
+    // Enable notifications now, if we don't have to wait for a STOMP or MQTT connection before generating a Boot! notification
+    if (enabled_connections == 0)
     {
         DM_EXEC_EnableNotifications();
     }
@@ -969,13 +994,10 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
     obj_added_msg_t *oam;
     obj_deleted_msg_t *odm;
     process_usp_record_msg_t *pur;
-    stomp_complete_msg_t *scm;
     mtp_thread_exited_msg_t *tem;
+    unsigned all_mtp_exited = 0;
     bdc_transfer_result_msg_t *btr;
     mtp_reply_to_t *mrt;
-#ifdef ENABLE_MQTT
-    mqtt_complete_msg_t *mcm;
-#endif
 
     // Exit if there is no activity on the message queue socket
     if (SOCKET_SET_IsReadyToRead(mq_rx_socket, set) == 0)
@@ -1009,22 +1031,31 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             USP_SAFE_FREE(mrt->mqtt_topic);
             break;
 
+#ifndef DISABLE_STOMP
         case kDmExecMsg_StompHandshakeComplete:
+        {
+            stomp_complete_msg_t *scm;
             scm = &msg.params.stomp_complete;
             DEVICE_CONTROLLER_SetRolesFromStomp(scm->stomp_instance, scm->role, scm->allowed_controllers);
             DM_EXEC_EnableNotifications();
 
             // Free all arguments passed in this message
             USP_SAFE_FREE(scm->allowed_controllers);
+        }
             break;
+#endif
+
 #ifdef ENABLE_MQTT
         case kDmExecMsg_MqttHandshakeComplete:
+        {
+            mqtt_complete_msg_t *mcm;
             mcm = &msg.params.mqtt_complete;
             DEVICE_CONTROLLER_SetRolesFromMqtt(mcm->mqtt_instance, mcm->role, mcm->allowed_controllers);
             DM_EXEC_EnableNotifications();
 
             // Free all arguments passed in this message
             USP_SAFE_FREE(mcm->allowed_controllers);
+        }
             break;
 #endif
         case kDmExecMsg_OperComplete:
@@ -1094,9 +1125,23 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         case kDmExecMsg_MtpThreadExited:
             tem = &msg.params.mtp_thread_exited;
             cumulative_mtp_threads_exited |= tem->flags;
-            if (cumulative_mtp_threads_exited == ALL_MTP_EXITED)
+
+            // Form bitmask of all MTP threads which must exit before a scheduled exit can be handled
+            #ifndef DISABLE_STOMP
+            all_mtp_exited |= STOMP_EXITED;
+            #endif
+
+            #ifdef ENABLE_COAP
+            all_mtp_exited |= COAP_EXITED;
+            #endif
+
+            #ifdef ENABLE_MQTT
+            all_mtp_exited |= MQTT_EXITED;
+            #endif
+
+            if (cumulative_mtp_threads_exited == all_mtp_exited)
             {
-                HandleScheduledExit();
+                DM_EXEC_HandleScheduledExit();
             }
             break;
 
@@ -1113,7 +1158,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
 
 /*********************************************************************//**
 **
-** HandleScheduledExit
+** DM_EXEC_HandleScheduledExit
 **
 ** If this function is called, then USP Agent will stop running in this function
 ** after possibly signalling to the vendor that the CPE should reboot, or perform a factory reset
@@ -1124,7 +1169,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
 ** \return  None
 **
 **************************************************************************/
-void HandleScheduledExit(void)
+void DM_EXEC_HandleScheduledExit(void)
 {
     exit_action_t exit_action;
     dm_vendor_reboot_cb_t   reboot_cb;
@@ -1196,10 +1241,6 @@ void HandleScheduledExit(void)
 void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt)
 {
     int err;
-    char *agent_queue;
-    char *buf;
-    int len;
-    char *err_msg;
 
     // Exit if handled the USP record successfully
     err = MSG_HANDLER_HandleBinaryRecord(pbuf, pbuf_len, role, allowed_controllers, mrt);
@@ -1215,6 +1256,13 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
         return;
     }
 #endif
+
+#ifndef DISABLE_STOMP
+{
+    char *agent_queue;
+    char *buf;
+    int len;
+    char *err_msg;
 
     // Exit if the controller did not send a 'usp-err-id' STOMP header to identify this broken USP record
     // (We can't send back a response unless they did)
@@ -1233,6 +1281,8 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
     // NOTE: The trailing NULL in the pbuf contents is not part of the final STOMP frame but is necessary for printing out the pbuf contents in MSG_HANDLER_LogMessageToSend
     agent_queue = DEVICE_MTP_GetAgentStompQueue(mrt->stomp_instance);
     STOMP_QueueBinaryMessage(USP__HEADER__MSG_TYPE__ERROR, mrt->stomp_instance, mrt->stomp_dest, agent_queue, (unsigned char *)buf, len, kMtpContentType_Text, mrt->stomp_err_id, END_OF_TIME);
+}
+#endif
 }
 
 

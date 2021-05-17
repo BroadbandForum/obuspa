@@ -1,4 +1,37 @@
 # Release History
+## Release 4.0.0
+  * ControllerTrust support
+    * Challenge/Response mechanism
+    * OnBoardRequest mechanism
+    * Device.LocalAgent.Certificate (certs trusted by OBUSPA)
+    * Device.Security.Certificate (all other certs)
+  * Bulk Data Collection via USP notifications
+  * Configure options for supported MTPs
+  * ScheduleTimer USP command support
+  * Reference following in search expressions
+  * Example Dockerfile
+  * Bug Fixes
+    * Reporting of memory leaks when -m option used
+    * Exponential backoff for MQTT
+    * Reporting of synchronous USP command failures
+    * Database persistence of multi-instance objects consisting purely of ReadOnly parameters
+    * USP SetResponse when using wildcards
+    * ObjectCreation/Deletion notifications if ReferenceList contains a partial path and object uses refresh instances vendor hook
+    * KV_VECTOR_FindKey() when start_index is non zero
+    * Reporting of object access in GetSupportedDM response for read only objects that use the grouped vendor interface
+    * Default Endpoint ID containing characters which should be percent encoded
+    * Legacy OpenSSL 1.0.2g support
+    * MQTT Response Topic
+    * MQTT Secure Password Parameter
+  * Other Changes
+    * MQTT broker certificate hostname validation
+    * Timeout for SSL handshake if STOMP broker doesn't respond
+    * subscription_id field ignored in NotifyResp
+    * MQTT protocol tracing improved
+    * X_ARRIS-COM_EnableEncryption parameter name changed to EnableEncryption, for STOMP MTP
+  * Known Issues
+    * ControllerTrust ChallengeResponse handling of retries
+
 ## Release 3.0.0
   * MQTT MTP support
      * MQTT v5.0 and MQTT v3.1.1 support

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -66,15 +66,15 @@ int TEXT_UTILS_StringToBinary(char *str, unsigned char *buf, int len, int *bytes
 int TEXT_UTILS_StringToIpAddr(char *str, nu_ipaddr_t *ip_addr);
 char *TEXT_UTILS_SplitPath(char *path, char *buf, int len);
 char *TEXT_UTILS_SplitPathAtSeparator(char *path, char *buf, int len, int separator_split);
+void TEXT_UTILS_ListToString(char **items, int num_items, char *buf, int len);
 void TEXT_UTILS_SplitString(char *str, str_vector_t *sv, char *separator);
 void TEXT_UTILS_StrncpyLen(char *dst, int dst_len, char *src, int src_len);
 char *TEXT_UTILS_StrStr(char *haystack, char *needle);
 int TEXT_UTILS_NullStringCompare(char *str1, char *str2);
-void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char safe_char);
+void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char *safe_chars);
 void TEXT_UTILS_PercentDecodeString(char *buf);
 void TEXT_UTILS_ReplaceCharInString(char *src, char match_char, char *replacement, char *dst, int dst_len);
 char *TEXT_UTILS_TrimBuffer(char *buf);
-bool TEXT_UTILS_IsSymbol(char *buf);
 int TEXT_UTILS_HexStringToValue(char *s);
 int TEXT_UTILS_HexDigitToValue(char c);
 char TEXT_UTILS_ValueToHexDigit(int nibble);

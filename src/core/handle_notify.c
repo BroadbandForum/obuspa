@@ -62,6 +62,10 @@
 unsigned sub_notify_count[kSubNotifyType_Max] = {0};
 
 //------------------------------------------------------------------------------
+// Variable containing the count of onboard request messages
+unsigned onboard_request_count = 0;
+
+//------------------------------------------------------------------------------
 // Maximum number of characters in a message id (allocated by this agent) for a notify message
 #define MAX_NOTIFY_MSG_ID 64
 
@@ -70,6 +74,7 @@ unsigned sub_notify_count[kSubNotifyType_Max] = {0};
 Usp__Msg *CreateOperComplete(char *command, char *command_key, char *subscription_id, bool send_resp);
 Usp__Msg *CreateNotify(char *msg_id, char *subscription_id, bool send_resp, Usp__Notify__NotificationCase notification_case);
 char *CalcMessageId(subs_notify_t notify_type, char *msg_id, int len);
+char *OnBoardRequestMessageId(char *msg_id, int len);
 void AddObjCreation_UniqueKeys(Usp__Notify__ObjectCreation *obj_creation, kv_vector_t *kvv);
 
 
@@ -468,6 +473,48 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_Event(char *event_name, kv_vector_t *param
 
 /*********************************************************************//**
 **
+** MSG_HANDLER_CreateNotifyReq_OnBoard
+**
+** Creates OnBoardRequest notification
+**
+** \param   oui - agent oui
+** \param   product_class - agent product class
+** \param   serial_number - agent serial number
+** \param   send_resp - Set to true if we require the controller to send a response
+**
+** \return  Pointer to message created
+**
+**************************************************************************/
+Usp__Msg *MSG_HANDLER_CreateNotifyReq_OnBoard(char* oui, char* product_class, char* serial_number, bool send_resp)
+{
+    char msg_id[MAX_NOTIFY_MSG_ID];
+    Usp__Msg *req;
+    Usp__Notify__OnBoardRequest *event;
+
+    // Create message id for OnBoardRequest
+    OnBoardRequestMessageId(msg_id, sizeof(msg_id));
+
+    // Create the notification
+    // Subscription id is an empty string according to R-NOT.7
+    req = CreateNotify(msg_id, "", send_resp, USP__NOTIFY__NOTIFICATION_ON_BOARD_REQ);
+
+    // Allocate and initialise memory to store the structure
+    event = USP_MALLOC(sizeof(Usp__Notify__OnBoardRequest));
+    usp__notify__on_board_request__init(event);
+
+    // set the values
+    event->oui = USP_STRDUP(oui);
+    event->product_class = USP_STRDUP(product_class);
+    event->serial_number = USP_STRDUP(serial_number);
+    event->agent_supported_protocol_versions = USP_STRDUP(AGENT_SUPPORTED_PROTOCOL_VERSIONS);
+
+    req->body->request->notify->on_board_req = event;
+
+    return req;
+}
+
+/*********************************************************************//**
+**
 ** CreateOperComplete
 **
 ** Creates an Operation Complete Notify message for the specified controller endpoint
@@ -604,4 +651,36 @@ char *CalcMessageId(subs_notify_t notify_type, char *msg_id, int len)
     return msg_id;
 }
 
+
+/*********************************************************************//**
+**
+** OnBoardRequestMessageId
+**
+** Creates a unique message id for onboard request message
+**
+** \param   msg_id - pointer to buffer in which to write the message id
+** \param   len - length of buffer
+**
+** \return  pointer to start of buffer
+**
+**************************************************************************/
+char *OnBoardRequestMessageId(char *msg_id, int len)
+{
+    char *notify_str = "OnBoardRequest";
+    unsigned count;
+    char buf[MAX_ISO8601_LEN];
+
+    count = onboard_request_count;
+    count++;
+    onboard_request_count = count;
+
+    // Form a message id string which is unique.
+    {
+        // In production, the string must be unique even across reboots because RabbitMQ queues responses from the controller
+        // and may deliver them at Reboot (and we don't want these responses to inadvertently be for fresh NotifyRequests)
+        USP_SNPRINTF(msg_id, len, "%s-%s-%d", notify_str, iso8601_cur_time(buf, sizeof(buf)), count);
+    }
+
+    return msg_id;
+}
 

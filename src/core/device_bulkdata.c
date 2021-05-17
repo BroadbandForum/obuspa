@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2017-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2017-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -57,6 +57,7 @@
 #include "text_utils.h"
 #include "retry_wait.h"
 #include "bdc_exec.h"
+#include "dm_exec.h"
 #include "group_get_vector.h"
 
 //------------------------------------------------------------------------------
@@ -66,7 +67,6 @@
 
 //------------------------------------------------------------------------------
 // Definitions for formats that we support
-#define BULKDATA_PROTOCOL "HTTP"
 #define BULKDATA_ENCODING_TYPE "JSON"
 #define BULKDATA_JSON_REPORT_FORMAT "NameValuePair"
 
@@ -115,6 +115,37 @@ typedef struct
 //---------------------------------------------------------------------------------------------
 // Bulkdata library global context
 static bulkdata_profile_t bulkdata_profiles[BULKDATA_MAX_PROFILES];
+
+//---------------------------------------------------------------------------------------------
+// Bulk Data Collection Protocol
+#define BULKDATA_PROTOCOL_HTTP "HTTP"
+#define BULKDATA_PROTOCOL_USP_EVENT "USPEventNotif"
+#define BULKDATA_PROTOCOL  BULKDATA_PROTOCOL_HTTP "," BULKDATA_PROTOCOL_USP_EVENT
+
+typedef enum
+{
+    kBdcProtocol_HTTP,
+    kBdcProtocol_UspEvent,
+
+    kBdcProtocol_Max               // This should always be the last value in this enumeration. It is used to statically size arrays based on one entry for each active enumeration
+} bdc_protocol_t;
+
+// Array to convert from string to enumeration, and vice-versa
+const enum_entry_t bdc_protocols[kBdcProtocol_Max] =
+{
+    { kBdcProtocol_HTTP,               BULKDATA_PROTOCOL_HTTP },       // This is the default value for notification type
+    { kBdcProtocol_UspEvent,           BULKDATA_PROTOCOL_USP_EVENT },
+};
+
+//---------------------------------------------------------------------------------------------
+// Profile Push Event
+#define BULKDATA_PROFILE_PUSH_EVENT "Device.BulkData.Profile.{i}.Push!"
+
+// Array of arguments sent in Push! event
+static char *profile_push_event_args[] =
+{
+    "Data",
+};
 
 //---------------------------------------------------------------------------------------------
 // Structure containing retrieved controlling parameters for a specific profile
@@ -197,14 +228,15 @@ int ProcessBulkDataProfileAdded(int instance);
 void ProcessBulkDataProfileDeleted(bulkdata_profile_t *bp);
 int bulkdata_stop_profile(bulkdata_profile_t *bp);
 void bulkdata_process_profile(int id);
-void bulkdata_process_profile_work(bulkdata_profile_t *bp);
+void bulkdata_process_profile_http(bulkdata_profile_t *bp);
+void bulkdata_process_profile_usp_event(bulkdata_profile_t *bp);
 bulkdata_profile_t *bulkdata_find_free_profile(void);
 bulkdata_profile_t *bulkdata_find_profile(int profile_id);
 int bulkdata_calc_report_map(bulkdata_profile_t *bp, kv_vector_t *report_map);
 int bulkdata_reduce_to_alt_name(char *spec, char *path, char *alt_name, char *out_buf, int buf_len);
-char *bulkdata_generate_json_report(bulkdata_profile_t *bp, profile_ctrl_params_t *ctrl);
+char *bulkdata_generate_json_report(bulkdata_profile_t *bp, char *report_timestamp);
 unsigned char *bulkdata_compress_report(profile_ctrl_params_t *ctrl, char *input_buf, int input_len, int *p_output_len);
-int bulkdata_schedule_sending_report(profile_ctrl_params_t *ctrl, bulkdata_profile_t *bp, unsigned char *json_report, int report_len);
+int bulkdata_schedule_sending_http_report(profile_ctrl_params_t *ctrl, bulkdata_profile_t *bp, unsigned char *json_report, int report_len);
 int bulkdata_start_profile(bulkdata_profile_t *bp);
 int bulkdata_resync_profile(bulkdata_profile_t *bp, int *delta_time);
 unsigned bulkdata_calc_waittime_to_next_send(bulkdata_profile_t *bp);
@@ -263,7 +295,7 @@ int DEVICE_BULKDATA_Init(void)
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.BulkData.Profile.{i}.X_ARRIS-COM_Status", Get_BulkDataProfileStatus, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.Name", "", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.NumberOfRetainedFailedReports", "0", Validate_NumberOfRetainedFailedReports, NULL, DM_INT);
-    err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.Protocol", BULKDATA_PROTOCOL, Validate_BulkDataProtocol, NULL, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.Protocol", BULKDATA_PROTOCOL_HTTP, Validate_BulkDataProtocol, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.EncodingType", BULKDATA_ENCODING_TYPE, Validate_BulkDataEncodingType, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.ReportingInterval", "86400", Validate_BulkDataReportingInterval, NotifyChange_BulkDataReportingInterval, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.TimeReference", UNKNOWN_TIME_STR, NULL, NotifyChange_BulkDataTimeReference, DM_DATETIME);
@@ -298,6 +330,10 @@ int DEVICE_BULKDATA_Init(void)
     err |= USP_REGISTER_Param_NumEntries("Device.BulkData.Profile.{i}.HTTP.RequestURIParameterNumberOfEntries", "Device.BulkData.Profile.{i}.HTTP.RequestURIParameter.{i}");
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.HTTP.RequestURIParameter.{i}.Name", "", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.HTTP.RequestURIParameter.{i}.Reference", "", Validate_BulkDataReference, NULL, DM_STRING);
+
+    // Register Push! Event
+    err |= USP_REGISTER_Event(BULKDATA_PROFILE_PUSH_EVENT);
+    err |= USP_REGISTER_EventArguments(BULKDATA_PROFILE_PUSH_EVENT, profile_push_event_args, NUM_ELEM(profile_push_event_args));
 
 
     // Exit if any errors occurred
@@ -525,11 +561,13 @@ int Validate_NumberOfRetainedFailedReports(dm_req_t *req, char *value)
 **************************************************************************/
 int Validate_BulkDataProtocol(dm_req_t *req, char *value)
 {
-    // Exit if trying to set a value outside of the range we accept
-    if (strcmp(value, BULKDATA_PROTOCOL) != 0)
+    int err;
+    bdc_protocol_t protocol;
+
+    err = DM_ACCESS_GetEnum(req->path, &protocol, bdc_protocols, NUM_ELEM(bdc_protocols));
+    if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Only Protocol supported is '%s'", __FUNCTION__, BULKDATA_PROTOCOL);
-        return USP_ERR_INVALID_VALUE;
+        return err;
     }
 
     return USP_ERR_OK;
@@ -2136,6 +2174,9 @@ int bulkdata_stop_profile(bulkdata_profile_t *bp)
 void bulkdata_process_profile(int id)
 {
     bulkdata_profile_t *bp;
+    int err;
+    bdc_protocol_t protocol;
+    char path[MAX_DM_PATH];
 
     // Exit if unable to find the profile
     // NOTE: This should never occur if the software is working correctly
@@ -2145,13 +2186,33 @@ void bulkdata_process_profile(int id)
         return;
     }
 
-    // Process the profile
-    bulkdata_process_profile_work(bp);
+    // Exit if unable to get Protocol for this profile
+    USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d.Protocol", bp->profile_id);
+    err = DM_ACCESS_GetEnum(path, &protocol, bdc_protocols, NUM_ELEM(bdc_protocols));
+    if (err != USP_ERR_OK)
+    {
+        return;
+    }
+
+    // Process the report using the required protocol
+    switch(protocol)
+    {
+        case kBdcProtocol_HTTP:
+            bulkdata_process_profile_http(bp);
+            break;
+
+        case kBdcProtocol_UspEvent:
+            bulkdata_process_profile_usp_event(bp);
+            break;
+
+        default:
+            break;
+    }
 }
 
 /*********************************************************************//**
 **
-**  bulkdata_process_profile_work
+**  bulkdata_process_profile_http
 **
 **  Perform the work of processing a profile
 **
@@ -2160,7 +2221,7 @@ void bulkdata_process_profile(int id)
 ** \return  None
 **
 **************************************************************************/
-void bulkdata_process_profile_work(bulkdata_profile_t *bp)
+void bulkdata_process_profile_http(bulkdata_profile_t *bp)
 {
     int err;
     report_t *cur_report;
@@ -2203,7 +2264,7 @@ void bulkdata_process_profile_work(bulkdata_profile_t *bp)
     }
 
     // Exit if unable to generate the report
-    json_report = bulkdata_generate_json_report(bp, &ctrl);
+    json_report = bulkdata_generate_json_report(bp, ctrl.report_timestamp);
     if (json_report == NULL)
     {
         USP_ERR_SetMessage("%s: bulkdata_generate_json_report failed", __FUNCTION__);
@@ -2227,11 +2288,102 @@ void bulkdata_process_profile_work(bulkdata_profile_t *bp)
     // NOTE: From this point on, only the compressed_report exists
 
     // Exit if failed to tell BDC thread to send the report
-    err = bulkdata_schedule_sending_report(&ctrl, bp, compressed_report, compressed_len);
+    err = bulkdata_schedule_sending_http_report(&ctrl, bp, compressed_report, compressed_len);
     if (err != USP_ERR_OK)
     {
         DEVICE_BULKDATA_NotifyTransferResult(bp->profile_id, kBDCTransferResult_Failure_Other);
     }
+}
+
+/*********************************************************************//**
+**
+**  bulkdata_process_profile_usp_event
+**
+**  Send the json report using USP Push! event
+**
+** \param   bp - pointer to bulk data profile to process
+**
+** \return  None
+**
+**************************************************************************/
+void bulkdata_process_profile_usp_event(bulkdata_profile_t *bp)
+{
+    int err;
+    char path[MAX_DM_PATH];
+    kv_vector_t event_args;
+    kv_pair_t kv;
+    report_t *cur_report;
+    char *json_report;
+    char report_timestamp[33];
+
+    // Exit if the MTP has not been connected to successfully after bootup
+    // This is to prevent BDC events being enqueued before the Boot! event is sent (the Boot! event is only sent after successfully connecting to the MTP).
+    if (DM_EXEC_IsNotificationsEnabled() == false)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to get ReportTimestamp
+    USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d.JSONEncoding.ReportTimestamp", bp->profile_id);
+    err = DATA_MODEL_GetParameterValue(path, report_timestamp, sizeof(report_timestamp), 0);
+    if (err != USP_ERR_OK)
+    {
+        return;
+    }
+
+    // When sending via USP events, only one report is ever sent in each USP event
+    // So ensure all retained reports are removed. NOTE: Clearing the reports here is only necessary when switching protocol from HTTP to USP event, and where HTTP had some unsent reports
+    bulkdata_clear_retained_reports(bp);
+    cur_report = &bp->reports[0];
+    cur_report->collection_time = time(NULL);
+    KV_VECTOR_Init(&cur_report->report_map);
+
+    // Exit if unable to get the map containing the report contents
+    err = bulkdata_calc_report_map(bp, &cur_report->report_map);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: bulkdata_calc_report_map failed", __FUNCTION__);
+        return;
+    }
+    bp->num_retained_reports = 1;
+
+    // Exit if unable to generate the report
+    json_report = bulkdata_generate_json_report(bp, report_timestamp);
+    if (json_report == NULL)
+    {
+        USP_ERR_SetMessage("%s: bulkdata_generate_json_report failed", __FUNCTION__);
+        return;
+    }
+
+    // NOTE: No need to print out the JSON report here, the USP message trace will contain it
+
+    // Construct event_args manually to avoid the overhead of a malloc and copy of the report in KV_VECTOR_Add()
+    kv.key = "Data";
+    kv.value = json_report;
+    event_args.vector = &kv;
+    event_args.num_entries = 1;
+
+    USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d.Push!", bp->profile_id);
+    DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(path, &event_args);
+
+    // Free the report. No need to free the event_args as json_report is the only thing dynamically allocated in it
+    free(json_report);      // The report is not allocated via USP_MALLOC
+
+    // From the point of view of this code, the report(s) have been successfully sent, so don't retain them
+    // NOTE: Sending of the reports successfully is delegated to the USP notification retry mechanism
+    bulkdata_clear_retained_reports(bp);
+    bp->retry_count = 0;
+
+exit:
+    // Exit if unable to restart the sync timer with the time until the next reporting interval
+    err = bulkdata_resync_profile(bp, NULL);
+    if (err != USP_ERR_OK)
+    {
+        return;
+    }
+
+    // Uncomment the next line to see how much memory is in use by USP Agent after each post
+//    USP_MEM_PrintSummary();
 }
 
 /*********************************************************************//**
@@ -2439,12 +2591,12 @@ int bulkdata_reduce_to_alt_name(char *spec, char *path, char *alt_name, char *ou
 **  See TR-157 section A.4.2 (end) for an example, and section A.3.5.2 for layout of content containing failed report transmissions
 **
 ** \param   bp - pointer to bulk data profile containing all reports (current and retained)
-** \param   ctrl - pointer to structure containing the controlling parameters for the profile we are generating a report for
+** \param   report_timestamp - value of Device.BulkData.Profile.{i}.JSONEncoding.ReportTimestamp
 **
 ** \return  pointer to NULL terminated dynamically allocated buffer containing the serialized report to send
 **
 **************************************************************************/
-char *bulkdata_generate_json_report(bulkdata_profile_t *bp, profile_ctrl_params_t *ctrl)
+char *bulkdata_generate_json_report(bulkdata_profile_t *bp, char *report_timestamp)
 {
     JsonNode *top;          // top of report
     JsonNode *array;        // array of reports (retained + current)
@@ -2474,11 +2626,11 @@ char *bulkdata_generate_json_report(bulkdata_profile_t *bp, profile_ctrl_params_
 
         // Add Collection time to each json report element (only if specified and not 'None')
         element = json_mkobject();
-        if (strcmp(ctrl->report_timestamp, "Unix-Epoch")==0)
+        if (strcmp(report_timestamp, "Unix-Epoch")==0)
         {
             json_append_member(element, "CollectionTime", json_mknumber(report->collection_time));
         }
-        else if (strcmp(ctrl->report_timestamp, "ISO-8601")==0)
+        else if (strcmp(report_timestamp, "ISO-8601")==0)
         {
             result = iso8601_from_unix_time(report->collection_time, buf, sizeof(buf));
             if (result != NULL)
@@ -2626,10 +2778,10 @@ unsigned char *bulkdata_compress_report(profile_ctrl_params_t *ctrl, char *input
 
 /*********************************************************************//**
 **
-**  bulkdata_schedule_sending_report
+**  bulkdata_schedule_sending_http_report
 **
 **  Tells the BDC thread to send the report
-**  NOTE: Ownership of full_url passes to bulkdata_send_report_inner()
+**  NOTE: Ownership of report passes to BDC_EXEC
 **
 ** \param   ctrl - parameters controlling the profile e.g. URL to upload report to
 ** \param   bp - pointer to bulk data profile to get the report map for
@@ -2639,7 +2791,7 @@ unsigned char *bulkdata_compress_report(profile_ctrl_params_t *ctrl, char *input
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int bulkdata_schedule_sending_report(profile_ctrl_params_t *ctrl, bulkdata_profile_t *bp, unsigned char *report, int report_len)
+int bulkdata_schedule_sending_http_report(profile_ctrl_params_t *ctrl, bulkdata_profile_t *bp, unsigned char *report, int report_len)
 {
     char *query_string = NULL;
     char *full_url = NULL;
@@ -2684,7 +2836,7 @@ int bulkdata_schedule_sending_report(profile_ctrl_params_t *ctrl, bulkdata_profi
     }
 
     // Exit if failed to post a message to BDC thread
-    // NOTE: Ownership of full_url, query_string, report, username and password passes to bulkdata_send_report_inner
+    // NOTE: Ownership of full_url, query_string, report, username and password passes to BDC_EXEC
     err = BDC_EXEC_PostReportToSend(bp->profile_id, full_url, query_string, username, password, report, report_len, flags);
     if (err != USP_ERR_OK)
     {

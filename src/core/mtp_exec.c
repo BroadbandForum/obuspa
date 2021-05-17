@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -46,8 +46,11 @@
 #include "common_defs.h"
 #include "mtp_exec.h"
 #include "dm_exec.h"
-#include "stomp.h"
 #include "os_utils.h"
+
+#ifndef DISABLE_STOMP
+#include "stomp.h"
+#endif
 
 #ifdef ENABLE_COAP
 #include "usp_coap.h"
@@ -61,6 +64,7 @@
 // Enumeration that is set when a USP Agent stop has been scheduled (for when connections have finished sending and receiving messages)
 scheduled_action_t mtp_exit_scheduled = kScheduledAction_Off;
 
+#ifndef DISABLE_STOMP
 //------------------------------------------------------------------------------
 // Unix domain socket pair used to implement a wakeup message queue
 // One socket is always used for sending, and the other always used for receiving
@@ -73,7 +77,7 @@ static int mtp_stomp_mq_sockets[2] = {-1, -1};
 // Flag set to true if the MTP thread has exited
 // This gets set after a scheduled exit due to a stop command, Reboot or FactoryReset operation
 bool is_stomp_mtp_thread_exited = false;
-
+#endif
 
 #ifdef ENABLE_COAP
 //------------------------------------------------------------------------------
@@ -106,6 +110,10 @@ bool is_mqtt_mtp_thread_exited = false;
 #endif
 
 //------------------------------------------------------------------------------
+// Message to post on wakeup message queue
+#define WAKEUP_MESSAGE 'W'
+
+//------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void UpdateMtpSockSet(socket_set_t *set);
 void ProcessMtpSocketActivity(socket_set_t *set);
@@ -126,6 +134,10 @@ int MTP_EXEC_Init(void)
 {
     int err;
 
+    // Avoid compilation error, if no MTPs are enabled
+    (void)err;
+
+#ifndef DISABLE_STOMP
     // Exit if unable to initialize the unix domain socket pair used to implement a wakeup message queue
     err = socketpair(AF_UNIX, SOCK_DGRAM, 0, mtp_stomp_mq_sockets);
     if (err != 0)
@@ -133,6 +145,7 @@ int MTP_EXEC_Init(void)
         USP_ERR_ERRNO("socketpair", errno);
         return USP_ERR_INTERNAL_ERROR;
     }
+#endif
 
 #ifdef ENABLE_COAP
     // Exit if unable to initialize the unix domain socket pair used to implement a wakeup message queue
@@ -157,6 +170,7 @@ int MTP_EXEC_Init(void)
     return USP_ERR_OK;
 }
 
+#ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
 ** MTP_EXEC_StompWakeup
@@ -170,7 +184,6 @@ int MTP_EXEC_Init(void)
 **************************************************************************/
 void MTP_EXEC_StompWakeup(void)
 {
-    #define WAKEUP_MESSAGE 'W'
     char msg = WAKEUP_MESSAGE;
     int bytes_sent;
 
@@ -183,6 +196,7 @@ void MTP_EXEC_StompWakeup(void)
         return;
     }
 }
+#endif
 
 #ifdef ENABLE_COAP
 /*********************************************************************//**
@@ -273,7 +287,11 @@ void MTP_EXEC_ScheduleExit(void)
 **************************************************************************/
 void MTP_EXEC_ActivateScheduledActions(void)
 {
-    bool any_mtp_exited = is_stomp_mtp_thread_exited;
+    bool any_mtp_exited = 0;
+
+#ifndef DISABLE_STOMP
+    any_mtp_exited = any_mtp_exited || is_stomp_mtp_thread_exited;
+#endif
 #ifdef ENABLE_COAP
     any_mtp_exited = any_mtp_exited || is_coap_mtp_thread_exited;
 #endif
@@ -291,22 +309,36 @@ void MTP_EXEC_ActivateScheduledActions(void)
     if (mtp_exit_scheduled == kScheduledAction_Signalled)
     {
         mtp_exit_scheduled = kScheduledAction_Activated;
+#ifndef DISABLE_STOMP
         MTP_EXEC_StompWakeup();
+#endif
 #ifdef ENABLE_COAP
         MTP_EXEC_CoapWakeup();
 #endif
 #ifdef ENABLE_MQTT
         MTP_EXEC_MqttWakeup();
 #endif
+
+        // Ensure that exit still occurs, if no MTPs are compiled into the code
+#ifdef DISABLE_STOMP
+#ifndef ENABLE_COAP
+#ifndef ENABLE_MQTT
+        DM_EXEC_HandleScheduledExit();
+#endif
+#endif
+#endif
     }
 
     // Activate all scheduled reconnects, if signalled
+#ifndef DISABLE_STOMP
     STOMP_ActivateScheduledActions();
+#endif
 #ifdef ENABLE_MQTT
     MQTT_ActivateScheduledActions();
 #endif
 }
 
+#ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
 ** MTP_EXEC_StompMain
@@ -371,6 +403,7 @@ void *MTP_EXEC_StompMain(void *args)
         }
     }
 }
+#endif
 
 #ifdef ENABLE_MQTT
 /*********************************************************************//**

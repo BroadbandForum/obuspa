@@ -89,8 +89,6 @@ SOURCES = src/core/main.c \
 
 obuspa_SOURCES = $(SOURCES)
 obuspa_CPPFLAGS = $(openssl_CFLAGS) $(sqlite3_CFLAGS) $(libcurl_CFLAGS) $(zlib_CFLAGS) $(libmosquitto_CFLAGS)
-obuspa_CPPFLAGS += -DENABLE_COAP
-obuspa_CPPFLAGS += -DENABLE_MQTT
 obuspa_CPPFLAGS += -DOBUSPA_LOCAL_STATE_DIR=\"$(OBUSPA_LOCAL_STATE_DIR)\"
 obuspa_CPPFLAGS +=  $(AM_CPPFLAGS) \
                       -Werror \

@@ -1,7 +1,8 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2020, BT PLC
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2020-2021, BT PLC
+ * Copyright (C) 2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,7 +32,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
-
 /**
  * \file device_mqtt.c
  *
@@ -75,7 +75,6 @@ const enum_entry_t mqtt_tsprotocol[kMqttTSprotocol_Max] =
 {
     { kMqttTSprotocol_tcpip,  "TCP/IP" },
     { kMqttTSprotocol_tls, "TLS" },
-    { kMqttTSprotocol_websocket, "WebSocket" },
 };
 //------------------------------------------------------------------------------
 // Location of the MQTT Client table within the data model
@@ -220,7 +219,7 @@ int DEVICE_MQTT_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.BrokerAddress", NULL, NULL, NotifyChange_MQTTBrokerAddress, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.BrokerPort", "1883", Validate_MQTTBrokerPort, NotifyChange_MQTTBrokerPort, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Username", NULL, NULL, NotifyChange_MQTTUsername, DM_STRING);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Password", NULL, NULL, NotifyChange_MQTTPassword, DM_STRING);
+    err |= USP_REGISTER_DBParam_Secure(DEVICE_MQTT_CLIENT ".{i}.Password", "", NULL, NotifyChange_MQTTPassword);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.KeepAliveTime", "60",  Validate_MQTTKeepAliveTime, NotifyChange_MQTTKeepAliveTime, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.ProtocolVersion", "5.0", Validate_MQTTProtocolVersion, NotifyChange_MQTTProtocolVersion , DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.ClientID", "", NULL, NotifyChange_MQTTClientId, DM_STRING);
@@ -356,8 +355,10 @@ exit:
 **************************************************************************/
 void DEVICE_MQTT_Stop(void)
 {
+    int i;
+
     // Destroy all clients
-    for (int i = 0; i < MAX_MQTT_CLIENTS; i++)
+    for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
         DestroyMQTTClient(&mqtt_client_params[i]);
     }
@@ -2569,6 +2570,8 @@ int Notify_MqttClientDeleted(dm_req_t *req)
 **************************************************************************/
 void DestroyMQTTClient(client_t *client)
 {
+    int i;
+
     mqtt_conn_params_t* mp = &client->conn_params;
 
     // Disable the lower level connection
@@ -2577,7 +2580,7 @@ void DestroyMQTTClient(client_t *client)
     // Free and DeInitialise the slot
     MQTT_DestroyConnParams(mp);
 
-    for (int i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
+    for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         USP_SAFE_FREE(client->subscriptions[i].topic);
     }
@@ -2660,9 +2663,10 @@ client_t *FindUnusedMqttClient(void)
 **************************************************************************/
 mqtt_subscription_t* FindSubscriptionInMqttClient(client_t* client, int instance)
 {
+    int i;
     mqtt_subscription_t* sub = NULL;
 
-    for(int i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
+    for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         sub = &client->subscriptions[i];
         if (sub->instance == instance)

@@ -385,6 +385,7 @@ Usp__GetSupportedDMResp__SupportedObjectResult *
 AddReqObjResult_SupportedObjResult(Usp__GetSupportedDMResp__RequestedObjectResult *ror, dm_node_t *node, unsigned short permissions)
 {
     Usp__GetSupportedDMResp__SupportedObjectResult *sor;
+    dm_object_info_t *info;
     int new_num;    // new number of entries in the requested obj result array
     int len;
     bool is_add_allowed = false;  // Assume that add and delete of the object are not allowed
@@ -410,19 +411,33 @@ AddReqObjResult_SupportedObjResult(Usp__GetSupportedDMResp__RequestedObjectResul
     sor->supported_obj_path[len] = '.';
     sor->supported_obj_path[len+1] = '\0';
 
-    // Determine properties, based on whether the object is multi-instance or not
+    // Determine properties, based on whether the object is multi-instance or not, and grouped or not
     if (node->type == kDMNodeType_Object_MultiInstance)
     {
         // Multi Instance object
         sor->is_multi_instance = true;
-        if ((node->registered.object_info.validate_add_cb != USP_HOOK_DenyAddInstance) && (permissions & PERMIT_ADD))
+        info = &node->registered.object_info;
+        if (info->group_id == NON_GROUPED)
         {
-            is_add_allowed = true;
-        }
+            // Non-grouped multi Instance object
+            if ((info->validate_add_cb != USP_HOOK_DenyAddInstance) && (permissions & PERMIT_ADD))
+            {
+                is_add_allowed = true;
+            }
 
-        if ((node->registered.object_info.validate_del_cb != USP_HOOK_DenyDeleteInstance) && (permissions & PERMIT_DEL))
+            if ((info->validate_del_cb != USP_HOOK_DenyDeleteInstance) && (permissions & PERMIT_DEL))
+            {
+                is_del_allowed = true;
+            }
+        }
+        else
         {
-            is_del_allowed = true;
+            // Grouped multi Instance object
+            if (info->group_writable)
+            {
+                is_add_allowed = true;
+                is_del_allowed = true;
+            }
         }
     }
     else

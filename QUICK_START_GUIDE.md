@@ -31,6 +31,10 @@ $ make
 $ sudo make install
 ```
 
+### Configure Options
+* _--disable-coap_ - Removes CoAP MTP
+* _--disable-mqtt_ - Removes MQTT MTP
+* _--disable-stomp_ - Removes STOMP MTP
 
 ## Running OB-USP-AGENT for the first time
 Before OB-USP-AGENT starts, it needs a database containing the settings of the USP controller to contact.
@@ -93,6 +97,22 @@ $ rm /usr/local/var/obuspa/usp.db
 
 Alternatively you can use the 'obuspa -c dbset' command (see next section) to alter parameters
 in the database, and try again.
+
+## Running OBUSPA inside Docker
+
+You can also run OBUSPA within docker. Simply build the docker container, and tag with obuspa:latest.
+
+```
+docker build -t obuspa:latest .
+```
+
+Then run, with mounts for the factory reset file, and specify the arguments you'd like. For example:
+
+```
+docker run -d -v $(pwd)/factory_reset_example.txt:/obuspa/factory_reset_example.txt obuspa:latest obuspa -r /obuspa/factory_reset_example.txt -p -v4
+```
+
+In its current state, this will not preserve the USP database over docker runs.
 
 ## CoAP Message Transfer Protocol
 OB-USP-AGENT also supports CoAP MTP. As with STOMP MTP, this is enabled
@@ -203,6 +223,7 @@ The following defines are most likely to need modifying:
 * VENDOR_PRODUCT_CLASS - The value of Device.DeviceInfo.ProductClass
 * VENDOR_MANUFACTURER - The value of Device.DeviceInfo.Manufacturer
 * VENDOR_MODEL_NAME - The value of Device.DeviceInfo.ModelName
+* SYSTEM_CERT_PATH - Location of file or directory containing certificates. These are reported in Device.Security.Certificate and not used in OB-USP-AGENT's trust store (use '-t' option to specify trust store certificates).
 
 
 ## Extending the Data Model
@@ -232,6 +253,8 @@ The Get_ModelNumber() vendor hook function is called whenever OB-USP-AGENT core 
 
 The error codes to return are defined in src/include/usp_err_codes.h.
 If an error occurs, call USP_ERR_SetMessage() to set an error message that will be returned by the USP protocol.
+
+Vendor hook set handlers must check for uniqueness if their parameter forms part of a unique key for an object.
 
 For more complex examples of extending the data model, see the DEVICE_XXX_Init() functions in the src/core/device_XXX.c files
 

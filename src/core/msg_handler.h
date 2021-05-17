@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
+ * Copyright (C) 2019-2021, Broadband Forum
  * Copyright (C) 2016-2019  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -47,6 +47,10 @@
 #include "vendor_defs.h"
 #include "device.h"
 
+//--------------------------------------------------------------------
+// Agent supported protocol versions
+#define AGENT_SUPPORTED_PROTOCOL_VERSIONS "1.0"
+
 //------------------------------------------------------------------------------
 // Typedef for callback function, used to extract paramerror fields from a response message, in order to put it in an error message
 typedef int (*paramerror_extractor_t)(Usp__Msg *src_msg, Usp__Msg *err_msg);
@@ -60,6 +64,7 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *m
 int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time);
 int MSG_HANDLER_GetMsgControllerInstance(void);
 void MSG_HANDLER_GetMsgRole(combined_role_t *combined_role);
+void MSG_HANDLER_GetControllerInfo(controller_info_t *controller_info);
 char *MSG_HANDLER_GetMsgControllerEndpointId(void);
 
 // Parse message received and handle response
@@ -91,6 +96,7 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_OperCompleteSuccess(kv_vector_t *output_ar
 Usp__Msg *MSG_HANDLER_CreateNotifyReq_OperCompleteFailure(int err_code, char *err_msg, char *command, char *command_key,
                                                           char *subscription_id, bool send_resp);
 Usp__Msg *MSG_HANDLER_CreateNotifyReq_Event(char *event_name, kv_vector_t *param_values, char *subscription_id, bool send_resp);
+Usp__Msg *MSG_HANDLER_CreateNotifyReq_OnBoard(char* oui, char* product_class, char* serial_number, bool send_resp);
 
 #endif
 

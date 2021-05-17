@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -39,6 +39,7 @@
  *
  */
 
+#ifndef DISABLE_STOMP
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -270,6 +271,7 @@ void StartStompConnection(stomp_connection_t *sc);
 void StopStompConnection(stomp_connection_t *sc, bool purge_queued_messages);
 void InitStompConnection(stomp_connection_t *sc);
 int PerformStompSslConnect(stomp_connection_t *sc);
+int PerformStompSslHandshake(stomp_connection_t *sc);
 stomp_connection_t *FindUnusedStompConn(void);
 void CopyStompConnParamsToNext(stomp_connection_t *sc, stomp_conn_params_t *sp, char *stomp_queue);
 void CopyStompConnParamsFromNext(stomp_connection_t *sc);
@@ -1583,27 +1585,8 @@ void InitStompConnection(stomp_connection_t *sc)
 **************************************************************************/
 int PerformStompSslConnect(stomp_connection_t *sc)
 {
-    int sock_opt;
     int err;
     X509 *server_cert;
-
-    // Exit if unable to get current socket options
-    sock_opt = fcntl(sc->socket_fd, F_GETFL);
-    if (sock_opt == -1)
-    {
-        USP_ERR_ERRNO("fcntl", errno);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Exit if unable to temporarily set the socket as blocking
-    // We do this before performing SSL handshake, so that error messages in the SSL handshake can be reported here
-    sock_opt &= ~O_NONBLOCK;
-    err = fcntl(sc->socket_fd, F_SETFL, sock_opt);
-    if (err == -1)
-    {
-        USP_ERR_ERRNO("fcntl", errno);
-        return USP_ERR_INTERNAL_ERROR;
-    }
 
     // Exit if unable to create a new SSL connection
     sc->ssl = SSL_new(stomp_ssl_ctx);
@@ -1616,28 +1599,13 @@ int PerformStompSslConnect(stomp_connection_t *sc)
     // Set the pointer to the variable in which to point to the certificate chain collected in the verify callback
     SSL_set_app_data(sc->ssl, &sc->cert_chain);
 
-#if OPENSSL_VERSION_NUMBER >= 0x1000200FL // SSL version 1.0.2
-{
-    // Enable automatic hostname validation in later versions of OpenSSL
-    // Exit if unable to get the verify parameter object, which we are going to set properties on
-    X509_VERIFY_PARAM *verify_object;
-    verify_object = SSL_get0_param(sc->ssl);
-    if (verify_object == NULL)
+    // Exit if failed to setup hostname validation with SSL
+    err = DEVICE_SECURITY_AddCertHostnameValidation(sc->ssl, sc->host, strlen(sc->host));
+    if (err != USP_ERR_OK)
     {
-        USP_LOG_Error("%s: SSL_get0_param() failed", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
+        USP_LOG_Error("%s: Host validation failed.", __FUNCTION__);
+        return err;
     }
-
-    // Set the properties on the verify object
-    // These fail the cert if the STOMP server hostname doesn't match the SubjectAltName (SAN) in the cert
-    // If SAN is not present, the cert is failed if hostname doesn't match the CommonName (CN) in the cert
-    // If neither SAN, nor CN are present in the cert, then the cert will automatically be failed by the verify object set
-    // For wildcarded hostnames in the cert, the '*' must be a subdomain (eg *.foo.com, *.foo.bar.com, but not *.com)
-    // and Partial Wildcards eg f*oo.bar.com are not allowed ('*' must represent a full subdomain)
-    X509_VERIFY_PARAM_set_hostflags(verify_object, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
-    X509_VERIFY_PARAM_set1_host(verify_object, sc->host, strlen(sc->host));
-}
-#endif
 
     // Exit if unable to attach the socket to our SSL connection
     err = SSL_set_fd(sc->ssl, sc->socket_fd);
@@ -1648,12 +1616,10 @@ int PerformStompSslConnect(stomp_connection_t *sc)
     }
 
     // Exit if unable to successfully perform the SSL handshake
-    err = SSL_connect(sc->ssl);
-    if (err != 1)
+    err = PerformStompSslHandshake(sc);
+    if (err != USP_ERR_OK)
     {
-        int ssl_err = SSL_get_error(sc->ssl, err);
-        USP_LOG_ErrorSSL(__FUNCTION__, "SSL_connect() failed", err, ssl_err);
-        return USP_ERR_INTERNAL_ERROR;
+        return err;
     }
 
     // Exit if the handshake was successful, but the server did not provide a certificate
@@ -1679,19 +1645,96 @@ int PerformStompSslConnect(stomp_connection_t *sc)
         }
     }
 
-    // Exit if unable to set the socket back as non blocking
-    err = fcntl(sc->socket_fd, F_SETFL, O_NONBLOCK);
-    if (err == -1)
-    {
-        USP_ERR_ERRNO("fcntl", errno);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
     // Allow SSL_write() to write a partial message ie not block if it cannot write the full message
     SSL_set_mode(sc->ssl, SSL_MODE_ENABLE_PARTIAL_WRITE);
 
     // If the code gets here, then the SSL connection was successful
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** PerformStompSslHandshake
+**
+** Perform an SSL handshake with timeout
+**
+** \param   sc - pointer to STOMP connection
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int PerformStompSslHandshake(stomp_connection_t *sc)
+{
+    int err;
+    int result;
+    time_t timeout_time;
+    int timeout_ms;
+    socket_set_t set;
+    int num_sockets;
+
+    #define STOMP_SSL_HANDSHAKE_TIMEOUT 10  // in seconds
+    timeout_time = time(NULL) + STOMP_SSL_HANDSHAKE_TIMEOUT;
+
+    while(true)
+    {
+        // Exit if connect timed out (calculating the amount of time left)
+        timeout_ms = (timeout_time - time(NULL)) * 1000;
+        if (timeout_ms < 0)
+        {
+            USP_LOG_Error("%s: SSL handshake timed out", __FUNCTION__);
+            return USP_ERR_INTERNAL_ERROR;
+        }
+
+        // Attempt to perform the next step of the SSL handshake
+        // NOTE: This function is non-blocking, and will return an eror if it needs to read
+        result = SSL_connect(sc->ssl);
+        err = SSL_get_error(sc->ssl, result);
+
+        switch(result)
+        {
+            case 0:
+                // SSL Handshake failed gracefully (eg due to mismatch in ciphers supported)
+                USP_LOG_ErrorSSL(__FUNCTION__, "SSL_connect() failed", result, err);
+                return USP_ERR_INTERNAL_ERROR;
+                break;
+
+            case 1:
+                // SSL Handshake was successful
+                return USP_ERR_OK;
+                break;
+
+            default:
+                if ((err != SSL_ERROR_WANT_READ) && (err != SSL_ERROR_WANT_WRITE))
+                {
+                    // SSL Handshake failed for some other reason
+                    USP_LOG_ErrorSSL(__FUNCTION__, "SSL_connect() failed", result, err);
+                    return USP_ERR_INTERNAL_ERROR;
+                }
+                break;
+        }
+
+        // If the code gets here, then SSL wanted a read or a write, so setup to wait for one on the socket
+        SOCKET_SET_Clear(&set);
+        if (err == SSL_ERROR_WANT_READ)
+        {
+            SOCKET_SET_AddSocketToReceiveFrom(sc->socket_fd, timeout_ms, &set);
+        }
+
+        if (err == SSL_ERROR_WANT_WRITE)
+        {
+            SOCKET_SET_AddSocketToSendTo(sc->socket_fd, timeout_ms, &set);
+        }
+
+        // Exit if an error occurred whilst waiting for the read/write or timeout
+        num_sockets = SOCKET_SET_Select(&set);
+        if (num_sockets == -1)
+        {
+            return USP_ERR_INTERNAL_ERROR;
+        }
+    }
+
+    // Code should never get here, as all exits are from the while loop
+    return USP_ERR_INTERNAL_ERROR;
 }
 
 /*********************************************************************//**
@@ -4035,3 +4078,4 @@ bool IsUspRecordInStompQueue(stomp_connection_t *sc, unsigned char *pbuf, int pb
     return false;
 }
 
+#endif // DISABLE_STOMP

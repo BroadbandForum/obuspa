@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -60,7 +60,9 @@ typedef enum
 typedef enum
 {
     kMtpProtocol_None,      // None setup yet. The default.
+#ifndef DISABLE_STOMP
     kMtpProtocol_STOMP,
+#endif
 #ifdef ENABLE_COAP
     kMtpProtocol_CoAP,
 #endif
@@ -118,16 +120,18 @@ extern bool is_mqtt_mtp_thread_exited;
 //------------------------------------------------------------------------------
 // API functions
 int MTP_EXEC_Init(void);
-void *MTP_EXEC_StompMain(void *args);
-void *MTP_EXEC_CoapMain(void *args);
-void *MTP_EXEC_MqttMain(void *args);
-void MTP_EXEC_StompWakeup(void);
 void MTP_EXEC_ScheduleExit(void);
 void MTP_EXEC_ActivateScheduledActions(void);
+#ifndef DISABLE_STOMP
+void *MTP_EXEC_StompMain(void *args);
+void MTP_EXEC_StompWakeup(void);
+#endif
 #ifdef ENABLE_COAP
+void *MTP_EXEC_CoapMain(void *args);
 void MTP_EXEC_CoapWakeup(void);
 #endif
 #ifdef ENABLE_MQTT
+void *MTP_EXEC_MqttMain(void *args);
 void MTP_EXEC_MqttWakeup(void);
 #endif
 //------------------------------------------------------------------------------
