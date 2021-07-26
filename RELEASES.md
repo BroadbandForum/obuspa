@@ -1,4 +1,33 @@
 # Release History
+
+## Release 4.1.0
+  * New Features
+    * Search expressions supported in Bulk Data Collection
+    * 'obuspa -c show data model' includes USP command and event arguments
+  * Bug Fixes
+    * MQTT Connection failure over TLS with libmosquitto 1.6.13+
+    * Some ChallengeResponse parameters were not using base64
+    * Device.LocalAgent.CertificateNumberOfEntries returns empty string rather than 0
+    * Device.MQTT.Client.1.Status returns "Running" rather than "Connected"
+    * Device.Security.Certificate.1.Alias is not defined in TR181
+    * Probuf protocol trace does not indicate if truncated
+    * Removed unnecessary allowed_controllers code
+    * Untrusted role cannot issue a RequestChallenge() or ChallengeResponse() command
+    * Bulk Data Collection using USPNotif throws console error related to HTTP URL (GH Issue #20)
+    * Race hazard prevents changing MQTT connection parameters
+    * 'obuspa -e' option accepted, even if C library cannot print callstack
+    * Certificate validity dates reported incorrectly on 32 bit platforms for dates after 2038
+    * Object deletion notification not sent for nested objects (GH Issue #21)
+  * Data Model Enhancements
+    * Device.MQTT.Capabilities
+  * API Enhancements
+    * Table objects must now be registered before child parameters
+    * USP_REGISTER_Param_SupportedList()
+    * USP_DM_InformDataModelEvent()
+    * MQTT password via get_mtp_password_cb
+  * Known Issues
+    * ControllerTrust ChallengeResponse handling of retries
+
 ## Release 4.0.0
   * ControllerTrust support
     * Challenge/Response mechanism

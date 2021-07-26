@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -64,6 +64,7 @@ int DM_ACCESS_GetIpAddr(char *path, nu_ipaddr_t *ip_addr);
 int DM_ACCESS_SetInteger(char *path, int value);
 
 int DM_ACCESS_ValidateBool(dm_req_t *req, char *value);
+int DM_ACCESS_ValidateBase64(dm_req_t *req, char *value);
 int DM_ACCESS_ValidatePort(dm_req_t *req, char *value);
 int DM_ACCESS_ValidateRange_Unsigned(dm_req_t *req, unsigned min_value, unsigned max_value);
 int DM_ACCESS_ValidateRange_Signed(dm_req_t *req, int min_value, int max_value);

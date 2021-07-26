@@ -147,9 +147,6 @@ int GetHardwareVersion(dm_req_t *req, char *buf, int len);
 int DEVICE_LOCAL_AGENT_Init(void)
 {
     int err = USP_ERR_OK;
-    int num_protocols = 0;
-    char *protocols[kMtpProtocol_Max];
-    char supported_protocols[MAX_DM_SHORT_VALUE_LEN];
 
     // Initialise last reboot cause structure
     memset(&reboot_info, 0, sizeof(reboot_info));
@@ -159,24 +156,8 @@ int DEVICE_LOCAL_AGENT_Init(void)
     err = USP_ERR_OK;
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.LocalAgent.UpTime", GetUpTime, DM_UINT);
 
-    // Form string containing list of supported protocols
-    #ifndef DISABLE_STOMP
-    protocols[num_protocols++] = "STOMP";
-    #endif
-
-    #ifdef ENABLE_COAP
-    protocols[num_protocols++] = "CoAP";
-    #endif
-
-    #ifdef ENABLE_MQTT
-    protocols[num_protocols++] = "MQTT";
-    #endif
-
-    USP_ASSERT(num_protocols <= kMtpProtocol_Max);
-    TEXT_UTILS_ListToString(protocols, num_protocols, supported_protocols, sizeof(supported_protocols));
-
     // Register supported protocols and software version
-    err |= USP_REGISTER_Param_Constant("Device.LocalAgent.SupportedProtocols", supported_protocols, DM_STRING);
+    err |= USP_REGISTER_Param_SupportedList("Device.LocalAgent.SupportedProtocols", mtp_protocols, NUM_ELEM(mtp_protocols));
     err |= USP_REGISTER_Param_Constant("Device.LocalAgent.SoftwareVersion", AGENT_SOFTWARE_VERSION, DM_STRING);
 
     // Register ScheduleTimer operation

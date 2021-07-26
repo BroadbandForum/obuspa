@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -417,6 +417,35 @@ int DM_ACCESS_ValidateBool(dm_req_t *req, char *value)
     }
 
     return err;
+}
+
+/*********************************************************************//**
+**
+** DM_ACCESS_ValidateBase64
+**
+** Validates that the specified value string represents a base64 encoded binary blob
+** This function is supplied to be used as a vendor hook validation callback
+**
+** \param   req - pointer to structure containing path information
+** \param   value - value of the parameter to check
+**
+** \return  USP_ERR_OK if validated successfully
+**          USP_ERR_INVALID_TYPE if string value does not represent a base64 encoded string
+**
+**************************************************************************/
+int DM_ACCESS_ValidateBase64(dm_req_t *req, char *value)
+{
+    int err;
+    unsigned char buf[MAX_DM_VALUE_LEN];
+
+    err = TEXT_UTILS_Base64StringToBinary(value, buf, sizeof(buf), NULL);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: Invalid base64 encoded string for param=%s", __FUNCTION__, req->path);
+        return err;
+    }
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**

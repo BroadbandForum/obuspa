@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2021, Broadband Forum
- * Copyright (C) 2017-2019  CommScope, Inc
+ * Copyright (C) 2017-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -57,6 +57,7 @@
 #include "dm_access.h"
 #include "vendor_api.h"
 #include "iso8601.h"
+#include "text_utils.h"
 
 //------------------------------------------------------------------------------
 // Location of the controller trust tables within the data model
@@ -124,25 +125,21 @@ static char *challenge_response_input_args[] =
 
 //------------------------------------------------------------------------------------
 // Controller Challenge structure
+// When a controller issues a RequestChallenge() command, this structure stores the state of the challenge in the controller_challenges[] array
 typedef struct
 {
-    char *controller_endpoint_id; // endpoint id of the controller that executed the command
-                                  // it's used to match a challenge with the controller that sent the command
+    char *controller_endpoint_id; // endpoint id of the controller that initiated this RequestChallenge()
+                                  // or NULL if the entry in controller_challenges[] is not active
+    char *challenge_id;           // Generated ChallengeID identifying this active RequestChallenge()
 
-    char *challenge_id;           // generated challenge id - ChallengeID ouput parameter from RequestChallenge() command
-                                  // it's used to match the response with the request
+    int expiration;               // Number of seconds before this RequestChallenge() expires
+    time_t expire_time;           // absolute time that this RequestChallenge() expires
 
-    int expiration;               // RequestExpiration input parameter from RequestChallenge() command
-                                  // number of seconds the request is going to expire
-
-    time_t expire_time;           // calculated expiration time using RequestExpiration parameter
-                                  // defines when a challenge is going to expire
-
-    char *challenge_ref;          // ChallengeRef input parameter from RequestChallenge() command
-                                  // it's a reference to the data model Challenge table
+    char *challenge_ref;          // Data model path identifying the instance in the Device.LocalAgent.ControllerTrust.Challenge.{i} table
+                                  // This instance contains the password that the controller needs to provide in the ChallengeResponse() command
 
     unsigned retries;             // number of times that the password provided by the controller was wrong
-    time_t locked_time;           // calculated lockout time when the number of retries exceeded
+    time_t locked_time;           // Absolute time at which the lockout period expires, or 0 if not currently in the lockout period
 } controller_challenge_t;
 
 static controller_challenge_t controller_challenges[MAX_CONTROLLERS];
@@ -247,6 +244,7 @@ int DEVICE_CTRUST_Init(void)
     err |= USP_REGISTER_Param_Constant(DEVICE_CREDENTIAL_ROOT ".Enable", "true", DM_BOOL);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CREDENTIAL_ROOT ".Role", Get_CredentialRole, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CREDENTIAL_ROOT ".Credential", Get_CredentialCertificate, DM_STRING);
+    err |= USP_REGISTER_Param_Constant(DEVICE_CREDENTIAL_ROOT ".AllowedUses", "MTP-and-broker", DM_STRING);
 
     // Device.LocalAgent.ControllerTrust.Challenge.{i}
     err |= USP_REGISTER_Object(DEVICE_CHALLENGE_ROOT, NULL, NULL, NULL, NULL, NULL, NULL);
@@ -255,9 +253,9 @@ int DEVICE_CTRUST_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Role", "", Validate_ChallengeRole, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Enable", "false", NULL, NULL, DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Type", CHALLENGE_TYPE, Validate_ChallengeType, NULL, DM_STRING);
-    err |= USP_REGISTER_DBParam_Secure(DEVICE_CHALLENGE_ROOT ".Value", "", NULL, NULL);
+    err |= USP_REGISTER_DBParam_Secure(DEVICE_CHALLENGE_ROOT ".Value", "", DM_ACCESS_ValidateBase64, NULL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".ValueType", CHALLENGE_VALUE_TYPE, Validate_ChallengeValueType, NULL, DM_STRING);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Instruction", "", NULL, NULL, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Instruction", "", DM_ACCESS_ValidateBase64, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".InstructionType", CHALLENGE_INSTRUCTION_TYPE, Validate_ChallengeInstructionType, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Retries", "", NULL, NULL, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".LockoutPeriod", "30", NULL, NULL, DM_INT);
@@ -348,6 +346,7 @@ void DEVICE_CTRUST_Stop(void)
     int i, j;
     role_t *rp;
     permission_t *pp;
+    controller_challenge_t *cc;
 
     // Iterate over all roles, freeing memory
     for (i=0; i<kCTrustRole_Max; i++)
@@ -365,6 +364,13 @@ void DEVICE_CTRUST_Stop(void)
 
     // Free all credentials
     USP_SAFE_FREE(credentials);
+
+    // Free all controller challenges
+    for (i=0; i<NUM_ELEM(controller_challenges); i++)
+    {
+        cc = &controller_challenges[i];
+        DestroyControllerChallenge(cc);
+    }
 }
 
 /*********************************************************************//**
@@ -966,8 +972,8 @@ controller_challenge_t *FindAvailableControllerChallenge(char *controller_endpoi
         cc = &controller_challenges[i];
 
         // if it does, return it
-        if (cc->controller_endpoint_id != NULL
-                && strcmp(cc->controller_endpoint_id, controller_endpoint_id) == 0)
+        if ((cc->controller_endpoint_id != NULL)
+                && (strcmp(cc->controller_endpoint_id, controller_endpoint_id) == 0))
         {
             // but first, clean up existing information
             // since new requests from controllers should
@@ -1060,9 +1066,9 @@ int ControllerTrustRequestChallenge(dm_req_t *req, char *command_key, kv_vector_
     int request_expiration;
 
     // Output variables
-    char *instruction = NULL;
-    char *instruction_type = NULL;
-    char *value_type = NULL;
+    char instruction[MAX_DM_VALUE_LEN];
+    char instruction_type[MAX_DM_SHORT_VALUE_LEN];
+    char value_type[MAX_DM_SHORT_VALUE_LEN];
     char challenge_id[MAX_DM_VALUE_LEN];
 
     // Extract the input arguments using KV_VECTOR_ functions
@@ -1087,7 +1093,7 @@ int ControllerTrustRequestChallenge(dm_req_t *req, char *command_key, kv_vector_
     err = DM_ACCESS_ValidateReference(challenge_ref, DEVICE_CHALLENGE_ROOT, &challenge_ref_instance);
     if (err != USP_ERR_OK)
     {
-        err = USP_ERR_INVALID_VALUE;
+        err = USP_ERR_INVALID_VALUE;  // Not strictly necessary, as DM_ACCESS_ValidateReference() returns invlaid value
         goto exit;
     }
 
@@ -1112,21 +1118,21 @@ int ControllerTrustRequestChallenge(dm_req_t *req, char *command_key, kv_vector_
 
     // set the output parameters
     USP_SNPRINTF(path, sizeof(path), "%s.Instruction", challenge_ref);
-    err = DM_ACCESS_GetString(path, &instruction);
+    err = DATA_MODEL_GetParameterValue(path, instruction, sizeof(instruction), 0);
     if (err != USP_ERR_OK)
     {
         goto exit;
     }
 
     USP_SNPRINTF(path, sizeof(path), "%s.InstructionType", challenge_ref);
-    err = DM_ACCESS_GetString(path, &instruction_type);
+    err = DATA_MODEL_GetParameterValue(path, instruction_type, sizeof(instruction_type), 0);
     if (err != USP_ERR_OK)
     {
         goto exit;
     }
 
     USP_SNPRINTF(path, sizeof(path), "%s.ValueType", challenge_ref);
-    err = DM_ACCESS_GetString(path, &value_type);
+    err = DATA_MODEL_GetParameterValue(path, value_type, sizeof(value_type), 0);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -1158,11 +1164,6 @@ int ControllerTrustRequestChallenge(dm_req_t *req, char *command_key, kv_vector_
     err = USP_ERR_OK;
 
 exit:
-
-    USP_SAFE_FREE(instruction);
-    USP_SAFE_FREE(instruction_type);
-    USP_SAFE_FREE(value_type);
-
     return err;
 }
 
@@ -1184,6 +1185,7 @@ char *GenerateChallengeId(char *challenge_id, int len)
 
     request_challenge_count++;
     USP_SNPRINTF(challenge_id, len, "Challenge-%s-%d", iso8601_cur_time(buf, sizeof(buf)), request_challenge_count);
+
 
     return challenge_id;
 }
@@ -1312,7 +1314,11 @@ int ControllerTrustChallengeResponse(dm_req_t *req, char *command_key, kv_vector
 {
     int err = USP_ERR_OK;
     char path[MAX_DM_PATH];
-    char value[MAX_DM_VALUE_LEN];
+    char base64_value[MAX_DM_VALUE_LEN];
+    unsigned char binary_value[MAX_DM_VALUE_LEN];
+    unsigned char response_value[MAX_DM_VALUE_LEN];
+    int binary_value_len;
+    int response_value_len;
     unsigned retries;
     int lockout;
     controller_challenge_t *cc;
@@ -1374,11 +1380,15 @@ int ControllerTrustChallengeResponse(dm_req_t *req, char *command_key, kv_vector
     // retrieve values from challenge
     // Value
     USP_SNPRINTF(path, sizeof(path), "%s.Value", cc->challenge_ref);
-    err = DATA_MODEL_GetParameterValue(path, value, sizeof(value), SHOW_PASSWORD);
+    err = DATA_MODEL_GetParameterValue(path, base64_value, sizeof(base64_value), SHOW_PASSWORD);
     if (err != USP_ERR_OK)
     {
         goto exit;
     }
+
+    // Convert base64_value from base64 to binary form
+    err = TEXT_UTILS_Base64StringToBinary(base64_value, binary_value, sizeof(binary_value), &binary_value_len);
+    USP_ASSERT(err == USP_ERR_OK);      // The code should have only allowed base64 values to be written
 
     // Retries
     USP_SNPRINTF(path, sizeof(path), "%s.Retries", cc->challenge_ref);
@@ -1405,9 +1415,11 @@ int ControllerTrustChallengeResponse(dm_req_t *req, char *command_key, kv_vector
         goto exit;
     }
 
-    // if value matches value from challenge, return ok
-    // otherwise return 7022 Command failure according to https://issues.broadband-forum.org/browse/DEV2DM-32
-    if (strcmp(input_value, value) != 0)
+    // Attempt to convert challenge response input value from base64 to a binary value
+    err = TEXT_UTILS_Base64StringToBinary(input_value, response_value, sizeof(response_value), &response_value_len);
+
+    // Exit if challenge response input value was not valid base64, or it did not match the value setup in the Challenge table
+    if ((err != USP_ERR_OK) || (binary_value_len != response_value_len) || (memcmp(binary_value, response_value, binary_value_len) != 0))
     {
         // wrong password
         // increase retries

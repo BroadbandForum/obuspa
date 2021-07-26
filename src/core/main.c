@@ -84,7 +84,9 @@ static struct option long_options[] =
     {"dbfile",     required_argument, NULL, 'f'},    // Sets the name of the path to use for the database file
     {"verbose",    required_argument, NULL, 'v'},    // Verbosity level for debug logging
     {"meminfo",    no_argument,       NULL, 'm'},    // Collects and prints information useful to debugging memory leaks
+#ifdef HAVE_EXECINFO_H
     {"error",      no_argument,       NULL, 'e'},    // Prints the callstack whenever an error is detected
+#endif
     {"prototrace" ,no_argument,       NULL, 'p'},    // Enables logging of the protocol trace
     {"command",    no_argument,       NULL, 'c'},    // The rest of the command line is a command to invoke on the active USP Agent.
                                                      // Using this option turns this executable into just a CLI for the active USP Agent.
@@ -183,10 +185,12 @@ int main(int argc, char *argv[])
                 enable_mem_info = true;
                 break;
 
+#ifdef HAVE_EXECINFO_H
             case 'e':
                 // Enable callstack printing when an error occurs
                 enable_callstack_debug = true;
                 break;
+#endif
 
             case 'p':
                 // Enable logging of protocol trace
@@ -465,7 +469,9 @@ void PrintUsage(char *prog_name)
     printf("--resetfile (-r)  Sets the path of the text file containing factory reset parameters\n");
     printf("--interface (-i)  Sets the name of the networking interface to use for USP communication\n");
     printf("--meminfo (-m)    Collects and prints information useful to debugging memory leaks\n");
+#ifdef HAVE_EXECINFO_H
     printf("--error (-e)      Enables printing of the callstack whenever an error is detected\n");
+#endif
     printf("--command (-c)    Sends a CLI command to the running USP Agent and prints the response\n");
     printf("                  To get a list of all CLI commands use '-c help'\n");
     printf("\n");

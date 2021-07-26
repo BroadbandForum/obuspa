@@ -266,6 +266,8 @@ extern char *reboot_cause_path;
                           (node->type == kDMNodeType_DBParam_ReadWriteAuto) || \
                           (node->type == kDMNodeType_DBParam_Secure))
 
+#define IsOperation(node)  ((node->type == kDMNodeType_SyncOperation) || (node->type == kDMNodeType_AsyncOperation))
+
 //------------------------------------------------------------------------------
 // Definitions for flags in DATA_MODEL_GetParameterValue()
 #define SHOW_PASSWORD 0x00000001        // Used internally by USP Agent to get the actual value of passwords (default behaviour is to return an empty string)

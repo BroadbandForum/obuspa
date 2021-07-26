@@ -535,12 +535,11 @@ int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_ro
 **
 ** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table)
 ** \param   role - Role allowed for this message
-** \param   allowed_controllers - URN pattern containing the endpoint_id of allowed controllers
 **
 ** \return  None
 **
 **************************************************************************/
-void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role, char *allowed_controllers)
+void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role)
 {
     int i, j;
     controller_t *cont;
@@ -2859,12 +2858,11 @@ char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance)
 **
 ** \param   mqtt_instance - MQTT instance (in Device.MQTT.Client table)
 ** \param   role - Role allowed for this message
-** \param   allowed_controllers - URN pattern containing the endpoint_id of allowed controllers
 **
 ** \return  None
 **
 **************************************************************************/
-void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role, char *allowed_controllers)
+void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role)
 {
     int i, j;
     controller_t *cont;

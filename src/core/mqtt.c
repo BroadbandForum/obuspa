@@ -1,8 +1,8 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2019-2021, Broadband Forum
  * Copyright (C) 2020, BT PLC
- * Copyright (C) 2020  CommScope, Inc
+ * Copyright (C) 2020-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -116,7 +116,6 @@ typedef struct
     mqtt_failure_t failure_code;
 
     ctrust_role_t role;
-    char *allowed_controllers;
 
     // Scheduler
     mqtt_conn_params_t next_params;
@@ -403,6 +402,19 @@ int ConnectSetEncryption(mqtt_client_t *client)
         return USP_ERR_INTERNAL_ERROR;
     }
 
+    // libmosquitto 1.6.13 onwards, this parameter is default enabled, which means libmosquitto shall
+    // use the default context for TLS connectivity with defined cafile/capath as a minimum,
+    // but here we are using SSL_CTX, thus setting this default parameter to false.
+    // MOSQ_OPT_SSL_CTX_WITH_DEFAULTS is introduced in libmosquitto version 1.1.0, so for backward
+    // compatibility, its guarded by version check with 1.1.0.
+#if LIBMOSQUITTO_VERSION_NUMBER >= 1001000 // libmosquitto version 1.1.0
+    if (mosquitto_int_option(client->mosq, MOSQ_OPT_SSL_CTX_WITH_DEFAULTS, false) != MOSQ_ERR_SUCCESS)
+    {
+        USP_LOG_Error("%s: Failed to set mosquitto ssl default ctx as false", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+#endif
+
     // Set TLS using SSL_CTX in lib mosquitto
     if(mosquitto_opts_set(client->mosq, MOSQ_OPT_SSL_CTX, client->ssl_ctx) != MOSQ_ERR_SUCCESS)
     {
@@ -626,7 +638,7 @@ int SubscribeToAll(mqtt_client_t *client)
     int i;
 
     // Let the DM know we're ready for sending messages
-    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->role, client->allowed_controllers);
+    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->role);
 
     // Now we have the proplist, send the subscribe
     for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
@@ -752,7 +764,6 @@ void HandleMqttError(mqtt_client_t *client, mqtt_failure_t failure_code, const c
 {
     if (client->state != kMqttState_ErrorRetrying)
     {
-        ParamReplace(&client->next_params, &client->conn_params);
         MoveState(&client->state, kMqttState_ErrorRetrying, message);
     }
 
@@ -831,7 +842,7 @@ void ReceiveMqttMessage(mqtt_client_t *client, const struct mosquitto_message *m
     }
 
     // Message may not be valid USP
-    DM_EXEC_PostUspRecord(message->payload, message->payloadlen, client->role, client->allowed_controllers, &mrt);
+    DM_EXEC_PostUspRecord(message->payload, message->payloadlen, client->role, &mrt);
 }
 
 int SendQueueHead(mqtt_client_t *client)
@@ -1167,7 +1178,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
     {
         if (client->cert_chain != NULL)
         {
-            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role, &client->allowed_controllers);
+            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role);
             if (err != USP_ERR_OK)
             {
                 USP_LOG_Error("Failed to get the controller trust with err: %d", err);
@@ -1258,7 +1269,7 @@ void ConnectCallback(struct mosquitto *mosq, void *userdata, int result)
     {
         if (client->cert_chain != NULL)
         {
-            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role, &client->allowed_controllers);
+            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role);
             if (err != USP_ERR_OK)
             {
                 USP_LOG_Error("Failed to get the controller trust with err: %d", err);
@@ -1625,7 +1636,6 @@ void InitClient(mqtt_client_t *client, int index)
     client->cert_chain = NULL;
     client->verify_callback = mqtt_verify_callbacks[index];
     client->socket_fd = INVALID;
-    client->allowed_controllers = NULL;
     client->ssl_ctx = DEVICE_SECURITY_CreateSSLContext(SSLv23_client_method(), SSL_VERIFY_PEER, client->verify_callback);
     ResetRetryCount(client);
 
@@ -1653,7 +1663,6 @@ void DestroyClient(mqtt_client_t *client)
 
     MQTT_SubscriptionDestroy(&client->response_subscription);
 
-    USP_SAFE_FREE(client->allowed_controllers);
     if (client->cert_chain != NULL)
     {
         sk_X509_pop_free(client->cert_chain, X509_free);
@@ -1804,6 +1813,8 @@ int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subsc
     }
 
     ParamReplace(&client->conn_params, mqtt_params);
+    ParamReplace(&client->next_params, mqtt_params);
+
     for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         MQTT_SubscriptionReplace(&client->subscriptions[i], &subscriptions[i]);
@@ -1864,7 +1875,9 @@ int MQTT_DisableClient(int instance, bool purge_queued_messages)
     }
 
     MQTT_DestroyConnParams(&client->conn_params);
-    // Next params are required, they will be destroyed on destroy client only
+    // NOTE: next_params are not freed here because in MQTT_UpdateAllSockSet(), when performing a reconnect with different
+    // connection parameters, this is achieved using MQTT_DisableClient, immediately followed by EnableClient()
+    // so freeing next_params here would break that.
 
 error:
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);
@@ -2221,7 +2234,7 @@ const char *MQTT_GetClientStatus(int instance)
                 status = "Connecting";
                 break;
             case kMqttState_Running:
-                status = "Running";
+                status = "Connected";
                 break;
             case kMqttState_ErrorRetrying:
                 {
@@ -2335,7 +2348,7 @@ int MQTT_AddSubscription(int instance, mqtt_subscription_t* subscription)
     }
 
     // Let the DM know we're ready for sending messages
-    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->role, client->allowed_controllers);
+    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->role);
 
     return err;
 }

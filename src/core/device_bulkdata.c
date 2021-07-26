@@ -120,7 +120,6 @@ static bulkdata_profile_t bulkdata_profiles[BULKDATA_MAX_PROFILES];
 // Bulk Data Collection Protocol
 #define BULKDATA_PROTOCOL_HTTP "HTTP"
 #define BULKDATA_PROTOCOL_USP_EVENT "USPEventNotif"
-#define BULKDATA_PROTOCOL  BULKDATA_PROTOCOL_HTTP "," BULKDATA_PROTOCOL_USP_EVENT
 
 typedef enum
 {
@@ -280,7 +279,7 @@ int DEVICE_BULKDATA_Init(void)
     err = USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Enable", "false", NULL, NotifyChange_BulkDataGlobalEnable, DM_BOOL);
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.BulkData.Status", Get_BulkDataGlobalStatus, DM_STRING);
     err |= USP_REGISTER_Param_Constant("Device.BulkData.MinReportingInterval", BULKDATA_MINIMUM_REPORTING_INTERVAL_STR, DM_UINT);
-    err |= USP_REGISTER_Param_Constant("Device.BulkData.Protocols", BULKDATA_PROTOCOL, DM_STRING);
+    err |= USP_REGISTER_Param_SupportedList("Device.BulkData.Protocols", bdc_protocols, NUM_ELEM(bdc_protocols));
     err |= USP_REGISTER_Param_Constant("Device.BulkData.EncodingTypes", BULKDATA_ENCODING_TYPE, DM_STRING);
     err |= USP_REGISTER_Param_Constant("Device.BulkData.ParameterWildCardSupported", "true", DM_BOOL);
     err |= USP_REGISTER_Param_Constant("Device.BulkData.MaxNumberOfProfiles", BULKDATA_MAX_PROFILES_STR, DM_INT);
@@ -465,6 +464,7 @@ void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bdc_transfer_result_t 
     {
         // Report(s) have been successfully sent, so don't retain them
         bulkdata_clear_retained_reports(bp);
+        bp->is_working = true;
     }
     else
     {
@@ -474,6 +474,7 @@ void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bdc_transfer_result_t 
             // Report(s) have not been sent successfully, so start the retry mechanism (or increment the retry_count, if it is already in progress)
             bp->retry_count++;
         }
+        bp->is_working = false;
     }
 
 
@@ -1933,14 +1934,6 @@ int bulkdata_platform_get_profile_control_params(bulkdata_profile_t *bp, profile
         return err;
     }
 
-    // Exit if URL has not been setup by the ACS
-    if (ctrl_params->url[0] == '\0')
-    {
-        USP_LOG_Error("%s: Profile %d started but it's URL has not been setup", __FUNCTION__, bp->profile_id);
-        bp->is_working = false;
-        return err;
-    }
-
     // Exit if unable to get Username
     USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d.HTTP.Username", bp->profile_id);
     err = DATA_MODEL_GetParameterValue(path, ctrl_params->username, sizeof(ctrl_params->username), 0);
@@ -1999,15 +1992,7 @@ int bulkdata_start_profile(bulkdata_profile_t *bp)
 {
     int err;
     int wait_time;
-    profile_ctrl_params_t ctrl;
 
-
-    // Exit if unable to obtain the control parameters for this profile
-    err = bulkdata_platform_get_profile_control_params(bp, &ctrl);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
 
     // Determine the time until the timer should next fire
     wait_time = bulkdata_calc_waittime_to_next_reporting_interval(bp->reporting_interval, bp->time_reference);
@@ -2456,8 +2441,8 @@ void bulkdata_clear_retained_reports(bulkdata_profile_t *bp)
 ** \param   spec - path specification (This may be a partial path, or contain wildcards, and one of it's expansions was 'path')
 ** \param   path - fully expanded data model path
 ** \param   alt_name - alternative name for the above path
-** \param   reduced_path - pointer to buffer in which to return the reduced name
-** \param   len - size of buffer in which to return the reduced name
+** \param   out_buf - pointer to buffer in which to return the reduced name
+** \param   buf_len - size of buffer in which to return the reduced name
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -2467,6 +2452,9 @@ int bulkdata_reduce_to_alt_name(char *spec, char *path, char *alt_name, char *ou
     char *s;    // pointer stepping thru spec
     char *p;    // pointer stepping thru path
     char *o;    // pointer stepping thru out_buf
+    char *t;    // temp pointer
+
+    memset(out_buf, 0, buf_len);
 
     // Exit if no alt_name - no reduction necessary
     if (*alt_name == '\0')
@@ -2508,9 +2496,26 @@ int bulkdata_reduce_to_alt_name(char *spec, char *path, char *alt_name, char *ou
             {
                 // Copy index characters at wildcard
                 *o++ = *p++;
-                if (*p == '.')
+                if (*p == '.')  // Only move off the wildcard character when we have copied all of the index characters
                 {
-                    s++;    // Only move off the wildcard character when we have copied all of the index characters
+                    s++;
+                    *o++ = '.';
+                }
+            }
+            else if (*s == '[')
+            {
+                // Copy index characters at search expression
+                *o++ = *p++;
+                if (*p == '.')  // Only move after the search expression when we have copied all of the index characters
+                {
+                    // Find the end of the unique key
+                    // NOTE: We should always find the end of the unique key, as the code shouldn't be performing alt name reduction unless the path expression is valid
+                    t = strchr(s, ']');
+                    if (t != NULL)
+                    {
+                        s = t;
+                    }
+                    s++;
                     *o++ = '.';
                 }
             }
@@ -2539,48 +2544,6 @@ int bulkdata_reduce_to_alt_name(char *spec, char *path, char *alt_name, char *ou
     *o = '\0';
     return USP_ERR_OK;
 }
-
-#if 0
-//--------------------------------------------------------------------------
-// Test code
-
-//int test_reduce(void)
-//{
-//    char buf[100];
-//
-//    // fully qualified
-//    bulkdata_reduce_to_alt_name("Device.Stuff.Hello",
-//                                "Device.Stuff.Hello",
-//                                "alt", buf);
-//
-//    // partial path
-//    bulkdata_reduce_to_alt_name("Device.Stuff.Hello.",
-//                                "Device.Stuff.Hello.This.Should.Be.1.Addded",
-//                                "alt", buf);
-//
-//    // partial path, no trailing '.' in spec
-//    bulkdata_reduce_to_alt_name("Device.Stuff.Hello",
-//                                "Device.Stuff.Hello.This.Should.Be.2.Addded",
-//                                "alt", buf);
-//
-//    // wildcard
-//    bulkdata_reduce_to_alt_name("Device.*.Stuff.*.Hello",
-//                                "Device.56.Stuff.72.Hello",
-//                                "alt", buf);
-//
-//    // wildcard with partial path
-//    bulkdata_reduce_to_alt_name("Device.*.Stuff.*.Hello.",
-//                                "Device.56.Stuff.72.Hello.This.Should.Be.3.Addded",
-//                                "alt", buf);
-//
-//    // wildcard with partial path, no trailing '.' in spec
-//    bulkdata_reduce_to_alt_name("Device.*.Stuff.*.Hello",
-//                                "Device.56.Stuff.72.Hello.This.Should.Be.4.Addded",
-//                                "alt", buf);
-//
-//    return 0;
-//}
-#endif
 
 /*********************************************************************//**
 **
@@ -2800,6 +2763,13 @@ int bulkdata_schedule_sending_http_report(profile_ctrl_params_t *ctrl, bulkdata_
     char *username;
     char *password;
 
+    // Exit if URL is empty
+    if (ctrl->url[0] == '\0')
+    {
+        USP_LOG_Error("%s: Profile %d started but it's URL has not been setup", __FUNCTION__, bp->profile_id);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
     // Exit if unable to generate the URI query string
     query_string = bulkdata_platform_get_uri_query_params(bp->profile_id);
     if (query_string == NULL)
@@ -2905,4 +2875,72 @@ bulkdata_profile_t *bulkdata_find_profile(int profile_id)
     // If the code gets here, no matching profile was found
     return NULL;
 }
+
+//------------------------------------------------------------------------------------------
+// Code to test the bulkdata_reduce_to_alt_name() function
+#if 0
+char *reduce_to_alt_test_cases[] =
+{
+    // Path Expression                      // Resolved path                        // Expected Result
+
+    // fully qualified
+    "Device.Stuff.Hello",                   "Device.Stuff.Hello",                   "alt",
+
+    // partial path
+    "Device.Stuff.Hello.",                  "Device.Stuff.Hello.Obj.1.Param",       "alt.Obj.1.Param",
+
+    // partial path, no trailing '.' in expression
+    "Device.Stuff.Hello",                   "Device.Stuff.Hello.Obj.2.Param",       "alt.Obj.2.Param",
+
+    //------------------------
+    // basic wildcard
+    "Device.1.Stuff.*.Hello",               "Device.1.Stuff.72.Hello",              "alt.72",
+
+    // wildcard with partial path
+    "Device.*.ObjA.",                       "Device.56.ObjA.ObjB.7.Param",          "alt.56.ObjB.7.Param",
+
+    // 2 wildcards
+    "Device.*.Stuff.*.Hello",               "Device.56.Stuff.72.Hello",             "alt.56.72",
+
+    // 2 wildcards with partial path
+    "Device.*.Stuff.*.Hello.",              "Device.56.Stuff.72.Hello.Obj.3.Param", "alt.56.72.Obj.3.Param",
+
+    // wildcard with partial path, but path expression does not contain a trailing '.'
+    "Device.*.Stuff.*.Hello",               "Device.56.Stuff.72.Hello.Obj.4.Param", "alt.56.72.Obj.4.Param",
+
+    //------------------------
+    // basic search expression
+    "Device.[Param == \"string\"].Param",   "Device.56.Param",                      "alt.56",
+
+    // search expression with partial path
+    "Device.[Param == \"string\"].ObjA.",   "Device.56.ObjA.ObjB.7.Param",          "alt.56.ObjB.7.Param",
+
+    // 2 search expressions
+    "Device.[A==1].Stuff.[B==2].Hello",     "Device.56.Stuff.72.Hello",             "alt.56.72",
+
+    // 2 search expressions with partial path
+    "Device.[A==1].Stuff.[B==2].Hello.",    "Device.56.Stuff.72.Hello.Obj.3.Param", "alt.56.72.Obj.3.Param",
+
+    // 2 search expressions with partial path, but path expression does not contain a trailing '.'
+    "Device.[A==1].Stuff.[B==2].Hello",     "Device.56.Stuff.72.Hello.Obj.4.Param", "alt.56.72.Obj.4.Param",
+};
+
+void Test_ReduceToAltName(void)
+{
+    int i;
+    int err;
+    char buf[MAX_DM_PATH];
+
+    for (i=0; i < NUM_ELEM(reduce_to_alt_test_cases); i+=3)
+    {
+        err = bulkdata_reduce_to_alt_name(reduce_to_alt_test_cases[i], reduce_to_alt_test_cases[i+1], "alt", buf, sizeof(buf));
+        if ((err != USP_ERR_OK) || (strcmp(buf, reduce_to_alt_test_cases[i+2]) != 0))
+        {
+            printf("ERROR: [%d] Test case result for '%s => %s' is '%s' (expected '%s')\n", i/3, reduce_to_alt_test_cases[i], reduce_to_alt_test_cases[i+1], buf, reduce_to_alt_test_cases[i+2]);
+        }
+    }
+}
+#endif
+
+
 

@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -148,7 +148,7 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
 char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance);
 int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_role);
 int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_role_t *combined_role);
-void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role, char *allowed_controllers);
+void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role);
 int DEVICE_CONTROLLER_GetSubsRetryParams(char *endpoint_id, unsigned *min_wait_interval, unsigned *interval_multiplier);
 void DEVICE_CONTROLLER_NotifyStompConnDeleted(int stomp_instance);
 int DEVICE_MTP_Init(void);
@@ -183,7 +183,7 @@ void DEVICE_SUBSCRIPTION_Dump(void);
 int DEVICE_SECURITY_Init(void);
 int DEVICE_SECURITY_Start(void);
 void DEVICE_SECURITY_Stop(void);
-int DEVICE_SECURITY_GetControllerTrust(STACK_OF(X509) *cert_chain, ctrust_role_t *role, char **allowed_controllers);
+int DEVICE_SECURITY_GetControllerTrust(STACK_OF(X509) *cert_chain, ctrust_role_t *role);
 bool DEVICE_SECURITY_IsClientCertAvailable(void);
 SSL_CTX *DEVICE_SECURITY_CreateSSLContext(const SSL_METHOD *method, int verify_mode, ssl_verify_callback_t verify_callback);
 int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify_callback_t verify_callback);
@@ -230,7 +230,7 @@ void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance);
 void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance);
 int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value);
 int DEVICE_MQTT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *topic, char *response_topic, unsigned char *pbuf, int pbuf_len);
-void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role, char *allowed_controllers);
+void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role);
 char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance);
 
 //------------------------------------------------------------------------------

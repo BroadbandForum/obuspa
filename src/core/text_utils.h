@@ -63,6 +63,7 @@ int TEXT_UTILS_StringToEnum(char *str, const enum_entry_t *enums, int num_enums)
 char *TEXT_UTILS_EnumToString(int value, const enum_entry_t *enums, int num_enums);
 int TEXT_UTILS_StringToDateTime(char *str, time_t *value);
 int TEXT_UTILS_StringToBinary(char *str, unsigned char *buf, int len, int *bytes_written);
+int TEXT_UTILS_Base64StringToBinary(char *str, unsigned char *buf, int len, int *bytes_written);
 int TEXT_UTILS_StringToIpAddr(char *str, nu_ipaddr_t *ip_addr);
 char *TEXT_UTILS_SplitPath(char *path, char *buf, int len);
 char *TEXT_UTILS_SplitPathAtSeparator(char *path, char *buf, int len, int separator_split);
@@ -75,6 +76,7 @@ void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char *saf
 void TEXT_UTILS_PercentDecodeString(char *buf);
 void TEXT_UTILS_ReplaceCharInString(char *src, char match_char, char *replacement, char *dst, int dst_len);
 char *TEXT_UTILS_TrimBuffer(char *buf);
+void TEXT_UTILS_StripChars(char *strip, char *src, char *dest, int dest_len);
 int TEXT_UTILS_HexStringToValue(char *s);
 int TEXT_UTILS_HexDigitToValue(char c);
 char TEXT_UTILS_ValueToHexDigit(int nibble);

@@ -108,13 +108,12 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_pro
 ** \param   pbuf - pointer to buffer containing protobuf encoded USP record
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   role - Role allowed for this message
-** \param   allowed_controllers - URN pattern containing the endpoint_id of allowed controllers
 ** \param   mrt - details of where response to this USP message should be sent
 **
 ** \return  USP_ERR_OK if successful, USP_ERR_MESSAGE_NOT_UNDERSTOOD if unable to unpack the USP Record
 **
 **************************************************************************/
-int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt)
+int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt)
 {
     int err;
     UspRecord__Record *rec;
@@ -138,7 +137,7 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_rol
     PROTO_TRACE_ProtobufMessage(&rec->base);
 
     // Process the encapsulated USP message
-    err = MSG_HANDLER_HandleBinaryMessage(rec->no_session_context->payload.data, rec->no_session_context->payload.len, role, allowed_controllers, rec->from_id, mrt);
+    err = MSG_HANDLER_HandleBinaryMessage(rec->no_session_context->payload.data, rec->no_session_context->payload.len, role, rec->from_id, mrt);
 
 exit:
     // Free the unpacked USP record
@@ -156,14 +155,13 @@ exit:
 ** \param   pbuf - pointer to buffer containing protobuf encoded USP message
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   role - Role allowed for this message
-** \param   allowed_controllers - URN containing the endpoint_id of allowed controllers
 ** \param   controller_endpoint - endpoint which sent this message
 ** \param   mrt - details of where response to this USP message should be sent
 **
 ** \return  USP_ERR_OK if successful, USP_ERR_MESSAGE_NOT_UNDERSTOOD if unable to unpack the USP Record
 **
 **************************************************************************/
-int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, char *controller_endpoint, mtp_reply_to_t *mrt)
+int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *controller_endpoint, mtp_reply_to_t *mrt)
 {
     int err;
     Usp__Msg *usp;
@@ -733,6 +731,7 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_pro
         return;
     }
 
+
     switch(protocol)
     {
 #ifndef DISABLE_STOMP
@@ -745,7 +744,7 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_pro
 
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
-            // If the message was not received over STOMP, then the inherited role won't have been saved in DEVICE_CONTROLLER,
+            // If the message was received over CoAP, then the inherited role won't have been saved in DEVICE_CONTROLLER,
             // so override with the role that was passed with the USP message
             USP_ASSERT(cur_msg_combined_role.inherited == ROLE_DEFAULT);
             cur_msg_combined_role.inherited = role;

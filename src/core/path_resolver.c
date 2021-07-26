@@ -985,14 +985,6 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     bool is_ref_match;
     expr_op_t valid_ops[] = {kExprOp_Equal, kExprOp_NotEqual, kExprOp_LessThanOrEqual, kExprOp_GreaterThanOrEqual, kExprOp_LessThan, kExprOp_GreaterThan};
 
-    // Exit if this is a Bulk Data collection operation, which does not allow unique key addressing
-    // (because the alt-name reduction rules in TR-157 do not support it)
-    if (state->op == kResolveOp_GetBulkData)
-    {
-        USP_ERR_SetMessage("%s: Bulk Data collection does not allow unique key addressing in search expressions", __FUNCTION__);
-        return USP_ERR_INVALID_PATH_SYNTAX;
-    }
-
     // Exit if unable to find the end of the unique key
     p = strchr(unresolved, ']');
     if (p == NULL)

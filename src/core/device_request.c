@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2017-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2017-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -97,6 +97,8 @@ int DEVICE_REQUEST_Init(void)
     // Arguments associated with Async Operations that have the RESTART_ON_REBOOT flag set
     // These objects shadow the objects in the request table - having the same instance number for the operation
     // The lifetime of these shadow objects match those of the object in the request table.
+    err |= USP_REGISTER_Object("Internal.Request.{i}", NULL, NULL, NULL, NULL, NULL, NULL);
+    err |= USP_REGISTER_Object("Internal.Request.{i}.InputArgs.{i}", NULL, NULL, NULL, NULL, NULL, NULL);
     err |= USP_REGISTER_DBParam_ReadWrite("Internal.Request.{i}.InputArgs.{i}.Name", "", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite("Internal.Request.{i}.InputArgs.{i}.Value", "", NULL, NULL, DM_STRING);
     if (err != USP_ERR_OK)

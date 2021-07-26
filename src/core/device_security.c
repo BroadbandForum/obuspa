@@ -138,8 +138,8 @@ typedef struct
     char *subject;              // Free with OPENSSL_free()
     char *issuer;               // Free with OPENSSL_free()
     char *serial_number;        // Free with OPENSSL_free()
-    time_t not_before;
-    time_t not_after;
+    char not_before[MAX_ISO8601_LEN];
+    char not_after[MAX_ISO8601_LEN];
     time_t last_modif;
     char *subject_alt;          // Free with USP_FREE()
     char *signature_algorithm;  // Free with USP_FREE()
@@ -221,9 +221,9 @@ int ParseCert_Subject(X509 *cert, char **p_subject);
 int ParseCert_Issuer(X509 *cert, char **p_issuer);
 int ParseCert_LastModif(X509 *cert, time_t *last_modif);
 int ParseCert_SerialNumber(X509 *cert, char **p_serial_number);
-int ParseCert_NotBefore(X509 *cert, time_t *not_before);
-int ParseCert_NotAfter(X509 *cert, time_t *not_after);
-time_t Asn1Time_To_UnixTime(ASN1_TIME *cert_time);
+int ParseCert_NotBefore(X509 *cert, char *buf, int len);
+int ParseCert_NotAfter(X509 *cert, char *buf, int len);
+int Asn1Time_To_ISO8601(ASN1_TIME *cert_time, char *buf, int buflen);
 int ParseCert_SubjectAlt(X509 *cert, char **p_subject_alt);
 int ParseCert_SignatureAlg(X509 *cert, char **p_sig_alg);
 int CalcCertHash(X509 *cert, cert_hash_t *p_hash);
@@ -254,7 +254,6 @@ int DEVICE_SECURITY_Init(void)
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.Security.CertificateNumberOfEntries", Get_NumCerts, DM_UINT);
     err |= USP_REGISTER_Object(DEVICE_CERT_ROOT ".{i}", USP_HOOK_DenyAddInstance, NULL, NULL,   // This table is read only
                                                         USP_HOOK_DenyDeleteInstance, NULL, NULL);
-    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.Alias", DM_ACCESS_PopulateAliasParam, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.LastModif", GetCert_LastModif, DM_DATETIME);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.SerialNumber", GetCert_SerialNumber, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.Issuer", GetCert_Issuer, DM_STRING);
@@ -267,7 +266,7 @@ int DEVICE_SECURITY_Init(void)
     // Register Device.LocalAgent.Certificate parameters
     err |= USP_REGISTER_Object(DEVICE_LA_CERT_ROOT ".{i}", USP_HOOK_DenyAddInstance, NULL, NULL,   // This table is read only
                                                         USP_HOOK_DenyDeleteInstance, NULL, NULL);
-    err |= USP_REGISTER_VendorParam_ReadOnly("Device.LocalAgent.CertificateNumberOfEntries", Get_NumTrustCerts, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly("Device.LocalAgent.CertificateNumberOfEntries", Get_NumTrustCerts, DM_UINT);
 
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_LA_CERT_ROOT ".{i}.Alias", DM_ACCESS_PopulateAliasParam, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_LA_CERT_ROOT ".{i}.SerialNumber", GetLaCert_SerialNumber, DM_STRING);
@@ -277,7 +276,7 @@ int DEVICE_SECURITY_Init(void)
     err |= USP_REGISTER_SyncOperation(DEVICE_LA_CERT_ROOT ".{i}.GetFingerprint()", Operate_GetFingerprint);
     err |= USP_REGISTER_OperationArguments(DEVICE_LA_CERT_ROOT ".{i}.GetFingerprint()", fp_input_args, NUM_ELEM(fp_input_args),
                                                                                         fp_output_args, NUM_ELEM(fp_output_args));
-    err |= USP_REGISTER_Param_Constant("Device.LocalAgent.SupportedFingerprintAlgorithms", "SHA-1,SHA-224,SHA-256,SHA-384,SHA-512", DM_STRING);
+    err |= USP_REGISTER_Param_SupportedList("Device.LocalAgent.SupportedFingerprintAlgorithms", fp_algs, NUM_ELEM(fp_algs));
 
     // Register unique keys for tables
     char *unique_keys[] = { "SerialNumber", "Issuer" };
@@ -442,7 +441,7 @@ void DEVICE_SECURITY_Stop(void)
 **
 ** DEVICE_SECURITY_GetControllerTrust
 **
-** Obtains the controller trust level to use for controllers attached to this connection
+** Obtains the controller trust role to use for controllers attached to this connection
 ** NOTE: This function is called from the MTP thread, so it should only log errors (not call USP_ERR_SetMessage)
 ** NOTE: The DM thread owned variables accessed by this function are seeded at startup and are immutable afterwards,
 **       therefore this function may safely be called from the MTP thread even though it accesses variables
@@ -450,14 +449,12 @@ void DEVICE_SECURITY_Stop(void)
 **
 ** \param   cert_chain - pointer to verified certificate chain for this connection
 ** \param   role - pointer to variable in which to return role permitted by CA cert
-** \param   allowed_controllers - pointer to variable in which to return a pointer to a dynamically allocated string
-**                     containing the URN of permitted controller endpoint_ids ('from_id's)
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
 #define STACK_OF_X509  STACK_OF(X509)  // Define so that ctags works for this function
-int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, ctrust_role_t *role, char **allowed_controllers)
+int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, ctrust_role_t *role)
 {
     int err;
     unsigned num_certs;
@@ -483,14 +480,6 @@ int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, ctrust_role_t 
     if (broker_cert == NULL)
     {
         USP_LOG_Error("%s: Unable to get broker cert with sk_X509_value()", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Exit if unable to extract the names of the controllers allowed by the broker cert
-    err = ParseCert_SubjectAlt(broker_cert, allowed_controllers);
-    if (err != USP_ERR_OK)
-    {
-        USP_LOG_Error("%s: Unable to obtain the SubjectAltName of a valid controller from the broker certificate", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -1693,7 +1682,7 @@ int GetCert_NotBefore(dm_req_t *req, char *buf, int len)
     // Write the value into the return buffer
     ct = Find_SecurityCertByReq(req);
     USP_ASSERT(ct != NULL);
-    val_datetime = ct->not_before;
+    USP_STRNCPY(buf, ct->not_before, len);
     return USP_ERR_OK;
 }
 
@@ -1717,7 +1706,7 @@ int GetCert_NotAfter(dm_req_t *req, char *buf, int len)
     // Write the value into the return buffer
     ct = Find_SecurityCertByReq(req);
     USP_ASSERT(ct != NULL);
-    val_datetime = ct->not_after;
+    USP_STRNCPY(buf, ct->not_after, len);
     return USP_ERR_OK;
 }
 
@@ -2058,8 +2047,8 @@ int AddCert(X509 *cert, cert_usage_t cert_usage, ctrust_role_t role)
     err |= ParseCert_Issuer(cert, &ct->issuer);
     err |= ParseCert_LastModif(cert, &ct->last_modif);
     err |= ParseCert_SerialNumber(cert, &ct->serial_number);
-    err |= ParseCert_NotBefore(cert, &ct->not_before);
-    err |= ParseCert_NotAfter(cert, &ct->not_after);
+    err |= ParseCert_NotBefore(cert, ct->not_before, sizeof(ct->not_before));
+    err |= ParseCert_NotAfter(cert, ct->not_after, sizeof(ct->not_after));
     err |= ParseCert_SubjectAlt(cert, &ct->subject_alt);
     err |= ParseCert_SignatureAlg(cert, &ct->signature_algorithm);
     err |= CalcCertHash(cert, &ct->hash);
@@ -2328,12 +2317,13 @@ int ParseCert_SerialNumber(X509 *cert, char **p_serial_number)
 ** Extracts the NotBefore time field of the specified cert
 **
 ** \param   cert - pointer to the certificate structure to extract the details of
-** \param   not_before - pointer to variable in which to return the value of the extracted field
+** \param   buf - pointer to buffer in which to return ISO8601 format string
+** \param   len - length of buffer in which to return ISO8601 format string
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int ParseCert_NotBefore(X509 *cert, time_t *not_before)
+int ParseCert_NotBefore(X509 *cert, char *buf, int len)
 {
     ASN1_TIME *cert_time;
 
@@ -2345,9 +2335,7 @@ int ParseCert_NotBefore(X509 *cert, time_t *not_before)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    *not_before = Asn1Time_To_UnixTime(cert_time);
-
-    return USP_ERR_OK;
+    return Asn1Time_To_ISO8601(cert_time, buf, len);
 }
 
 /*********************************************************************//**
@@ -2357,12 +2345,13 @@ int ParseCert_NotBefore(X509 *cert, time_t *not_before)
 ** Extracts the NotBefore time field of the specified cert
 **
 ** \param   cert - pointer to the certificate structure to extract the details of
-** \param   not_after - pointer to variable in which to return the value of the extracted field
+** \param   buf - pointer to buffer in which to return ISO8601 format string
+** \param   len - length of buffer in which to return ISO8601 format string
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int ParseCert_NotAfter(X509 *cert, time_t *not_after)
+int ParseCert_NotAfter(X509 *cert, char *buf, int len)
 {
     ASN1_TIME *cert_time;
 
@@ -2374,45 +2363,43 @@ int ParseCert_NotAfter(X509 *cert, time_t *not_after)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    *not_after = Asn1Time_To_UnixTime(cert_time);
-
-    return USP_ERR_OK;
+    return Asn1Time_To_ISO8601(cert_time, buf, len);
 }
 
 /*********************************************************************//**
 **
-** Asn1Time_To_UnixTime
+** Asn1Time_To_ISO8601
 **
-** Converts a time specified in SSL ASN1 to a unix time
+** Converts a time specified in SSL ASN1 to am ISO8601 time
 **
 ** \param   cert_time - pointer to SSL ANS1 time to convert
+** \param   buf - pointer to buffer in which to return ISO8601 format string
+** \param   buflen - length of buffer in which to return ISO8601 format string
 **
-** \return  converted time or INVALID_TIME if failed to convert
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-time_t Asn1Time_To_UnixTime(ASN1_TIME *cert_time)
+int Asn1Time_To_ISO8601(ASN1_TIME *cert_time, char *buf, int buflen)
 {
     char *s;
     struct tm tm;
-    time_t t;
     int i;
     int len;
 
+    // Exit if the string does not match one of the lengths we are expecting
     s = (char *) cert_time->data;
     len = strlen(s);
-
-    // Exit if the string does not match one of the lengths we are expecting
     if ((len != 13) && (len != 15))
     {
         USP_ERR_SetMessage("%s: ASN1 string ('%s') does not match expected format (wrong length)", __FUNCTION__, s);
-        return INVALID_TIME;
+        return USP_ERR_INTERNAL_ERROR;
     }
 
     // Exit if the string is not terminated by 'Z'
     if (s[len-1] != 'Z')
     {
         USP_ERR_SetMessage("%s: ASN1 string ('%s') does not match expected format (not terminated in 'Z')", __FUNCTION__, s);
-        return INVALID_TIME;
+        return USP_ERR_INTERNAL_ERROR;
     }
 
     // Exit if one of the digits is not numeric
@@ -2421,7 +2408,7 @@ time_t Asn1Time_To_UnixTime(ASN1_TIME *cert_time)
         if ((s[i] < '0') || (s[i] > '9'))
         {
             USP_ERR_SetMessage("%s: ASN1 string ('%s') contains invalid digit ('%c')", __FUNCTION__, s, s[i]);
-            return INVALID_TIME;
+            return USP_ERR_INTERNAL_ERROR;
         }
     }
 
@@ -2445,7 +2432,7 @@ time_t Asn1Time_To_UnixTime(ASN1_TIME *cert_time)
         if (tm.tm_year < 70)
         {
             USP_ERR_SetMessage("%s: ASN1 string ('%s') contains invalid year", __FUNCTION__, s);
-            return INVALID_TIME;
+            return USP_ERR_INTERNAL_ERROR;
         }
 
         s += 4; // Skip to month characters
@@ -2454,19 +2441,20 @@ time_t Asn1Time_To_UnixTime(ASN1_TIME *cert_time)
     // Fill in other fields
     tm.tm_mon  = 10*TO_DIGIT(s[0]) + TO_DIGIT(s[1]) - 1; // Month 0-11
     tm.tm_mday = 10*TO_DIGIT(s[2]) + TO_DIGIT(s[3]);     // Day of month 1-31
-    tm.tm_hour = 10*TO_DIGIT(s[4]) + TO_DIGIT(s[5]); ;   // Hour 0-23
+    tm.tm_hour = 10*TO_DIGIT(s[4]) + TO_DIGIT(s[5]);     // Hour 0-23
     tm.tm_min  = 10*TO_DIGIT(s[6]) + TO_DIGIT(s[7]);     // Minute 0-59
-    tm.tm_sec  = 10*TO_DIGIT(s[8]) + TO_DIGIT(s[9]);   // Second 0-59
+    tm.tm_sec  = 10*TO_DIGIT(s[8]) + TO_DIGIT(s[9]);     // Second 0-59
 
-    // Exit if unable to convert the time
-    t = mktime(&tm);
-    if (t == INVALID_TIME)
+    // Exit if  unable to Form the ISO8601 string in the return buffer
+    buf[0] = '\0';
+    len = iso8601_strftime(buf, buflen, &tm);
+    if (len == 0)
     {
-        USP_ERR_SetMessage("%s: timegm() failed for ASN1 string ('%s')", __FUNCTION__, s);
-        return INVALID_TIME;
+        USP_ERR_SetMessage("%s: iso8601_strftime() failed", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
     }
 
-    return t;
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**

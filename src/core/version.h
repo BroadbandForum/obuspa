@@ -40,4 +40,4 @@
  */
 
  /* Lines below main version may include patch version numbers */
-#define AGENT_SOFTWARE_VERSION  "4.0.0"
+#define AGENT_SOFTWARE_VERSION  "4.1.0"

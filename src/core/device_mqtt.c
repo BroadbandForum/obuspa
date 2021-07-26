@@ -205,6 +205,10 @@ int DEVICE_MQTT_Init(void)
     }
 
     // Register parameters implemented by this component
+    err |= USP_REGISTER_Param_SupportedList("Device.MQTT.Capabilities.ProtocolVersionsSupported", mqtt_protocolver, NUM_ELEM(mqtt_protocolver));
+    err |= USP_REGISTER_Param_SupportedList("Device.MQTT.Capabilities.TransportProtocolSupported", mqtt_tsprotocol, NUM_ELEM(mqtt_tsprotocol));
+    err |= USP_REGISTER_Param_Constant("Device.MQTT.Capabilities.MaxNumberOfClientSubscriptions", TO_STR(MAX_MQTT_SUBSCRIPTIONS), DM_UINT);
+
     err |= USP_REGISTER_Object(DEVICE_MQTT_CLIENT ".{i}", ValidateAdd_Mqttclients, NULL,
                                Notify_MQTTClientAdded, NULL, NULL, Notify_MqttClientDeleted);
     if (err != USP_ERR_OK)
@@ -665,6 +669,28 @@ int ProcessMqttClientAdded(int instance)
     if (err != USP_ERR_OK)
     {
         goto exit;
+    }
+
+    // Override a blank password in the database with that provided by a core vendor hook
+    if (mqttclient->conn_params.password[0] == '\0')
+    {
+        char buf[MAX_DM_SHORT_VALUE_LEN];
+        dm_vendor_get_mtp_password_cb_t   get_mtp_password_cb;
+
+        get_mtp_password_cb = vendor_hook_callbacks.get_mtp_password_cb;
+        if (get_mtp_password_cb != NULL)
+        {
+            // Exit if vendor hook failed
+            err = get_mtp_password_cb(instance, buf, sizeof(buf));
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+
+            // Replace the blank password from the database with the password retrieved via core vendor hook
+            USP_SAFE_FREE(mqttclient->conn_params.password);
+            mqttclient->conn_params.password = USP_STRDUP(buf);
+        }
     }
 
     // Exit if unable to get the clientid for this MQTT client
@@ -1196,13 +1222,30 @@ int NotifyChange_MQTTPassword(dm_req_t *req, char *value)
 {
     mqtt_conn_params_t *mp;
     bool schedule_reconnect = false;
-    //char buf[MAX_DM_SHORT_VALUE_LEN];
-    //dm_vendor_get_mtp_password_cb_t   get_mtp_password_cb;
-    //int err;
+    char buf[MAX_DM_SHORT_VALUE_LEN];
+    dm_vendor_get_mtp_password_cb_t   get_mtp_password_cb;
+    int err;
 
     // Determine mqtt client to be updated
     mp = FindMqttParamsByInstance(inst1);
     USP_ASSERT(mp != NULL);
+
+    // Override a blank password in the database with that provided by a core vendor hook
+    if (*value == '\0')
+    {
+        get_mtp_password_cb = vendor_hook_callbacks.get_mtp_password_cb;
+        if (get_mtp_password_cb != NULL)
+        {
+            // Exit if vendor hook failed
+            err = get_mtp_password_cb(inst1, buf, sizeof(buf));
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
+
+            value = buf;
+        }
+    }
 
     // Determine whether to schedule a reconnect
     if ((strcmp(mp->password, value) != 0) && (mp->enable))

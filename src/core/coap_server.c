@@ -94,7 +94,6 @@ typedef struct
                             // (because the request was received on a new DTLS session, the response will likely need to be too)
 
     STACK_OF(X509) *cert_chain; // Full SSL certificate chain for the CoAP connection, collected in the SSL verify callback
-    char *allowed_controllers; // pattern describing the endpoint_id of controllers which is granted access to this agent
     ctrust_role_t role;     // role granted by the CA cert in the chain of trust with the CoAP client
 
     nu_ipaddr_t peer_addr;   // Current peer that sent the first block. Whilst building up a USP Record, only PDUs from this peer are accepted
@@ -801,7 +800,6 @@ void InitCoapSession(coap_server_session_t *css)
     css->wbio = NULL;
     css->is_first_usp_msg = true;
     css->cert_chain = NULL;
-    css->allowed_controllers = NULL;
     css->role = ROLE_DEFAULT;    // Set default role, if not determined from SSL certs
     memset(&css->peer_addr, 0, sizeof(css->peer_addr));
     css->peer_port = INVALID;
@@ -1034,7 +1032,7 @@ int PerformSessionDtlsConnect(coap_server_session_t *css)
     if (css->cert_chain != NULL)
     {
         // Exit if unable to determine the role associated with the trusted root cert that signed the peer cert
-        err = DEVICE_SECURITY_GetControllerTrust(css->cert_chain, &css->role, &css->allowed_controllers);
+        err = DEVICE_SECURITY_GetControllerTrust(css->cert_chain, &css->role);
         if (err != USP_ERR_OK)
         {
             USP_LOG_Error("%s: DEVICE_SECURITY_GetControllerTrust() failed. Resetting CoAP session", __FUNCTION__);
@@ -1084,7 +1082,6 @@ void StopCoapSession(coap_server_session_t *css)
         sk_X509_pop_free(css->cert_chain, X509_free);
         css->cert_chain = NULL;
     }
-    USP_SAFE_FREE(css->allowed_controllers);
 
     // Free the SSL object, gracefully shutting down the SSL connection
     // NOTE: This also frees the BIO object (if one exists) as it is owned by the SSL object
@@ -1247,7 +1244,7 @@ exit:
             css->is_first_usp_msg = false;
 
             // Post the USP record for processing
-            DM_EXEC_PostUspRecord(css->usp_buf, css->usp_buf_len, css->role, css->allowed_controllers, &mtp_reply_to);
+            DM_EXEC_PostUspRecord(css->usp_buf, css->usp_buf_len, css->role, &mtp_reply_to);
             FreeReceivedUspRecord(css);
         }
     }

@@ -464,6 +464,8 @@ void USP_MEM_PrintSummary(void)
 {
 #ifdef HAVE_MALLINFO
     USP_LOG_Info("Memory in use: %d", (int) mallinfo().uordblks);
+#else
+    USP_LOG_Warning("WARNING: Unable to log memory in use. mallinfo() not present");
 #endif
 }
 
@@ -707,9 +709,8 @@ minfo_t *FindMemInfoByPtr(void *ptr)
 ** GetCallers
 **
 ** Gets an array of pointers to the names of the functions in the callstack
-** This function returns
 **
-** \param   callers - pointer to array in which to return pointers to the names of the function in the callstack
+** \param   callers - pointer to array in which to return pointers to the names of the functions in the callstack
 ** \param   num_callers - number of entries in the array
 **
 ** \return  None
@@ -761,6 +762,7 @@ void GetCallers(char **callers, int num_callers)
 #else
 void GetCallers(char **callers, int num_callers)
 {
-	*callers = NULL;
+    // Signal to caller that no callstack is available
+    callers[0] = NULL;
 }
 #endif

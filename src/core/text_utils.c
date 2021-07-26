@@ -41,6 +41,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <openssl/evp.h>
 
 #include "common_defs.h"
 #include "str_vector.h"
@@ -389,6 +390,62 @@ int TEXT_UTILS_StringToBinary(char *str, unsigned char *buf, int len, int *bytes
 
     *bytes_written = num_bytes;
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** TEXT_UTILS_Base64StringToBinary
+**
+** Converts a Base64 encoded string into its binary format in a buffer
+** NOTE: Copes with embedded CR/LF and space/tabs
+**
+** \param   str - pointer to input string to convert (in base64 format)
+** \param   buf - pointer to buffer in which to write the binary data
+** \param   len - length of the buffer
+** \param   bytes_written - pointer to variable in which to return the number of bytes written into the buffer, or NULL if not required
+**
+** \return  USP_ERR_OK if successful.
+**          USP_ERR_INVALID_TYPE if unable to convert the string
+**
+**************************************************************************/
+int TEXT_UTILS_Base64StringToBinary(char *str, unsigned char *buf, int len, int *bytes_written)
+{
+    int err;
+    int original_len;
+    char *stripped = NULL;
+    int stripped_len;
+    int output_len;
+
+    // Strip the input string of CR/LF and tab/space.
+    // This is necessary because the OpenSSL conversion function does not cope with these characters correctly
+    // NOTE: This may be fixed in later versions of OpenSSL (after 1.1.1c) as the documentation now suggests this stage is not required
+    original_len = strlen(str) + 1;   // Plus 1 to include NULL terminator
+    stripped = USP_MALLOC(original_len);
+    TEXT_UTILS_StripChars("\n\r\t ", str, stripped, original_len);
+
+    stripped_len = strlen(stripped);
+    USP_ASSERT(len > (stripped_len*3)/4 );  // Ensure that output buffer won't overflow
+
+    // Exit if failed to decode the stripped input
+    output_len = EVP_DecodeBlock(buf, (const unsigned char *)stripped, stripped_len);
+    if (output_len == -1)
+    {
+        USP_ERR_SetMessage("%s: Unable to convert base64 encoded string", __FUNCTION__);
+        err = USP_ERR_INVALID_TYPE;
+        goto exit;
+    }
+
+    // Return the number of bytes converted (if required)
+    if (bytes_written != NULL)
+    {
+        *bytes_written = output_len;
+    }
+
+    err = USP_ERR_OK;
+
+exit:
+    USP_SAFE_FREE(stripped);
+    return err;
 }
 
 /*********************************************************************//**
@@ -895,6 +952,50 @@ char *TEXT_UTILS_TrimBuffer(char *buf)
 
     // Return the first non-whitespace character in the buffer
     return first;
+}
+
+/*********************************************************************//**
+**
+** TEXT_UTILS_StripChars
+**
+** Forms the destination string by removing the specified characters from the input string
+** NOTE: Caller must ensure that destination buffer is large enough. If not, converted string is truncated.
+**
+** \param   strip_chars - string containing characters to remove from the src string
+** \param   src - pointer to string to convert
+** \param   dest - pointer to buffer in which to return the stripped string
+** \param   dest_len - length of buffer in which to return the stripped string
+**
+** \return  pointer to string in buffer
+**
+**************************************************************************/
+void TEXT_UTILS_StripChars(char *strip_chars, char *src, char *dest, int dest_len)
+{
+    char c;
+
+    // Iterate over all characters in the src string
+    c = *src++;
+    while (c != '\0')
+    {
+        // Copy from src to dest, if current char is not one of the ones being stripped
+        if (strchr(strip_chars, c) == NULL)
+        {
+            *dest++ = c;
+            dest_len--;
+
+            // Exit loop, if only one character left in destination buffer, because we need to use that to
+            // NULL terminate the destination string
+            if (dest_len == 1)
+            {
+                break;
+            }
+        }
+
+        // Move to next char
+        c = *src++;
+    }
+
+    *dest = '\0';
 }
 
 /*********************************************************************//**

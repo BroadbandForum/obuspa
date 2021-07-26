@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -91,5 +91,6 @@ extern bool enable_callstack_debug;
 // Macro used to print out STOMP frames
 #define USP_PROTOCOL(...)   USP_LOG_Printf(kLogType_Protocol, __VA_ARGS__)
 
-
+// Maximum number of characters in a single log statement
+#define USP_LOG_MAXLEN  (10*1024)
 #endif

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -251,6 +251,59 @@ int USP_REGISTER_Param_NumEntries(char *path, char *table_path)
     info->group_id = NON_GROUPED;
     info->type_flags = DM_UINT;
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** USP_REGISTER_Param_SupportedList
+**
+** Convenience function to register a parameter containing a comma separated list of enumerated values
+** This function is typically used for parameters stating a fixed list of supported options
+**
+** \param   path - full data model path for the parameter
+** \param   enums - pointer to conversion table a list of enumerations and their associated string representation
+** \param   num_enums - number of enumerations in the table
+**
+** \return  pointer to converted string or "UNKNOWN" if unable to convert
+**
+**************************************************************************/
+int USP_REGISTER_Param_SupportedList(char *path, const enum_entry_t *enums, int num_enums)
+{
+    int i;
+    char *p;
+    int chars_written;
+    const enum_entry_t *e;
+    char buf[MAX_DM_VALUE_LEN];
+    int len;
+
+    // Default to empty string, if no items
+    p = buf;
+    *p = '\0';
+    len = sizeof(buf);
+
+    // Iterate over all enums to add, forming a comma separated string
+    for (i=0; i<num_enums; i++)
+    {
+        // Add comma before every enum (apart from the first)
+        if (p != buf)
+        {
+            chars_written = USP_SNPRINTF(p, len, "%s", ", ");
+            p += chars_written;
+            len -= chars_written;
+        }
+
+        // Add the enum (if it's not empty)
+        e = &enums[i];
+        if (e->name[0] != '\0')
+        {
+            chars_written = USP_SNPRINTF(p, len, "%s", e->name);
+            p += chars_written;
+            len -= chars_written;
+        }
+    }
+
+    // Register the parameter as a constant comma separated string
+    return USP_REGISTER_Param_Constant(path, buf, DM_STRING);
 }
 
 /*********************************************************************//**

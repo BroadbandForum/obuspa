@@ -166,7 +166,6 @@ typedef struct
     SSL *ssl;               // SSL used for this STOMP connection
     STACK_OF(X509) *cert_chain; // Full SSL certificate chain for the STOMP connection, collected in the SSL verify callback
 
-    char *allowed_controllers; // pattern describing the endpoint_id of controllers which is granted access to this agent
     ctrust_role_t role;     // role granted by the CA cert in the chain of trust with the STOMP broker
 
     char *subscribe_dest;   // STOMP destination to subscribe to (received from the STOMP server in the CONNECTED frame).
@@ -1481,7 +1480,6 @@ void StopStompConnection(stomp_connection_t *sc, bool purge_queued_messages)
     sc->socket_fd = -1;
     sc->ssl = NULL;
     sc->cert_chain = NULL;
-    USP_SAFE_FREE(sc->allowed_controllers);
     sc->role = ROLE_DEFAULT;
     USP_SAFE_FREE(sc->subscribe_dest);
     sc->agent_heartbeat_period = 0;
@@ -1546,7 +1544,6 @@ void InitStompConnection(stomp_connection_t *sc)
     sc->cert_chain = NULL;
     sc->role = ROLE_DEFAULT;
     sc->subscribe_dest = NULL;
-    sc->allowed_controllers = NULL;
 
     sc->agent_heartbeat_period = 0;
     sc->server_heartbeat_period = 0;
@@ -1638,7 +1635,7 @@ int PerformStompSslConnect(stomp_connection_t *sc)
     if (sc->cert_chain != NULL)
     {
         // Exit if unable to determine the role associated with the trusted root cert
-        err = DEVICE_SECURITY_GetControllerTrust(sc->cert_chain, &sc->role, &sc->allowed_controllers);
+        err = DEVICE_SECURITY_GetControllerTrust(sc->cert_chain, &sc->role);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -2178,7 +2175,7 @@ int TransmitStompMessage(stomp_connection_t *sc)
 
             // Notify the data model of the role to use for controllers connected to this STOMP connection
             // This will also unblock the Boot! event, subscriptions, and restarting of operations
-            DM_EXEC_PostStompHandshakeComplete(sc->instance, sc->role, sc->allowed_controllers);
+            DM_EXEC_PostStompHandshakeComplete(sc->instance, sc->role);
             break;
 
         default:
@@ -2914,7 +2911,7 @@ void HandleRxMsg_RunningState(stomp_connection_t *sc, int msg_size)
     USP_PROTOCOL("%s", &sc->rxframe[offset]);
 
     // Send the USP Record to the data model thread for processing
-    DM_EXEC_PostUspRecord(pbuf, pbuf_len, sc->role, sc->allowed_controllers, &mtp_reply_to);
+    DM_EXEC_PostUspRecord(pbuf, pbuf_len, sc->role, &mtp_reply_to);
 }
 
 /*********************************************************************//**

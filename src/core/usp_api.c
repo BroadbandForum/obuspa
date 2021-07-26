@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -247,6 +247,35 @@ int USP_DM_GetInstances(char *path, int *vector, int max_entries, int *num_entri
 exit:
     INT_VECTOR_Destroy(&iv);
     return err;
+}
+
+/*********************************************************************//**
+**
+** USP_DM_InformDataModelEvent
+**
+** Synchronously notifies USP Agent core of a USP Event
+** This function should only be called from the data model thread.
+** Typically this function is called at startup from the async operation restart vendor hook,
+** to ensure a particular USP event (e.g. TransferComplete!) is sent before the corresponding Operation Complete notification
+** NOTE: Ownership of the output_args stays with the caller, so the caller must destroy them after calling this function
+**
+** \param   event_name - name of the event
+** \param   output_args - arguments for the event
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int USP_DM_InformDataModelEvent(char *event_name, kv_vector_t *output_args)
+{
+    // Exit if this function is not being called from the data model thread
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(event_name, output_args);
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**

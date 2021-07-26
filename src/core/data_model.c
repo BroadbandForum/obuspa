@@ -120,6 +120,7 @@ int DeleteChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *n
 int strncpy_path_segments(char *dst, char *src, int maxlen);
 void DumpSchemaFromRoot(dm_node_t *root, char *name);
 void AddChildNodes(dm_node_t *parent, str_vector_t *sv);
+void AddChildArgs(str_vector_t *sv, char *path, str_vector_t *args, char *arg_type);
 int SortSchemaPath(const void *p1, const void *p2);
 int RegisterDefaultControllerTrust(void);
 void DestroySchemaRecursive(dm_node_t *parent);
@@ -3065,6 +3066,14 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
         child = DM_PRIV_FindMatchingChild(parent, seg->name);
         if (child == NULL)
         {
+            // Do not allow tables to be registered implicitly by a parameter. Only allow them to be registered explicitly.
+            // Only non-table objects are registered implicitly
+            if ((seg->type == kDMNodeType_Object_MultiInstance) && (i != num_segments-1))
+            {
+                USP_ERR_SetMessage("%s: %s must be registered before %s", __FUNCTION__, schema_path, path);
+                return NULL;
+            }
+
             // Node has not yet been added, so add it
             child = CreateNode(seg->name, seg->type, schema_path);
             if (child == NULL)
@@ -3082,7 +3091,9 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
                 inst.order++;
             }
 
-            // Default the group_id, if this is an object which we are adding implicitly to the data model by registering a parameter
+            // Default the group_id
+            // For grouped table objects, this will be overridden by the caller
+            // For non table objects, the group_id is effectively 'don't care' as non-table objects are not accessible via the grouped vendor hook APIs
             if (IsObject(child))
             {
                 dm_object_info_t *info;
@@ -4187,6 +4198,7 @@ int DeleteChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *n
         DM_INST_VECTOR_Remove(inst);
 
         // Add this object instance to the list of instances which are pending notification to the vendor
+        path[path_len+len] = '\0';
         DM_TRANS_Add(kDMOp_Del, path, NULL, NULL, node, inst);
     }
 
@@ -4458,8 +4470,25 @@ int SortSchemaPath(const void *p1, const void *p2)
 void AddChildNodes(dm_node_t *parent, str_vector_t *sv)
 {
     dm_node_t *child;
+    char obj_path[MAX_DM_PATH];
+    char *path;
 
-    STR_VECTOR_Add(sv, parent->path);
+    // Add this node to the string vector
+    USP_SNPRINTF(obj_path, sizeof(obj_path), "%s.", parent->path);
+    path = (IsObject(parent)) ? obj_path : parent->path;
+    STR_VECTOR_Add(sv, path);
+
+    // Add arguments (if applicable) to string vector
+    if (IsOperation(parent))
+    {
+        AddChildArgs(sv, parent->path, &parent->registered.oper_info.input_args, "input");
+        AddChildArgs(sv, parent->path, &parent->registered.oper_info.output_args, "output");
+    }
+
+    if (parent->type == kDMNodeType_Event)
+    {
+        AddChildArgs(sv, parent->path, &parent->registered.event_info.event_args, "event_arg");
+    }
 
     // Iterate over list of children
     child = (dm_node_t *) parent->child_nodes.head;
@@ -4469,6 +4498,32 @@ void AddChildNodes(dm_node_t *parent, str_vector_t *sv)
 
         // Move to next sibling in the data model tree
         child = (dm_node_t *) child->link.next;
+    }
+}
+
+/*********************************************************************//**
+**
+** AddChildArgs
+**
+** Function called to add recursively to add the schema paths of all nodes to a string vector
+**
+** \param   sv - pointer to string vector in which to add the schema paths
+** \param   path - data model path of the USP command or event
+** \param   args - pointer to string vector containing arguments to add to the schema path vector
+** \param   arg_type - pointer to string describing type of argument (input, output, or event_arg)
+**
+** \return  None
+**
+**************************************************************************/
+void AddChildArgs(str_vector_t *sv, char *path, str_vector_t *args, char *arg_type)
+{
+    int i;
+    char buf[MAX_DM_PATH];
+
+    for (i=0; i < args->num_entries; i++)
+    {
+        USP_SNPRINTF(buf, sizeof(buf), "%s %s:%s", path, arg_type, args->vector[i]);
+        STR_VECTOR_Add(sv, buf);
     }
 }
 
@@ -4525,6 +4580,8 @@ int RegisterDefaultControllerTrust(void)
     err |= USP_DM_RegisterRoleName(kCTrustRole_Untrusted,  "Untrusted");
     err |= USP_DM_AddControllerTrustPermission(kCTrustRole_Untrusted, "Device.", PERMIT_NONE);
     err |= USP_DM_AddControllerTrustPermission(kCTrustRole_Untrusted, "Device.DeviceInfo.", PERMIT_GET | PERMIT_OBJ_INFO);
+    err |= USP_DM_AddControllerTrustPermission(kCTrustRole_Untrusted, "Device.LocalAgent.ControllerTrust.RequestChallenge()", PERMIT_OPER);
+    err |= USP_DM_AddControllerTrustPermission(kCTrustRole_Untrusted, "Device.LocalAgent.ControllerTrust.ChallengeResponse()", PERMIT_OPER);
 
     if (err != USP_ERR_OK)
     {

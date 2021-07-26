@@ -53,11 +53,10 @@
 // API functions
 int DM_EXEC_Init(void);
 void DM_EXEC_Destroy(void);
-void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt);
-void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role, char *allowed_controllers);
-void DM_EXEC_PostMqttHandshakeComplete(int stomp_instance, ctrust_role_t role, char *allowed_controllers);
+void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt);
+void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role);
+void DM_EXEC_PostMqttHandshakeComplete(int stomp_instance, ctrust_role_t role);
 void DM_EXEC_PostMtpThreadExited(unsigned flags);
-void DM_EXEC_HandleStompHandshakeComplete(int stomp_instance, ctrust_role_t role, char *allowed_controllers);
 int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
 void DM_EXEC_HandleScheduledExit(void);
 bool DM_EXEC_IsNotificationsEnabled(void);

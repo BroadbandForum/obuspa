@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -68,6 +68,14 @@ typedef struct
     int *vector;
     int num_entries;
 } int_vector_t;
+
+//-------------------------------------------------------------------------
+// Structure used for tables to convert from a string to an enumeration
+typedef struct
+{
+    int value;
+    char *name;
+} enum_entry_t;
 
 //-------------------------------------------------------------------------
 // Enumeration of expression operators
@@ -317,6 +325,7 @@ typedef struct
 // Functions to register the data model
 // These functions may only be called during startup (which for vendor code, means within VENDOR_Init())
 int USP_REGISTER_Param_Constant(char *path, char *value, unsigned type_flags);
+int USP_REGISTER_Param_SupportedList(char *path, const enum_entry_t *enums, int num_enums);
 int USP_REGISTER_DBParam_ReadWrite(char *path, char *value, dm_validate_value_cb_t validator_cb, dm_notify_set_cb_t notify_set_cb, unsigned type_flags);
 int USP_REGISTER_Param_NumEntries(char *path, char *table_path);
 int USP_REGISTER_VendorParam_ReadOnly(char *path, dm_get_value_cb_t get_cb, unsigned type_flags);
@@ -347,7 +356,6 @@ int USP_REGISTER_Object_RefreshInstances(char *path, dm_refresh_instances_cb_t r
 //------------------------------------------------------------------------------
 // Functions that may be called from vendor hooks to access the data model
 // These functions must not be called from any thread other than the data model thread
-// If you need to access a data model parameter from another thread, then it must be implemented as a vendor parameter
 int USP_DM_GetParameterValue(char *path, char *buf, int len);
 int USP_DM_SetParameterValue(char *path, char *new_value);
 int USP_DM_DeleteInstance(char *path);
@@ -356,6 +364,7 @@ int USP_DM_RefreshInstance(char *path);
 int USP_DM_GetInstances(char *path, int *vector, int max_entries, int *num_entries);
 int USP_DM_RegisterRoleName(ctrust_role_t role, char *name);
 int USP_DM_AddControllerTrustPermission(ctrust_role_t role, char *path, unsigned short permission_bitmask);
+int USP_DM_InformDataModelEvent(char *event_name, kv_vector_t *output_args);
 
 //------------------------------------------------------------------------------
 // Functions that may be called from a thread implementing an asynchronous operation

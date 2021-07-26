@@ -388,13 +388,20 @@ void USP_LOG_String(log_type_t log_type, char *str)
 void USP_LOG_Printf(log_type_t log_type, char *fmt, ...)
 {
     va_list ap;
-    char buf[USP_ERR_MAXLEN];
+    char buf[USP_LOG_MAXLEN];
+    int chars_written;
 
     // Print the message to the buffer
     va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
-    buf[sizeof(buf)-1] = '\0';
+    chars_written = vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
+
+    // Ensure that if the log message has been truncated, that it is reported in the log
+    if (chars_written >= sizeof(buf)-1)
+    {
+        #define TRUNCATED_STR "\n...[truncated]..."
+        memcpy(&buf[sizeof(buf)-sizeof(TRUNCATED_STR)], TRUNCATED_STR, sizeof(TRUNCATED_STR));
+    }
 
     USP_LOG_Puts(log_type, buf);
 }

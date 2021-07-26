@@ -119,7 +119,6 @@ typedef struct
     unsigned char *pbuf;
     int pbuf_len;
     ctrust_role_t role;
-    char *allowed_controllers;
     mtp_reply_to_t mtp_reply_to;    // destination to send the USP message response to
 } process_usp_record_msg_t;
 
@@ -128,7 +127,6 @@ typedef struct
 {
     int stomp_instance;
     ctrust_role_t role;
-    char *allowed_controllers;
 } stomp_complete_msg_t;
 
 // Notify controller trust role for all controllers connected to the specified MQTT client
@@ -136,7 +134,6 @@ typedef struct
 {
     int mqtt_instance;
     ctrust_role_t role;
-    char *allowed_controllers;
 } mqtt_complete_msg_t;
 
 
@@ -213,7 +210,7 @@ static bool is_notifications_enabled = false;
 void UpdateSockSet(socket_set_t *set);
 void ProcessSocketActivity(socket_set_t *set);
 void ProcessMessageQueueSocketActivity(socket_set_t *set);
-void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt);
+void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt);
 
 /*********************************************************************//**
 **
@@ -541,13 +538,12 @@ int USP_SIGNAL_ObjectDeleted(char *path)
 **                 NOTE: This is part of larger buffer (with STOMP), so must be copied before sending to the data model thread)
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   role - Controller Trust Role allowed for this message
-** \param   allowed_controllers - URN pattern describing the endpoint_id of allowed controllers
 ** \param   mrt - details of where response to this USP message should be sent
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt)
+void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt)
 {
     dm_exec_msg_t  msg;
     process_usp_record_msg_t *pur;
@@ -568,7 +564,6 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role
     memcpy(pur->pbuf, pbuf, pbuf_len);
     pur->pbuf_len = pbuf_len;
     pur->role = role;
-    pur->allowed_controllers = USP_STRDUP(allowed_controllers);
     pur->mtp_reply_to.protocol = mrt->protocol;
     pur->mtp_reply_to.is_reply_to_specified = mrt->is_reply_to_specified;
     pur->mtp_reply_to.stomp_dest = USP_STRDUP(mrt->stomp_dest);
@@ -604,12 +599,11 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role
 **
 ** \param   stomp_instance - instance number of STOMP connection in Device.STOMP.Connection.{i}
 ** \param   role - Role to use for controllers connected to the specified STOMP connection
-** \param   allowed_controllers - URN pattern describing the endpoint_id of allowed controllers
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role, char *allowed_controllers)
+void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role)
 {
     dm_exec_msg_t  msg;
     stomp_complete_msg_t *scm;
@@ -628,7 +622,6 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role, 
     scm = &msg.params.stomp_complete;
     scm->stomp_instance = stomp_instance;
     scm->role = role;
-    scm->allowed_controllers = (allowed_controllers != NULL) ? USP_STRDUP(allowed_controllers) : NULL;
 
     // Send the message
     bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
@@ -652,12 +645,11 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role, 
 **
 ** \param   stomp_instance - instance number of STOMP connection in Device.STOMP.Connection.{i}
 ** \param   role - Role to use for controllers connected to the specified STOMP connection
-** \param   allowed_controllers - URN pattern describing the endpoint_id of allowed controllers
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, ctrust_role_t role, char *allowed_controllers)
+void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, ctrust_role_t role)
 {
     dm_exec_msg_t  msg;
     mqtt_complete_msg_t *mcm;
@@ -676,7 +668,6 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, ctrust_role_t role, ch
     mcm = &msg.params.mqtt_complete;
     mcm->mqtt_instance = mqtt_instance;
     mcm->role = role;
-    mcm->allowed_controllers = (allowed_controllers != NULL) ? USP_STRDUP(allowed_controllers) : NULL;
 
     // Send the message
     bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
@@ -1019,11 +1010,10 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             pur = &msg.params.usp_record;
             mrt = &pur->mtp_reply_to;
 
-            ProcessBinaryUspRecord(pur->pbuf, pur->pbuf_len, pur->role, pur->allowed_controllers, mrt);
+            ProcessBinaryUspRecord(pur->pbuf, pur->pbuf_len, pur->role, mrt);
 
             // Free all arguments passed in this message
             USP_FREE(pur->pbuf);
-            USP_SAFE_FREE(pur->allowed_controllers);
             USP_SAFE_FREE(mrt->stomp_dest);
             USP_SAFE_FREE(mrt->stomp_err_id);
             USP_SAFE_FREE(mrt->coap_host);
@@ -1036,11 +1026,8 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         {
             stomp_complete_msg_t *scm;
             scm = &msg.params.stomp_complete;
-            DEVICE_CONTROLLER_SetRolesFromStomp(scm->stomp_instance, scm->role, scm->allowed_controllers);
+            DEVICE_CONTROLLER_SetRolesFromStomp(scm->stomp_instance, scm->role);
             DM_EXEC_EnableNotifications();
-
-            // Free all arguments passed in this message
-            USP_SAFE_FREE(scm->allowed_controllers);
         }
             break;
 #endif
@@ -1050,11 +1037,8 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         {
             mqtt_complete_msg_t *mcm;
             mcm = &msg.params.mqtt_complete;
-            DEVICE_CONTROLLER_SetRolesFromMqtt(mcm->mqtt_instance, mcm->role, mcm->allowed_controllers);
+            DEVICE_CONTROLLER_SetRolesFromMqtt(mcm->mqtt_instance, mcm->role);
             DM_EXEC_EnableNotifications();
-
-            // Free all arguments passed in this message
-            USP_SAFE_FREE(mcm->allowed_controllers);
         }
             break;
 #endif
@@ -1232,18 +1216,17 @@ void DM_EXEC_HandleScheduledExit(void)
 ** \param   pbuf - pointer to buffer containing protobuf encoded USP record
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   role - Role allowed for this message
-** \param   allowed_controllers - URN pattern containing the endpoint_id of allowed controllers
 ** \param   mrt - details of where response to this USP message should be sent
 **
 ** \return  None - Errors are handled by either sending back a 'usp-err-id' frame (for STOMP MTP) or by ignoring the USP record (for CoAP MTP)
 **
 **************************************************************************/
-void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *allowed_controllers, mtp_reply_to_t *mrt)
+void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt)
 {
     int err;
 
     // Exit if handled the USP record successfully
-    err = MSG_HANDLER_HandleBinaryRecord(pbuf, pbuf_len, role, allowed_controllers, mrt);
+    err = MSG_HANDLER_HandleBinaryRecord(pbuf, pbuf_len, role, mrt);
     if (err == USP_ERR_OK)
     {
         return;
