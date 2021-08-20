@@ -2902,7 +2902,7 @@ int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash
 ** \param   path - full data model path of the parameter or object to return the node of
 **                 This may be an instantiated or schema path or may use wildcards instead of instance numbers (if so, inst and is_qualified_instance must be NULL).
 ** \param   inst - pointer to instances structure, filled in from parsing the path
-**                 NOTE: This parameter may be NULL if instances are not required
+**                 NOTE: This parameter may be NULL if instances are not required, but only if is_qualified_instance is NULL too
 **
 ** \param   is_qualified_instance - Pointer to boolean in which to return whether the instances
 **                                  structure contains all instance numbers for the parameter/object being addressed
@@ -4053,7 +4053,6 @@ int AddChildParamsDefaultValues(char *path, int path_len, dm_node_t *node, dm_in
 ** NOTE: This function is recursive
 **
 ** \param   path - path of the object instance to delete children from. This code will modify the buffer pointed to by this path
-**                 NOTE: path is only actually needed for debug and error reporting purposes
 ** \param   path_len - length of path (position to append child node names)
 ** \param   node - Node to delete children of
 ** \param   inst - pointer to instance structure locating the parent node
@@ -4148,7 +4147,6 @@ int DeleteChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t 
 ** NOTE: This function is recursive
 **
 ** \param   path - path of the object to delete children from. This code will modify the buffer pointed to by this path
-**                 NOTE: path is only actually needed for debug and error reporting purposes
 ** \param   path_len - length of path (position to append child node names)
 ** \param   node - Node to delete children of
 ** \param   inst - pointer to instance structure locating the parent node

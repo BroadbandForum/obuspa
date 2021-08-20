@@ -111,6 +111,8 @@ int ResolveIntermediateReferences(str_vector_t *params, resolver_state_t *state,
 bool GroupReferencedParameters(str_vector_t *params, resolver_state_t *state, int_vector_t *perm, group_get_vector_t *ggv, int *err);
 void InitSearchParam(search_param_t *sp);
 void DestroySearchParam(search_param_t *sp);
+void RefreshInstances_LifecycleSubscriptionEndingInPartialPath(char *path);
+
 /*********************************************************************//**
 **
 ** PATH_RESOLVER_ResolveDevicePath
@@ -268,6 +270,7 @@ int ExpandPath(char *resolved, char *unresolved, resolver_state_t *state)
     int len;
     int err;
     char c;
+    bool check_refresh_instances = false;
 
     // Exit if path is too long
     len = strlen(resolved);
@@ -343,16 +346,9 @@ int ExpandPath(char *resolved, char *unresolved, resolver_state_t *state)
 
             case kResolveOp_SubsAdd:
             case kResolveOp_SubsDel:
-                {
-                    // Partial path for add/delete object subscriptions must ensure that object instances are refreshed
-                    // Do this by getting the instances for this object (all sub objects are also refreshed in the process)
-                    int_vector_t iv;
-
-                    resolved[len-1] = '\0';
-                    INT_VECTOR_Init(&iv);
-                    DATA_MODEL_GetInstances(resolved, &iv);  // Intentionally ignoring any errors
-                    INT_VECTOR_Destroy(&iv);
-                }
+                // Remove any trailing '.'  The partial path may potentially call a refresh instances vendor hook to be called
+                resolved[len-1] = '\0';
+                check_refresh_instances = true;
                 break;
 
             case kResolveOp_Add:
@@ -381,7 +377,75 @@ int ExpandPath(char *resolved, char *unresolved, resolver_state_t *state)
         return err;
     }
 
+    // Partial path for add/delete object subscriptions must ensure that object instances are refreshed
+    // Do this by getting the instances for this object (all sub objects are also refreshed in the process)
+    if (check_refresh_instances)
+    {
+        RefreshInstances_LifecycleSubscriptionEndingInPartialPath(resolved);
+    }
+
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** RefreshInstances_LifecycleSubscriptionEndingInPartialPath
+**
+** Refreshes the instance numbers of a top level object referenced by an object lifetime subscription
+**
+** The code in RefreshInstancesForObjLifetimeSubscriptions() periodically
+** refreshes all instances which have object lifetime subscriptions on them
+** in order to determine whether the subscription should fire.
+** This function is called if the ReferenceList of the subscription is a partial path.
+** It ensures that the refresh instances vendor hook is called, if it wouldn't have been
+** already during path resolution. The only time it wouldn't have been called is if the
+** path resolver resolves to a partial path of a top level multi-instance object
+**
+** \param   path - path of the object to potentially refresh
+**
+** \return  None
+**
+**************************************************************************/
+void RefreshInstances_LifecycleSubscriptionEndingInPartialPath(char *path)
+{
+    dm_node_t *node;
+    bool is_qualified_instance;
+    dm_object_info_t *info;
+    dm_instances_t inst;
+
+    // Exit if unable to find node representing this object. NOTE: This should never occur, as caller should have ensured path exists in schema
+    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    if (node == NULL)
+    {
+        return;
+    }
+
+    // Exit if this is not a top level multi-instance object with a refresh instances vendor hook
+    // NOTE: If path is to a child object whose parent has a refresh instances vendor hook,
+    //       then the vendor hook will already have been called as part of resolving the path, so no need to refresh here
+    // NOTE: The path resolver disallows object lifecycle subscriptions on partial paths that are not multi-instance objects
+    //       so this code does not have to cope with calling the refresh instances vendor hook for a child object of the given path.
+    info = &node->registered.object_info;
+    if ((node->type != kDMNodeType_Object_MultiInstance) || (node->order != 1) || (info->refresh_instances_cb == NULL))
+    {
+        return;
+    }
+
+    // Exit if this object is already a fully qualified instance
+    // NOTE: This may be the case if the subscription ReferenceList terminated in wildcard or instance number before the partial path dot character
+    // If so, the refresh instances vendor hook would already have been called
+    if (is_qualified_instance)
+    {
+        return;
+    }
+
+    // NOTE: This function may be called recursively if it is time to call the refresh instances vendor hook
+    // The first time DM_INST_VECTOR_RefreshTopLevelObjectInstances() is called, if it calls the refresh instances vendor hook,
+    // then afterwards it will determine if any of the instances caused the subscription to fire.
+    // It does this by calling the path resolver, which will end up in this function again.
+    // The second time that DM_INST_VECTOR_RefreshTopLevelObjectInstances() is called, the instances cache
+    // will not need refreshing, hence DM_INST_VECTOR_RefreshTopLevelObjectInstances() will return the second time it is called.
+    DM_INST_VECTOR_RefreshTopLevelObjectInstances(node);
 }
 
 /*********************************************************************//**

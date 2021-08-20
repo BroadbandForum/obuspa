@@ -895,8 +895,6 @@ void *DM_EXEC_Main(void *args)
                 return NULL;
                 break;
 
-                break;
-
             case 0:
                 // No controllers with any activity, but we still may need to process a timeout, so fall-through
             default:

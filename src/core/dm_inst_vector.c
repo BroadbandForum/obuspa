@@ -243,7 +243,7 @@ int DM_INST_VECTOR_IsExist(dm_instances_t *match, bool *exists)
     dm_instances_vector_t *div;
     int err;
 
-    // Exit if the object is a single instance object - these always exist
+    // Exit if the object is a single instance object or an unqualified multi-instance object - these always exist
     if (match->order == 0)
     {
         *exists = true;
@@ -733,6 +733,24 @@ int DM_INST_VECTOR_RefreshInstance(char *path)
 
 /*********************************************************************//**
 **
+** DM_INST_VECTOR_RefreshTopLevelObjectInstances
+**
+** Refreshes the instances for the specified top level object and all children
+** NOTE: This function may be called recursively, since it is called from the path resolver and it may call
+**       the path resolver itself in order to resolve object lifetime event subscriptions
+**
+** \param   node - pointer to node of top level object to refresh
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DM_INST_VECTOR_RefreshTopLevelObjectInstances(dm_node_t *node)
+{
+    return RefreshInstVector(node, true);
+}
+
+/*********************************************************************//**
+**
 ** AddObjectInstanceIfPermitted
 **
 ** Adds the specified object instance, to the string vector, if the role permits its instance numbers to be read
@@ -885,7 +903,7 @@ int RefreshInstVector(dm_node_t *top_node, bool notify_subscriptions)
     }
 
     // NOTE: We need to call DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths() before DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent()
-    //       But as that is an unnecessary (and costly) operation if no instances are deleted, we only do if if there were any instances that were deleted
+    //       But as that is an unnecessary (and costly) operation if no instances are deleted, we only do it if there were any instances that were deleted
     if (deleted_instances.num_entries > 0)
     {
         // NOTE: DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths() must be called before any objects are actually deleted from the data model

@@ -58,5 +58,6 @@ int DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vecto
 void DM_INST_VECTOR_RefreshBaselineInstances(dm_node_t *parent);
 void DM_INST_VECTOR_Dump(dm_instances_vector_t *div);
 int DM_INST_VECTOR_RefreshInstance(char *path);
+int DM_INST_VECTOR_RefreshTopLevelObjectInstances(dm_node_t *node);
 
 #endif

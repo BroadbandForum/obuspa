@@ -2358,6 +2358,7 @@ void RefreshInstancesForObjLifetimeSubscriptions(void)
 
     // Simply resolving the path expressions for ObjectCreation/Deletion subscriptions will result in the refresh_instances callback being called if necessary
     // (because the path resolver checks whether the instance being resolved exists, or gets the instances to resolve a wildcard etc)
+    // And when instances are refreshed, the code automatically determines if any have been added or deleted
     for (i=0; i < subscriptions.num_entries; i++)
     {
         sub = &subscriptions.vector[i];

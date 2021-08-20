@@ -155,7 +155,7 @@ client_t *FindUnusedMqttClient(void);
 client_t *FindDevMqttClientByInstance(int instance);
 void DestroyMQTTClient(client_t *client);
 int ProcessMqttClientAdded(int instance);
-int ProcessMqttSubscriptionAdded(int instance, int sub_instance);
+int ProcessMqttSubscriptionAdded(int instance, int sub_instance, mqtt_subscription_t **mqtt_sub);
 int DEVICE_MQTT_StartAllClients(void);
 int EnableMQTTClient(mqtt_conn_params_t *mp, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS]);
 void ScheduleMqttReconnect(mqtt_conn_params_t *mp);
@@ -605,10 +605,14 @@ int ProcessMqttClientAdded(int instance)
 {
     int err;
     char path[MAX_DM_PATH];
-
+    int_vector_t iv;
     client_t *mqttclient;
-    mqttclient = FindUnusedMqttClient();
+    int i;
+    int mqtt_subs_inst;
+
     // Initialise to defaults
+    INT_VECTOR_Init(&iv);
+    mqttclient = FindUnusedMqttClient();
     if (mqttclient == NULL)
     {
         return USP_ERR_RESOURCES_EXCEEDED;
@@ -915,10 +919,38 @@ int ProcessMqttClientAdded(int instance)
         goto exit;
     }
 
+    // Exit if unable to get the object instance numbers present in the mqtt client subscription table
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.Subscription.", device_mqtt_client_root, instance);
+    err = DATA_MODEL_GetInstances(path, &iv);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Add all MQTT subscriptions
+    for (i=0; i < iv.num_entries; i++)
+    {
+        mqtt_subs_inst = iv.vector[i];
+        err = ProcessMqttSubscriptionAdded(instance, mqtt_subs_inst, NULL);
+        if (err != USP_ERR_OK)
+        {
+            // Exit if unable to delete a MQTT subscription with bad parameters from the DB
+            USP_SNPRINTF(path, sizeof(path), "%s.%d.Subscription.%d", device_mqtt_client_root, instance, mqtt_subs_inst);
+            USP_LOG_Warning("%s: Deleting %s as it contained invalid parameters.", __FUNCTION__, path);
+            err = DATA_MODEL_DeleteInstance(path, 0);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+        }
+    }
+
     // If the code gets here, then we successfully retrieved all data about the MQTT client
     err = USP_ERR_OK;
 
 exit:
+    INT_VECTOR_Destroy(&iv);
+
     if (err != USP_ERR_OK)
     {
         DestroyMQTTClient(mqttclient);
@@ -961,64 +993,71 @@ int EnableMQTTClient(mqtt_conn_params_t *mp, mqtt_subscription_t subscriptions[M
 **
 ** ProcessMqttSubscriptionAdded
 *
-** Reads the parameters for the specified Mqtt Client subscriotion from the
-** database and processes them
+** Reads the parameters for the specified MQTT client subscription from the
+** database and caches them in the local mqtt_client_params[]
+** NOTE: Does not propagate the change to the underlying MTP (this must be performed by the caller by calling MQTT_AddSubscription)
 **
 ** \param   instance - instance number of the MQTT client
 ** \param   sub_instance - instance number of the MQTT Subscription
+** \param   mqtt_sub - pointer to variable in which to return a pointer to the MQTT subscription entry allocated by this function
+**                     NOTE: This parameter may be NULL, if the caller is not interested in this value
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int ProcessMqttSubscriptionAdded(int instance, int sub_instance)
+int ProcessMqttSubscriptionAdded(int instance, int sub_instance, mqtt_subscription_t **mqtt_sub)
 {
     int err = USP_ERR_OK;
     char path[MAX_DM_PATH];
     client_t *client = NULL;
+    mqtt_subscription_t *sub;
 
-    // Refactor.
+    // Default return parameters
+    if (mqtt_sub != NULL)
+    {
+        *mqtt_sub = NULL;
+    }
+
+    // Exit if unable to allocate a subscription entry for this MQTT client
     client = FindDevMqttClientByInstance(instance);
     USP_ASSERT(client != NULL);
-
-    mqtt_subscription_t* sub = FindUnusedSubscriptionInMqttClient(client);
+    sub = FindUnusedSubscriptionInMqttClient(client);
     if (sub == NULL)
     {
         USP_LOG_Error("%s: Failed to find empty subscription.", __FUNCTION__);
         return USP_ERR_RESOURCES_EXCEEDED;
     }
-
     sub->instance = sub_instance;
 
+    // Exit if unable to retrieve the Enable parameter for this MQTT subscription
     USP_SNPRINTF(path, sizeof(path), "%s.%d.Subscription.%d.Enable", device_mqtt_client_root, instance, sub_instance);
     err = DM_ACCESS_GetBool(path, &sub->enabled);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Client Subscription %d enable failed", __FUNCTION__, sub_instance);
         return err;
     }
 
+    // Exit if unable to retrieve the Topic parameter for this MQTT subscription
     USP_SNPRINTF(path, sizeof(path), "%s.%d.Subscription.%d.Topic", device_mqtt_client_root, instance, sub_instance);
     USP_SAFE_FREE(sub->topic);
     err = DM_ACCESS_GetString(path, &sub->topic);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Client Subscription %d Topic failed", __FUNCTION__, sub_instance);
         return err;
     }
 
+    // Exit if unable to retrieve the QoS parameter for this MQTT subscription
     USP_SNPRINTF(path, sizeof(path), "%s.%d.Subscription.%d.QoS", device_mqtt_client_root, instance, sub_instance);
     err = DM_ACCESS_GetUnsigned(path, &sub->qos);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Client Subscription %d QoS failed", __FUNCTION__, sub_instance);
         return err;
     }
 
-    err = MQTT_AddSubscription(instance, sub);
-    if (err != USP_ERR_OK)
+    // Since the subscription was retrieved successfully, return the subscription entry
+    if (mqtt_sub != NULL)
     {
-        USP_ERR_SetMessage("%s: client subscribe failed\n", __FUNCTION__);
-        return err;
+        *mqtt_sub = sub;
     }
 
     return err;
@@ -2781,7 +2820,6 @@ int ValidateAdd_MqttClientSubscriptions(dm_req_t *req)
     return USP_ERR_OK;
 }
 
-
 /*********************************************************************//**
 **
 ** Notify_MqttClientSubcriptionsAdded
@@ -2798,21 +2836,29 @@ int Notify_MqttClientSubcriptionsAdded(dm_req_t *req)
 {
     int err;
     client_t *mqttclient;
+    mqtt_subscription_t *sub;
 
     mqttclient = FindDevMqttClientByInstance(inst1);
     USP_ASSERT(mqttclient != NULL); // As we had just successfully added it
 
     // Exit if failed to copy from DB into mqtt client array
-    err = ProcessMqttSubscriptionAdded(inst1, inst2);
+    err = ProcessMqttSubscriptionAdded(inst1, inst2, &sub);
     if (err != USP_ERR_OK)
     {
         USP_ERR_SetMessage(" %s: Process MQTT client added failed\n", __FUNCTION__);
         return err;
     }
 
+    // Exit if unable to propagate the subscription to the MQTT MTP
+    err = MQTT_AddSubscription(inst1, sub);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: client subscribe failed\n", __FUNCTION__);
+        return err;
+    }
+
     return USP_ERR_OK;
 }
-
 
 /*********************************************************************//**
 **

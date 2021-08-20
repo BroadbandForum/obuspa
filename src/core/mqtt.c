@@ -1193,40 +1193,66 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
             USP_LOG_Error("%s: No cert chain, so cannot get controller trust", __FUNCTION__);
         }
 
-
         // Pick up client id, as per R-MQTT.9
-        // Done as arrays on the stack here so we don't have _even_ more to free from the heap
-        char client_id[512] = { 0 };
-        char *client_id_ptr = client_id;
-        char response_info[512] = { 0 };
-        char *response_info_ptr = response_info;
-        char subscribe_topic[512] = { 0 };
-        char *subscribe_topic_ptr = subscribe_topic;
+        char *client_id_ptr = NULL;
+        char *response_info_ptr = NULL;
+        char *subscribe_topic_ptr = NULL;
 
-        mosquitto_property_read_string(props, ASSIGNED_CLIENT_IDENTIFIER,
-                &client_id_ptr, false /* skip first */);
-
-        mosquitto_property_read_string(props, RESPONSE_INFORMATION,
-                &response_info_ptr, false);
-
-        char* name = "subscribe-topic";
-        if (mosquitto_property_read_string_pair(props, USER_PROPERTY,
-                &name, &subscribe_topic_ptr, false) != MOSQ_ERR_SUCCESS)
+        if (mosquitto_property_read_string(props, ASSIGNED_CLIENT_IDENTIFIER,
+              &client_id_ptr, false /* skip first */) != NULL)
         {
-            USP_LOG_Error("Couldn't find subscribe-topic in user properties");
+            USP_LOG_Debug("Received client_id: \"%s\"", client_id_ptr);
+            USP_SAFE_FREE(client->conn_params.client_id);
+            client->conn_params.client_id = USP_STRDUP(client_id_ptr);
+            free(client_id_ptr);
         }
 
-        USP_LOG_Debug("Received subcribe-topic: \"%s\"", subscribe_topic);
-
-        if (strlen(response_info_ptr) > 0)
+        if (mosquitto_property_read_string(props, RESPONSE_INFORMATION,
+              &response_info_ptr, false) != NULL)
         {
             // Then replace the response_topic in subscription with this
             USP_SAFE_FREE(client->response_subscription.topic);
+            USP_LOG_Debug("Received response_info: \"%s\"", response_info_ptr);
             client->response_subscription.topic = USP_STRDUP(response_info_ptr);
+            free(response_info_ptr);
         }
-
-        USP_SAFE_FREE(client->conn_params.client_id);
-        client->conn_params.client_id = USP_STRDUP(client_id_ptr);
+        else
+        {
+            // if no response information, check if it's in the subscribe-topic user prop
+            char* userPropName;
+            if (mosquitto_property_read_string_pair(props, USER_PROPERTY,
+                  &userPropName, &subscribe_topic_ptr, false) != NULL)
+            {
+                // we only want subscribe-topic user property
+                if (strcmp("subscribe-topic", userPropName) == 0)
+                {
+                    USP_LOG_Debug("Received subcribe-topic: \"%s\"", subscribe_topic_ptr);
+                    USP_SAFE_FREE(client->response_subscription.topic);
+                    client->response_subscription.topic = USP_STRDUP(subscribe_topic_ptr);
+                    free(subscribe_topic_ptr);
+                    free(userPropName);
+                }
+                else
+                {
+                    // it wasn't in the 1st one, try the next one, set skip 1st to true
+                    free(subscribe_topic_ptr);
+                    free(userPropName);
+                    if (mosquitto_property_read_string_pair(props, USER_PROPERTY,
+                       &userPropName, &subscribe_topic_ptr, true) != NULL)
+                    {
+                        // we only want subscribe-topic user property
+                        if (strcmp("subscribe-topic", userPropName) == 0)
+                        {
+                            USP_LOG_Debug("Received subcribe-topic: \"%s\"", subscribe_topic_ptr);
+                            USP_SAFE_FREE(client->response_subscription.topic);
+                            client->response_subscription.topic = USP_STRDUP(subscribe_topic_ptr);
+                        }
+                        free(subscribe_topic_ptr);
+                        free(userPropName);
+                    }
+                }
+            }
+        }
         USP_LOG_Debug("Received client id \"%s\"", client->conn_params.client_id);
 
         ResetRetryCount(client);
@@ -1552,6 +1578,7 @@ void DisconnectCallback(struct mosquitto *mosq, void *userdata, int rc)
     {
         if (client->state != kMqttState_ErrorRetrying)
         {
+			USP_LOG_Debug("DisconnectCallback rc is %d\n", rc);
             HandleMqttError(client, kMqttFailure_OtherError, "Force disconnected from broker");
         }
     }
