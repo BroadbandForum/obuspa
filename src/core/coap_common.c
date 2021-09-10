@@ -495,6 +495,7 @@ int COAP_SendPdu(SSL *ssl, BIO *wbio, int socket_fd, unsigned char *buf, int len
 ** COAP_WriteRst
 **
 ** Writes a CoAP PDU containing a RST of the message to send
+** RST is empty message with Code 0
 **
 ** \param   message_id - message_id which this RST is a response to, or a message_id allocated by us, if one could not be parsed from the input PDU
 ** \param   token - pointer to buffer containing token of received PDU that caused this RST
@@ -510,14 +511,12 @@ int COAP_WriteRst(int message_id, unsigned char *token, int token_len, unsigned 
 {
     unsigned header = 0;
     unsigned char *p;
-    int size;
 
     // Calculate the header bytes
     MODIFY_BITS(31, 30, header, COAP_VERSION);
     MODIFY_BITS(29, 28, header, kPduType_Reset);
     MODIFY_BITS(27, 24, header, token_len);
-    MODIFY_BITS(23, 21, header, kPduClass_ClientErrorResponse);
-    MODIFY_BITS(20, 16, header, kPduClientErrRespCode_BadRequest);
+    MODIFY_BITS(23, 16, header, kPduClientErrRespCode_BadRequest);
     MODIFY_BITS(15, 0, header, message_id);
 
     // Write the CoAP header bytes and token into the output buffer
@@ -525,14 +524,6 @@ int COAP_WriteRst(int message_id, unsigned char *token, int token_len, unsigned 
     WRITE_4_BYTES(p, header);
     memcpy(p, token, token_len);
     p += token_len;
-
-    // Write the end of options marker into the output buffer
-    WRITE_BYTE(p, PDU_OPTION_END_MARKER);
-
-    // Copy the textual reason for failure into the payload of the RST
-    size = strlen(coap_err_message);
-    memcpy(p, coap_err_message, size);
-    p += size;
 
     // Log what is going to be sent
     USP_PROTOCOL("%s: Sending CoAP RST (MID=%d)", __FUNCTION__, message_id);
