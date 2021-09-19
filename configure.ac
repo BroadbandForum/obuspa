@@ -45,6 +45,7 @@ AC_FUNC_STRERROR_R
 AC_CHECK_HEADERS([malloc.h])
 AC_CHECK_HEADERS([execinfo.h])
 AC_CHECK_FUNCS([mallinfo])
+AC_CHECK_FUNCS([mallinfo2])
 
 # Generate Makefiles
 AC_CONFIG_FILES([Makefile])

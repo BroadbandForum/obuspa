@@ -416,9 +416,13 @@ void USP_MEM_StartCollection(void)
     collect_memory_info = true;
     print_leak_report = true;
 
-#ifdef HAVE_MALLINFO
+#if defined(HAVE_MALLINFO) || defined(HAVE_MALLINFO2)
     // Store initial static memory usage after data model has been registered
-    baseline_memory_usage = mallinfo().uordblks;
+    #if defined(HAVE_MALLINFO2)
+        baseline_memory_usage = mallinfo2().uordblks;
+    #else
+        baseline_memory_usage = mallinfo().uordblks;
+    #endif
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
 #endif
 
@@ -462,7 +466,9 @@ void USP_MEM_StopCollection(void)
 **************************************************************************/
 void USP_MEM_PrintSummary(void)
 {
-#ifdef HAVE_MALLINFO
+#if defined(HAVE_MALLINFO2)
+    USP_LOG_Info("Memory in use: %d", (int) mallinfo2().uordblks);
+#elif defined(HAVE_MALLINFO)
     USP_LOG_Info("Memory in use: %d", (int) mallinfo().uordblks);
 #else
     USP_LOG_Warning("WARNING: Unable to log memory in use. mallinfo() not present");
@@ -486,7 +492,7 @@ void USP_MEM_Print(void)
     minfo_t *mi;
     int count = 0;
 
-#ifdef HAVE_MALLINFO
+#if defined(HAVE_MALLINFO) || defined(HAVE_MALLINFO2)
     static int last_memory_usage = 0;
     int cur_memory_usage;
 #endif
@@ -497,9 +503,13 @@ void USP_MEM_Print(void)
         return;
     }
 
-#ifdef HAVE_MALLINFO
+#if defined(HAVE_MALLINFO) || defined(HAVE_MALLINFO2)
     // Exit if no change in memory usage since last time called
-    cur_memory_usage = mallinfo().uordblks;
+    #if defined(HAVE_MALLINFO2)
+        cur_memory_usage = mallinfo2().uordblks;
+    #else
+        cur_memory_usage = mallinfo().uordblks;
+    #endif
     if (cur_memory_usage == last_memory_usage)
     {
         USP_LOG_Info("No change in memory usage.\nMemory in use: %d (%s line %d)", cur_memory_usage, __FUNCTION__, __LINE__);
@@ -582,8 +592,12 @@ int USP_MEM_PrintAll(void)
     minfo_t *mi;
     int count = 0;
 
-#ifdef HAVE_MALLINFO
-    USP_LOG_Info("Memory in use: %d (%s line %d)", (int) mallinfo().uordblks, __FUNCTION__, __LINE__);
+#if defined(HAVE_MALLINFO) || defined(HAVE_MALLINFO2)
+    #if defined(HAVE_MALLINFO2)
+        USP_LOG_Info("Memory in use: %d (%s line %d)", (int) mallinfo2().uordblks, __FUNCTION__, __LINE__);
+    #else
+        USP_LOG_Info("Memory in use: %d (%s line %d)", (int) mallinfo().uordblks, __FUNCTION__, __LINE__);
+    #endif
     USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
 #endif
 
