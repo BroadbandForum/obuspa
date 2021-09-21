@@ -396,7 +396,7 @@ int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint
     // Fill in the USP Record structure
     // NOTE: This is all statically allocated (or owned elsewhere), so no need to free
     usp_record__record__init(&rec);
-    rec.version = "1.0";
+    rec.version = AGENT_CURRENT_PROTOCOL_VERSION;
     rec.to_id = endpoint_id;
     rec.from_id = DEVICE_LOCAL_AGENT_GetEndpointID();
     rec.payload_security = USP_RECORD__RECORD__PAYLOAD_SECURITY__PLAINTEXT;
@@ -640,13 +640,6 @@ int ValidateUspRecord(UspRecord__Record *rec)
 {
     char *endpoint_id;
     UspRecord__NoSessionContextRecord *ctx;
-
-    // Exit if unsupported version
-    if ((rec->version == NULL) || (strcmp(rec->version, "1.0") != 0))
-    {
-        USP_ERR_SetMessage("%s: Ignoring USP record with unsupported version (%s)", __FUNCTION__, rec->version);
-        return USP_ERR_RECORD_FIELD_INVALID;
-    }
 
     // Exit if this record is not supposed to be processed by us
     endpoint_id = DEVICE_LOCAL_AGENT_GetEndpointID();

@@ -49,7 +49,8 @@
 
 //--------------------------------------------------------------------
 // Agent supported protocol versions
-#define AGENT_SUPPORTED_PROTOCOL_VERSIONS "1.0"
+#define AGENT_SUPPORTED_PROTOCOL_VERSIONS "1.0,1.1"
+#define AGENT_CURRENT_PROTOCOL_VERSION    "1.1"
 
 //------------------------------------------------------------------------------
 // Typedef for callback function, used to extract paramerror fields from a response message, in order to put it in an error message
