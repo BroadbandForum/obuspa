@@ -1,5 +1,10 @@
 # OB-USP-AGENT Changelog since Release 4.1
 
+## 2021-10-04: Add support for mallinfo2, mallinfo deprecated on glibc >= 2.33 (GH#26)
+
+### Added
+- Support for mallinfo2, mallinfo deprecated on glibc >= 2.33 (GH#26)
+
 ## 2021-09-20: Fixed CoAP RST message format error (GH#25) and other issues
 
 ### Fixed

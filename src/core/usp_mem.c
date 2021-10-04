@@ -87,7 +87,7 @@ typedef struct
 // Variables associated with collecting memory info for debugging purposes
 bool collect_memory_info = false;
 bool print_leak_report = false;
-int baseline_memory_usage = INVALID;
+unsigned baseline_memory_usage = 0;           // 0 indicates that the memory usage could not be obtained
 
 static minfo_t *minfo = NULL;
 //------------------------------------------------------------------------------------
@@ -98,6 +98,7 @@ minfo_t *FindFreeMemInfo(void);
 minfo_t *FindMemInfoByPtr(void *ptr);
 void PrintMemInfoEntry(minfo_t *mi, char *str, int index);
 void GetCallers(char **callers, int num_callers);
+unsigned GetMemUsage(void);
 
 //------------------------------------------------------------------------------------
 // Structure defining functions used to allocate and free memory associated with protocol buffers
@@ -416,11 +417,12 @@ void USP_MEM_StartCollection(void)
     collect_memory_info = true;
     print_leak_report = true;
 
-#ifdef HAVE_MALLINFO
     // Store initial static memory usage after data model has been registered
-    baseline_memory_usage = mallinfo().uordblks;
-    USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
-#endif
+    baseline_memory_usage = GetMemUsage();
+    if (baseline_memory_usage != 0)
+    {
+        USP_LOG_Info("Baseline Memory usage: %u", (unsigned) baseline_memory_usage);
+    }
 
     // The sync timer vector is reallocated by BulkDataCollection after collection has been started,
     // so needs to be in the meminfo array (otherwise we assert that a realloc has occured before an alloc)
@@ -462,11 +464,18 @@ void USP_MEM_StopCollection(void)
 **************************************************************************/
 void USP_MEM_PrintSummary(void)
 {
-#ifdef HAVE_MALLINFO
-    USP_LOG_Info("Memory in use: %d", (int) mallinfo().uordblks);
-#else
-    USP_LOG_Warning("WARNING: Unable to log memory in use. mallinfo() not present");
-#endif
+    unsigned mem_use;
+
+    // Log memory usage (if available)
+    mem_use = GetMemUsage();
+    if (mem_use != 0)
+    {
+        USP_LOG_Info("Memory in use: %u", mem_use);
+    }
+    else
+    {
+        USP_LOG_Warning("WARNING: Unable to log memory in use. mallinfo/mallinfo2() not present");
+    }
 }
 
 /*********************************************************************//**
@@ -485,11 +494,8 @@ void USP_MEM_Print(void)
     int i;
     minfo_t *mi;
     int count = 0;
-
-#ifdef HAVE_MALLINFO
-    static int last_memory_usage = 0;
-    int cur_memory_usage;
-#endif
+    static unsigned last_memory_usage = 0;
+    unsigned cur_memory_usage;
 
     // Exit if not collecting memory info
     if (collect_memory_info==false)
@@ -497,18 +503,19 @@ void USP_MEM_Print(void)
         return;
     }
 
-#ifdef HAVE_MALLINFO
-    // Exit if no change in memory usage since last time called
-    cur_memory_usage = mallinfo().uordblks;
-    if (cur_memory_usage == last_memory_usage)
+    // Exit if no change in memory usage since last time called (if memory usage available)
+    cur_memory_usage = GetMemUsage();
+    if (cur_memory_usage != 0)
     {
-        USP_LOG_Info("No change in memory usage.\nMemory in use: %d (%s line %d)", cur_memory_usage, __FUNCTION__, __LINE__);
-        return;
-    }
+        if (cur_memory_usage == last_memory_usage)
+        {
+            USP_LOG_Info("No change in memory usage.\nMemory in use: %u (%s line %d)", cur_memory_usage, __FUNCTION__, __LINE__);
+            return;
+        }
 
-    USP_LOG_Info("Memory usage changed to: %d (%s line %d)", cur_memory_usage, __FUNCTION__, __LINE__);
-    last_memory_usage = cur_memory_usage;
-#endif
+        USP_LOG_Info("Memory usage changed to: %u (%s line %d)", cur_memory_usage, __FUNCTION__, __LINE__);
+        last_memory_usage = cur_memory_usage;
+    }
 
     // Iterate over the memory info array, printing out all entries which have changed since last time this function was called
     OS_UTILS_LockMutex(&mem_access_mutex);
@@ -581,11 +588,15 @@ int USP_MEM_PrintAll(void)
     int i;
     minfo_t *mi;
     int count = 0;
+    unsigned mem_use;
 
-#ifdef HAVE_MALLINFO
-    USP_LOG_Info("Memory in use: %d (%s line %d)", (int) mallinfo().uordblks, __FUNCTION__, __LINE__);
-    USP_LOG_Info("Baseline Memory usage: %d", baseline_memory_usage);
-#endif
+    // Log memory usage (if available)
+    mem_use = GetMemUsage();
+    if (mem_use != 0)
+    {
+        USP_LOG_Info("Memory in use: %u (%s line %d)", mem_use, __FUNCTION__, __LINE__);
+        USP_LOG_Info("Baseline Memory usage: %u", baseline_memory_usage);
+    }
 
     // Exit if not collecting memory info
     if (print_leak_report==false)
@@ -716,11 +727,12 @@ minfo_t *FindMemInfoByPtr(void *ptr)
 ** \return  None
 **
 **************************************************************************/
-#ifdef HAVE_EXECINFO_H
 void GetCallers(char **callers, int num_callers)
 {
     int i;
     int stack_end = 0;
+
+#ifdef HAVE_EXECINFO_H
     #define MAX_CALLSTACK  30
     void *callstack[MAX_CALLSTACK];
     void **stack_start;
@@ -752,6 +764,7 @@ void GetCallers(char **callers, int num_callers)
             callers[i] = "dladdr failed";
         }
     }
+#endif
 
     // Fill in end of callers array, in the case that the callstack is shorter than num_callers
     for (i=stack_end; i<num_callers; i++)
@@ -759,10 +772,30 @@ void GetCallers(char **callers, int num_callers)
         callers[i] = NULL;
     }
 }
-#else
-void GetCallers(char **callers, int num_callers)
+
+/*********************************************************************//**
+**
+** GetMemUsage
+**
+** Returns the amount of memory in use, or 0 if unable to obtain this
+**
+** \param   None
+**
+** \return  Numer of bytes of memory in use by this executable, or 0 if unable to obtain this information
+**
+**************************************************************************/
+unsigned GetMemUsage(void)
 {
-    // Signal to caller that no callstack is available
-    callers[0] = NULL;
-}
+    unsigned mem_use = 0;
+
+#if defined(HAVE_MALLINFO) || defined(HAVE_MALLINFO2)
+#ifdef HAVE_MALLINFO2
+    mem_use = (unsigned) mallinfo2().uordblks;
+#else
+    mem_use = (unsigned) mallinfo().uordblks;
 #endif
+#endif
+
+
+    return mem_use;
+}
