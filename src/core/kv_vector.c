@@ -274,8 +274,8 @@ void KV_VECTOR_AddHexNumber(kv_vector_t *kvv, char *key, unsigned char *buf, int
     p = value;
     for (i=0; i<len; i++)
     {
-        *p++ = TEXT_UTILS_ValueToHexDigit((buf[i] & 0xF0) >> 4);
-        *p++ = TEXT_UTILS_ValueToHexDigit(buf[i] & 0x0F);
+        *p++ = TEXT_UTILS_ValueToHexDigit((buf[i] & 0xF0) >> 4, USE_UPPERCASE_HEX_DIGITS);
+        *p++ = TEXT_UTILS_ValueToHexDigit(buf[i] & 0x0F, USE_UPPERCASE_HEX_DIGITS);
     }
     *p = '\0';
 

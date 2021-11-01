@@ -57,6 +57,7 @@
 #include "uptime.h"
 #include "iso8601.h"
 #include "os_utils.h"
+#include "bdc_exec.h"
 
 
 
@@ -411,6 +412,7 @@ int DEVICE_LOCAL_AGENT_ScheduleReboot(exit_action_t exit_action, char *reboot_ca
     }
 
     scheduled_exit_action = exit_action;
+    BDC_EXEC_ScheduleExit();
     MTP_EXEC_ScheduleExit();
     return USP_ERR_OK;
 }
@@ -706,8 +708,8 @@ int GetDefaultSerialNumber(char *buf, int len)
     for (i=0; i<MAC_ADDR_LEN; i++)
     {
         val = mac_addr[i];
-        *p++ = TEXT_UTILS_ValueToHexDigit( (val & 0xF0) >> 4 );
-        *p++ = TEXT_UTILS_ValueToHexDigit( val & 0x0F );
+        *p++ = TEXT_UTILS_ValueToHexDigit( (val & 0xF0) >> 4, USE_UPPERCASE_HEX_DIGITS );
+        *p++ = TEXT_UTILS_ValueToHexDigit( val & 0x0F, USE_UPPERCASE_HEX_DIGITS );
     }
     *p = '\0';
 
@@ -753,8 +755,8 @@ int GetDefaultEndpointID(char *buf, int len, char *oui, char *serial_number)
 
     // Percent encode the OUI and serial number
     #define SAFE_CHARS "-._"
-    TEXT_UTILS_PercentEncodeString(oui, oui_encoded, sizeof(oui_encoded), SAFE_CHARS);
-    TEXT_UTILS_PercentEncodeString(serial_number, serial_number_encoded, sizeof(serial_number_encoded), SAFE_CHARS);
+    TEXT_UTILS_PercentEncodeString(oui, oui_encoded, sizeof(oui_encoded), SAFE_CHARS, USE_UPPERCASE_HEX_DIGITS);
+    TEXT_UTILS_PercentEncodeString(serial_number, serial_number_encoded, sizeof(serial_number_encoded), SAFE_CHARS, USE_UPPERCASE_HEX_DIGITS);
 
     // Form the final endpoint_id
     USP_SNPRINTF(buf, len, "os::%s-%s", oui_encoded, serial_number_encoded);

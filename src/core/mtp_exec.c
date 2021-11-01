@@ -60,6 +60,10 @@
 #include "mqtt.h"
 #endif
 
+#ifdef ENABLE_WEBSOCKETS
+#include "wsclient.h"
+#endif
+
 //------------------------------------------------------------------------------
 // Enumeration that is set when a USP Agent stop has been scheduled (for when connections have finished sending and receiving messages)
 scheduled_action_t mtp_exit_scheduled = kScheduledAction_Off;
@@ -271,7 +275,6 @@ void MTP_EXEC_ScheduleExit(void)
     mtp_exit_scheduled = kScheduledAction_Signalled;
 }
 
-
 /*********************************************************************//**
 **
 ** MTP_EXEC_ActivateScheduledActions
@@ -298,6 +301,9 @@ void MTP_EXEC_ActivateScheduledActions(void)
 #ifdef ENABLE_MQTT
     any_mtp_exited = any_mtp_exited || is_mqtt_mtp_thread_exited;
 #endif
+#ifdef ENABLE_WEBSOCKETS
+    any_mtp_exited = any_mtp_exited || is_wsclient_mtp_thread_exited;
+#endif
 
     // Exit if any MTP thread has already exited (because if they have, there is no need to schedule any further actions)
     if (any_mtp_exited)
@@ -318,6 +324,10 @@ void MTP_EXEC_ActivateScheduledActions(void)
 #ifdef ENABLE_MQTT
         MTP_EXEC_MqttWakeup();
 #endif
+#ifdef ENABLE_WEBSOCKETS
+        // No need to wakeup Websocket client thread, because the call to WSCLIENT_ActivateScheduledActions() later in this function,
+        // causes the websocket thread to wake up
+#endif
 
         // Ensure that exit still occurs, if no MTPs are compiled into the code
 #ifdef DISABLE_STOMP
@@ -335,6 +345,9 @@ void MTP_EXEC_ActivateScheduledActions(void)
 #endif
 #ifdef ENABLE_MQTT
     MQTT_ActivateScheduledActions();
+#endif
+#ifdef ENABLE_WEBSOCKETS
+    WSCLIENT_ActivateScheduledActions();
 #endif
 }
 

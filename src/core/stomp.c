@@ -209,7 +209,7 @@ static stomp_connection_t stomp_connections[MAX_STOMP_CONNECTIONS];
 typedef struct
 {
     double_link_t link;     // Doubly linked list pointers. These must always be first in this structure
-    Usp__Header__MsgType usp_msg_type;  // Type of USP message contained within pbuf (if content_type==kStompContentType_UspRecord)
+    Usp__Header__MsgType usp_msg_type;  // Type of USP message contained within pbuf (if content_type==kMtpContentType_UspRecord)
     unsigned char *pbuf;    // content of STOMP frame to send
     int pbuf_len;           // Length of content to send
     mtp_content_type_t content_type; // Type of content stored in pbuf
@@ -647,6 +647,7 @@ int STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, ch
     is_duplicate = IsUspRecordInStompQueue(sc, pbuf, pbuf_len);
     if (is_duplicate)
     {
+        USP_FREE(pbuf);
         err = USP_ERR_OK;
         goto exit;
     }
@@ -3996,7 +3997,7 @@ void RemoveExpiredStompMessages(stomp_connection_t *sc)
     stomp_send_item_t *queued_msg;
     stomp_send_item_t *next_msg;
 
-    USP_ASSERT(sc->txframe == NULL);    // This function must not remove the current frame being transmitted whilst is is being transmitted
+    USP_ASSERT(sc->txframe == NULL);    // This function must not remove the current frame being transmitted whilst it is being transmitted
 
     cur_time = time(NULL);
     queued_msg = (stomp_send_item_t *) sc->usp_record_send_queue.head;

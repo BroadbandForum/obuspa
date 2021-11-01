@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2018-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2018-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -123,6 +123,12 @@ unsigned RETRY_WAIT_Calculate(unsigned retry_count, double m, double k)
 
     min_seconds = (unsigned) (m * pow(k/1000, retry_count-1));
     max_seconds = (unsigned) (m * pow(k/1000, retry_count));
+
+    // NOTE: Following statement is not strictly necessary, since k must be >= 1000. It is there to prevent cases where K<1000 from calculating large delays
+    if (max_seconds < min_seconds)
+    {
+        max_seconds = min_seconds;
+    }
 
     range = max_seconds - min_seconds;
     random_value = rand_r(&dm_thread_random_seed);

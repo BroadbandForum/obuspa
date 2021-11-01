@@ -225,7 +225,7 @@ int AddUserProperties(mosquitto_property **props)
     if (mosquitto_property_add_string_pair(props, USER_PROPERTY, "usp-endpoint-id",
                 endpoint) != MOSQ_ERR_SUCCESS)
     {
-        USP_LOG_Error("Failed to add user property string to properties");
+        USP_LOG_Error("%s: Failed to add user property string to properties", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -326,7 +326,7 @@ int EnableMosquitto(mqtt_client_t *client)
     {
         if (client->conn_params.version != kMqttProtocol_5_0)
         {
-            USP_LOG_Debug("Client id is null or 0 length, overriding with endpoint");
+            USP_LOG_Debug("%s: Client id is null or 0 length, overriding with endpoint", __FUNCTION__);
             USP_SAFE_FREE(client->conn_params.client_id);
             client->conn_params.client_id = USP_STRDUP(DEVICE_LOCAL_AGENT_GetEndpointID());
 
@@ -370,7 +370,7 @@ int EnableMosquitto(mqtt_client_t *client)
 
     if (mosquitto_int_option(client->mosq, MOSQ_OPT_PROTOCOL_VERSION, mosquitto_version) != MOSQ_ERR_SUCCESS)
     {
-        USP_LOG_Error("Failed to set mosquitto version %d", mosquitto_version);
+        USP_LOG_Error("%s: Failed to set mosquitto version %d", __FUNCTION__, mosquitto_version);
         return USP_ERR_UNSUPPORTED_PARAM;
     }
 
@@ -383,6 +383,9 @@ int ConnectSetEncryption(mqtt_client_t *client)
     USP_ASSERT(client->ssl_ctx != NULL);
     int err;
 
+    // Load the trust store certs into the context. This is performed here, rather than in MQTT_start() in order
+    // to minimise memory usage, since most of the MQTT client structures will typically be unused
+    // NOTE: The SSL context ignores certs that already exist in the trust store, when adding duplicates
     err = DEVICE_SECURITY_LoadTrustStore(client->ssl_ctx, SSL_VERIFY_PEER, client->verify_callback);
     if (err != USP_ERR_OK)
     {
@@ -444,7 +447,7 @@ int ConnectV5(mqtt_client_t *client)
 
     if (mosq_err != MOSQ_ERR_SUCCESS)
     {
-        USP_LOG_Error("Failed to connect v5 with %s (%d)", mosquitto_strerror(mosq_err), mosq_err);
+        USP_LOG_Error("%s: Failed to connect v5 with %s (%d)", __FUNCTION__, mosquitto_strerror(mosq_err), mosq_err);
 
         err = USP_ERR_INTERNAL_ERROR;
         goto error;
@@ -479,7 +482,7 @@ int Connect(mqtt_client_t *client)
 
     if (client->conn_params.ts_protocol == kMqttTSprotocol_tls)
     {
-        USP_LOG_Debug("Enabling encryption for MQTT client");
+        USP_LOG_Debug("%s: Enabling encryption for MQTT client", __FUNCTION__);
         err = ConnectSetEncryption(client);
         if (err != USP_ERR_OK)
         {
@@ -505,7 +508,7 @@ int Connect(mqtt_client_t *client)
                     client->conn_params.keepalive);
         if (mosq_err != MOSQ_ERR_SUCCESS)
         {
-            USP_LOG_Error("Failed to connect v3.1.1 with %s (%d)", mosquitto_strerror(mosq_err), mosq_err);
+            USP_LOG_Error("%s: Failed to connect v3.1.1 with %s (%d)", __FUNCTION__, mosquitto_strerror(mosq_err), mosq_err);
             return USP_ERR_INTERNAL_ERROR;
         }
     }
@@ -530,7 +533,7 @@ int SubscribeV5(mqtt_client_t *client, mqtt_subscription_t *sub)
     if (mosquitto_subscribe_v5(client->mosq, &sub->mid, sub->topic, sub->qos,
                 0 /*Options, default */, proplist) != MOSQ_ERR_SUCCESS)
     {
-        USP_LOG_Error("Failed to subscribe to %s with v5", sub->topic);
+        USP_LOG_Error("%s: Failed to subscribe to %s with v5", __FUNCTION__, sub->topic);
 
         err = USP_ERR_INTERNAL_ERROR;
         goto error;
@@ -568,7 +571,7 @@ int Subscribe(mqtt_client_t *client, mqtt_subscription_t *sub)
     {
         if (mosquitto_subscribe(client->mosq, &sub->mid, sub->topic, sub->qos) != MOSQ_ERR_SUCCESS)
         {
-            USP_LOG_Error("Failed to subscribe to %s", sub->topic);
+            USP_LOG_Error("%s: Failed to subscribe to %s", __FUNCTION__, sub->topic);
             err = USP_ERR_INTERNAL_ERROR;
         }
     }
@@ -589,7 +592,7 @@ int UnsubscribeV5(mqtt_client_t *client, mqtt_subscription_t *sub)
 
     if (mosquitto_unsubscribe_v5(client->mosq, &sub->mid, sub->topic, proplist) != MOSQ_ERR_SUCCESS)
     {
-        USP_LOG_Error("Failed to unsubscribe to %s with v5", sub->topic);
+        USP_LOG_Error("%s: Failed to unsubscribe to %s with v5", __FUNCTION__, sub->topic);
         err = USP_ERR_INTERNAL_ERROR;
     }
 
@@ -624,7 +627,7 @@ int Unsubscribe(mqtt_client_t *client, mqtt_subscription_t *sub)
     {
         if (mosquitto_unsubscribe(client->mosq, &sub->mid, sub->topic) != MOSQ_ERR_SUCCESS)
         {
-            USP_LOG_Error("Failed to subscribe to %s", sub->topic);
+            USP_LOG_Error("%s: Failed to subscribe to %s", __FUNCTION__, sub->topic);
             err = USP_ERR_INTERNAL_ERROR;
         }
     }
@@ -677,14 +680,14 @@ int PublishV5(mqtt_client_t *client, mqtt_send_item_t *msg)
     // Setup proplist flags for v5
     if (mosquitto_property_add_string(&proplist, CONTENT_TYPE, "application/vnd.bbf.usp.msg") != MOSQ_ERR_SUCCESS)
     {
-        USP_LOG_Error("Failed to add content type string");
+        USP_LOG_Error("%s: Failed to add content type string", __FUNCTION__);
         err = USP_ERR_INTERNAL_ERROR;
         goto error;
     }
 
     if (mosquitto_property_add_string(&proplist, RESPONSE_TOPIC, client->response_subscription.topic) != MOSQ_ERR_SUCCESS)
     {
-        USP_LOG_Error("Failed to add response topic string");
+        USP_LOG_Error("%s: Failed to add response topic string", __FUNCTION__);
         err = USP_ERR_INTERNAL_ERROR;
         goto error;
     }
@@ -692,7 +695,7 @@ int PublishV5(mqtt_client_t *client, mqtt_send_item_t *msg)
     // Check all properties
     if (mosquitto_property_check_all(PUBLISH, proplist) != MOSQ_ERR_SUCCESS)
     {
-        USP_LOG_Error("property check failed.");
+        USP_LOG_Error("%s: property check failed.", __FUNCTION__);
         err = USP_ERR_INTERNAL_ERROR;
         goto error;
     }
@@ -700,7 +703,7 @@ int PublishV5(mqtt_client_t *client, mqtt_send_item_t *msg)
     int mosq_err = mosquitto_publish_v5(client->mosq, &msg->mid, msg->topic, msg->pbuf_len, msg->pbuf, msg->qos, false /* retain */, proplist);
     if (mosq_err != MOSQ_ERR_SUCCESS)
     {
-        USP_LOG_Error("Failed to publish to v5 with error %d", mosq_err);
+        USP_LOG_Error("%s: Failed to publish to v5 with error %d", __FUNCTION__, mosq_err);
         err = USP_ERR_INTERNAL_ERROR;
         goto error;
     }
@@ -730,7 +733,7 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
     {
         if (mosquitto_publish(client->mosq, &msg->mid, msg->topic, msg->pbuf_len, msg->pbuf, msg->qos, false /*retain*/) != MOSQ_ERR_SUCCESS)
         {
-            USP_LOG_Error("Failed to publish to v3.1.1. Params:\n MID:%d\n topic:%s\n msg->qos:%d\n", msg->mid, msg->topic, msg->qos);
+            USP_LOG_Error("%s: Failed to publish to v3.1.1. Params:\n MID:%d\n topic:%s\n msg->qos:%d\n", __FUNCTION__, msg->mid, msg->topic, msg->qos);
             err = USP_ERR_INTERNAL_ERROR;
         }
     }
@@ -868,7 +871,7 @@ int SendQueueHead(mqtt_client_t *client)
     }
     else
     {
-        USP_LOG_Error("Incorrect state for sending messages %s", mqtt_state_names[state]);
+        USP_LOG_Error("%s: Incorrect state for sending messages %s", __FUNCTION__, mqtt_state_names[state]);
         err = USP_ERR_INTERNAL_ERROR;
     }
 
@@ -1112,7 +1115,7 @@ void MessageV5Callback(struct mosquitto *mosq, void *userdata, const struct mosq
             if (mosquitto_property_read_string(props, RESPONSE_TOPIC,
                     &response_info_ptr, false) == NULL)
             {
-                USP_LOG_Debug("Failed to read response topic in message info: \"%s\"\n", response_info_ptr);
+                USP_LOG_Debug("%s: Failed to read response topic in message info: \"%s\"\n", __FUNCTION__, response_info_ptr);
                 response_info_ptr = NULL;
             }
 
@@ -1181,7 +1184,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
             int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role);
             if (err != USP_ERR_OK)
             {
-                USP_LOG_Error("Failed to get the controller trust with err: %d", err);
+                USP_LOG_Error("%s: Failed to get the controller trust with err: %d", __FUNCTION__, err);
             }
             else
             {
@@ -1201,7 +1204,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
         if (mosquitto_property_read_string(props, ASSIGNED_CLIENT_IDENTIFIER,
               &client_id_ptr, false /* skip first */) != NULL)
         {
-            USP_LOG_Debug("Received client_id: \"%s\"", client_id_ptr);
+            USP_LOG_Debug("%s: Received client_id: \"%s\"", __FUNCTION__, client_id_ptr);
             USP_SAFE_FREE(client->conn_params.client_id);
             client->conn_params.client_id = USP_STRDUP(client_id_ptr);
             free(client_id_ptr);
@@ -1212,7 +1215,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
         {
             // Then replace the response_topic in subscription with this
             USP_SAFE_FREE(client->response_subscription.topic);
-            USP_LOG_Debug("Received response_info: \"%s\"", response_info_ptr);
+            USP_LOG_Debug("%s: Received response_info: \"%s\"", __FUNCTION__, response_info_ptr);
             client->response_subscription.topic = USP_STRDUP(response_info_ptr);
             free(response_info_ptr);
         }
@@ -1226,7 +1229,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
                 // we only want subscribe-topic user property
                 if (strcmp("subscribe-topic", userPropName) == 0)
                 {
-                    USP_LOG_Debug("Received subcribe-topic: \"%s\"", subscribe_topic_ptr);
+                    USP_LOG_Debug("%s: Received subcribe-topic: \"%s\"", __FUNCTION__, subscribe_topic_ptr);
                     USP_SAFE_FREE(client->response_subscription.topic);
                     client->response_subscription.topic = USP_STRDUP(subscribe_topic_ptr);
                     free(subscribe_topic_ptr);
@@ -1243,7 +1246,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
                         // we only want subscribe-topic user property
                         if (strcmp("subscribe-topic", userPropName) == 0)
                         {
-                            USP_LOG_Debug("Received subcribe-topic: \"%s\"", subscribe_topic_ptr);
+                            USP_LOG_Debug("%s: Received subcribe-topic: \"%s\"", __FUNCTION__, subscribe_topic_ptr);
                             USP_SAFE_FREE(client->response_subscription.topic);
                             client->response_subscription.topic = USP_STRDUP(subscribe_topic_ptr);
                         }
@@ -1253,7 +1256,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
                 }
             }
         }
-        USP_LOG_Debug("Received client id \"%s\"", client->conn_params.client_id);
+        USP_LOG_Debug("%s: Received client id \"%s\"", __FUNCTION__, client->conn_params.client_id);
 
         ResetRetryCount(client);
 
@@ -1298,7 +1301,7 @@ void ConnectCallback(struct mosquitto *mosq, void *userdata, int result)
             int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role);
             if (err != USP_ERR_OK)
             {
-                USP_LOG_Error("Failed to get the controller trust with err: %d", err);
+                USP_LOG_Error("%s: Failed to get the controller trust with err: %d", __FUNCTION__, err);
             }
             else
             {
@@ -1578,7 +1581,7 @@ void DisconnectCallback(struct mosquitto *mosq, void *userdata, int rc)
     {
         if (client->state != kMqttState_ErrorRetrying)
         {
-			USP_LOG_Debug("DisconnectCallback rc is %d\n", rc);
+			USP_LOG_Debug("%s: DisconnectCallback rc is %d\n", __FUNCTION__, rc);
             HandleMqttError(client, kMqttFailure_OtherError, "Force disconnected from broker");
         }
     }
@@ -1605,17 +1608,17 @@ void LogCallback(struct mosquitto *mosq, void *userdata, int level, const char *
     switch(level)
     {
         case MOSQ_LOG_ERR:
-            USP_LOG_Error("MQTT Error: %s", str);
+            USP_LOG_Error("%s; MQTT Error: %s", __FUNCTION__, str);
             break;
         case MOSQ_LOG_WARNING:
-            USP_LOG_Warning("MQTT Warning: %s", str);
+            USP_LOG_Warning("%s: MQTT Warning: %s", __FUNCTION__, str);
         case MOSQ_LOG_INFO:
-            USP_LOG_Info("MQTT Info: %s", str);
+            USP_LOG_Info("%s: MQTT Info: %s", __FUNCTION__, str);
             break;
         case MOSQ_LOG_NOTICE:
         case MOSQ_LOG_DEBUG:
         default:
-            USP_LOG_Debug("MQTT Debug: %s", str);
+            USP_LOG_Debug("%s: MQTT Debug: %s", __FUNCTION__, str);
             break;
 
     }
@@ -1663,10 +1666,8 @@ void InitClient(mqtt_client_t *client, int index)
     client->cert_chain = NULL;
     client->verify_callback = mqtt_verify_callbacks[index];
     client->socket_fd = INVALID;
-    client->ssl_ctx = DEVICE_SECURITY_CreateSSLContext(SSLv23_client_method(), SSL_VERIFY_PEER, client->verify_callback);
+    client->ssl_ctx = NULL;   // NOTE: The SSL context is created in MQTT_Start()
     ResetRetryCount(client);
-
-    USP_ASSERT(client->ssl_ctx != NULL);
 
     for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
@@ -1754,11 +1755,34 @@ void MQTT_Destroy(void)
 
 int MQTT_Start(void)
 {
+    int i;
     int err = USP_ERR_OK;
+    mqtt_client_t *client;
+
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
-    // TODO: Handle any additional setup required here
+    // Initialise the SSL contexts for all of the clients
+    // This cannot be done in MQTT_Init() because at that time in the initialisation the trust store certs haven't been locally cached
+    // Also WSCLIENT_Start() is called after MQTT_Init(0, and it re-initialises OpenSSL (libwebsockets limitation)
+    for (i = 0; i < MAX_MQTT_CLIENTS; i++)
+    {
+        // Exit if unable to create an SSL context
+        // NOTE: Trust store certs are only loaded into the context later, on demand, since most of these contexts will be unused
+        client = &mqtt_clients[i];
+        client->ssl_ctx = SSL_CTX_new(SSLv23_client_method());
+        if (client->ssl_ctx == NULL)
+        {
+            USP_ERR_SetMessage("%s: SSL_CTX_new failed", __FUNCTION__);
+            err = USP_ERR_INTERNAL_ERROR;
+            goto exit;
+        }
 
+        // Explicitly disallow SSLv2, as it is insecure. See https://arxiv.org/pdf/1407.2168.pdf
+        // NOTE: Even without this, SSLv2 ciphers don't seem to appear in the cipher list. Just added in case someone is using an older version of OpenSSL.
+        SSL_CTX_set_options(client->ssl_ctx, SSL_OP_NO_SSLv2);
+    }
+
+exit:
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);
 
     return err;
@@ -1797,7 +1821,7 @@ int EnableClient(mqtt_client_t* client)
     int err = EnableMosquitto(client);
     if (err != USP_ERR_OK)
     {
-        USP_LOG_Error("Failed to enable client.");
+        USP_LOG_Error("%s: Failed to enable client.", __FUNCTION__);
     }
     else
     {
@@ -2023,7 +2047,7 @@ void MQTT_ProcessAllSocketActivity(socket_set_t* set)
                         {
                             if (mosquitto_loop_write(client->mosq, 1) != MOSQ_ERR_SUCCESS)
                             {
-                                USP_LOG_Error("Failed to write to socket");
+                                USP_LOG_Error("%s: Failed to write to socket", __FUNCTION__);
                             }
                         }
 
@@ -2031,13 +2055,13 @@ void MQTT_ProcessAllSocketActivity(socket_set_t* set)
                         {
                             if (mosquitto_loop_read(client->mosq, 1) != MOSQ_ERR_SUCCESS)
                             {
-                                USP_LOG_Error("Failed to read from socket");
+                                USP_LOG_Error("%s: Failed to read from socket", __FUNCTION__);
                             }
                         }
 
                         if (mosquitto_loop_misc(client->mosq) != MOSQ_ERR_SUCCESS)
                         {
-                            USP_LOG_Error("Failed to write misc");
+                            USP_LOG_Error("%s: Failed to write misc", __FUNCTION__);
                         }
                     }
                     break;
@@ -2132,7 +2156,8 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
                         else
                         {
                             time_t diff = client->retry_time - cur_time;
-                            USP_LOG_Debug("%s: Waiting for time to retry: remaining time: %lds retry_time: %ld time: %ld", __FUNCTION__, diff, client->retry_time, cur_time);
+                            USP_LOG_Debug("%s: Waiting for time to retry: remaining time: %lds retry_time: %ld time: %ld",
+                                    __FUNCTION__, (long int)diff, (long int)client->retry_time, (long int)cur_time);
                         }
                     }
                     break;
@@ -2374,9 +2399,6 @@ int MQTT_AddSubscription(int instance, mqtt_subscription_t* subscription)
         }
     }
 
-    // Let the DM know we're ready for sending messages
-    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->role);
-
     return err;
 }
 
@@ -2477,7 +2499,7 @@ int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *subscription)
         {
             if (mosquitto_unsubscribe(client->mosq, &sub->mid, sub->topic) != MOSQ_ERR_SUCCESS)
             {
-                USP_LOG_Error("Failed to unsubscribe from %s", sub->topic);
+                USP_LOG_Error("%s: Failed to unsubscribe from %s", __FUNCTION__, sub->topic);
                 err = USP_ERR_INTERNAL_ERROR;
             }
         }

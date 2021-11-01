@@ -20,6 +20,7 @@ RUN apt-get update &&\
         automake \
         libtool \
         libmosquitto-dev \
+        libwebsockets-dev \
         pkg-config \
         make \
         &&\

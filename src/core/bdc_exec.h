@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -46,6 +46,7 @@
 int BDC_EXEC_Init(void);
 int BDC_EXEC_PostReportToSend(int profile_id, char *full_url, char *query_string, char *username, char *password, unsigned char *report, int report_len, unsigned flags);
 void *BDC_EXEC_Main(void *args);
+void BDC_EXEC_ScheduleExit(void);
 
 //------------------------------------------------------------------------------
 // Definitions of bits in flags parameter of BDC_EXEC_PostReportToSend()

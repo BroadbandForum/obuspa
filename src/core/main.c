@@ -57,6 +57,7 @@
 #include "mtp_exec.h"
 #include "dm_exec.h"
 #include "bdc_exec.h"
+#include "wsclient.h"
 #include "data_model.h"
 #include "dm_access.h"
 #include "device.h"
@@ -307,6 +308,14 @@ int main(int argc, char *argv[])
     }
 #endif
 
+#ifdef ENABLE_WEBSOCKETS
+    err = OS_UTILS_CreateThread(WSCLIENT_Main, NULL);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+#endif
+
     // Exit if unable to spawn off a thread to perform bulk data collection posts
     err = OS_UTILS_CreateThread(BDC_EXEC_Main, NULL);
     if (err != USP_ERR_OK)
@@ -436,6 +445,7 @@ void MAIN_Stop(void)
     // Free all memory used by USP Agent
     DM_EXEC_Destroy();
     curl_global_cleanup();
+    USP_MEM_Destroy();
 }
 
 /*********************************************************************//**

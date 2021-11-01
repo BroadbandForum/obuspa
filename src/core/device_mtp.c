@@ -106,6 +106,9 @@ const enum_entry_t mtp_protocols[kMtpProtocol_Max] =
 #ifdef ENABLE_MQTT
     { kMtpProtocol_MQTT, "MQTT" },
 #endif
+#ifdef ENABLE_WEBSOCKETS
+    { kMtpProtocol_WebSockets, "WebSocket" },
+#endif
 };
 
 //------------------------------------------------------------------------------
@@ -242,20 +245,14 @@ int DEVICE_MTP_Start(void)
     int instance;
     int err;
     char path[MAX_DM_PATH];
+    agent_mtp_t *mtp;
+    int count;
 
     // Exit if unable to get the object instance numbers present in the agent MTP table
     INT_VECTOR_Init(&iv);
     err = DATA_MODEL_GetInstances(DEVICE_AGENT_MTP_ROOT, &iv);
     if (err != USP_ERR_OK)
     {
-        goto exit;
-    }
-
-    // Issue a warning, if no local agent MTPs are present in database
-    if (iv.num_entries == 0)
-    {
-        USP_LOG_Warning("%s: WARNING: No instances in %s. USP Agent can only be accessed via CLI.", __FUNCTION__, device_agent_mtp_root);
-        err = USP_ERR_OK;
         goto exit;
     }
 
@@ -275,6 +272,23 @@ int DEVICE_MTP_Start(void)
                 goto exit;
             }
         }
+    }
+
+    // Count enabled agent MTPs
+    count = 0;
+    for (i=0; i<MAX_AGENT_MTPS; i++)
+    {
+        mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->enable))
+        {
+            count++;
+        }
+    }
+
+    // Display a warning of no agent MTPs are enabled
+    if (count==0)
+    {
+        USP_LOG_Warning("WARNING: No enabled MTPs in %s. USP Agent may only be usable via the CLI", device_agent_mtp_root);
     }
 
     err = USP_ERR_OK;

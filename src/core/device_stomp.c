@@ -199,14 +199,6 @@ int DEVICE_STOMP_Start(void)
         goto exit;
     }
 
-    // Exit, issuing a warning, if no STOMP connections are present in database
-    if (iv.num_entries == 0)
-    {
-        USP_LOG_Warning("%s: WARNING: No instances in %s", __FUNCTION__, device_stomp_conn_root);
-        err = USP_ERR_OK;
-        goto exit;
-    }
-
     // Add all stomp connections to the stomp connection array
     for (i=0; i < iv.num_entries; i++)
     {

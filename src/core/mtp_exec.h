@@ -69,6 +69,9 @@ typedef enum
 #ifdef ENABLE_MQTT
     kMtpProtocol_MQTT,
 #endif
+#ifdef ENABLE_WEBSOCKETS
+    kMtpProtocol_WebSockets,
+#endif
 
     // The following enumeration should always be the last - it is used to size arrays
     kMtpProtocol_Max

@@ -60,6 +60,9 @@
 #ifdef ENABLE_COAP
 #include "usp_coap.h"
 #endif
+#ifdef ENABLE_WEBSOCKETS
+#include "wsclient.h"
+#endif
 //------------------------------------------------------------------------------
 // Location of the controller table within the data model
 #define DEVICE_CONT_ROOT "Device.LocalAgent.Controller"
@@ -93,6 +96,11 @@ typedef struct
     int mqtt_connection_instance;
     char *mqtt_controller_topic;
 #endif
+
+#ifdef ENABLE_WEBSOCKETS
+    wsclient_config_t websock;
+#endif
+
 } controller_mtp_t;
 
 //------------------------------------------------------------------------------
@@ -136,6 +144,8 @@ int Validate_ControllerMtpProtocol(dm_req_t *req, char *value);
 int Validate_PeriodicNotifInterval(dm_req_t *req, char *value);
 int Validate_ControllerRetryMinimumWaitInterval(dm_req_t *req, char *value);
 int Validate_ControllerRetryIntervalMultiplier(dm_req_t *req, char *value);
+int Validate_SessionRetryInterval(dm_req_t *req, char *value);
+int Validate_SessionRetryMultiplier(dm_req_t *req, char *value);
 int Notify_ControllerEnable(dm_req_t *req, char *value);
 int Notify_ControllerEndpointID(dm_req_t *req, char *value);
 int Notify_ControllerMtpEnable(dm_req_t *req, char *value);
@@ -163,13 +173,12 @@ void UpdateFirstPeriodicNotificationTime(void);
 int Validate_ControllerAssignedRole(dm_req_t *req, char *value);
 int Notify_ControllerAssignedRole(dm_req_t *req, char *value);
 int UpdateAssignedRole(controller_t *cont, char *reference);
-int ValidateMtpUniquenessReq(mtp_protocol_t protocol, dm_req_t* req);
+int ValidateMtpUniqueness(mtp_protocol_t protocol, int cont_inst, int mtp_inst);
+int ValidateMtpResourceAvailable(mtp_protocol_t protocol, int cont_inst, int mtp_inst);
 
 #ifndef DISABLE_STOMP
 int Notify_ControllerMtpStompReference(dm_req_t *req, char *value);
 int Notify_ControllerMtpStompDestination(dm_req_t *req, char *value);
-int ValidateStompMtpUniquenessReq(dm_req_t *req);
-int ValidateStompMtpUniqueness(controller_t *cont, int mtp_instance);
 #endif
 
 #ifdef ENABLE_COAP
@@ -182,8 +191,18 @@ int Notify_ControllerMtpCoapEncryption(dm_req_t *req, char *value);
 #ifdef ENABLE_MQTT
 int Notify_ControllerMtpMqttReference(dm_req_t *req, char *value);
 int Notify_ControllerMtpMqttTopic(dm_req_t *req, char *value);
-int ValidateMqttMtpUniquenessReq(dm_req_t *req);
-int ValidateMqttMtpUniqueness(controller_t *cont, int mtp_instance);
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+int Validate_ControllerMtpWebsockKeepAlive(dm_req_t *req, char *value);
+int Get_WebsockRetryCount(dm_req_t *req, char *buf, int len);
+int Notify_ControllerMtpWebsockHost(dm_req_t *req, char *value);
+int Notify_ControllerMtpWebsockPort(dm_req_t *req, char *value);
+int Notify_ControllerMtpWebsockPath(dm_req_t *req, char *value);
+int Notify_ControllerMtpWebsockEncryption(dm_req_t *req, char *value);
+int Notify_ControllerMtpWebsockKeepAlive(dm_req_t *req, char *value);
+int Notify_ControllerMtpWebsockRetryInterval(dm_req_t *req, char *value);
+int Notify_ControllerMtpWebsockRetryMultiplier(dm_req_t *req, char *value);
 #endif
 
 /*********************************************************************//**
@@ -268,6 +287,17 @@ int DEVICE_CONTROLLER_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.MQTT.Topic", "", NULL, Notify_ControllerMtpMqttTopic, DM_STRING);
 #endif
 
+#ifdef ENABLE_WEBSOCKETS
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.Host", "", NULL, Notify_ControllerMtpWebsockHost, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.Port", "80", DM_ACCESS_ValidatePort, Notify_ControllerMtpWebsockPort, DM_UINT);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.Path", "", NULL, Notify_ControllerMtpWebsockPath, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.EnableEncryption", "true", NULL, Notify_ControllerMtpWebsockEncryption, DM_BOOL);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.KeepAliveInterval", "30", Validate_ControllerMtpWebsockKeepAlive, Notify_ControllerMtpWebsockKeepAlive, DM_UINT);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.CurrentRetryCount", Get_WebsockRetryCount, DM_UINT);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.SessionRetryMinimumWaitInterval", "5", Validate_SessionRetryInterval, Notify_ControllerMtpWebsockRetryInterval, DM_UINT);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.SessionRetryIntervalMultiplier", "2000", Validate_SessionRetryMultiplier, Notify_ControllerMtpWebsockRetryMultiplier, DM_UINT);
+#endif
+
     // Register unique keys for all tables
     char *cont_unique_keys[] = { "EndpointID" };
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_CONT_ROOT ".{i}", cont_unique_keys, NUM_ELEM(cont_unique_keys));
@@ -302,11 +332,14 @@ int DEVICE_CONTROLLER_Init(void)
 **************************************************************************/
 int DEVICE_CONTROLLER_Start(void)
 {
-    int i;
+    int i, j;
     int err;
     int_vector_t iv;
     int cont_instance;
+    controller_t *cont;
+    controller_mtp_t *mtp;
     char path[MAX_DM_PATH];
+    int count;
 
     // Exit if unable to get the object instance numbers present in the controllers table
     INT_VECTOR_Init(&iv);
@@ -340,6 +373,30 @@ int DEVICE_CONTROLLER_Start(void)
                 goto exit;
             }
         }
+    }
+
+    // Count number of enabled MTPs
+    count = 0;
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if ((cont->instance != INVALID) && (cont->enable))
+        {
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->enable))
+                {
+                    count++;
+                }
+            }
+        }
+    }
+
+    // Display a warning of no controller MTPs are enabled
+    if (count==0)
+    {
+        USP_LOG_Warning("WARNING: No enabled MTPs in %s.{i}.MTP. USP Agent may only be usable via the CLI", device_cont_root);
     }
 
     err = USP_ERR_OK;
@@ -605,9 +662,9 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Exit if unable to find a controller MTP to send this message on
+    // Exit if unable to find a controller MTP to send this message on (if no reply_to is available)
     mtp = FindFirstEnabledMtp(cont, mrt->protocol);
-    if (mtp == NULL)
+    if ((mtp == NULL) && (mrt->is_reply_to_specified == false))
     {
         USP_ERR_SetMessage("%s: Unable to find a valid controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
         return USP_ERR_INTERNAL_ERROR;
@@ -658,6 +715,14 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
                 dest.mqtt_topic = mtp->mqtt_controller_topic;
                 break;
 #endif
+
+#ifdef ENABLE_WEBSOCKETS
+            case kMtpProtocol_WebSockets:
+                dest.protocol = kMtpProtocol_WebSockets;
+                dest.wsclient_cont_instance = cont->instance;
+                dest.wsclient_mtp_instance = mtp->instance;
+                break;
+#endif
             default:
                 TERMINATE_BAD_CASE(mtp->protocol);
                 break;
@@ -698,6 +763,15 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
         }
             break;
 #endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kMtpProtocol_WebSockets:
+            WSCLIENT_QueueBinaryMessage(usp_msg_type, dest.wsclient_cont_instance, dest.wsclient_mtp_instance, pbuf, pbuf_len, kMtpContentType_UspRecord, expiry_time);
+            err = USP_ERR_OK;
+            break;
+#endif
+
+
         default:
             TERMINATE_BAD_CASE(mrt->protocol);
             break;
@@ -1104,12 +1178,20 @@ int Notify_ControllerMtpDeleted(dm_req_t *req)
     }
 
 #ifdef ENABLE_COAP
-    // Stop this controller, if it is CoAP
+    // Stop this MTP, if it is CoAP
     // (We don't need to do anything if this MTP is STOMP, because all we are deleting is an
     //  address to send to, the STOMP connection itself is separate)
     if ((mtp->protocol == kMtpProtocol_CoAP) && (mtp->enable) && (cont->enable))
     {
         COAP_CLIENT_Stop(cont->instance, mtp->instance);
+    }
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+    // Stop this MTP, if it is WebSockets
+    if ((mtp->protocol == kMtpProtocol_WebSockets) && (mtp->enable) && (cont->enable))
+    {
+        WSCLIENT_StopClient(cont->instance, mtp->instance);
     }
 #endif
 
@@ -1165,14 +1247,14 @@ int Validate_ControllerMtpEnable(dm_req_t *req, char *value)
     mtp_protocol_t protocol;
     char path[MAX_DM_PATH];
 
-    // Exit if we are disabling this controller MTP. In this case we do not have to check for only one enabled STOMP MTP
+    // Exit if we are disabling this controller MTP. In this case we do not have to perform the uniqueness aand resource available checks
     if (val_bool == false)
     {
         return USP_ERR_OK;
     }
 
-    // Exit if this controller MTP is not using STOMP
-    // NOTE: We look the value up in the database because this function may be called before the controller MTP has actually been added
+    // Exit if unable to get the protocol configured for this MTP
+    // NOTE: We look the value up in the database because this function may be called before the controller MTP has actually been added to the internal data structure
     USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.Protocol", device_cont_root, inst1, inst2);
     err = DM_ACCESS_GetEnum(path, &protocol, mtp_protocols, NUM_ELEM(mtp_protocols));
     if (err != USP_ERR_OK)
@@ -1181,7 +1263,20 @@ int Validate_ControllerMtpEnable(dm_req_t *req, char *value)
         return USP_ERR_OK;
     }
 
-    err = ValidateMtpUniquenessReq(protocol, req);
+    // Exit if trying to enable more than one MTP with the same protocol for this controller
+    err = ValidateMtpUniqueness(protocol, inst1, inst2);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if trying to enable more MTPs than the lower levels support for this protocol
+    err = ValidateMtpResourceAvailable(protocol, inst1, inst2);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     return err;
 }
 
@@ -1214,11 +1309,10 @@ int Validate_ControllerMtpProtocol(dm_req_t *req, char *value)
         USP_ERR_SetMessage("%s: Invalid or unsupported protocol %s", __FUNCTION__, value);
         return USP_ERR_INVALID_VALUE;
     }
-
     protocol = (mtp_protocol_t) index;
 
     // Exit if this controller MTP is not enabled
-    // NOTE: We look the value up in the database because this function may be called before the controller MTP has actually been added
+    // NOTE: We look the value up in the database because this function may be called before the controller MTP has actually been added to the internal data structure
     USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.Enable", device_cont_root, inst1, inst2);
     err = DM_ACCESS_GetBool(path, &enable);
     if ((err != USP_ERR_OK) || (enable == false))
@@ -1227,9 +1321,21 @@ int Validate_ControllerMtpProtocol(dm_req_t *req, char *value)
         return USP_ERR_OK;
     }
 
-    err = ValidateMtpUniquenessReq(protocol, req);
+    // Exit if trying to enable more than one MTP with the same protocol for this controller
+    err = ValidateMtpUniqueness(protocol, inst1, inst2);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
 
-    return err;
+    // Exit if trying to enable more MTPs than the lower levels support for this protocol
+    err = ValidateMtpResourceAvailable(protocol, inst1, inst2);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -1268,6 +1374,40 @@ int Validate_ControllerRetryIntervalMultiplier(dm_req_t *req, char *value)
 
 /*********************************************************************//**
 **
+** Validate_SessionRetryInterval
+**
+** Validates Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.SessionRetryMinimumWaitInterval
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_SessionRetryInterval(dm_req_t *req, char *value)
+{
+    return DM_ACCESS_ValidateRange_Unsigned(req, 1, 65535);
+}
+
+/*********************************************************************//**
+**
+** Validate_SessionRetryMultiplier
+**
+** Validates Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.SessionRetryIntervalMultiplier
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_SessionRetryMultiplier(dm_req_t *req, char *value)
+{
+    return DM_ACCESS_ValidateRange_Unsigned(req, 1000, 65535);
+}
+
+/*********************************************************************//**
+**
 ** Validate_ControllerAssignedRole
 **
 ** Validates Device.LocalAgent.Controller.{i}.AssignedRole
@@ -1292,6 +1432,23 @@ int Validate_ControllerAssignedRole(dm_req_t *req, char *value)
     err = DM_ACCESS_ValidateReference(value, "Device.LocalAgent.ControllerTrust.Role.{i}", &instance);
 
     return err;
+}
+
+/*********************************************************************//**
+**
+** Validate_ControllerMtpWebsockKeepAlive
+**
+** Validates Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.KeepAliveInterval
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_ControllerMtpWebsockKeepAlive(dm_req_t *req, char *value)
+{
+    return DM_ACCESS_ValidateRange_Unsigned(req, 1, UINT_MAX);
 }
 
 /*********************************************************************//**
@@ -1325,6 +1482,7 @@ int Notify_ControllerEnable(dm_req_t *req, char *value)
     cont->enable = val_bool;
 
 #ifdef ENABLE_COAP
+{
     // Iterate over all MTPs for this controller, starting or stopping its associated CoAP MTPs
     int i;
     for (i=0; i<MAX_CONTROLLER_MTPS; i++)
@@ -1350,6 +1508,31 @@ int Notify_ControllerEnable(dm_req_t *req, char *value)
             }
         }
     }
+}
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+{
+    // Iterate over all MTPs for this controller, starting or stopping its associated Websocket MTPs
+    int i;
+    for (i=0; i<MAX_CONTROLLER_MTPS; i++)
+    {
+        controller_mtp_t *mtp;
+
+        mtp = &cont->mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_WebSockets))
+        {
+            if ((mtp->enable) && (cont->enable))
+            {
+                WSCLIENT_StartClient(cont->instance, mtp->instance, cont->endpoint_id, &mtp->websock);
+            }
+            else
+            {
+                WSCLIENT_StopClient(cont->instance, mtp->instance);
+            }
+        }
+    }
+}
 #endif
 
     return USP_ERR_OK;
@@ -1441,6 +1624,7 @@ int Notify_ControllerMtpEnable(dm_req_t *req, char *value)
     mtp->enable = val_bool;
 
 #ifdef ENABLE_COAP
+{
     // Start or stop CoAP client based on new value
     int err;
     if (mtp->protocol == kMtpProtocol_CoAP)
@@ -1459,7 +1643,26 @@ int Notify_ControllerMtpEnable(dm_req_t *req, char *value)
             COAP_CLIENT_Stop(cont->instance, mtp->instance);
         }
     }
+}
 #endif
+
+#ifdef ENABLE_WEBSOCKETS
+{
+    // Start or stop WebSockets client based on new value
+    if (mtp->protocol == kMtpProtocol_WebSockets)
+    {
+        if ((mtp->enable) && (cont->enable))
+        {
+            WSCLIENT_StartClient(cont->instance, mtp->instance, cont->endpoint_id, &mtp->websock);
+        }
+        else
+        {
+            WSCLIENT_StopClient(cont->instance, mtp->instance);
+        }
+    }
+}
+#endif
+
     // NOTE: We do not have to do anything for STOMP, as these parameters are only searched when we send
 
     return USP_ERR_OK;
@@ -1514,6 +1717,7 @@ int Notify_ControllerMtpProtocol(dm_req_t *req, char *value)
     }
 
 #ifdef ENABLE_COAP
+{
     int err;
 
     // Stop the old CoAP server, if we've moved from CoAP
@@ -1531,6 +1735,23 @@ int Notify_ControllerMtpProtocol(dm_req_t *req, char *value)
             return err;
         }
     }
+}
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+{
+    // Stop the old connection, if we've moved from WebSockets to a different protocol
+    if (old_protocol == kMtpProtocol_WebSockets)
+    {
+        WSCLIENT_StopClient(cont->instance, mtp->instance);
+    }
+
+    // Start a new connection, if we've moved to WebSockets from a different protocol
+    if (new_protocol == kMtpProtocol_WebSockets)
+    {
+        WSCLIENT_StartClient(cont->instance, mtp->instance, cont->endpoint_id, &mtp->websock);
+    }
+}
 #endif
 
     // NOTE: We don't need to do anything explicitly for STOMP
@@ -1720,6 +1941,303 @@ int Notify_ControllerMtpCoapEncryption(dm_req_t *req, char *value)
 
     // NOTE: We do not need to explicitly propagate this value to the COAP module here,
     // as each USP message that is queued includes this information
+
+    return USP_ERR_OK;
+}
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+/*********************************************************************//**
+**
+** Notify_ControllerMtpWebsockHost
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.Host is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpWebsockHost(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if the value hasn't changed
+    if (strcmp(mtp->websock.host, value)==0)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set the new value
+    USP_SAFE_FREE(mtp->websock.host);
+    mtp->websock.host = USP_STRDUP(value);
+
+    // Schedule a reconnect, if the connection is currently enabled
+    if (mtp->enable)
+    {
+        WSCLIENT_StartClient(inst1, inst2, cont->endpoint_id, &mtp->websock);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Notify_ControllerMtpWebsockPort
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.Port is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpWebsockPort(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if the value hasn't changed
+    if (mtp->websock.port == val_uint)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set the new value
+    mtp->websock.port = val_uint;
+
+    // Schedule a reconnect, if the connection is currently enabled
+    if (mtp->enable)
+    {
+        WSCLIENT_StartClient(inst1, inst2, cont->endpoint_id, &mtp->websock);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Notify_ControllerMtpWebsockPath
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.Path is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpWebsockPath(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if the value hasn't changed
+    if (strcmp(mtp->websock.path, value)==0)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set the new value
+    USP_SAFE_FREE(mtp->websock.path);
+    mtp->websock.path = USP_STRDUP(value);
+
+    // Schedule a reconnect, if the connection is currently enabled
+    if (mtp->enable)
+    {
+        WSCLIENT_StartClient(inst1, inst2, cont->endpoint_id, &mtp->websock);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Notify_ControllerMtpWebsockEncryption
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.EnableEncryption is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpWebsockEncryption(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if the value hasn't changed
+    if (mtp->websock.enable_encryption == val_bool)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set the new value
+    mtp->websock.enable_encryption = val_bool;
+
+    // Schedule a reconnect, if the connection is currently enabled
+    if (mtp->enable)
+    {
+        WSCLIENT_StartClient(inst1, inst2, cont->endpoint_id, &mtp->websock);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Notify_ControllerMtpWebsockKeepAlive
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.KeepAliveInterval is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpWebsockKeepAlive(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if the value hasn't changed
+    if (mtp->websock.keep_alive_interval == val_uint)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set the new value
+    mtp->websock.keep_alive_interval = val_uint;
+
+    // Inform the MTP of the change (NOTE: This will not result in a reconnect)
+    if (mtp->enable)
+    {
+        WSCLIENT_StartClient(inst1, inst2, cont->endpoint_id, &mtp->websock);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Notify_ControllerMtpWebsockRetryInterval
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.SessionRetryMinimumWaitInterval is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpWebsockRetryInterval(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if the value hasn't changed
+    if (mtp->websock.retry_interval == val_uint)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set the new value
+    mtp->websock.retry_interval = val_uint;
+
+    // Inform the MTP of the change (NOTE: This will not result in a reconnect)
+    if (mtp->enable)
+    {
+        WSCLIENT_StartClient(inst1, inst2, cont->endpoint_id, &mtp->websock);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Notify_ControllerMtpWebsockRetryMultiplier
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.SessionRetryIntervalMultiplier is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpWebsockRetryMultiplier(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if the value hasn't changed
+    if (mtp->websock.retry_multiplier == val_uint)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set the new value
+    mtp->websock.retry_multiplier = val_uint;
+
+    // Inform the MTP of the change (NOTE: This will not result in a reconnect)
+    if (mtp->enable)
+    {
+        WSCLIENT_StartClient(inst1, inst2, cont->endpoint_id, &mtp->websock);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Get_WebsockRetryCount
+**
+** Gets the value of Device.LocalAgent.Controller.{i}.MTP.{i}.WebSocket.CurrentRetryCount
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   buf - pointer to buffer in which to return the value
+** \param   len - length of return buffer
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Get_WebsockRetryCount(dm_req_t *req, char *buf, int len)
+{
+    val_uint = WSCLIENT_GetRetryCount(inst1, inst2);
 
     return USP_ERR_OK;
 }
@@ -2103,17 +2621,24 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
         goto exit;
     }
 
-#ifndef DISABLE_STOMP
-    // Exit if this MTP is not the only STOMP MTP for this controller
-    if (mtp->protocol == kMtpProtocol_STOMP)
+    if (mtp->enable)
     {
-        err = ValidateStompMtpUniqueness(cont, mtp_instance);
+        // Exit if this MTP is not the only enabled MTP with the same protocol for this controller
+        err = ValidateMtpUniqueness(mtp->protocol, cont->instance, mtp_instance);
         if (err != USP_ERR_OK)
         {
-            goto exit;
+            return err;
+        }
+
+        // Exit if trying to enable more MTPs than the lower levels support for this protocol
+        err = ValidateMtpResourceAvailable(mtp->protocol, cont->instance, mtp_instance);
+        if (err != USP_ERR_OK)
+        {
+            return err;
         }
     }
 
+#ifndef DISABLE_STOMP
     // Exit if there was an error in the reference to the entry in the STOMP connection table
     USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.STOMP.Reference", device_cont_root, cont->instance, mtp_instance);
     err = DEVICE_MTP_GetStompReference(path, &mtp->stomp_connection_instance);
@@ -2177,16 +2702,6 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
 #endif
 
 #ifdef ENABLE_MQTT
-    // Exit if this MTP is not the only MQTT MTP for this controller
-    if (mtp->protocol == kMtpProtocol_MQTT)
-    {
-        err = ValidateMqttMtpUniqueness(cont, mtp_instance);
-        if (err != USP_ERR_OK)
-        {
-            goto exit;
-        }
-    }
-
     // Exit if unable to get the enable for this MTP
     USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.Enable", device_cont_root, cont->instance, mtp_instance);
     err = DM_ACCESS_GetBool(path, &mtp->enable);
@@ -2210,6 +2725,70 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     if (err != USP_ERR_OK)
     {
         return err;
+    }
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+    // Exit if unable to get the name of the controller's websocket server host name
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.WebSocket.Host", device_cont_root, cont->instance, mtp_instance);
+    err = DM_ACCESS_GetString(path, &mtp->websock.host);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if unable to get the name of the controller's websocket path
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.WebSocket.Path", device_cont_root, cont->instance, mtp_instance);
+    err = DM_ACCESS_GetString(path, &mtp->websock.path);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if unable to get the name of the controller's websocket port
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.WebSocket.Port", device_cont_root, cont->instance, mtp_instance);
+    err = DM_ACCESS_GetUnsigned(path, &mtp->websock.port);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if unable to get the name of the controller's websocket port
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.WebSocket.EnableEncryption", device_cont_root, cont->instance, mtp_instance);
+    err = DM_ACCESS_GetBool(path, &mtp->websock.enable_encryption);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if unable to get the websocket keep alive interval
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.WebSocket.KeepAliveInterval", device_cont_root, cont->instance, mtp_instance);
+    err = DM_ACCESS_GetUnsigned(path, &mtp->websock.keep_alive_interval);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if unable to get the retry interval when connecting to the controller over websockets
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.WebSocket.SessionRetryMinimumWaitInterval", device_cont_root, cont->instance, mtp_instance);
+    err = DM_ACCESS_GetUnsigned(path, &mtp->websock.retry_interval);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if unable to get the retry multiplier when connecting to the controller over websockets
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.WebSocket.SessionRetryIntervalMultiplier", device_cont_root, cont->instance, mtp_instance);
+    err = DM_ACCESS_GetUnsigned(path, &mtp->websock.retry_multiplier);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Start a WebSocket client to connect to this controller (if required)
+    if ((mtp->protocol == kMtpProtocol_WebSockets) && (mtp->enable) && (cont->enable))
+    {
+        WSCLIENT_StartClient(cont->instance, mtp_instance, cont->endpoint_id, &mtp->websock);
     }
 #endif
 
@@ -2599,60 +3178,40 @@ void DestroyControllerMtp(controller_mtp_t *mtp)
     mtp->mqtt_connection_instance = INVALID;
     USP_SAFE_FREE(mtp->mqtt_controller_topic);
 #endif
+
+#ifdef ENABLE_WEBSOCKETS
+    USP_SAFE_FREE(mtp->websock.host);
+    USP_SAFE_FREE(mtp->websock.path);
+#endif
 }
 
-#ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
-** ValidateStompMtpUniquenessReq
+** ValidateMtpUniqueness
 **
-** Validates that only one STOMP MTP is enabled at any one time
+** Validates that only one MTP of the specified protocol is enabled at any one time for the specified controller
+** NOTE: This function disregards whether the controller itself is enabled, otherwise this check would also need to be performed on controller enablement
 **
-** \param   req - pointer to structure identifying the controller MTP
+** \param   protocol - MTP Protocol that we want to check only one is enabled at a time
+** \param   cont_inst - instance number of controller in Device.LocalAgent.Controller.{i} table
+** \param   mtp_inst - instance number of MTP in Device.LocalAgent.Controller.{i}.MTP.{i} table
+**                     NOTE: This is also the instance number which the caller wants to set to the specified protocol
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int ValidateStompMtpUniquenessReq(dm_req_t *req)
-{
-    int err;
-    controller_t *cont;
-
-    // Determine the controller entry
-    cont = FindControllerByInstance(inst1);
-    USP_ASSERT(cont != NULL);
-
-    // Exit if this instance is not the only STOMP MTP for this controller
-    err = ValidateStompMtpUniqueness(cont, inst2);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    return USP_ERR_OK;
-}
-
-
-/*********************************************************************//**
-**
-** ValidateStompMtpUniqueness
-**
-** Validates that only one STOMP MTP is enabled at any one time
-**
-** \param   cont - controller on which to validate there is only one STOMP MTP
-** \param   mtp_instance - Instance number which is expected to be the single STOMP MTP
-**                          This instance is skipped when searching.
-**                          It is necessary to allow you to set an MTP to use STOMP again.
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int ValidateStompMtpUniqueness(controller_t *cont, int mtp_instance)
+int ValidateMtpUniqueness(mtp_protocol_t protocol, int cont_inst, int mtp_inst)
 {
     int i;
+    controller_t *cont;
     controller_mtp_t *mtp;
+    char *protocol_str;
 
-    // Iterate over all MTPs, seeing if any (other than the one currently being set) is enabled and a STOMP connection
+    // Determine the controller entry
+    cont = FindControllerByInstance(cont_inst);
+    USP_ASSERT(cont != NULL);
+
+    // Iterate over all MTPs, seeing if any (other than the one currently being set) is enabled and set the the same protocol
     for (i=0; i < MAX_CONTROLLER_MTPS; i++)
     {
         mtp = &cont->mtps[i];
@@ -2663,24 +3222,116 @@ int ValidateStompMtpUniqueness(controller_t *cont, int mtp_instance)
             continue;
         }
 
-        // Skip the instance currently being validated - we allow the current STOMP MTP to have it's protocol set to STOMP again !
-        if (mtp->instance == mtp_instance)
+        // Skip the instance currently being validated - we allow the current MTP to have its protocol set to the same value again !
+        if (mtp->instance == mtp_inst)
         {
             continue;
         }
 
-        // Exit if another MTP is enabled, and uses STOMP
-        if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_STOMP))
+        // Exit if another MTP is enabled, and uses the same protocol
+        if ((mtp->enable == true) && (mtp->protocol == protocol))
         {
-            USP_ERR_SetMessage("%s: Controller can only have one enabled STOMP MTP (matches %s.%d.MTP.%d)", __FUNCTION__, device_cont_root, cont->instance, mtp->instance);
+            protocol_str = TEXT_UTILS_EnumToString(protocol, mtp_protocols, NUM_ELEM(mtp_protocols));
+            USP_ERR_SetMessage("%s: Controller can only have one enabled %s MTP (matches %s.%d.MTP.%d)", __FUNCTION__, protocol_str, device_cont_root, cont_inst, mtp->instance);
             return USP_ERR_VALUE_CONFLICT;
         }
     }
 
-    // If the code gets here, then only the instance being validated is STOMP and enabled
+    // If the code gets here, then only the instance being validated is set the the specified protocol and enabled
     return USP_ERR_OK;
 }
+
+/*********************************************************************//**
+**
+** ValidateMtpResourceAvailable
+**
+** Validates that we have enough MTP resources available of the specified protocol
+** NOTE: This function disregards whether the controller itself is enabled, otherwise this check would also need to be performed on controller enablement
+**
+** \param   protocol - MTP Protocol that we want to check resource availability of
+** \param   cont_inst - instance number of controller in Device.LocalAgent.Controller.{i} table
+** \param   mtp_inst - instance number of MTP in Device.LocalAgent.Controller.{i}.MTP.{i} table
+**                     NOTE: This is also the instance number which the caller wants to set to the specified protocol
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ValidateMtpResourceAvailable(mtp_protocol_t protocol, int cont_inst, int mtp_inst)
+{
+    int i, j;
+    int max_count;
+    int count;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+    char *protocol_str;
+
+    // Determine the maximum number of MTP resources for the specified protocol, exiting if there are no constraints
+    switch(protocol)
+    {
+#ifndef DISABLE_STOMP
+        case kMtpProtocol_STOMP:
+            max_count = MAX_STOMP_CONNECTIONS;
+            break;
 #endif
+
+#ifdef ENABLE_COAP
+        case kMtpProtocol_CoAP:
+            max_count = MAX_COAP_CLIENTS;
+            break;
+#endif
+
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+            max_count = MAX_MQTT_CLIENTS;
+            break;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kMtpProtocol_WebSockets:
+            max_count = MAX_WEBSOCKET_CLIENTS;
+            break;
+#endif
+        default:
+        case kMtpProtocol_None:
+        case kMtpProtocol_Max:
+            // All other MTPs have no resource constraints, so just return
+            return USP_ERR_OK;
+            break;
+    }
+
+    // Count the number of currently enabled MTPs (across all controllers) which use this protocol
+    count = 1;      // Account for the MTP slot which we want to activate the MTP resource on
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if (cont->instance != INVALID)
+        {
+            // Iterate over all MTP slots for this controller
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->enable) && (mtp->protocol == protocol))
+                {
+                    if ((cont->instance != cont_inst) || (mtp->instance != mtp_inst)) // Only increment if not the MTP slot we want to activate (as we've already accounted for it)
+                    {
+                        count++;
+                    }
+                }
+            }
+        }
+    }
+
+    // Exit if activating the specified MTP would exceed the resources available for the specified protocol
+    if (count > max_count)
+    {
+        protocol_str = TEXT_UTILS_EnumToString(protocol, mtp_protocols, NUM_ELEM(mtp_protocols));
+        USP_ERR_SetMessage("%s: Resources exceeded: Too many enabled %s MTPs already (maximum=%d) to activate %s.%d.MTP.%d", __FUNCTION__, protocol_str, max_count, device_cont_root, cont_inst, mtp_inst);
+        return USP_ERR_RESOURCES_EXCEEDED;
+    }
+
+    // If the code gets here, then the specified MTP can be activated - there are enough resources for it
+    return USP_ERR_OK;
+}
 
 /*********************************************************************//**
 **
@@ -3043,124 +3694,7 @@ int Notify_ControllerMtpMqttTopic(dm_req_t *req, char *value)
 
     return USP_ERR_OK;
 }
-
-/*********************************************************************//**
-**
-** ValidateMqttMtpUniquenessReq
-**
-** Validates that only one MQTT MTP is enabled at any one time
-**
-** \param   req - pointer to structure identifying the controller MTP
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int ValidateMqttMtpUniquenessReq(dm_req_t *req)
-{
-    int err;
-    controller_t *cont;
-
-    // Determine the controller entry
-    cont = FindControllerByInstance(inst1);
-    USP_ASSERT(cont != NULL);
-
-    // Exit if this instance is not the only MQTT MTP for this controller
-    err = ValidateMqttMtpUniqueness(cont, inst2);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    return USP_ERR_OK;
-}
-/*********************************************************************//**
-**
-** ValidateMqttMtpUniqueness
-**
-** Validates that only one MQTT MTP is enabled at any one time
-**
-** \param   cont - controller on which to validate there is only one MQTT MTP
-** \param   mtp_instance - Instance number which is expected to be the single MQTT MTP
-**                          This instance is skipped when searching.
-**                          It is necessary to allow you to set an MTP to use MQTT again.
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int ValidateMqttMtpUniqueness(controller_t *cont, int mtp_instance)
-{
-    int i;
-    controller_mtp_t *mtp;
-
-    // Iterate over all MTPs, seeing if any (other than the one currently being set) is enabled and a MQTT connection
-    for (i=0; i < MAX_CONTROLLER_MTPS; i++)
-    {
-        mtp = &cont->mtps[i];
-
-        // Skip this entry if not in use
-        if (mtp->instance == INVALID)
-        {
-            continue;
-        }
-
-        // Skip the instance currently being validated - we allow the current MQTT MTP to have it's protocol set to MQTT again !
-        if (mtp->instance == mtp_instance)
-        {
-            continue;
-        }
-
-        // Exit if another MTP is enabled, and uses MQTT
-        if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT))
-        {
-            USP_ERR_SetMessage("%s: Controller can only have one enabled MQTT MTP (matches %s.%d.MTP.%d)", __FUNCTION__, device_cont_root, cont->instance, mtp->instance);
-            return USP_ERR_VALUE_CONFLICT;
-        }
-    }
-
-    // If the code gets here, then only the instance being validated is MQTT and enabled
-    return USP_ERR_OK;
-}
 #endif
-
-/*********************************************************************//**
-**
-** ValidateMtpUniquenessReq
-**
-** Function to determine if a unique MTP is in use
-**
-** \param   protocol - enum of the protocol
-** \param   req - pointer to structure identifying the controller MTP
-**
-** \return  USP_ERR_OK if ok or not required,
-**
-**************************************************************************/
-int ValidateMtpUniquenessReq(mtp_protocol_t protocol, dm_req_t* req)
-{
-    int err = USP_ERR_OK;
-
-    switch(protocol)
-    {
-#ifndef DISABLE_STOMP
-        case kMtpProtocol_STOMP:
-            err = ValidateStompMtpUniquenessReq(req);
-            break;
-#endif
-#ifdef ENABLE_MQTT
-        case kMtpProtocol_MQTT:
-            err = ValidateMqttMtpUniquenessReq(req);
-            break;
-#endif
-#ifdef ENABLE_COAP
-        case kMtpProtocol_CoAP:
-#endif
-        default:
-            // No uniqueness check required
-            // Keep default
-            break;
-    }
-
-    return err;
-}
 
 //------------------------------------------------------------------------------------------
 // Code to test the CalcNextPeriodicTime() function

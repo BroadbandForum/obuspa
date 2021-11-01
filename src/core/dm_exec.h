@@ -45,9 +45,11 @@
 #include "device.h"
 //------------------------------------------------------------------------------
 // Bitmask indicating which thread exited to DM_EXEC_PostMtpThreadExited()
-#define STOMP_EXITED 0x00000001
-#define COAP_EXITED  0x00000002
-#define MQTT_EXITED  0x00000004
+#define STOMP_EXITED    0x00000001
+#define COAP_EXITED     0x00000002
+#define MQTT_EXITED     0x00000004
+#define BDC_EXITED      0x00000008
+#define WSCLIENT_EXITED 0x00000010
 
 //------------------------------------------------------------------------------
 // API functions

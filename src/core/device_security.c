@@ -296,8 +296,13 @@ int DEVICE_SECURITY_Init(void)
     }
 
     // Initialise SSL
-    SSL_library_init();                 // Initialises lib SSL
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    SSL_library_init();
+    OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
+#else
+    OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS, NULL);
+#endif
 
     // Initialise client certificate structure
     memset(&client_cert, 0, sizeof(client_cert));
@@ -312,7 +317,9 @@ int DEVICE_SECURITY_Init(void)
 **
 ** DEVICE_SECURITY_Start
 **
-** Starts this component, adding all instances to the data model
+** Loads all trust store and client certificates into memory
+** NOTE: This function must not create any permanent SSL contests, as
+**       libwebsockets re-initialises LibSSL, after this function is called
 **
 ** \param   None
 **
@@ -333,7 +340,8 @@ int DEVICE_SECURITY_Start(void)
     }
 
     // Add trust store certificates specified by '-t' option
-    if (usp_trust_store_file != NULL)
+    // NOTE: The string compare test is present in order to allow an invocation of USP Agent to specify no trust store file using -t "null". Useful, if the -t option is always used in all invocations.
+    if ((usp_trust_store_file != NULL) && (strcmp(usp_trust_store_file, "null") != 0))
     {
         LoadCerts_FromPath(usp_trust_store_file, kCertUsage_TrustCert, kCTrustRole_FullAccess);
     }
@@ -575,7 +583,7 @@ exit:
 **
 ** \param   ssl_ctx - pointer to SSL context to add trust store certs to
 ** \param   verify_mode - whether SSL should verify the peer (SSL_VERIFY_PEER), and whether to only perform verification once (SSL_VERIFY_CLIENT_ONCE - for DTLS servers)
-** \param   verify_callback - Function to call when verifying certificates from the server
+** \param   verify_callback - Function to call when verifying certificates from the server or NULL if none should be set
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -614,7 +622,10 @@ int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify
     }
 
     // Set the verify callback to use for each certificate
-    SSL_CTX_set_verify(ssl_ctx, verify_mode, verify_callback);
+    if ((verify_callback != NULL) && (verify_mode != 0))
+    {
+        SSL_CTX_set_verify(ssl_ctx, verify_mode, verify_callback);
+    }
 
     // Load the client cert using the load_agent_cert vendor hook (if registered)
     load_agent_cert_cb = vendor_hook_callbacks.load_agent_cert_cb;
@@ -690,7 +701,8 @@ void DEVICE_SECURITY_GetClientCertStatus(bool *available, bool *matches_endpoint
 **
 ** \param   preverify_ok - set to 1, if the current certificate passed, set to 0 if it did not
 ** \param   x509_ctx - pointer to context for certificate chain verification
-** \param   p_cert_chain - double pointer to a STACK_OF_X509 cert chain
+** \param   p_cert_chain - pointer to variable in which to return a pointer to a saved cert chain
+**                         NOTE: If a cert chain is already saved, then the cert chain is not updated
 **
 ** \return  1 if certificate chain should be trusted
 **          0 if certificate chain should not be trusted, and connection dropped
@@ -790,7 +802,7 @@ int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x5
     ssl = X509_STORE_CTX_get_ex_data(x509_ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
     USP_ASSERT(ssl != NULL);
 
-    // Get the pointer to variable in which to save the certificate chain)
+    // Get the pointer to variable in which to save the certificate chain
     p_cert_chain = (STACK_OF(X509) **)SSL_get_app_data(ssl);
 
     // Simplification, allow this to be functionally the same with origin of p_cert_chain to differ
@@ -799,12 +811,12 @@ int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x5
 
 /*********************************************************************//**
 **
-** DEVICE_SECURITY_BulkDataTrustCertVerifyCallback
+** DEVICE_SECURITY_NoSaveTrustCertVerifyCallback
 **
 ** Called back from OpenSSL for each certificate in the received server certificate chain of trust
 ** This function is used to ignore certificate validation errors caused by system time being incorrect
-** NOTE: This code is different from TrustStoreVerifyCallback() in that it does not save the certificate
-**       chain for use by ControllerTrust
+** NOTE: This code is different from DEVICE_SECURITY_TrustCertVerifyCallback() in that it does not
+**       save the certificate chain for use by ControllerTrust
 **
 ** \param   preverify_ok - set to 1, if the current certificate passed, set to 0 if it did not
 ** \param   x509_ctx - pointer to context for certificate chain verification
@@ -813,7 +825,7 @@ int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x5
 **          0 if certificate chain should not be trusted, and connection dropped
 **
 **************************************************************************/
-int DEVICE_SECURITY_BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
+int DEVICE_SECURITY_NoSaveTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx)
 {
     int cert_err;
     bool is_reliable;
@@ -919,6 +931,10 @@ int DEVICE_SECURITY_AddCertHostnameValidation(SSL* ssl, const char* name, size_t
     X509_VERIFY_PARAM_set_hostflags(verify_object, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
     X509_VERIFY_PARAM_set1_host(verify_object, name, length);
 }
+#endif
+
+#if OPENSSL_VERSION_NUMBER >= 0x0090806f // SSL version 0.9.8f
+    SSL_set_tlsext_host_name(ssl, name);
 #endif
 
     return USP_ERR_OK;
@@ -1430,8 +1446,8 @@ void LogCertChain(STACK_OF_X509 *cert_chain)
     int i;
     X509 *cert;
     unsigned num_certs;
-    char *subject;
-    char *issuer;
+    char subject[257];
+    char issuer[257];
 
     // Iterate over all certs in the chain, printing their subject and issuer
     num_certs = sk_X509_num(cert_chain);
@@ -1441,12 +1457,14 @@ void LogCertChain(STACK_OF_X509 *cert_chain)
         cert = (X509*) sk_X509_value(cert_chain, i);
         if (cert == NULL)
         {
-            subject = issuer = "Unable to get cert";
+            char *fail_str = "Unable to get cert";
+            USP_STRNCPY(subject, fail_str, sizeof(subject));
+            USP_STRNCPY(issuer, fail_str, sizeof(issuer));
         }
         else
         {
-            subject = X509_NAME_oneline(X509_get_subject_name(cert), NULL, 0);
-            issuer = X509_NAME_oneline(X509_get_issuer_name(cert), NULL, 0);
+            X509_NAME_oneline(X509_get_subject_name(cert), subject, sizeof(subject));
+            X509_NAME_oneline(X509_get_issuer_name(cert), issuer, sizeof(issuer));
         }
         USP_LOG_Info("[%d] Subject: %s", i, subject);
         USP_LOG_Info("[%d]      (Issuer: %s)", i, issuer);
@@ -2021,6 +2039,7 @@ int AddCert(X509 *cert, cert_usage_t cert_usage, ctrust_role_t role)
     err = CalcCertHash(cert, &hash);
     if (err != USP_ERR_OK)
     {
+        X509_free(cert);
         return err;
     }
 
@@ -2051,7 +2070,7 @@ int AddCert(X509 *cert, cert_usage_t cert_usage, ctrust_role_t role)
     err |= ParseCert_NotAfter(cert, ct->not_after, sizeof(ct->not_after));
     err |= ParseCert_SubjectAlt(cert, &ct->subject_alt);
     err |= ParseCert_SignatureAlg(cert, &ct->signature_algorithm);
-    err |= CalcCertHash(cert, &ct->hash);
+    ct->hash = hash;
 
     // Exit if any error occurred when parsing
     if (err != USP_ERR_OK)

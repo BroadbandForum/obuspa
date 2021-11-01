@@ -151,7 +151,7 @@ int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *
     #define DEVICE_ROOT_STR "Device."
     if (strncmp(path, DEVICE_ROOT_STR, sizeof(DEVICE_ROOT_STR)-1) != 0)
     {
-        USP_ERR_SetMessage("%s: Expression does not start in '%s'", __FUNCTION__, DEVICE_ROOT_STR);
+        USP_ERR_SetMessage("%s: Expression does not start in '%s' (path='%s')", __FUNCTION__, DEVICE_ROOT_STR, path);
         return USP_ERR_INVALID_PATH;
     }
 
@@ -2001,13 +2001,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
 
         case kResolveOp_Set:
             // kResolveOp_Set resolves to objects, not parameters
-            // So checking for permission to write is performed later by calling
-
-            if ((permission_bitmask & PERMIT_SET)==0)
-            {
-                USP_ERR_SetMessage("%s: No permission to write to %s", __FUNCTION__, path);
-                return USP_ERR_PERMISSION_DENIED;
-            }
+            // So checking for permission to write is performed later in GROUP_SET_VECTOR_Add() when the parameter to set is known
             break;
 
         case kResolveOp_Add:

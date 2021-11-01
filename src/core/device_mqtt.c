@@ -306,14 +306,6 @@ int DEVICE_MQTT_Start(void)
         return err;
     }
 
-    // Exit, issuing a warning, if no MQTT clients are present in database
-    if (iv.num_entries == 0)
-    {
-        USP_LOG_Warning("%s: WARNING: No instances in %s", __FUNCTION__, DEVICE_MQTT_CLIENT);
-        err = USP_ERR_OK;
-        goto exit;
-    }
-
     // Add all MQTT clients to the MQTT client array
     for (i=0; i < iv.num_entries; i++)
     {

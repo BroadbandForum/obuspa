@@ -18,12 +18,16 @@ For example,  DEVICE_XXX_Init() refers to a set of functions:
 ## Building OB-USP-AGENT
 1. Install dependencies (Curl, OpenSSL, Sqlite, z-lib, autotools) using package manager:
 ```
+$ sudo apt-get install libssl-dev libcurl4-openssl-dev libsqlite3-dev libz-dev autoconf automake libtool  pkg-config
+```
+2. Install optional dependencies (libmosquitto, libwebsockets) using package manager:
+```
 $ sudo apt-add-repository ppa:mosquitto-dev/mosquitto-ppa
 $ sudo apt-get update
-$ sudo apt-get install libssl-dev libcurl4-openssl-dev libsqlite3-dev libz-dev autoconf automake libtool libmosquitto-dev pkg-config
+$ sudo apt-get install libmosquitto-dev libwebsockets-dev
 ```
 
-2. Install OB-USP-AGENT from source:
+3. Install OB-USP-AGENT from source:
 ```
 $ autoreconf --force --install
 $ ./configure
@@ -34,6 +38,7 @@ $ sudo make install
 ### Configure Options
 * _--disable-coap_ - Removes CoAP MTP
 * _--disable-mqtt_ - Removes MQTT MTP
+* _--disable-websockets_ - Removes WebSockets MTP
 * _--disable-stomp_ - Removes STOMP MTP
 
 ## Running OB-USP-AGENT for the first time

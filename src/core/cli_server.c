@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -65,6 +65,7 @@
 #include "version.h"
 #include "stomp.h"
 #include "group_get_vector.h"
+#include "bdc_exec.h"
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -79,6 +80,7 @@ int ExecuteCli_Set(char *arg1, char *arg2, char *usage);
 int ExecuteCli_Add(char *arg1, char *arg2, char *usage);
 int ExecuteCli_Del(char *arg1, char *arg2, char *usage);
 int ExecuteCli_Operate(char *arg1, char *arg2, char *usage);
+int ExecuteCli_Event(char *arg1, char *arg2, char *usage);
 int ExecuteCli_GetInstances(char *arg1, char *arg2, char *usage);
 int ExecuteCli_Show(char *arg1, char *arg2, char *usage);
 int ExecuteCli_Dump(char *arg1, char *arg2, char *usage);
@@ -134,6 +136,7 @@ cli_cmd_t cli_commands[] =
     { "add",     1, RUN_REMOTELY, ExecuteCli_Add,   "add [object]"},
     { "del",     1, RUN_REMOTELY, ExecuteCli_Del,   "del [path-expr]"},
     { "operate", 1, RUN_REMOTELY, ExecuteCli_Operate,"operate [operation]"},
+    { "event",   1, RUN_REMOTELY, ExecuteCli_Event, "event [event]"},
     { "instances", 1, RUN_REMOTELY, ExecuteCli_GetInstances,   "instances [path-expr]" },
     { "show",    1, RUN_LOCALLY,  ExecuteCli_Show,  "show ['datamodel' | 'database' ]"},
     { "dump",    1, RUN_REMOTELY, ExecuteCli_Dump,  "dump ['memory' | 'mdelta' | 'subscriptions' | 'instances' ]"},
@@ -1134,6 +1137,100 @@ exit:
 
 /*********************************************************************//**
 **
+** ExecuteCli_Event
+**
+** Executes the event CLI command
+** NOTE: A subscription must be in place for the event to be sent
+**
+** \param   arg1 - event (and args) to emit
+** \param   arg2 - unused
+** \param   usage - pointer to string containing usage info for this command
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ExecuteCli_Event(char *arg1, char *arg2, char *usage)
+{
+    int i;
+    int err;
+    str_vector_t events;
+    kv_vector_t args;
+    char *bracket_start;
+    char *bracket_end;
+    char *pling;
+    expr_op_t valid_ops[] = {kExprOp_Equals};
+    expr_vector_t temp_ev;
+
+    // Initialise all vectors used by this function
+    KV_VECTOR_Init(&args);
+    EXPR_VECTOR_Init(&temp_ev);
+    STR_VECTOR_Init(&events);
+
+    // Exit if argument does not contain an exclamation mark
+    pling = TEXT_UTILS_StrStr(arg1, "!");
+    if (pling == NULL)
+    {
+        SendCliResponse("Missing exclamation mark in event name\n");
+        err = USP_ERR_INVALID_ARGUMENTS;
+        goto exit;
+    }
+
+    // Skip extracting arguments if none supplied
+    bracket_start = TEXT_UTILS_StrStr(arg1, "(");
+    if (bracket_start == NULL)
+    {
+        goto resolved;
+    }
+
+    // Exit if closing bracket is not present
+    bracket_end = TEXT_UTILS_StrStr(bracket_start, ")");
+    if (bracket_end == NULL)
+    {
+        SendCliResponse("Missing closing bracket around the arguments\n");
+        err = USP_ERR_INVALID_ARGUMENTS;
+        goto exit;
+    }
+
+    // Split off the arguments for the operation
+    *bracket_start = '\0';
+    *bracket_end= '\0';
+
+    // Exit if unable to extract the args into a temporary expression vector
+    err = EXPR_VECTOR_SplitExpressions(&bracket_start[1], &temp_ev, ",", valid_ops, NUM_ELEM(valid_ops), EXPR_FROM_CLI);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Convert the expression vector to a key-value vector, destroying the expression vector
+    EXPR_VECTOR_ToKeyValueVector(&temp_ev, &args);
+
+resolved:
+    // Exit if unable to get a list of all events referenced by the expression
+    err = PATH_RESOLVER_ResolvePath(arg1, &events, NULL, kResolveOp_Event, NULL, INTERNAL_ROLE, 0);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Iterate over all events to operate on
+    for (i=0; i < events.num_entries; i++)
+    {
+        SendCliResponse("Event (%s) being signalled\n", events.vector[i]);
+        DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(events.vector[i], &args);
+    }
+
+    err = USP_ERR_OK;
+
+exit:
+    KV_VECTOR_Destroy(&args);
+    STR_VECTOR_Destroy(&events);
+    EXPR_VECTOR_Destroy(&temp_ev);
+    return err;
+}
+
+/*********************************************************************//**
+**
 ** ExecuteCli_GetInstances
 **
 ** Executes the get instances CLI command
@@ -1534,6 +1631,7 @@ int ExecuteCli_ProtoTrace(char *arg1, char *arg2, char *usage)
 int ExecuteCli_Stop(char *arg1, char *arg2, char *usage)
 {
     // Signal that USP Agent should stop, once no queued messages to send
+    BDC_EXEC_ScheduleExit();
     MTP_EXEC_ScheduleExit();
     MTP_EXEC_ActivateScheduledActions();
 

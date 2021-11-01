@@ -1008,11 +1008,12 @@ void TEXT_UTILS_StripChars(char *strip_chars, char *src, char *dest, int dest_le
 ** \param   dst - pointer to buffer in which to store the percent encoded output string
 ** \param   dst_len - length of buffer in which to store the percent encoded output string
 ** \param   safe_chars - characters which should not be percent encoded (these are in addition to alphanumeric chars, which are never percent encoded)
+** \param   flags - flags controlling the encoding e.g. USE_LOWERCASE_HEX_DIGITS
 **
 ** \return  None
 **
 **************************************************************************/
-void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char *safe_chars)
+void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char *safe_chars, unsigned flags)
 {
     char c;
     bool is_percent_encode;
@@ -1046,8 +1047,8 @@ void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char *saf
         if (is_percent_encode)
         {
             *dst++ = '%';
-            *dst++ = TEXT_UTILS_ValueToHexDigit( BITS(7, 4, c));
-            *dst++ = TEXT_UTILS_ValueToHexDigit( BITS(3, 0, c));
+            *dst++ = TEXT_UTILS_ValueToHexDigit( BITS(7, 4, c), flags);
+            *dst++ = TEXT_UTILS_ValueToHexDigit( BITS(3, 0, c), flags);
         }
         else
         {
@@ -1276,11 +1277,12 @@ int TEXT_UTILS_HexDigitToValue(char c)
 ** Converts the specified value into a hex character (0-F)
 **
 ** \param   nibble - value to convert (0-15)
+** \param   flags - flags controlling the encoding e.g. USE_LOWERCASE_HEX_DIGITS
 **
 ** \return  value of hex digit (nibble), or 'X' if unable to convert the value
 **
 **************************************************************************/
-char TEXT_UTILS_ValueToHexDigit(int nibble)
+char TEXT_UTILS_ValueToHexDigit(int nibble, unsigned flags)
 {
     if ((nibble >=0) && (nibble <=9))
     {
@@ -1289,7 +1291,14 @@ char TEXT_UTILS_ValueToHexDigit(int nibble)
 
     if ((nibble >= 10) && (nibble <=15))
     {
-        return nibble - 10 + 'A';
+        if (flags & USE_LOWERCASE_HEX_DIGITS)
+        {
+            return nibble - 10 + 'a';
+        }
+        else
+        {
+            return nibble - 10 + 'A';
+        }
     }
 
     // If the code gets here then the digit could not be converted

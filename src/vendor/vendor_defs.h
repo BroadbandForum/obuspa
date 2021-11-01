@@ -61,7 +61,7 @@
 #define MAX_COAP_CLIENTS (MAX_CONTROLLERS)  // Maximum number of CoAP controllers which an agent sends to
 #define MAX_COAP_SERVER_SESSIONS 2      // Maxiumum number of simultaneous sessions with CoAP controllers which the agent can service
 #define MAX_MQTT_SUBSCRIPTIONS 5
-#define MAX_ACTIVATE_TIME_WINDOWS 5 // Maximum number of time windows allowed in the Activate() command's input arguments
+#define MAX_WEBSOCKET_CLIENTS (MAX_CONTROLLERS)  // Maximum number of WebSocket controllers which an agent sends to
 #define MAX_NODE_MAP_BUCKETS  1024  // Maximum number of buckets in the data model node map. This should be set to at least the number of registered parameters and objects in the data model
 
 // NB: If you change this, you must also change the SSL callback functions within mqtt.c
@@ -120,6 +120,7 @@
 // Uncomment the following defines to add code and features to the standard build
 //#define VALIDATE_OUTPUT_ARG_NAMES        // Checks that the output argument names in operations and events formed by code in USP Agent
                                            // match the schema registered in the data model by USP_REGISTER_OperationArguments() and USP_REGISTER_EventArguments
+
 //-----------------------------------------------------------------------------------------
 // The following define controls whether STOMP connects over the default WAN interface, or
 // whether the Linux routing tables can decide which interface to use
@@ -177,7 +178,7 @@
 //       If after modifying, you are unsure, try reading back the default values from an empty database and checking that they make sense
 #define BULKDATA_MAX_PROFILES 5                    // Maximum number of bulk data profiles supported
 #define BULKDATA_MAX_RETAINED_FAILED_REPORTS 3     // Maximum number of retained failed bulk data reports
-#define BULKDATA_MINIMUM_REPORTING_INTERVAL 300    // Minimum supported reporting interval, in seconds
+#define BULKDATA_MINIMUM_REPORTING_INTERVAL 1    // Minimum supported reporting interval, in seconds
 #define BULKDATA_HTTP_AUTH_METHOD  CURLAUTH_BASIC  // HTTP Authentication method to use. Note: Normally over https
 
 #define BULKDATA_CONNECT_TIMEOUT 30   // Timeout (in seconds) when attempting to connect to a bulk data collection server

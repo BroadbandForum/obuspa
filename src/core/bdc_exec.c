@@ -82,10 +82,19 @@ static int bdc_mq_sockets[2] = {-1, -1};
 #define mq_tx_socket  bdc_mq_sockets[1]
 
 //-------------------------------------------------------------------------
+// Enumeration of message types for BDC thread's message queue
+typedef enum
+{
+    kBdcMsgType_SendReport,
+    kBdcMsgType_ScheduleExit
+} bdc_exec_msg_type_t;
+
+//-------------------------------------------------------------------------
 // Message enqueueing the sending of a bulk data collection report
 // NOTE: All dynamically allocated buffers passed with this message, pass ownership to the BDC thread
 typedef struct
 {
+    bdc_exec_msg_type_t msg_type; // Type of message
     int profile_id;          // Instance number of profile in Device.Bulkdata.Profile.{i}
     char *full_url;          // URL of the BDC server to post the report to
     char *query_string;      // HTTP query string, sent to the BDC server
@@ -106,6 +115,10 @@ static CURLM *curl_multi_ctx;
 
 // Number of curl easy interface handles that have been added to the curl multi-interface handle
 static int num_transfers_in_progress = 0;
+
+//------------------------------------------------------------------------------
+// Flag to determine whether BDC thread should exit
+static bool bdc_exit_scheduled = false;
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -185,6 +198,7 @@ int BDC_EXEC_PostReportToSend(int profile_id, char *full_url, char *query_string
 
     // Form message (do this first, so that we can free message contents if a failure occurs)
     memset(&msg, 0, sizeof(msg));
+    msg.msg_type = kBdcMsgType_SendReport;
     msg.profile_id = profile_id;
     msg.full_url = full_url;
     msg.query_string = query_string;
@@ -220,6 +234,42 @@ int BDC_EXEC_PostReportToSend(int profile_id, char *full_url, char *query_string
 
 /*********************************************************************//**
 **
+** BDC_EXEC_ScheduleExit
+**
+** Posts a message to BDC Exec thread to cause it to exit
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void BDC_EXEC_ScheduleExit(void)
+{
+    bdc_exec_msg_t  msg;
+    int bytes_sent;
+
+    // Form message (do this first, so that we can free message contents if a failure occurs)
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_type = kBdcMsgType_ScheduleExit;
+
+    // Exit if message queue is not setup yet
+    if (mq_tx_socket == -1)
+    {
+        USP_LOG_Error("%s is being called before data model has been initialised", __FUNCTION__);
+        return;
+    }
+
+    // Exit if unable to send the message
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    if (bytes_sent != sizeof(msg))
+    {
+        char buf[USP_ERR_MAXLEN];
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        return;
+    }
+}
+/*********************************************************************//**
+**
 ** BDC_EXEC_Main
 **
 ** Main loop of the bulk data collection thread
@@ -233,6 +283,8 @@ void *BDC_EXEC_Main(void *args)
 {
     int num_sockets;
     socket_set_t set;
+    bdc_connection_t *bc;
+    int i;
 
     // Exit if uable to create a curl multi-interface handle
     curl_multi_ctx = curl_multi_init();
@@ -271,9 +323,33 @@ void *BDC_EXEC_Main(void *args)
                 PerformSendingReports();
                 break;
         }
+
+        // Exit this thread, if an exit is scheduled
+        // NOTE: Unlike the USP MTPs, bulk data collection does not wait for all reports to be sent
+        if (bdc_exit_scheduled)
+        {
+            goto exit;
+        }
     }
 
-    // NOTE: If this thread ever exited, it should call curl_multi_cleanup(curl_multi_ctx);
+exit:
+    // Free all BDC connections
+    for (i=0; i<NUM_ELEM(bdc_connection); i++)
+    {
+        bc = &bdc_connection[i];
+        if (bc->profile_id != INVALID)
+        {
+            FreeBdcConnection(bc);
+        }
+    }
+
+    // Free curl context
+    curl_multi_cleanup(curl_multi_ctx);
+
+    // Signal the data model thread that this thread has exited
+    DM_EXEC_PostMtpThreadExited(BDC_EXITED);
+
+    return NULL;
 }
 
 /*********************************************************************//**
@@ -359,7 +435,16 @@ void ProcessBdcMessageQueueSocketActivity(socket_set_t *set)
         return;
     }
 
+    // Exit if this is a ScheduleExit message
+    if (msg.msg_type == kBdcMsgType_ScheduleExit)
+    {
+        bdc_exit_scheduled = true;
+        return;
+    }
+
+    // If the code gets here, it must be a SendReport message
     // Exit if unable to find a connection slot
+    USP_ASSERT(msg.msg_type == kBdcMsgType_SendReport);
     bc = FindFreeBdcConnection();
     if (bc == NULL)
     {
@@ -872,7 +957,7 @@ CURLcode LoadBulkDataTrustStore(CURL *curl, void *curl_sslctx, void *parm)
     }
 
     // Exit if unable to load the trust store and client cert into curl's SSL context
-    err = DEVICE_SECURITY_LoadTrustStore(curl_ssl_ctx, SSL_VERIFY_PEER, DEVICE_SECURITY_BulkDataTrustCertVerifyCallback);
+    err = DEVICE_SECURITY_LoadTrustStore(curl_ssl_ctx, SSL_VERIFY_PEER, DEVICE_SECURITY_NoSaveTrustCertVerifyCallback);
     if (err != USP_ERR_OK)
     {
         return CURLE_ABORTED_BY_CALLBACK;

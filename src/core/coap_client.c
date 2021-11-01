@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2017-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2017-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -247,6 +247,11 @@ void COAP_CLIENT_Destroy(void)
         }
     }
 
+    // Free the OpenSSL context
+    if (coap_client_ssl_ctx != NULL)
+    {
+        SSL_CTX_free(coap_client_ssl_ctx);
+    }
 }
 
 /*********************************************************************//**

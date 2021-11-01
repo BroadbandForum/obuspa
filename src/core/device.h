@@ -118,6 +118,12 @@ typedef struct
                                         // that the USP response must be sent back on a new DTLS session also. Wihout this,
                                         // the CoAP retry mechanism will cause the DTLS session to restart, but it is a while
                                         // before the retry is triggered, so this hint speeds up communications
+
+    // Following member variables only set if reply_to was specified and USP message was received over Websockets
+    int wsclient_cont_instance;         // Controller instance number in Device.LocalAgent.Controller.{i}
+    int wsclient_mtp_instance;          // MTP instance number in Device.LocalAgent.Controller.{i}.MTP.{i}
+
+
 } mtp_reply_to_t;
 
 //------------------------------------------------------------------------------
@@ -168,6 +174,9 @@ void DEVICE_STOMP_ScheduleReconnect(int instance);
 mtp_status_t DEVICE_STOMP_GetMtpStatus(int instance);
 int DEVICE_STOMP_CountEnabledConnections(void);
 void DEVICE_STOMP_GetDestinationFromServer(int instance, char *buf, int len);
+int DEVICE_WEBSOCK_Init(void);
+int DEVICE_WEBSOCK_Start(void);
+void DEVICE_WEBSOCK_Stop(void);
 int DEVICE_SUBSCRIPTION_Init(void);
 int DEVICE_SUBSCRIPTION_Start(void);
 void DEVICE_SUBSCRIPTION_Stop(void);
@@ -190,7 +199,7 @@ int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify
 int DEVICE_SECURITY_TrustCertVerifyCallbackWithCertChain(int preverify_ok, X509_STORE_CTX *x509_ctx, STACK_OF(X509) **p_cert_chain);
 void DEVICE_SECURITY_GetClientCertStatus(bool *available, bool *matches_endpoint);
 int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
-int DEVICE_SECURITY_BulkDataTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
+int DEVICE_SECURITY_NoSaveTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
 int DEVICE_SECURITY_AddCertHostnameValidation(SSL* ssl, const char* name, size_t length);
 int DEVICE_SECURITY_AddCertHostnameValidationCtx(SSL_CTX* ssl_ctx, const char* name, size_t length);
 int DEVICE_CTRUST_Init(void);

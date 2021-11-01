@@ -52,6 +52,11 @@
 #define ADD_TO_HASH(c, hash)  hash = hash*FNV_PRIME;  hash = hash^(c);
 
 //-------------------------------------------------------------------------
+// Definitions for bits within flags argument of TEXT_UTILS_PercentEncodeString() and TEXT_UTILS_ValueToHexDigit()
+#define USE_UPPERCASE_HEX_DIGITS 0x00000000
+#define USE_LOWERCASE_HEX_DIGITS 0x00000001
+
+//-------------------------------------------------------------------------
 // API functions
 dm_hash_t TEXT_UTILS_CalcHash(char *s);
 int TEXT_UTILS_StringToUnsigned(char *str, unsigned *value);
@@ -72,14 +77,14 @@ void TEXT_UTILS_SplitString(char *str, str_vector_t *sv, char *separator);
 void TEXT_UTILS_StrncpyLen(char *dst, int dst_len, char *src, int src_len);
 char *TEXT_UTILS_StrStr(char *haystack, char *needle);
 int TEXT_UTILS_NullStringCompare(char *str1, char *str2);
-void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char *safe_chars);
+void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char *safe_chars, unsigned flags);
 void TEXT_UTILS_PercentDecodeString(char *buf);
 void TEXT_UTILS_ReplaceCharInString(char *src, char match_char, char *replacement, char *dst, int dst_len);
 char *TEXT_UTILS_TrimBuffer(char *buf);
 void TEXT_UTILS_StripChars(char *strip, char *src, char *dest, int dest_len);
 int TEXT_UTILS_HexStringToValue(char *s);
 int TEXT_UTILS_HexDigitToValue(char c);
-char TEXT_UTILS_ValueToHexDigit(int nibble);
+char TEXT_UTILS_ValueToHexDigit(int nibble, unsigned flags);
 void TEXT_UTILS_PathToSchemaForm(char *path, char *buf, int len);
 int TEXT_UTILS_CountConsecutiveDigits(char *p);
 char *TEXT_UTILS_StrDupWithTrailingDot(char *path);

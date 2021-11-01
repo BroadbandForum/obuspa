@@ -278,6 +278,11 @@ void COAP_SERVER_Destroy(void)
         }
     }
 
+    // Free the OpenSSL context
+    if (coap_server_ssl_ctx != NULL)
+    {
+        SSL_CTX_free(coap_server_ssl_ctx);
+    }
 }
 
 /*********************************************************************//**
@@ -2209,7 +2214,7 @@ int CalcUriQueryOption(int socket_fd, bool encryption_preference, char *buf, int
     }
 
     // Percent encode our resource name according to step 6 in section 6.5 (Composing URIs from Options) of RFC7252
-    TEXT_UTILS_PercentEncodeString(cs->listen_resource, resource_name, sizeof(resource_name), ".~-_!$&'()*+,;=:@/");
+    TEXT_UTILS_PercentEncodeString(cs->listen_resource, resource_name, sizeof(resource_name), ".~-_!$&'()*+,;=:@/", USE_UPPERCASE_HEX_DIGITS);
 
 
     // Fill in the URI query option. This specifies where the USP controller should send responses to

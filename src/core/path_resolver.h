@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,7 +52,7 @@ typedef enum
     kResolveOp_Add,     // Resolves objects that are not fully qualified
     kResolveOp_Del,     // Resolves fully qualified objects that exist
     kResolveOp_Oper,    // Resolves operations (for when a request is made to perform an operation)
-    kResolveOp_Event,   // Resolves events (currently not triggered by the code - included for completeness)
+    kResolveOp_Event,   // Resolves events
     kResolveOp_Instances, // Resolves fully qualified objects that exist
 
     // The following operations are similar to their conterparts above, other than they check different permission bits

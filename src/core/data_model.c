@@ -61,6 +61,10 @@
 #include "usp_coap.h"
 #endif
 
+#ifdef ENABLE_WEBSOCKETS
+#include "wsclient.h"
+#endif
+
 //--------------------------------------------------------------------
 // Boolean that allows us to control which scope the USP_REGISTER_XXX() functions can be called in
 bool is_executing_within_dm_init = false;
@@ -156,6 +160,11 @@ int DATA_MODEL_Init(void)
 #ifdef ENABLE_COAP
     // Initialise CoAP protocol layer
     COAP_Init();
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+    // Initialise WebSockets protocol layer
+    WSCLIENT_Init();
 #endif
 
     // Register core implemented nodes in the schema
@@ -290,7 +299,16 @@ int DATA_MODEL_Start(void)
     err |= DEVICE_TIME_Start();
 #endif
     err |= DEVICE_CONTROLLER_Start();
+
+    // Load trust store and client certs into USP Agent's cache
+    // NOTE: This call does not leave any dynamic allocations owned by SSL (which is necessary, since libwebsockets is going to re-initialise SSL)
     err |= DEVICE_SECURITY_Start();
+
+#ifdef ENABLE_WEBSOCKETS
+    // IMPORTANT: libwebsockets re-initialises libssl here, then loads the trust store and client cert from USP Agent's cache
+    err |= WSCLIENT_Start();
+#endif
+
 #ifndef DISABLE_STOMP
     err |= DEVICE_STOMP_Start();          // NOTE: This must come after DEVICE_SECURITY_Start(), as it assumes the trust store and client certs have been locally cached
 #endif
@@ -355,6 +373,7 @@ void DATA_MODEL_Stop(void)
 #ifdef ENABLE_MQTT
     DEVICE_MQTT_Stop();
 #endif
+    DEVICE_BULKDATA_Stop();
     DEVICE_CTRUST_Stop();
     DEVICE_SECURITY_Stop();
     DEVICE_LOCAL_AGENT_Stop();
@@ -4263,8 +4282,16 @@ void DestroySchemaRecursive(dm_node_t *parent)
         case kDMNodeType_Object_SingleInstance:
         case kDMNodeType_VendorParam_ReadOnly:
         case kDMNodeType_VendorParam_ReadWrite:
-        case kDMNodeType_Event:
             // These types of nodes do not allocate anything extra in the 'registered' union
+            break;
+
+        case kDMNodeType_Event:
+            {
+                dm_event_info_t *info;
+
+                info = &parent->registered.event_info;
+                STR_VECTOR_Destroy(&info->event_args);
+            }
             break;
 
         case kDMNodeType_SyncOperation:

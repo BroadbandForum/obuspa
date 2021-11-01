@@ -183,6 +183,26 @@ int USP_MEM_Init(void)
 
 /*********************************************************************//**
 **
+** USP_MEM_Destroy
+**
+** Frees all memory used by this component
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void USP_MEM_Destroy(void)
+{
+    // Free the memory used by the leak detector
+    if (minfo != NULL)
+    {
+        free(minfo);
+    }
+}
+
+/*********************************************************************//**
+**
 ** USP_MEM_Malloc
 **
 ** Wrapper around malloc() that terminates with error message if it failed

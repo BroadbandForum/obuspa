@@ -85,10 +85,12 @@ SOURCES = src/core/main.c \
                     src/core/coap_server.c \
                     src/core/uri.c \
                     src/core/mqtt.c \
-                    src/core/device_mqtt.c
+                    src/core/device_mqtt.c \
+                    src/core/wsclient.c
+
 
 obuspa_SOURCES = $(SOURCES)
-obuspa_CPPFLAGS = $(openssl_CFLAGS) $(sqlite3_CFLAGS) $(libcurl_CFLAGS) $(zlib_CFLAGS) $(libmosquitto_CFLAGS)
+obuspa_CPPFLAGS = $(openssl_CFLAGS) $(sqlite3_CFLAGS) $(libcurl_CFLAGS) $(zlib_CFLAGS) $(libmosquitto_CFLAGS) $(libwebsockets_CFLAGS) 
 obuspa_CPPFLAGS += -DOBUSPA_LOCAL_STATE_DIR=\"$(OBUSPA_LOCAL_STATE_DIR)\"
 obuspa_CPPFLAGS +=  $(AM_CPPFLAGS) \
                       -Werror \
@@ -103,7 +105,7 @@ obuspa_CPPFLAGS +=  $(AM_CPPFLAGS) \
 obuspa_LDFLAGS = -rdynamic
 
 obuspa_LDADD = -lm -ldl -lpthread -lrt
-obuspa_LDADD += $(openssl_LIBS) $(sqlite3_LIBS) $(libcurl_LIBS) $(zlib_LIBS) $(libmosquitto_LIBS)
+obuspa_LDADD += $(openssl_LIBS) $(sqlite3_LIBS) $(libcurl_LIBS) $(zlib_LIBS) $(libmosquitto_LIBS) $(libwebsockets_LIBS)
 
 obuspa_LDFLAGS += -Wl,-rpath=/usr/local/lib
 

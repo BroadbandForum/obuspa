@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -54,6 +54,7 @@
 //------------------------------------------------------------------------------------
 // Functions wrapping memory allocation
 int USP_MEM_Init(void);
+void USP_MEM_Destroy(void);
 void *USP_MEM_Malloc(const char *func, int line, int size) ARGS_NONNULL MALLOC RETURNS_NONNULL;
 void USP_MEM_Free(const char *func, int line, void *ptr) ARGS_NONNULL;
 void *USP_MEM_Realloc(const char *func, int line, void *ptr, int size) ARGINDEX_NONNULL(1) MALLOC RETURNS_NONNULL;

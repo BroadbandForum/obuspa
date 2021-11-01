@@ -174,7 +174,7 @@ iso8601_us_strftime(char *buf, size_t bufsiz, const struct timeval *tv)
 
         size_t sz;
         sz = strftime(buf, bufsiz-8, "%FT%T.", gmtime(&tv->tv_sec));
-        sz += sprintf(buf+strlen(buf), "%06ldZ", tv->tv_usec);
+        sz += sprintf(buf+strlen(buf), "%06ldZ", (long int)tv->tv_usec);
         return sz;
 }
 

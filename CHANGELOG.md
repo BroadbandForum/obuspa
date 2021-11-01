@@ -1,5 +1,17 @@
 # OB-USP-AGENT Changelog since Release 4.1
 
+## 2021-11-04: Added WebSockets client Support
+
+### Added
+- WebSockets client Support
+- TLS Server Name Indication for STOMP
+- 'obuspa -c event' signals a USP event (for testing purposes)
+
+### Fixed
+- Compilation errors on GCC 11.2 cross compiler for ARM
+- ControllerTrust parameter set permission was incorrectly additionally considering the set permission of the parent object
+
+
 ## 2021-10-04: Add support for mallinfo2, mallinfo deprecated on glibc >= 2.33 (GH#26)
 
 ### Added

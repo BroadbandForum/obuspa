@@ -749,6 +749,15 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_pro
             USP_ASSERT(cur_msg_combined_role.inherited == role);
             break;
 #endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kMtpProtocol_WebSockets:
+            // If the message was received over WebSockets, then the inherited role won't have been saved in DEVICE_CONTROLLER,
+            // so override with the role that was passed with the USP message
+            USP_ASSERT(cur_msg_combined_role.inherited == ROLE_DEFAULT);
+            cur_msg_combined_role.inherited = role;
+            break;
+#endif
         default:
             TERMINATE_BAD_CASE(protocol);
             break;
