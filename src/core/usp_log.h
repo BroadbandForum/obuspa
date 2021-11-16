@@ -66,13 +66,13 @@ typedef enum
 //------------------------------------------------------------------------------------
 // API
 void USP_LOG_Init(void);
-int USP_LOG_SetFile(char *file);
+int USP_LOG_SetFile(const char *file);
 void USP_LOG_Callstack(void);
-void USP_LOG_HexBuffer(char *title, unsigned char *buf, int len);
+void USP_LOG_HexBuffer(const char *title, const unsigned char *buf, int len);
 void USP_LOG_String(log_type_t log_type, char *str);
-void USP_LOG_Printf(log_type_t log_type, char *fmt, ...) __attribute__((format(printf, 2, 3)));
-void USP_LOG_Puts(log_type_t log_type, char *str);
-void USP_LOG_ErrorSSL(const char *func_name, char *failure_string, int ret, int err);
+void USP_LOG_Printf(log_type_t log_type, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+void USP_LOG_Puts(log_type_t log_type, const char *str);
+void USP_LOG_ErrorSSL(const char *func_name, const char *failure_string, int ret, int err);
 
 //------------------------------------------------------------------------------------
 // Macros used for normal debug logging

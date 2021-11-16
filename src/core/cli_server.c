@@ -340,7 +340,7 @@ void CLI_SERVER_ProcessSocketActivity(socket_set_t *set)
 ** \return  None
 **
 **************************************************************************/
-void CLI_SERVER_SendResponse(char *s)
+void CLI_SERVER_SendResponse(const char *s)
 {
     if (dump_to_cli)
     {

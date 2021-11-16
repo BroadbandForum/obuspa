@@ -69,7 +69,7 @@ bool enable_protocol_trace = false;             // Whether protocol tracing shou
 
 //------------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
-void LogMessageToFile(FILE *fd, char *str);
+void LogMessageToFile(FILE *fd, const char *str);
 void CloseLog(void);
 
 /*********************************************************************//**
@@ -100,7 +100,7 @@ void USP_LOG_Init(void)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int USP_LOG_SetFile(char *file)
+int USP_LOG_SetFile(const char *file)
 {
     // Close the current log file
     CloseLog();
@@ -192,7 +192,7 @@ void USP_LOG_Callstack(void)
 ** \return  None
 **
 **************************************************************************/
-void USP_LOG_HexBuffer(char *title, unsigned char *buf, int len)
+void USP_LOG_HexBuffer(const char *title, const unsigned char *buf, int len)
 {
     int i;
     int residual;
@@ -317,7 +317,7 @@ void USP_LOG_HexBuffer(char *title, unsigned char *buf, int len)
 ** \return  USP_ERR_OK if no error occurred
 **
 **************************************************************************/
-void USP_LOG_ErrorSSL(const char *func_name, char *failure_string, int ret, int err)
+void USP_LOG_ErrorSSL(const char *func_name, const char *failure_string, int ret, int err)
 {
     char ssl_str[128] = {0};  // OpenSSL requires at least 120 bytes in this buffer
     char errno_str[128] = {0};
@@ -385,7 +385,7 @@ void USP_LOG_String(log_type_t log_type, char *str)
 ** \return  None
 **
 **************************************************************************/
-void USP_LOG_Printf(log_type_t log_type, char *fmt, ...)
+void USP_LOG_Printf(log_type_t log_type, const char *fmt, ...)
 {
     va_list ap;
     char buf[USP_LOG_MAXLEN];
@@ -418,7 +418,7 @@ void USP_LOG_Printf(log_type_t log_type, char *fmt, ...)
 ** \return  None
 **
 **************************************************************************/
-void USP_LOG_Puts(log_type_t log_type, char *str)
+void USP_LOG_Puts(log_type_t log_type, const char *str)
 {
     switch(log_type)
     {
@@ -468,7 +468,7 @@ void USP_LOG_Puts(log_type_t log_type, char *str)
 ** \return  None
 **
 **************************************************************************/
-void LogMessageToFile(FILE *fd, char *str)
+void LogMessageToFile(FILE *fd, const char *str)
 {
     log_message_cb_t log_message_cb;
 

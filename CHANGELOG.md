@@ -1,5 +1,11 @@
 # OB-USP-AGENT Changelog since Release 4.1
 
+## 2021-11-16: Added 'const' declaration to 'char *' usage in logger functions
+
+### Fixed
+- Added 'const' declaration to 'char *' usage in logger functions for calling from C++
+
+
 ## 2021-11-04: Added WebSockets client Support
 
 ### Added

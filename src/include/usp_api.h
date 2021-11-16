@@ -277,7 +277,7 @@ typedef int (*get_hardware_version_cb_t)(char *buf, int len);
 typedef unsigned long long (*stats_collection_enable_cb_t)(bool enable, char *interface_name);
 typedef int (*dm_vendor_get_mtp_password_cb_t)(int instance, char *buf, int len);
 typedef int (*load_agent_cert_cb_t)(SSL_CTX *ctx);
-typedef void (*log_message_cb_t)(char *buf);
+typedef void (*log_message_cb_t)(const char *buf);
 
 //-------------------------------------------------------------------------
 // Typedef for structure containing core vendor hook callbacks
