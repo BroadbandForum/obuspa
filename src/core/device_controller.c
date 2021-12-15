@@ -57,11 +57,17 @@
 #include "iso8601.h"
 #include "retry_wait.h"
 
+#ifndef DISABLE_STOMP
+#include "stomp.h"
+#endif
+
 #ifdef ENABLE_COAP
 #include "usp_coap.h"
 #endif
+
 #ifdef ENABLE_WEBSOCKETS
 #include "wsclient.h"
+#include "wsserver.h"
 #endif
 //------------------------------------------------------------------------------
 // Location of the controller table within the data model
@@ -175,6 +181,8 @@ int Notify_ControllerAssignedRole(dm_req_t *req, char *value);
 int UpdateAssignedRole(controller_t *cont, char *reference);
 int ValidateMtpUniqueness(mtp_protocol_t protocol, int cont_inst, int mtp_inst);
 int ValidateMtpResourceAvailable(mtp_protocol_t protocol, int cont_inst, int mtp_inst);
+int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp, mtp_reply_to_t *dest);
+int QueueBinaryMessageOnMtp(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *usp_msg_id, mtp_reply_to_t *mrt, controller_t *cont, controller_mtp_t *mtp, time_t expiry_time);
 
 #ifndef DISABLE_STOMP
 int Notify_ControllerMtpStompReference(dm_req_t *req, char *value);
@@ -203,6 +211,7 @@ int Notify_ControllerMtpWebsockEncryption(dm_req_t *req, char *value);
 int Notify_ControllerMtpWebsockKeepAlive(dm_req_t *req, char *value);
 int Notify_ControllerMtpWebsockRetryInterval(dm_req_t *req, char *value);
 int Notify_ControllerMtpWebsockRetryMultiplier(dm_req_t *req, char *value);
+void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt);
 #endif
 
 /*********************************************************************//**
@@ -631,13 +640,14 @@ void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role)
 ** DEVICE_CONTROLLER_QueueBinaryMessage
 **
 ** Queues a binary message to be sent to a controller
+** NOTE: This function determines the destination MTP, if the message is a USP notification
 **
 ** \param   usp_msg_type - Type of USP message contained in pbuf. This is used for debug logging when the message is sent by the MTP.
 ** \param   endpoint_id - controller to send the message to
 ** \param   pbuf - pointer to buffer containing binary protobuf message. Ownership of this buffer passes to protocol handler, if successful
 ** \param   pbuf_len - length of buffer containing protobuf binary message
 ** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
-** \param   mrt - details of where this USP response message should be sent
+** \param   mrt - details of where this USP response message should be sent. NOTE: This may not be specified if the message is a notification
 ** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
@@ -662,122 +672,36 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Exit if unable to find a controller MTP to send this message on (if no reply_to is available)
+    // Find the configured MTP in the Controller.MTP table to send the USP Record to
+    // NOTE: This may be NULL if no MTP is configured for the controller
     mtp = FindFirstEnabledMtp(cont, mrt->protocol);
-    if ((mtp == NULL) && (mrt->is_reply_to_specified == false))
-    {
-        USP_ERR_SetMessage("%s: Unable to find a valid controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
-        return USP_ERR_INTERNAL_ERROR;
-    }
 
-    // --------------------------------------------------------------------
-    // If 'reply-to' was not specified, then use the data model to fill in where the response should be sent
+    // If 'reply-to' was not specified, then use the configured MTP to fill in where the response should be sent
     // This is always the case for notifications, since they are not a response to any incoming USP message
     if (mrt->is_reply_to_specified == false)
     {
-        switch(mtp->protocol)
+        err = CalcNotifyDest(endpoint_id, cont, mtp, &dest);
+        if (err != USP_ERR_OK)
         {
-#ifndef DISABLE_STOMP
-            case kMtpProtocol_STOMP:
-                if (mtp->stomp_connection_instance == INVALID)
-                {
-                    USP_ERR_SetMessage("%s: No Stomp connection in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
-                    return USP_ERR_INTERNAL_ERROR;
-                }
-
-                dest.protocol = kMtpProtocol_STOMP;
-                dest.stomp_instance = mtp->stomp_connection_instance;
-                dest.stomp_dest = mtp->stomp_controller_queue;
-                break;
-#endif
-
-#ifdef ENABLE_COAP
-            case kMtpProtocol_CoAP:
-                dest.protocol = kMtpProtocol_CoAP;
-                dest.coap_host = mtp->coap_controller_host;
-                dest.coap_port = mtp->coap.port;
-                dest.coap_resource = mtp->coap.resource;
-                dest.coap_encryption = mtp->coap.enable_encryption;
-                dest.coap_reset_session_hint = false;
-                break;
-#endif
-
-#ifdef ENABLE_MQTT
-            case kMtpProtocol_MQTT:
-                if (mtp->mqtt_connection_instance == INVALID)
-                {
-                    USP_ERR_SetMessage("%s: No MQTT client in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
-                    return USP_ERR_INTERNAL_ERROR;
-                }
-
-                dest.protocol = kMtpProtocol_MQTT;
-                dest.mqtt_instance = mtp->mqtt_connection_instance;
-                dest.mqtt_topic = mtp->mqtt_controller_topic;
-                break;
-#endif
+            return err;
+        }
 
 #ifdef ENABLE_WEBSOCKETS
-            case kMtpProtocol_WebSockets:
-                dest.protocol = kMtpProtocol_WebSockets;
-                dest.wsclient_cont_instance = cont->instance;
-                dest.wsclient_mtp_instance = mtp->instance;
-                break;
+        // Switch the MTP destination, if the endpoint is not currently connected via
+        // the configured connection, but is connected via the agent's websocket server
+        SwitchMtpDestIfNotConnected(endpoint_id, &dest);
 #endif
-            default:
-                TERMINATE_BAD_CASE(mtp->protocol);
-                break;
-        }
     }
 
-    // --------------------------------------------------------------------
     // Send the response
-    switch(dest.protocol)
+    // NOTE: Ownership of pbuf passes to the MTP, if successful
+    err = QueueBinaryMessageOnMtp(usp_msg_type, endpoint_id, pbuf, pbuf_len, usp_msg_id, &dest, cont, mtp, expiry_time);
+    if (err != USP_ERR_OK)
     {
-#ifndef DISABLE_STOMP
-        case kMtpProtocol_STOMP:
-        {
-            char raw_err_id_header[256];        // header's contents before colons have been escaped (to '\c')
-            char err_id_header[256];            // header's contents after colons have been escaped (to '\c')
-            char *agent_queue = DEVICE_MTP_GetAgentStompQueue(dest.stomp_instance);
-
-            // Form the colon escaped contents of the 'usp-err-id' header
-            USP_SNPRINTF(raw_err_id_header, sizeof(raw_err_id_header), "%s/%s", endpoint_id, usp_msg_id);
-            TEXT_UTILS_ReplaceCharInString(raw_err_id_header, ':', "\\c", err_id_header, sizeof(err_id_header));
-
-            err = DEVICE_STOMP_QueueBinaryMessage(usp_msg_type, dest.stomp_instance, dest.stomp_dest, agent_queue, pbuf, pbuf_len, err_id_header, expiry_time);
-        }
-            break;
-#endif
-
-#ifdef ENABLE_COAP
-        case kMtpProtocol_CoAP:
-            err = COAP_CLIENT_QueueBinaryMessage(usp_msg_type, cont->instance, mtp->instance, pbuf, pbuf_len, &dest, expiry_time);
-            break;
-#endif
-
-#ifdef ENABLE_MQTT
-        case kMtpProtocol_MQTT:
-        {
-            char *response_topic = DEVICE_MTP_GetAgentMqttResponseTopic(dest.mqtt_instance);
-            err = DEVICE_MQTT_QueueBinaryMessage(usp_msg_type, dest.mqtt_instance, dest.mqtt_topic, response_topic, pbuf, pbuf_len);
-        }
-            break;
-#endif
-
-#ifdef ENABLE_WEBSOCKETS
-        case kMtpProtocol_WebSockets:
-            WSCLIENT_QueueBinaryMessage(usp_msg_type, dest.wsclient_cont_instance, dest.wsclient_mtp_instance, pbuf, pbuf_len, kMtpContentType_UspRecord, expiry_time);
-            err = USP_ERR_OK;
-            break;
-#endif
-
-
-        default:
-            TERMINATE_BAD_CASE(mrt->protocol);
-            break;
+        return err;
     }
 
-    return err;
+    return USP_ERR_OK;
 }
 
 #ifndef DISABLE_STOMP
@@ -821,6 +745,269 @@ void DEVICE_CONTROLLER_NotifyStompConnDeleted(int stomp_instance)
     }
 }
 #endif
+
+/*********************************************************************//**
+**
+** CalcNotifyDest
+**
+** Calculates the MTP destination to send a notification to
+** This would normally be the specified MTP, however if the MTP is not currently connected
+** and the endpoint is reachable via the agent's websocket server, then the websocket server is used instead
+**
+** \param   endpoint_id - USP Controller endpoint to send the notification to
+** \param   cont - pointer to controller instance to send the message to (only used by CoAP)
+** \param   mtp - configured MTP to send the notification to, or NULL if no MTP configured for the endpoint
+** \param   mrt - pointer to structure in which to return the calculated MTP destination
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp, mtp_reply_to_t *mrt)
+{
+    // If no MTP was configured to send notifications to this controller
+    if (mtp == NULL)
+    {
+#ifdef ENABLE_WEBSOCKETS
+        // See if the controller is connected to our websocket server
+        int err;
+        err = WSSERVER_GetMTPForEndpointId(endpoint_id, mrt);
+        if (err == USP_ERR_OK)
+        {
+            return err;
+        }
+        else
+#endif
+        {
+            // If the code gets here, no MTP was found to send this message on
+            USP_ERR_SetMessage("%s: Unable to find a valid controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
+            return USP_ERR_INTERNAL_ERROR;
+        }
+    }
+
+    switch(mtp->protocol)
+    {
+#ifndef DISABLE_STOMP
+        case kMtpProtocol_STOMP:
+            if (mtp->stomp_connection_instance == INVALID)
+            {
+                USP_ERR_SetMessage("%s: No Stomp connection in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
+                return USP_ERR_INTERNAL_ERROR;
+            }
+
+            mrt->protocol = kMtpProtocol_STOMP;
+            mrt->stomp_instance = mtp->stomp_connection_instance;
+            mrt->stomp_dest = mtp->stomp_controller_queue;
+            break;
+#endif
+
+#ifdef ENABLE_COAP
+        case kMtpProtocol_CoAP:
+            mrt->protocol = kMtpProtocol_CoAP;
+            mrt->coap_host = mtp->coap_controller_host;
+            mrt->coap_port = mtp->coap.port;
+            mrt->coap_resource = mtp->coap.resource;
+            mrt->coap_encryption = mtp->coap.enable_encryption;
+            mrt->coap_reset_session_hint = false;
+            break;
+#endif
+
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+            if (mtp->mqtt_connection_instance == INVALID)
+            {
+                USP_ERR_SetMessage("%s: No MQTT client in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
+                return USP_ERR_INTERNAL_ERROR;
+            }
+
+            mrt->protocol = kMtpProtocol_MQTT;
+            mrt->mqtt_instance = mtp->mqtt_connection_instance;
+            mrt->mqtt_topic = mtp->mqtt_controller_topic;
+            break;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kMtpProtocol_WebSockets:
+            mrt->protocol = kMtpProtocol_WebSockets;
+            mrt->wsclient_cont_instance = cont->instance;
+            mrt->wsclient_mtp_instance = mtp->instance;
+            mrt->wsserv_conn_id = INVALID;
+            break;
+#endif
+        default:
+            TERMINATE_BAD_CASE(mtp->protocol);
+            break;
+    }
+
+    return USP_ERR_OK;
+}
+
+
+#ifdef ENABLE_WEBSOCKETS
+/*********************************************************************//**
+**
+** SwitchMtpDestIfNotConnected
+**
+** Switches the MTP destination, if the endpoint is not currently connected via
+** the configured connection, but is connected via the agent's websocket server
+**
+** \param   endpoint_id - USP Controller endpoint to send the notification to
+** \param   mrt - pointer to structure in which to return the calculated MTP destination
+**
+** \return  None
+**
+**************************************************************************/
+void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
+{
+    int err;
+    char *status;
+    mtp_reply_to_t wsserv_dest;
+
+    // Exit if controller is not connected to agent's websocket server
+    err = WSSERVER_GetMTPForEndpointId(endpoint_id, &wsserv_dest);
+    if (err != USP_ERR_OK)
+    {
+        return;
+    }
+
+    // Since controller is connected to agent's websocket server,
+    // use the websocket server if the configured MTP is not actually connected
+    switch(mrt->protocol)
+    {
+#ifndef DISABLE_STOMP
+        case kMtpProtocol_STOMP:
+            status = STOMP_GetConnectionStatus(mrt->stomp_instance, NULL);
+            if (strcmp(status, "Enabled") != 0)
+            {
+                memcpy(mrt, &wsserv_dest, sizeof(mtp_reply_to_t));
+            }
+            break;
+#endif
+
+#ifdef ENABLE_COAP
+        case kMtpProtocol_CoAP:
+            // Since CoAP uses UDP, we don't know if the controller is connected or not, so just send on the configured MTP (CoAP)
+            break;
+#endif
+
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+            status = (char *) MQTT_GetClientStatus(mrt->mqtt_instance);
+            if (strcmp(status, "Connected") != 0)
+            {
+                memcpy(mrt, &wsserv_dest, sizeof(mtp_reply_to_t));
+            }
+
+            break;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kMtpProtocol_WebSockets:
+            if (mrt->wsserv_conn_id == INVALID)
+            {
+                // If configured to connect via the websocket client, then if it isn't connected, then send via agent's websocket server
+                if (WSCLIENT_IsEndpointConnected(endpoint_id) == false)
+                {
+                   memcpy(mrt, &wsserv_dest, sizeof(mtp_reply_to_t));
+                }
+            }
+            else
+            {
+                // USP Record is already routed to be sent via agent's websocket server. Nothing to do.
+            }
+            break;
+#endif
+
+        default:
+            TERMINATE_BAD_CASE(mrt->protocol);
+            break;
+    }
+}
+#endif
+
+/*********************************************************************//**
+**
+** QueueBinaryMessageOnMtp
+**
+** Queues a binary message on the specified MTP
+**
+** \param   usp_msg_type - Type of USP message contained in pbuf. This is used for debug logging when the message is sent by the MTP.
+** \param   endpoint_id - controller to send the message to
+** \param   pbuf - pointer to buffer containing binary protobuf message. Ownership of this buffer passes to protocol handler, if successful
+** \param   pbuf_len - length of buffer containing protobuf binary message
+** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
+** \param   mrt - details of where this USP response message should be sent
+** \param   cont - pointer to controller instance to send the message to (only used by CoAP)
+** \param   mtp - pointer to MTP instance to send the message to (only used by CoAP)
+** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int QueueBinaryMessageOnMtp(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *usp_msg_id, mtp_reply_to_t *mrt, controller_t *cont, controller_mtp_t *mtp, time_t expiry_time)
+{
+    int err = USP_ERR_OK;
+
+    switch(mrt->protocol)
+    {
+#ifndef DISABLE_STOMP
+        case kMtpProtocol_STOMP:
+        {
+            char raw_err_id_header[256];        // header's contents before colons have been escaped (to '\c')
+            char err_id_header[256];            // header's contents after colons have been escaped (to '\c')
+            char *agent_queue = DEVICE_MTP_GetAgentStompQueue(mrt->stomp_instance);
+
+            // Form the colon escaped contents of the 'usp-err-id' header
+            USP_SNPRINTF(raw_err_id_header, sizeof(raw_err_id_header), "%s/%s", endpoint_id, usp_msg_id);
+            TEXT_UTILS_ReplaceCharInString(raw_err_id_header, ':', "\\c", err_id_header, sizeof(err_id_header));
+
+            err = DEVICE_STOMP_QueueBinaryMessage(usp_msg_type, mrt->stomp_instance, mrt->stomp_dest, agent_queue, pbuf, pbuf_len, err_id_header, expiry_time);
+        }
+            break;
+#endif
+
+#ifdef ENABLE_COAP
+        case kMtpProtocol_CoAP:
+            if ((cont == NULL) || (mtp==NULL))
+            {
+                USP_ERR_SetMessage("%s: Unable to find an enabled MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
+                return USP_ERR_INTERNAL_ERROR;
+            }
+
+            err = COAP_CLIENT_QueueBinaryMessage(usp_msg_type, cont->instance, mtp->instance, pbuf, pbuf_len, mrt, expiry_time);
+            break;
+#endif
+
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+        {
+            char *response_topic = DEVICE_MTP_GetAgentMqttResponseTopic(mrt->mqtt_instance);
+            err = DEVICE_MQTT_QueueBinaryMessage(usp_msg_type, mrt->mqtt_instance, mrt->mqtt_topic, response_topic, pbuf, pbuf_len);
+        }
+            break;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kMtpProtocol_WebSockets:
+            if (mrt->wsserv_conn_id == INVALID)
+            {
+                WSCLIENT_QueueBinaryMessage(usp_msg_type, mrt->wsclient_cont_instance, mrt->wsclient_mtp_instance, pbuf, pbuf_len, kMtpContentType_UspRecord, expiry_time);
+            }
+            else
+            {
+                WSSERVER_QueueBinaryMessage(usp_msg_type, mrt->wsserv_conn_id, pbuf, pbuf_len, kMtpContentType_UspRecord, expiry_time);
+            }
+            err = USP_ERR_OK;
+            break;
+#endif
+
+
+        default:
+            TERMINATE_BAD_CASE(mrt->protocol);
+            break;
+    }
+
+    return err;
+}
 
 /*********************************************************************//**
 **
@@ -1448,6 +1635,7 @@ int Validate_ControllerAssignedRole(dm_req_t *req, char *value)
 **************************************************************************/
 int Validate_ControllerMtpWebsockKeepAlive(dm_req_t *req, char *value)
 {
+    // NOTE: Disallow 0 for keep alive period (0 is NOT a special case for off)
     return DM_ACCESS_ValidateRange_Unsigned(req, 1, UINT_MAX);
 }
 

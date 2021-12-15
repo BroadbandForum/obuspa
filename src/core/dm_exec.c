@@ -43,6 +43,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <errno.h>
+#include <unistd.h>
 
 #include "common_defs.h"
 #include "mtp_exec.h"
@@ -66,6 +67,7 @@
 
 #ifdef ENABLE_WEBSOCKETS
 #include "wsclient.h"
+#include "wsserver.h"
 #endif
 
 //------------------------------------------------------------------------------
@@ -582,6 +584,7 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role
     pur->mtp_reply_to.mqtt_instance = mrt->mqtt_instance;
     pur->mtp_reply_to.wsclient_cont_instance = mrt->wsclient_cont_instance;
     pur->mtp_reply_to.wsclient_mtp_instance = mrt->wsclient_mtp_instance;
+    pur->mtp_reply_to.wsserv_conn_id = mrt->wsserv_conn_id;
 
     // Send the message
     bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
@@ -1129,6 +1132,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
 
             #ifdef ENABLE_WEBSOCKETS
             all_mtp_exited |= WSCLIENT_EXITED;
+            all_mtp_exited |= WSSERVER_EXITED;
             #endif
 
             all_mtp_exited |= BDC_EXITED;
@@ -1214,6 +1218,7 @@ void DM_EXEC_HandleScheduledExit(void)
     }
 
     // If nothing else has exited yet, then exit
+    usleep(100000); // Sleep for 100us, just to allow all other threads to exit (that sent the kDmExecMsg_MtpThreadExited message)
     exit(0);
 }
 
@@ -1270,7 +1275,11 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
             // Send a 'usp-err-id' STOMP frame
             // NOTE: The trailing NULL in the pbuf contents is not part of the final STOMP frame but is necessary for printing out the pbuf contents in MSG_HANDLER_LogMessageToSend
             agent_queue = DEVICE_MTP_GetAgentStompQueue(mrt->stomp_instance);
-            STOMP_QueueBinaryMessage(USP__HEADER__MSG_TYPE__ERROR, mrt->stomp_instance, mrt->stomp_dest, agent_queue, (unsigned char *)buf, len, kMtpContentType_Text, mrt->stomp_err_id, END_OF_TIME);
+            err = STOMP_QueueBinaryMessage(USP__HEADER__MSG_TYPE__ERROR, mrt->stomp_instance, mrt->stomp_dest, agent_queue, (unsigned char *)buf, len, kMtpContentType_Text, mrt->stomp_err_id, END_OF_TIME);
+            if (err != USP_ERR_OK)
+            {
+                USP_FREE(buf);  // Free the payload, if ownership did not pass to STOMP MTP
+            }
         }
             break;
 #endif
@@ -1291,10 +1300,19 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
         case kMtpProtocol_WebSockets:
         {
             // Tell the MTP to close the connection, because there was a protobuf parsing error
+            // or the USP Record was received on the agent's websocket server, but the controller was already connected
+            // via the agent's websocket client (only one connection to a controller is allowed)
             char *err_msg = USP_STRDUP( USP_ERR_GetMessage());
-            WSCLIENT_QueueBinaryMessage(USP__HEADER__MSG_TYPE__ERROR, mrt->wsclient_cont_instance, mrt->wsclient_mtp_instance,
-                             (unsigned char *)err_msg, strlen(err_msg), kMtpContentType_Text, END_OF_TIME);
-
+            if (mrt->wsserv_conn_id == INVALID)
+            {
+                WSCLIENT_QueueBinaryMessage(USP__HEADER__MSG_TYPE__ERROR, mrt->wsclient_cont_instance, mrt->wsclient_mtp_instance,
+                                 (unsigned char *)err_msg, strlen(err_msg), kMtpContentType_Text, END_OF_TIME);
+            }
+            else
+            {
+                WSSERVER_QueueBinaryMessage(USP__HEADER__MSG_TYPE__ERROR, mrt->wsserv_conn_id,
+                                 (unsigned char *)err_msg, strlen(err_msg), kMtpContentType_Text, END_OF_TIME);
+            }
         }
             break;
 #endif

@@ -523,6 +523,7 @@ int COAP_CLIENT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int cont_i
     if (is_coap_mtp_thread_exited)
     {
         COAP_UnlockMutex();
+        USP_FREE(pbuf);
         return USP_ERR_OK;
     }
 
@@ -540,6 +541,7 @@ int COAP_CLIENT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int cont_i
     is_duplicate = IsUspRecordInCoapQueue(cc, pbuf, pbuf_len);
     if (is_duplicate)
     {
+        USP_FREE(pbuf);
         err = USP_ERR_OK;
         goto exit;
     }

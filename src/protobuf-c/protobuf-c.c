@@ -3143,7 +3143,7 @@ protobuf_c_message_unpack(const ProtobufCMessageDescriptor *desc,
 			tmp.len = 8;
 			break;
 		case PROTOBUF_C_WIRE_TYPE_LENGTH_PREFIXED: {
-			size_t pref_len;
+			size_t pref_len = 0;
 
 			tmp.len = scan_length_prefixed_data(rem, at, &pref_len);
 			if (tmp.len == 0) {

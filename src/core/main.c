@@ -57,7 +57,6 @@
 #include "mtp_exec.h"
 #include "dm_exec.h"
 #include "bdc_exec.h"
-#include "wsclient.h"
 #include "data_model.h"
 #include "dm_access.h"
 #include "device.h"
@@ -71,6 +70,11 @@
 #include "retry_wait.h"
 #include "nu_macaddr.h"
 
+
+#ifdef ENABLE_WEBSOCKETS
+#include "wsclient.h"
+#include "wsserver.h"
+#endif
 
 #ifndef OVERRIDE_MAIN
 //--------------------------------------------------------------------------------------

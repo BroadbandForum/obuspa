@@ -315,6 +315,7 @@ int DEVICE_STOMP_StartAllConnections(void)
 **************************************************************************/
 int DEVICE_STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *controller_queue, char *agent_queue, unsigned char *pbuf, int pbuf_len, char *err_id_header, time_t expiry_time)
 {
+    int err;
     stomp_conn_params_t *sp;
 
     // Exit if unable to find the specified STOMP connection
@@ -325,7 +326,12 @@ int DEVICE_STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int insta
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    STOMP_QueueBinaryMessage(usp_msg_type, instance, controller_queue, agent_queue, pbuf, pbuf_len, kMtpContentType_UspRecord, err_id_header, expiry_time);
+    // Exit if unable to queue the message
+    err = STOMP_QueueBinaryMessage(usp_msg_type, instance, controller_queue, agent_queue, pbuf, pbuf_len, kMtpContentType_UspRecord, err_id_header, expiry_time);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
 
     return USP_ERR_OK;
 }

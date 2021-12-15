@@ -51,6 +51,7 @@
 #include "text_utils.h"
 #include "usp-record.pb-c.h"
 #include "stomp.h"
+#include "wsclient.h"
 
 //------------------------------------------------------------------------
 // Index of the controller that sent the current USP message being processed
@@ -125,6 +126,20 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_rol
         USP_ERR_SetMessage("%s: usp_record__session_record__unpack failed. Ignoring USP Message", __FUNCTION__);
         return USP_ERR_RECORD_NOT_PARSED;
     }
+
+#ifdef ENABLE_WEBSOCKETS
+    // Exit if USP record received from the agent's websocket server is from a controller that is
+    // already connected via the agent's websocket client (only one connection to a controller is allowed)
+    if ((mrt->protocol == kMtpProtocol_WebSockets) && (mrt->wsserv_conn_id != INVALID))
+    {
+        if (WSCLIENT_IsEndpointConnected(rec->from_id))
+        {
+            USP_ERR_SetMessage("%s: Not permitting controller eid='%s' to connect. Already connected via agent's websocket client", __FUNCTION__, rec->from_id);
+            err = USP_ERR_REQUEST_DENIED;
+            goto exit;
+        }
+    }
+#endif
 
     // Exit if USP record failed validation
     err = ValidateUspRecord(rec);
@@ -645,7 +660,7 @@ int ValidateUspRecord(UspRecord__Record *rec)
     endpoint_id = DEVICE_LOCAL_AGENT_GetEndpointID();
     if ((rec->to_id == NULL) || (strcmp(rec->to_id, endpoint_id) != 0))
     {
-        USP_LOG_Warning("%s: WARNING: Ignoring USP record as it was addressed to endpoint_id=%s not %s", __FUNCTION__, rec->to_id, endpoint_id);
+        USP_ERR_SetMessage("%s: Ignoring USP record as it was addressed to endpoint_id=%s not %s", __FUNCTION__, rec->to_id, endpoint_id);
         return USP_ERR_REQUEST_DENIED;
     }
 

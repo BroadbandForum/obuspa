@@ -215,18 +215,19 @@ int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subsc
 
 
 /*********************************************************************//**
+**
 ** MQTT_DisableClient
 **
-** Disable the MQTT client connection given the instance id
+** Disables the specified MQTT client
 **
-** \param instance - instance id to identify the connection
-** \param purge_queued_messages - boolean flag to either clean all queued messages or keep them for next init.
-**  Normally purge unless retrying a connection
+** \param   instance - Instance number in Device.MQTT.Client.{i}
+** \param   is_reconnect - Set if this function is called as part of a reconnect sequence
+**                         (in which case the send queue is not purged and the next_params are not freed)
 **
-** \return USP_ERR_OK on success, USP_ERR_XXX otherwise
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MQTT_DisableClient(int instance, bool purge_queued_messages);
+int MQTT_DisableClient(int instance, bool is_reconnect);
 
 
 /*********************************************************************//**

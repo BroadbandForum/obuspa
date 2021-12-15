@@ -1,5 +1,31 @@
 # Release History
 
+## Release 5.0.0
+  * New Features
+    * WebSockets MTP Support in both client and server modes
+    * 'obuspa -c event' signals a USP event (for testing purposes)
+    * TLS Server Name Indication for STOMP
+    * Added ABOUT files (for open source attribution and inventory purposes)
+    * 'obuspa -c version' includes versions of shared library dependencies
+
+  * Bug Fixes
+    * MQTT connect can block, holding up the data model thread (GH Issue #31)
+    * MQTT Connect callback should not add trust store certs everytime (GH Issue #29)
+    * MQTT Subscriptions don't work at startup (GH Issue #23)
+    * MQTT subscribe-topic in CONNACK is not retrieved correctly
+    * CoAP RST message format error (GH#25)
+    * Support for mallinfo2, mallinfo deprecated on glibc >= 2.33 (GH#26)
+    * RequestChallenge/ChallengeResponse : Retries and Lockout period applied per ChallengeRef
+    * ControllerTrust parameter set permission was incorrectly additionally considering the set permission of the parent object
+    * Compilation error in protobuf C library with GCC 10.3
+    * Compilation errors on GCC 11.2 cross compiler for ARM
+
+  * Other
+    * Added 'const' declaration to 'char *' usage in logger functions for calling from C++
+    * Removed unnecessary log message for object deletion subscription containing wildcard and partial path
+    * Get Supported Protocol version updated
+    * Factory reset database improvements
+
 ## Release 4.1.0
   * New Features
     * Search expressions supported in Bulk Data Collection

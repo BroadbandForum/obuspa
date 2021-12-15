@@ -26,6 +26,7 @@ $ sudo apt-add-repository ppa:mosquitto-dev/mosquitto-ppa
 $ sudo apt-get update
 $ sudo apt-get install libmosquitto-dev libwebsockets-dev
 ```
+> **_NOTE:_**   libwebsockets must be compiled without support for event loop libraries (e.g. LWS_WITH_LIBUV=false) and without websocket extensions (LWS_WITHOUT_EXTENSIONS=true). These are the defaults but many distros choose to override them. 
 
 3. Install OB-USP-AGENT from source:
 ```

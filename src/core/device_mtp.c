@@ -59,6 +59,10 @@
 #include "usp_coap.h"
 #endif
 
+#ifdef ENABLE_WEBSOCKETS
+#include "wsserver.h"
+#endif
+
 //------------------------------------------------------------------------------
 // Location of the local agent MTP table within the data model
 #define DEVICE_AGENT_MTP_ROOT "Device.LocalAgent.MTP"
@@ -86,6 +90,10 @@ typedef struct
     int mqtt_connection_instance; // Instance number of the MQTT connection which this MTP refers to (ie Device.MQTT.Client.{i})
     char *mqtt_agent_topic;    // name of the queue on the above MQTT connection, on which this agent listens
     mqtt_qos_t mqtt_publish_qos;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+    wsserv_config_t websock;
 #endif
 } agent_mtp_t;
 
@@ -122,6 +130,7 @@ const enum_entry_t mtp_statuses[] =
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
+int Validate_AgentMtpEnable(dm_req_t *req, char *value);
 int ValidateAdd_AgentMtp(dm_req_t *req);
 int Notify_AgentMtpAdded(dm_req_t *req);
 int Notify_AgentMtpDeleted(dm_req_t *req);
@@ -164,6 +173,16 @@ int NotifyChange_AgentMtpCoAPEncryption(dm_req_t *req, char *value);
 int ControlCoapServer(agent_mtp_t *mtp, control_coapserver_t control_coapserver);
 #endif
 
+#ifdef ENABLE_WEBSOCKETS
+int CheckOnlyOneWsServerEnabled(int instance, int enable, mtp_protocol_t protocol);
+int Validate_AgentMtpWebsockKeepAlive(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpWebsockPort(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpWebsockPath(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpWebsockEncryption(dm_req_t *req, char *value);
+int NotifyChange_AgentMtpWebsockKeepAlive(dm_req_t *req, char *value);
+int Get_WebsockInterfaces(dm_req_t *req, char *buf, int len);
+#endif
+
 /*********************************************************************//**
 **
 ** DEVICE_MTP_Init
@@ -196,7 +215,7 @@ int DEVICE_MTP_Init(void)
     err |= USP_REGISTER_DBParam_Alias(DEVICE_AGENT_MTP_ROOT ".{i}.Alias", NULL);
 
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Protocol", "STOMP", Validate_AgentMtpProtocol, NotifyChange_AgentMtpProtocol, DM_STRING);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Enable", "false", NULL, NotifyChange_AgentMtpEnable, DM_BOOL);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Enable", "false", Validate_AgentMtpEnable, NotifyChange_AgentMtpEnable, DM_BOOL);
 
 #ifndef DISABLE_STOMP
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.STOMP.Reference", "", DEVICE_MTP_ValidateStompReference, NotifyChange_AgentMtpStompReference, DM_STRING);
@@ -215,6 +234,15 @@ int DEVICE_MTP_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.ResponseTopicConfigured", "", NULL, NotifyChange_AgentMtpMqtt_ResponseTopicConfigured, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.PublishQoS", "2", Validate_AgentMtpMQTTPublishQoS, NotifyChange_AgentMtpMQTTPublishQoS, DM_UINT);
 #endif
+
+#ifdef ENABLE_WEBSOCKETS
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.WebSocket.Port", "5683", DM_ACCESS_ValidatePort, NotifyChange_AgentMtpWebsockPort, DM_UINT);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.WebSocket.Path", "", NULL, NotifyChange_AgentMtpWebsockPath, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.WebSocket.EnableEncryption", "true", DM_ACCESS_ValidateBool, NotifyChange_AgentMtpWebsockEncryption, DM_BOOL);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.WebSocket.KeepAliveInterval", "30", Validate_AgentMtpWebsockKeepAlive, NotifyChange_AgentMtpWebsockKeepAlive, DM_UINT);
+
+#endif
+
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_AGENT_MTP_ROOT ".{i}.Status", Get_MtpStatus, DM_STRING);
 
     // Exit if any errors occurred
@@ -605,10 +633,62 @@ int Notify_AgentMtpDeleted(dm_req_t *req)
 
 /*********************************************************************//**
 **
+** Validate_AgentMtpEnable
+**
+** Validates Device.LocalAgent.MTP.{i}.Enable
+** by ensuring that the new value doesn't result in more than one websocket server being enabled
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_AgentMtpEnable(dm_req_t *req, char *value)
+{
+    bool enable;
+    int err;
+
+    // Exit if the value was invalid
+    err = TEXT_UTILS_StringToBool(value, &enable);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+#ifdef ENABLE_WEBSOCKETS
+{
+    char path[MAX_DM_SHORT_VALUE_LEN];
+    int protocol;
+
+    // Exit if unable to get the Protocol parameter for this instance
+    // NOTE: We look the value up in the database because this function may be called before the MTP has actually been added to the internal data structure
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.Protocol", device_agent_mtp_root, inst1);
+    err = DM_ACCESS_GetEnum(path, &protocol, mtp_protocols, NUM_ELEM(mtp_protocols));
+    if (err != USP_ERR_OK)
+    {
+        return USP_ERR_OK;  // Deliberately ignoring the error as it is related to Protocol, not the Enable parameter
+    }
+
+    // Exit if this MTP was attempting to be the websocket server, but another MTP was already providing it
+    err = CheckOnlyOneWsServerEnabled(inst1, enable, protocol);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+}
+#endif
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** Validate_AgentMtpProtocol
 **
 ** Validates Device.LocalAgent.MTP.{i}.Protocol
 ** by checking that it matches the protocols we support
+** And ensuring that the new value doesn't result in more than one websocket server being enabled
 **
 ** \param   req - pointer to structure identifying the parameter
 ** \param   value - value that the controller would like to set the parameter to
@@ -628,8 +708,75 @@ int Validate_AgentMtpProtocol(dm_req_t *req, char *value)
         return USP_ERR_INVALID_VALUE;
     }
 
+#ifdef ENABLE_WEBSOCKETS
+{
+    char path[MAX_DM_SHORT_VALUE_LEN];
+    bool enable;
+    int err;
+
+    // Exit if unable to get the Enable parameter for this instance
+    // NOTE: We look the value up in the database because this function may be called before the MTP has actually been added to the internal data structure
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.Enable", device_agent_mtp_root, inst1);
+    err = DM_ACCESS_GetBool(path, &enable);
+    if (err != USP_ERR_OK)
+    {
+        return USP_ERR_OK;  // Deliberately ignoring the error as it could occur whilst adding an MTP, if Protocol is set before Enable
+    }
+
+    // Exit if this MTP was attempting to be the websocket server, but another MTP was already providing it
+    err = CheckOnlyOneWsServerEnabled(inst1, enable, protocol);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+}
+#endif
+
     return USP_ERR_OK;
 }
+
+#ifdef ENABLE_WEBSOCKETS
+/*********************************************************************//**
+**
+** CheckOnlyOneWsServerEnabled
+**
+** Checks that if the configuration of the specified MTP would make it an enabled
+** websocket server, that there aren't any other MTPs configured as the enabled websocket server
+**
+** \param   instance - instance number in Device.LocalAgent.MTP identifying the MTP attempting to be the websocket server
+** \param   enable - whether the MTP attempting to be the websocket server is enabled or not
+** \param   protocol - protocol of the MTP attempting to be the websocket server
+**
+** \return  USP_ERR_OK if the specified MTP is allowed to be the enabled websocket server
+**          USP_ERR_RESOURCES_EXCEEDED if the specified MTP is not allowed to be the websocket server (because another MTP is already configured as it)
+**
+**************************************************************************/
+int CheckOnlyOneWsServerEnabled(int instance, int enable, mtp_protocol_t protocol)
+{
+    int i;
+    agent_mtp_t *mtp;
+
+    // Exit if this MTP is not attempting to be the enabled websocket server
+    if ((enable == false) || (protocol != kMtpProtocol_WebSockets))
+    {
+        return USP_ERR_OK;
+    }
+
+    // Since this MTP is attempting to be the enabled websocket server, check that there isn't an existing
+    // MTP which is configured as the enabled websocket server
+    for (i=0; i<MAX_AGENT_MTPS; i++)
+    {
+        mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->instance != instance) && (mtp->enable) && (mtp->protocol == kMtpProtocol_WebSockets))
+        {
+            USP_ERR_SetMessage("%s: Only one websocket server allowed. (Existing server at %s.%d)", __FUNCTION__, device_agent_mtp_root, mtp->instance);
+            return USP_ERR_RESOURCES_EXCEEDED;
+        }
+    }
+
+    return USP_ERR_OK;
+}
+#endif
 
 /*********************************************************************//**
 **
@@ -714,6 +861,33 @@ int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value)
             }
             break;
 #endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kMtpProtocol_WebSockets:
+{
+            // Enable or disable the Websocket server based on the new value
+            int err;
+            if (val_bool)
+            {
+                // Websocket server has been enabled
+                mtp->enable = val_bool;
+                err = WSSERVER_EnableServer(&mtp->websock);
+            }
+            else
+            {
+                // Websocket server has been disabled
+                err = WSSERVER_DisableServer();
+                mtp->enable = val_bool;
+            }
+
+            // Exit if an error occurred when starting or stopping the CoAPserver
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
+}
+            break;
+#endif
         default:
             TERMINATE_BAD_CASE(mtp->protocol);
             break;
@@ -776,6 +950,18 @@ int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value)
     }
 #endif
 
+#ifdef ENABLE_WEBSOCKETS
+    // If the existing protocol is Websockets, stop its server
+    if (mtp->protocol == kMtpProtocol_WebSockets)
+    {
+        int err = WSSERVER_DisableServer();
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+    }
+#endif
+
 #ifdef ENABLE_MQTT
     // Schedule the affected MQTT connection to reconnect (because it might have lost or gained a agent queue to subscribe to)
     if ((mtp->enable) && (mtp->mqtt_connection_instance != INVALID))
@@ -800,6 +986,18 @@ int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value)
     if (new_protocol == kMtpProtocol_CoAP)
     {
         int err = ControlCoapServer(mtp, COAP_SERVER_Start);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+    }
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+    // If the new protocol is Websockets, start its server
+    if (new_protocol == kMtpProtocol_WebSockets)
+    {
+        int err = WSSERVER_EnableServer(&mtp->websock);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -1118,6 +1316,257 @@ int NotifyChange_AgentMtpStompDestination(dm_req_t *req, char *value)
 }
 #endif
 
+#ifdef ENABLE_WEBSOCKETS
+/*********************************************************************//**
+**
+** Validate_AgentMtpWebsockKeepAlive
+**
+** Validates Device.LocalAgent.MTP.{i}.WebSocket.KeepAliveInterval
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_AgentMtpWebsockKeepAlive(dm_req_t *req, char *value)
+{
+    // NOTE: Disallow 0 for keep alive period (0 is NOT a special case for off)
+    return DM_ACCESS_ValidateRange_Unsigned(req, 1, UINT_MAX);
+}
+
+/*********************************************************************//**
+**
+** NotifyChange_AgentMtpWebsockPort
+**
+** Function called when Device.LocalAgent.MTP.{i}.WebSocket.Port is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_AgentMtpWebsockPort(dm_req_t *req, char *value)
+{
+    agent_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindAgentMtpByInstance(inst1);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if no change in parameter
+    if (mtp->websock.port == val_uint)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set new parameter
+    mtp->websock.port = val_uint;
+
+    // Exit if MTP is not enabled, or not set to websocket protocol
+    if ((mtp->enable == false) || (mtp->protocol != kMtpProtocol_WebSockets))
+    {
+        return USP_ERR_OK;
+    }
+
+    // Restart the websocket server with the new parameters
+    WSSERVER_EnableServer(&mtp->websock);
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** NotifyChange_AgentMtpWebsockPath
+**
+** Function called when Device.LocalAgent.MTP.{i}.WebSocket.Path is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_AgentMtpWebsockPath(dm_req_t *req, char *value)
+{
+    agent_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindAgentMtpByInstance(inst1);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if no change in parameter
+    if ((mtp->websock.path != NULL) && (strcmp(mtp->websock.path, value)==0))
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set new parameter
+    USP_SAFE_FREE(mtp->websock.path);
+    mtp->websock.path = USP_STRDUP(value);
+
+    // Exit if MTP is not enabled, or not set to websocket protocol
+    if ((mtp->enable == false) || (mtp->protocol != kMtpProtocol_WebSockets))
+    {
+        return USP_ERR_OK;
+    }
+
+    // Restart the websocket server with the new parameters
+    WSSERVER_EnableServer(&mtp->websock);
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** NotifyChange_AgentMtpWebsockEncryption
+**
+** Function called when Device.LocalAgent.MTP.{i}.WebSocket.EnableEncryption is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_AgentMtpWebsockEncryption(dm_req_t *req, char *value)
+{
+    agent_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindAgentMtpByInstance(inst1);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if no change in parameter
+    if (mtp->websock.enable_encryption == val_bool)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set new parameter
+    mtp->websock.enable_encryption = val_bool;
+
+    // Exit if MTP is not enabled, or not set to websocket protocol
+    if ((mtp->enable == false) || (mtp->protocol != kMtpProtocol_WebSockets))
+    {
+        return USP_ERR_OK;
+    }
+
+    // Restart the websocket server with the new parameters
+    WSSERVER_EnableServer(&mtp->websock);
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** NotifyChange_AgentMtpWebsockKeepAlive
+**
+** Function called when Device.LocalAgent.MTP.{i}.WebSocket.KeepAliveInterval is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_AgentMtpWebsockKeepAlive(dm_req_t *req, char *value)
+{
+    agent_mtp_t *mtp;
+
+    // Determine MTP to be updated
+    mtp = FindAgentMtpByInstance(inst1);
+    USP_ASSERT(mtp != NULL);
+
+    // Exit if no change in parameter
+    if (mtp->websock.keep_alive == val_uint)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set new parameter
+    mtp->websock.keep_alive = val_bool;
+
+    // Exit if MTP is not enabled, or not set to websocket protocol
+    if ((mtp->enable == false) || (mtp->protocol != kMtpProtocol_WebSockets))
+    {
+        return USP_ERR_OK;
+    }
+
+    // Restart the websocket server with the new parameters
+    WSSERVER_EnableServer(&mtp->websock);
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Get_WebsockInterfaces
+**
+** Gets the value of Device.LocalAgent.MTP.{i}.WebSocket.Interfaces
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   buf - pointer to buffer in which to return the parameter's value
+** \param   len - length of return buffer
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Get_WebsockInterfaces(dm_req_t *req, char *buf, int len)
+{
+    char *interfaces = WEBSOCKET_LISTEN_INTERFACE;
+    char path[MAX_DM_PATH];
+    char name[MAX_DM_SHORT_VALUE_LEN];
+    int_vector_t iv;
+    int instance;
+    int err;
+    int i;
+
+    // Exit if our Websocket server is listening on all network interfaces
+    buf[0] = '\0';
+    if ((interfaces[0] == '\0') || (strcmp(interfaces, "all")==0))
+    {
+        return USP_ERR_OK;
+    }
+
+    // Initialise vectors, so that if we exit prematurely, they can be torn down safely
+    INT_VECTOR_Init(&iv);
+
+    // Exit if unable to get all network interface instances in the data model
+    err = DATA_MODEL_GetInstances("Device.IP.Interface.", &iv);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Iterate over all instantiated network interfaces
+    for (i=0; i < iv.num_entries; i++)
+    {
+        // Skip if unable to get the name of the interface
+        instance = iv.vector[i];
+        USP_SNPRINTF(path, sizeof(path), "Device.IP.Interface.%d.Name", instance);
+        err = DATA_MODEL_GetParameterValue(path, name, sizeof(name), 0);
+        if (err != USP_ERR_OK)
+        {
+            continue;
+        }
+
+        // Exit if this interface name matches the interface that we have the Websocket server on
+        if (strcmp(name, interfaces)==0)
+        {
+            USP_SNPRINTF(buf, len, "Device.IP.Interface.%d", instance);
+            err = USP_ERR_OK;
+            goto exit;
+        }
+    }
+
+    // If the code gets here, then we didn't find the websocket server in the IP Interface table
+    // so just return an empty string for this parameter
+    err = USP_ERR_OK;
+
+exit:
+    INT_VECTOR_Destroy(&iv);
+    return err;
+}
+#endif
+
 /*********************************************************************//**
 **
 ** Get_MtpStatus
@@ -1161,6 +1610,13 @@ int Get_MtpStatus(dm_req_t *req, char *buf, int len)
 #ifdef ENABLE_MQTT
             case kMtpProtocol_MQTT:
                 status = DEVICE_MQTT_GetMtpStatus(mtp->mqtt_connection_instance);
+                break;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+            case kMtpProtocol_WebSockets:
+                // NOTE: The code allows only one Websocket server to be enabled
+                status = WSSERVER_GetMtpStatus();
                 break;
 #endif
 
@@ -1353,6 +1809,57 @@ int ProcessAgentMtpAdded(int instance)
     }
 #endif
 
+#ifdef ENABLE_WEBSOCKETS
+    // Exit if unable to get the listening port to use for Websockets
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.WebSocket.Port", device_agent_mtp_root, instance);
+    err = DM_ACCESS_GetUnsigned(path, &mtp->websock.port);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to get the name of the agent's Websocket path
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.WebSocket.Path", device_agent_mtp_root, instance);
+    err = DM_ACCESS_GetString(path, &mtp->websock.path);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to get whether to use an encrypted websocket connection or not
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.WebSocket.EnableEncryption", device_agent_mtp_root, instance);
+    err = DM_ACCESS_GetBool(path, &mtp->websock.enable_encryption);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to get the keep alive interval to use for Websockets
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.WebSocket.KeepAliveInterval", device_agent_mtp_root, instance);
+    err = DM_ACCESS_GetUnsigned(path, &mtp->websock.keep_alive);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if this MTP was attempting to be the websocket server, but another MTP was already providing it
+    err = CheckOnlyOneWsServerEnabled(mtp->instance, mtp->enable, mtp->protocol);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Start the Websockets server (if required)
+    if ((mtp->enable) && (mtp->protocol == kMtpProtocol_WebSockets))
+    {
+        err = WSSERVER_EnableServer(&mtp->websock);
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
+    }
+#endif
+
     // If the code gets here, then we successfully retrieved all data about the MTP
     err = USP_ERR_OK;
 
@@ -1443,6 +1950,10 @@ void DestroyAgentMtp(agent_mtp_t *mtp)
 #ifdef ENABLE_MQTT
     mtp->mqtt_connection_instance = INVALID;
     USP_SAFE_FREE(mtp->mqtt_agent_topic);
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+    USP_SAFE_FREE(mtp->websock.path);
 #endif
 }
 
@@ -1772,4 +2283,5 @@ int NotifyChange_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value)
     return USP_ERR_OK;
 }
 #endif
+
 

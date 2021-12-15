@@ -62,6 +62,7 @@
 
 #ifdef ENABLE_WEBSOCKETS
 #include "wsclient.h"
+#include "wsserver.h"
 #endif
 
 //------------------------------------------------------------------------------
@@ -325,8 +326,8 @@ void MTP_EXEC_ActivateScheduledActions(void)
         MTP_EXEC_MqttWakeup();
 #endif
 #ifdef ENABLE_WEBSOCKETS
-        // No need to wakeup Websocket client thread, because the call to WSCLIENT_ActivateScheduledActions() later in this function,
-        // causes the websocket thread to wake up
+        // Unlike other MTPs, no need to wakeup Websocket client or websocket server thread,
+        // because the call to XXX_ActivateScheduledActions() later in this function, causes the thread to wake up
 #endif
 
         // Ensure that exit still occurs, if no MTPs are compiled into the code
@@ -348,6 +349,7 @@ void MTP_EXEC_ActivateScheduledActions(void)
 #endif
 #ifdef ENABLE_WEBSOCKETS
     WSCLIENT_ActivateScheduledActions();
+    WSSERVER_ActivateScheduledActions();
 #endif
 }
 

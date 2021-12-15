@@ -61,7 +61,7 @@
 #define MAX_COAP_CLIENTS (MAX_CONTROLLERS)  // Maximum number of CoAP controllers which an agent sends to
 #define MAX_COAP_SERVER_SESSIONS 2      // Maxiumum number of simultaneous sessions with CoAP controllers which the agent can service
 #define MAX_MQTT_SUBSCRIPTIONS 5
-#define MAX_WEBSOCKET_CLIENTS (MAX_CONTROLLERS)  // Maximum number of WebSocket controllers which an agent sends to
+#define MAX_WEBSOCKET_CLIENTS (MAX_CONTROLLERS)  // Maximum number of WebSocket controllers which an agent sends to, or receives from
 #define MAX_NODE_MAP_BUCKETS  1024  // Maximum number of buckets in the data model node map. This should be set to at least the number of registered parameters and objects in the data model
 
 // NB: If you change this, you must also change the SSL callback functions within mqtt.c
@@ -170,6 +170,12 @@
 // An empty list or "any" indicates to listen on all interfaces
 // This may be overridden using the '-i' option (only one interface name is supported, if using '-i')
 #define COAP_LISTEN_INTERFACES    "eth0"  /* "lo, enp0s9" */
+
+// Network interface name that USP Agent's websocket server listens on (only one interface is currently supported)
+// An empty list or "any" indicates to listen on all interfaces
+// This may be overridden using the '-i' option
+#define WEBSOCKET_LISTEN_INTERFACE "eth0"  /*"lo"*/
+
 
 //-----------------------------------------------------------------------------------------
 // Defines for Bulk Data Collection

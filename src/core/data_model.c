@@ -63,6 +63,7 @@
 
 #ifdef ENABLE_WEBSOCKETS
 #include "wsclient.h"
+#include "wsserver.h"
 #endif
 
 //--------------------------------------------------------------------
@@ -165,6 +166,7 @@ int DATA_MODEL_Init(void)
 #ifdef ENABLE_WEBSOCKETS
     // Initialise WebSockets protocol layer
     WSCLIENT_Init();
+    WSSERVER_Init();
 #endif
 
     // Register core implemented nodes in the schema
@@ -307,6 +309,7 @@ int DATA_MODEL_Start(void)
 #ifdef ENABLE_WEBSOCKETS
     // IMPORTANT: libwebsockets re-initialises libssl here, then loads the trust store and client cert from USP Agent's cache
     err |= WSCLIENT_Start();
+    err |= WSSERVER_Start();
 #endif
 
 #ifndef DISABLE_STOMP

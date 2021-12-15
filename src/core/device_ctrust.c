@@ -137,12 +137,17 @@ typedef struct
 
     char *challenge_ref;          // Data model path identifying the instance in the Device.LocalAgent.ControllerTrust.Challenge.{i} table
                                   // This instance contains the password that the controller needs to provide in the ChallengeResponse() command
-
-    unsigned retries;             // number of times that the password provided by the controller was wrong
-    time_t locked_time;           // Absolute time at which the lockout period expires, or 0 if not currently in the lockout period
 } controller_challenge_t;
 
+typedef struct
+{
+    unsigned retries;             // number of times that the password provided by the controller was wrong
+    time_t locked_time;           // Absolute time at which the lockout period expires, or 0 if not currently in the lockout period
+} challenge_table_t;
+
 static controller_challenge_t controller_challenges[MAX_CONTROLLERS];
+
+static challenge_table_t *challenge_table = NULL;
 
 //------------------------------------------------------------------------------
 // Challenge mechanism constants that are currently supported
@@ -176,7 +181,7 @@ credential_t *CalcCredentialFromReq(dm_req_t *req);
 
 // Controller challenge forward declarations
 void DestroyControllerChallenge(controller_challenge_t *controller_challenge);
-controller_challenge_t *FindAvailableControllerChallenge(char *controller_endpoint_id);
+int FindAvailableControllerChallenge(char *controller_endpoint_id, char *challenge_ref, controller_challenge_t **cci);
 controller_challenge_t *FindControllerChallengeByEndpointId(char *controller_endpoint_id);
 
 // RequestChallenge forward declarations
@@ -298,6 +303,42 @@ int DEVICE_CTRUST_Init(void)
     return USP_ERR_OK;
 }
 
+int initialise_challenge_table()
+{
+    int err;
+    char path[MAX_DM_PATH];
+    char num_entry[MAX_DM_VALUE_LEN] = {0};
+    unsigned num;
+
+    challenge_table = NULL;
+
+    USP_SNPRINTF(path, sizeof(path), "%s.ChallengeNumberOfEntries", DEVICE_CTRUST_ROOT);
+    err = DATA_MODEL_GetParameterValue(path, num_entry, sizeof(num_entry), 0);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    err = TEXT_UTILS_StringToUnsigned(num_entry, &num);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    if (num == 0)
+    {
+        return USP_ERR_OK;
+    }
+
+    // allocate the challenge table and initialize it
+    challenge_table = (challenge_table_t *) USP_MALLOC(sizeof(challenge_table_t) * num);
+    USP_ASSERT(challenge_table != NULL);
+
+    memset(challenge_table, 0, sizeof(challenge_table_t) * num);
+
+    return USP_ERR_OK;
+}
+
 /*********************************************************************//**
 **
 ** DEVICE_CTRUST_Start
@@ -325,6 +366,12 @@ int DEVICE_CTRUST_Start(void)
         {
             return err;
         }
+    }
+
+    err = initialise_challenge_table();
+    if (err != USP_ERR_OK)
+    {
+        return err;
     }
 
     return USP_ERR_OK;
@@ -371,6 +418,9 @@ void DEVICE_CTRUST_Stop(void)
         cc = &controller_challenges[i];
         DestroyControllerChallenge(cc);
     }
+
+    // Free challenge_table
+    USP_SAFE_FREE(challenge_table);
 }
 
 /*********************************************************************//**
@@ -955,17 +1005,23 @@ void DestroyControllerChallenge(controller_challenge_t *controller_challenge)
 ** If the same controller sends a second request, the same structure is going to be cleaned and reused
 **
 ** \param   controller_endpoint_id - pointer to structure containing the controller endpoint id
+** \param   challenge_ref - pointer to challenge reference string got from the RequestChallenge
+** \param   cci - pointer to controller_challenges structure containing the matching controller endpoint
+** id or NULL if all are used or if a request already made by this controller and has not expired yet.
 **
-** \return  pointer to controller challenge structure or NULL if all are used.
-** NULL should not be returned since the structure uses the same amount of
-** available controllers and each controller can have only one request at a time
+** \return  USP_ERR_OK if able to find a instance in controller_challenges structure
+** USP_ERR_INVALID_VALUE if controller already requested a challenge but it has not expired yet
+** and controller tries to create another challenge
 **
 **************************************************************************/
-controller_challenge_t *FindAvailableControllerChallenge(char *controller_endpoint_id)
+int FindAvailableControllerChallenge(char *controller_endpoint_id, char *challenge_ref, controller_challenge_t **cci)
 {
     int i;
     controller_challenge_t *cc;
+    time_t now;
 
+    *cci = NULL;
+    now = time(NULL);
     // verify if the controller has a request challenge
     for (i = 0; i < NUM_ELEM(controller_challenges); i++)
     {
@@ -975,13 +1031,29 @@ controller_challenge_t *FindAvailableControllerChallenge(char *controller_endpoi
         if ((cc->controller_endpoint_id != NULL)
                 && (strcmp(cc->controller_endpoint_id, controller_endpoint_id) == 0))
         {
-            // but first, clean up existing information
-            // since new requests from controllers should
-            // be overwritten
-            DestroyControllerChallenge(cc);
+            // There is at most one (1) outstanding RequestChallenge for a requesting Controller.
+            // As such, any new challenges with a different value of the ChallengeRef parameter are denied
+            // until a successful response to the outstanding challenge is received by the Agent
+            // or the current RequestChallenge expires.
 
-            // return same controller challenge
-            return cc;
+            // Check if the RequestChallenge expired, if yes destroy the current context before using it
+            if (cc->expiration > 0 && cc->expire_time < now)
+            {
+                DestroyControllerChallenge(cc);
+                *cci = cc;
+                return USP_ERR_OK;
+            }
+
+            // If challengeRef is not same as the earlier one then return the error, else return last
+            // saved information
+            if ((cc->challenge_ref != NULL) && (strcmp(cc->challenge_ref, challenge_ref) != 0))
+            {
+                return USP_ERR_INVALID_VALUE;
+            }
+
+            // RequestExpiration shall be adjusted in caller
+            *cci = cc;
+            return USP_ERR_OK;
         }
     }
 
@@ -994,14 +1066,15 @@ controller_challenge_t *FindAvailableControllerChallenge(char *controller_endpoi
         // no challenge id means there is no challenge ref and no controller endpoint id
         if (cc->challenge_id == NULL)
         {
-            return cc;
+            *cci = cc;
+            return USP_ERR_OK;
         }
     }
 
     // null should never be returned since the amount of available controller challenges
     // is equals to the maximum amount of controllers and each controller can have
     // only one controller challenge
-    return NULL;
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -1050,6 +1123,7 @@ controller_challenge_t *FindControllerChallengeByEndpointId(char *controller_end
 **          USP_ERR_INVALID_VALUE if the challenge reference is empty
 **          USP_ERR_INVALID_VALUE if the challenge reference doesn't exist
 **          USP_ERR_INVALID_VALUE if the challenge is disabled
+**          USP_ERR_INVALID_VALUE if the controller does a new challenge request with different challenge reference
 **
 **************************************************************************/
 int ControllerTrustRequestChallenge(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args)
@@ -1138,28 +1212,37 @@ int ControllerTrustRequestChallenge(dm_req_t *req, char *command_key, kv_vector_
         goto exit;
     }
 
-    GenerateChallengeId(challenge_id, sizeof(challenge_id));
-
     // each controller can have only one request challenge
-    // 'There is at most one (1) outstanding RequestChallenge for a requesting Controller.'
-    // this should not be null
-    cc = FindAvailableControllerChallenge(ci.endpoint_id);
+    // 'There is at most one (1) outstanding RequestChallenge for a requesting Controller.
+    // As such, any new challenges with a different value of the ChallengeRef parameter are
+    // denied until a successful response to the outstanding challenge is received by
+    // the Agent or the current RequestChallenge expires.
+    // error occurs in case of same controller request another challenge with different challengeRef
+    err = FindAvailableControllerChallenge(ci.endpoint_id, challenge_ref, &cc);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: Duplicate challenge requested", __FUNCTION__);
+        goto exit;
+    }
     USP_ASSERT(cc != NULL);
 
-    // store the data
-    cc->controller_endpoint_id = USP_STRDUP(ci.endpoint_id);
-    cc->challenge_id = USP_STRDUP(challenge_id);
-    cc->challenge_ref = USP_STRDUP(challenge_ref);
+    // store the new data if not already set
+    if (cc->controller_endpoint_id == NULL) {
+        GenerateChallengeId(challenge_id, sizeof(challenge_id));
+        cc->controller_endpoint_id = USP_STRDUP(ci.endpoint_id);
+        cc->challenge_id = USP_STRDUP(challenge_id);
+        cc->challenge_ref = USP_STRDUP(challenge_ref);
+    }
+
+    // Request expiration always updated with a new RequestChallenge
     cc->expiration = request_expiration;
     cc->expire_time = time(NULL) + request_expiration;
-    cc->retries = 0;
-    cc->locked_time = 0;
 
     // Save all results into the output arguments using KV_VECTOR_ functions
     USP_ARG_Add(output_args, "Instruction", instruction);
     USP_ARG_Add(output_args, "InstructionType", instruction_type);
     USP_ARG_Add(output_args, "ValueType", value_type);
-    USP_ARG_Add(output_args, "ChallengeID", challenge_id);
+    USP_ARG_Add(output_args, "ChallengeID", cc->challenge_id);
 
     err = USP_ERR_OK;
 
@@ -1407,7 +1490,7 @@ int ControllerTrustChallengeResponse(dm_req_t *req, char *command_key, kv_vector
     }
 
     // verify if the locked period passed
-    if (lockout > 0 && cc->locked_time > now)
+    if (lockout > 0 && challenge_table[challenge_ref_instance].locked_time > now)
     {
         // it's still locked out
         USP_ERR_SetMessage("%s: Invalid value - lockout period hasn't expired", __FUNCTION__);
@@ -1423,10 +1506,15 @@ int ControllerTrustChallengeResponse(dm_req_t *req, char *command_key, kv_vector
     {
         // wrong password
         // increase retries
-        cc->retries++;
-        if (cc->retries >= retries)
+        challenge_table[challenge_ref_instance].retries++;
+
+        // The number of times a ControllerTrust.Challenge.{i}. entry can be consecutively failed
+        // (across all Controllers, without intermediate success) is defined by Retries. Once the
+        // number of failed consecutive attempts equals Retries, the ControllerTrust.Challenge.{i}.
+        // cannot be retried until after LockoutPeriod has expired.
+        if (challenge_table[challenge_ref_instance].retries >= retries && lockout > 0)
         {
-            cc->locked_time = now + lockout;
+            challenge_table[challenge_ref_instance].locked_time = now + lockout;
         }
 
         USP_ERR_SetMessage("%s: Command failure - invalid password", __FUNCTION__);
@@ -1466,6 +1554,10 @@ int ControllerTrustChallengeResponse(dm_req_t *req, char *command_key, kv_vector
     // if the code reached here, everything worked out
     // that means the current challenge should be cleaned up
     DestroyControllerChallenge(cc);
+
+    // Re-initialize the locked_time and retries with success
+    challenge_table[challenge_ref_instance].locked_time = 0;
+    challenge_table[challenge_ref_instance].retries = 0;
 
     err = USP_ERR_OK;
 

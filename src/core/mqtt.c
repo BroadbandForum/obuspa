@@ -101,7 +101,7 @@ mqtt_state_t mqtt_down_states[] = { kMqttState_Idle, kMqttState_AwaitingConnect,
 
 typedef struct
 {
-    mqtt_conn_params_t conn_params;
+    mqtt_conn_params_t conn_params; // If the Instance member of the structure is INVALID, then this mqtt_client_t structure is not in use
     mqtt_state_t state;
     struct mosquitto *mosq;
     mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS];
@@ -119,12 +119,19 @@ typedef struct
 
     // Scheduler
     mqtt_conn_params_t next_params;
-    scheduled_action_t scheduled_action;
+    scheduled_action_t schedule_reconnect;   // Sets whether an MQTT reconnect is scheduled
 
-    STACK_OF(X509) *cert_chain;
+    STACK_OF(X509) *cert_chain; // Certificate chain saved during SSL cert verification, and used to determine the role for the controller
     ssl_verify_callback_t *verify_callback;
     int socket_fd;
-    SSL_CTX *ssl_ctx;
+    SSL_CTX *ssl_ctx;           // SSL context used by this MQTT client instead of the default libmosquitto SSL context
+    bool are_certs_loaded;      // Flag indicating whether the above ssl_ctx has been loaded with the trust store certs
+                                // It is used to ensure that the certs are loaded only once, rather than on every reconnect
+
+    bool in_tcp_connect;        // Set when calling the mosquitto_connect (and MQTT v5 equivalent).
+                                // This flag causes the data model thread to delay performing any disconnect until after the connect call has returned
+    bool disconnect_after_tcp_connect; // Set if the MQTT thread should perform a disconnect after returning from the MQTT connect call
+
 } mqtt_client_t;
 
 
@@ -162,6 +169,8 @@ int EnableMosquitto(mqtt_client_t *client);
 #define MoveState(state, to, event) MoveState_Private(state, to, event, __FUNCTION__)
 void MoveState_Private(mqtt_state_t *state, mqtt_state_t to, const char *event, const char *func);
 void HandleMqttError(mqtt_client_t *client, mqtt_failure_t failure_code, const char* message);
+int DisableMqttClient(mqtt_client_t *client, bool is_reconnect);
+void FreeMqttClientCertChain(mqtt_client_t *client);
 
 //------------------------------------------------------------------------------------
 // Callbacks
@@ -385,18 +394,22 @@ int ConnectSetEncryption(mqtt_client_t *client)
 
     // Load the trust store certs into the context. This is performed here, rather than in MQTT_start() in order
     // to minimise memory usage, since most of the MQTT client structures will typically be unused
-    // NOTE: The SSL context ignores certs that already exist in the trust store, when adding duplicates
-    err = DEVICE_SECURITY_LoadTrustStore(client->ssl_ctx, SSL_VERIFY_PEER, client->verify_callback);
-    if (err != USP_ERR_OK)
+    // NOTE: The 'are_certs_loaded' flag ensures that the certs are loaded only once, rather than every reconnect
+    if (client->are_certs_loaded == false)
     {
-        USP_LOG_Error("%s: Failed to load the trust store", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-    else
-    {
+        // Exit if unable to load the trust store
+        err = DEVICE_SECURITY_LoadTrustStore(client->ssl_ctx, SSL_VERIFY_PEER, client->verify_callback);
+        if (err != USP_ERR_OK)
+        {
+            USP_LOG_Error("%s: Failed to load the trust store", __FUNCTION__);
+            return USP_ERR_INTERNAL_ERROR;
+        }
+
         USP_LOG_Debug("%s: Loaded the trust store!", __FUNCTION__);
+        client->are_certs_loaded = true;
     }
 
+    // Enable hostname validation in the SSL context
     err = DEVICE_SECURITY_AddCertHostnameValidationCtx(client->ssl_ctx, client->conn_params.host,
                                                         strlen(client->conn_params.host));
     if (err != USP_ERR_OK)
@@ -405,12 +418,13 @@ int ConnectSetEncryption(mqtt_client_t *client)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // libmosquitto 1.6.13 onwards, this parameter is default enabled, which means libmosquitto shall
-    // use the default context for TLS connectivity with defined cafile/capath as a minimum,
-    // but here we are using SSL_CTX, thus setting this default parameter to false.
-    // MOSQ_OPT_SSL_CTX_WITH_DEFAULTS is introduced in libmosquitto version 1.1.0, so for backward
-    // compatibility, its guarded by version check with 1.1.0.
-#if LIBMOSQUITTO_VERSION_NUMBER >= 1001000 // libmosquitto version 1.1.0
+    // In libmosquitto 1.6.14 onwards, by default libmosquitto uses it's own SSL context.
+    // So instruct libmosquitto to use SSL context owned by this MTP containing the right certs
+#if LIBMOSQUITTO_VERSION_NUMBER >= 1006014
+
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#error "Libmosquitto does not support MOSQ_OPT_SSL_CTX_WITH_DEFAULTS for OpenSSL revisions < 1.1"
+#endif
     if (mosquitto_int_option(client->mosq, MOSQ_OPT_SSL_CTX_WITH_DEFAULTS, false) != MOSQ_ERR_SUCCESS)
     {
         USP_LOG_Error("%s: Failed to set mosquitto ssl default ctx as false", __FUNCTION__);
@@ -428,58 +442,40 @@ int ConnectSetEncryption(mqtt_client_t *client)
     return USP_ERR_OK;
 }
 
-int ConnectV5(mqtt_client_t *client)
+/*********************************************************************//**
+**
+** PerformMqttClientConnect
+**
+** Attempt to TCP connect the specified client to its configured broker
+**
+** \param   client - pointer to MQTT client to connect to the broker
+**
+** \return  USP_ERR_INTERNAL_ERROR if failed to connect (and should retry)
+**
+**************************************************************************/
+int PerformMqttClientConnect(mqtt_client_t *client)
 {
-    // Setup the proplist
+    int version;
     mosquitto_property *proplist = NULL;
     int mosq_err = MOSQ_ERR_SUCCESS;
     int err = USP_ERR_OK;
 
-    // Add all properties required for the connection
-    if (AddConnectProperties(&proplist) != USP_ERR_OK)
-    {
-        err = USP_ERR_INTERNAL_ERROR;
-        goto error;
-    }
-
-    mosq_err = mosquitto_connect_bind_v5(client->mosq, client->conn_params.host, client->conn_params.port,
-            client->conn_params.keepalive, NULL, proplist);
-
-    if (mosq_err != MOSQ_ERR_SUCCESS)
-    {
-        USP_LOG_Error("%s: Failed to connect v5 with %s (%d)", __FUNCTION__, mosquitto_strerror(mosq_err), mosq_err);
-
-        err = USP_ERR_INTERNAL_ERROR;
-        goto error;
-    }
-
-error:
-    if (proplist != NULL)
-    {
-        mosquitto_property_free_all(&proplist);
-    }
-    return err;
-}
-
-int Connect(mqtt_client_t *client)
-{
-    int err = USP_ERR_OK;
-    int version = client->conn_params.version;
-
-    // Set username/ password before connecting
+    // Exit if unable to configure username/password for this mosquitto context
     if (strlen(client->conn_params.username) > 0)
     {
         if (mosquitto_username_pw_set(client->mosq, client->conn_params.username, client->conn_params.password) != MOSQ_ERR_SUCCESS)
         {
             HandleMqttError(client, kMqttFailure_OtherError, "Failed to set username/password");
-            return USP_ERR_INTERNAL_ERROR;
+            err = USP_ERR_INTERNAL_ERROR;
+            goto exit;
         }
     }
     else
     {
-        USP_LOG_Debug("%s: No username found - so not using one", __FUNCTION__);
+        USP_LOG_Warning("%s: No username found", __FUNCTION__);
     }
 
+    // Exit if unable to configure encryption for this mosquitto context
     if (client->conn_params.ts_protocol == kMqttTSprotocol_tls)
     {
         USP_LOG_Debug("%s: Enabling encryption for MQTT client", __FUNCTION__);
@@ -487,36 +483,123 @@ int Connect(mqtt_client_t *client)
         if (err != USP_ERR_OK)
         {
             USP_LOG_Error("%s: Failed to set encryption when requested - terminating", __FUNCTION__);
-
             HandleMqttError(client, kMqttFailure_Misconfigured, "Failed to set SSL");
-
-            return err;
+            goto exit;
         }
     }
 
+    // Create all properties required for the connection (MQTTv5 only)
+    version = client->conn_params.version;
     if (version == kMqttProtocol_5_0)
     {
-        err = ConnectV5(client);
-        if (err != USP_ERR_OK)
+        if (AddConnectProperties(&proplist) != USP_ERR_OK)
         {
-            return err;
+            err = USP_ERR_INTERNAL_ERROR;
+            goto exit;
         }
+    }
+
+    // Release the access mutex temporarily whilst performing the connect call
+    // We do this to prevent the data model thread from potentially being blocked, whilst the connect call is taking place
+    client->in_tcp_connect = true;
+    USP_ASSERT(client->disconnect_after_tcp_connect == false);
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
+
+    // Perform the TCP connect
+    // NOTE: TCP connect can block for around 2 minutes if the broker does not respond to the TCP handshake
+    if (version == kMqttProtocol_5_0)
+    {
+        mosq_err = mosquitto_connect_bind_v5(client->mosq, client->conn_params.host, client->conn_params.port,
+                                             client->conn_params.keepalive, NULL, proplist);
     }
     else
     {
-        int mosq_err = mosquitto_connect(client->mosq, client->conn_params.host, client->conn_params.port,
-                    client->conn_params.keepalive);
-        if (mosq_err != MOSQ_ERR_SUCCESS)
-        {
-            USP_LOG_Error("%s: Failed to connect v3.1.1 with %s (%d)", __FUNCTION__, mosquitto_strerror(mosq_err), mosq_err);
-            return USP_ERR_INTERNAL_ERROR;
-        }
+        mosq_err = mosquitto_connect(client->mosq, client->conn_params.host, client->conn_params.port,
+                                     client->conn_params.keepalive);
     }
 
-    // Load the socket in from connect
-    client->socket_fd = ClientMosquittoSocket(client);
-    USP_ASSERT(client->socket_fd >= 0);
+    // Take the access mutex again
+    OS_UTILS_LockMutex(&mqtt_access_mutex);
+    client->in_tcp_connect = false;
+
+    // If the MQTT client was scheduled to be disabled by another thread, whilst we were in the connect call, then perform the disable here
+    if (client->disconnect_after_tcp_connect)
+    {
+        client->disconnect_after_tcp_connect = false;
+        DisableMqttClient(client, false);       // NOTE: Deliberately ignoring any errors. Probably because client already in disconnected state because above connect call failed
+        err = USP_ERR_OK;
+        goto exit;
+    }
+
+    // Exit if failed to connect
+    if (mosq_err != MOSQ_ERR_SUCCESS)
+    {
+        char *version_str = (version == kMqttProtocol_5_0) ? "v5" : "v3.1.1";
+        USP_LOG_Error("%s: Failed to connect %s with %s (%d)", __FUNCTION__, version_str, mosquitto_strerror(mosq_err), mosq_err);
+        err = USP_ERR_INTERNAL_ERROR;
+        goto exit;
+    }
+
+exit:
+    // Free the connect properties (MQTTv5 only)
+    if (proplist != NULL)
+    {
+        mosquitto_property_free_all(&proplist);
+    }
+
     return err;
+}
+
+/*********************************************************************//**
+**
+** Connect
+**
+** Kick off connecting the specified MQTT client to its configured broker
+**
+** \param   client - pointer to MQTT client to connect to the broker
+**
+** \return  None
+**
+**************************************************************************/
+void Connect(mqtt_client_t *client)
+{
+    int err = USP_ERR_OK;
+
+    // Start the MQTT Connect
+    err = PerformMqttClientConnect(client);
+
+    // Exit if the MQTT client was disabled by another thread during the TCP connect
+    if (client->state == kMqttState_Idle)
+    {
+        return;
+    }
+
+    // Exit if failed to connect
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if an error occurred retrieving the connected socket_fd
+    client->socket_fd = ClientMosquittoSocket(client);
+    if (client->socket_fd < 0)
+    {
+        USP_LOG_Error("%s: Unable to retrieve connected socket_fd (%d)", __FUNCTION__, client->socket_fd);
+        err = USP_ERR_INTERNAL_ERROR;
+        goto exit;
+    }
+    err = USP_ERR_OK;
+
+exit:
+    // Move to next state, based on result of the connect
+    if (err == USP_ERR_OK)
+    {
+        MoveState(&client->state, kMqttState_AwaitingConnect, "Connect sent");
+    }
+    else
+    {
+        HandleMqttError(client, kMqttFailure_Connect, "Failed to connect to client");
+    }
 }
 
 int SubscribeV5(mqtt_client_t *client, mqtt_subscription_t *sub)
@@ -747,10 +830,14 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
 int DisconnectClient(mqtt_client_t *client)
 {
     int err = USP_ERR_OK;
+    int result;
 
     if (client->state != kMqttState_Idle)
     {
-        if (mosquitto_disconnect(client->mosq) != MOSQ_ERR_SUCCESS)
+        // NOTE: mosquitto_disconnect() may return an error if already disconnected, or
+        // if it cannot disconnect, because another thread is currently performing a mosquitto_connect()
+        result = mosquitto_disconnect(client->mosq);
+        if (result != MOSQ_ERR_SUCCESS)
         {
             err = USP_ERR_INTERNAL_ERROR;
         }
@@ -1190,6 +1277,9 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
             {
                 USP_LOG_Debug("%s: Successfully got the cert chain!", __FUNCTION__);
             }
+
+            // Free the cert chain, now that we've finished with it
+            FreeMqttClientCertChain(client);
         }
         else
         {
@@ -1307,6 +1397,9 @@ void ConnectCallback(struct mosquitto *mosq, void *userdata, int result)
             {
                 USP_LOG_Debug("%s: Successfully got the cert chain!", __FUNCTION__);
             }
+
+            // Free the cert chain, now that we've finished with it
+            FreeMqttClientCertChain(client);
         }
         else
         {
@@ -1577,7 +1670,7 @@ void DisconnectCallback(struct mosquitto *mosq, void *userdata, int rc)
     }
 
 
-    if (rc)
+    if (rc != 0)
     {
         if (client->state != kMqttState_ErrorRetrying)
         {
@@ -1589,6 +1682,7 @@ void DisconnectCallback(struct mosquitto *mosq, void *userdata, int rc)
     {
         if (client->state != kMqttState_ErrorRetrying)
         {
+            // We have successfully, gracefully disconnected from the broker
             MoveState(&client->state, kMqttState_Idle, "Disconnected from broker - ok");
         }
         else
@@ -1662,11 +1756,13 @@ void InitClient(mqtt_client_t *client, int index)
     client->state = kMqttState_Idle;
     client->mosq = NULL;
     client->role = ROLE_DEFAULT;
-    client->scheduled_action = kScheduledAction_Off;
+    client->schedule_reconnect = kScheduledAction_Off;
     client->cert_chain = NULL;
     client->verify_callback = mqtt_verify_callbacks[index];
     client->socket_fd = INVALID;
     client->ssl_ctx = NULL;   // NOTE: The SSL context is created in MQTT_Start()
+    client->are_certs_loaded = false;
+
     ResetRetryCount(client);
 
     for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
@@ -1677,6 +1773,40 @@ void InitClient(mqtt_client_t *client, int index)
     InitSubscription(&client->response_subscription);
 }
 
+
+/*********************************************************************//**
+**
+** FreeMqttClientCertChain
+**
+** Ensures that the cert chain is freed
+**
+** \param   client - pointer to MQTT client whose cert chain is to be freed
+**
+** \return  None
+**
+**************************************************************************/
+void FreeMqttClientCertChain(mqtt_client_t *client)
+{
+    if (client->cert_chain != NULL)
+    {
+        sk_X509_pop_free(client->cert_chain, X509_free);
+        client->cert_chain = NULL;
+    }
+}
+
+/*********************************************************************//**
+**
+** DestroyClient
+**
+** Frees all member variables in the specified MQTT client structure
+** and free the associated libmosquitto context
+** NOTE: This function is only called as part of graceful shutdown of the Agent
+**
+** \param   client - pointer to MQTT client whose cert chain is to be freed
+**
+** \return  None
+**
+**************************************************************************/
 void DestroyClient(mqtt_client_t *client)
 {
     int i;
@@ -1691,22 +1821,25 @@ void DestroyClient(mqtt_client_t *client)
 
     MQTT_SubscriptionDestroy(&client->response_subscription);
 
-    if (client->cert_chain != NULL)
-    {
-        sk_X509_pop_free(client->cert_chain, X509_free);
-        client->cert_chain = NULL;
-    }
+    FreeMqttClientCertChain(client);
 
+    // Free the mosquitto conetx
     if (client->mosq != NULL)
     {
         mosquitto_destroy(client->mosq);
+        client->mosq = NULL;
     }
 
+    // Free the SSL context
     if (client->ssl_ctx)
     {
         SSL_CTX_free(client->ssl_ctx);
+        client->ssl_ctx = NULL;
+        client->are_certs_loaded = false;
     }
 
+    // NOTE: Following is not stricly necessary, and we do not have to set client->conn_params.instance to INVALID,
+    // since this function is only called when shutting down the USP Agent
     memset(client, 0, sizeof(mqtt_client_t));
 }
 
@@ -1739,10 +1872,9 @@ void MQTT_Destroy(void)
     for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
         client = &mqtt_clients[i];
-        if (client->conn_params.instance != INVALID ||
-                client->state != kMqttState_Idle)
+        if (client->conn_params.instance != INVALID)
         {
-            MQTT_DisableClient(client->conn_params.instance, true);
+            MQTT_DisableClient(client->conn_params.instance, false);
         }
 
         DestroyClient(client);
@@ -1770,6 +1902,7 @@ int MQTT_Start(void)
         // NOTE: Trust store certs are only loaded into the context later, on demand, since most of these contexts will be unused
         client = &mqtt_clients[i];
         client->ssl_ctx = SSL_CTX_new(SSLv23_client_method());
+        client->are_certs_loaded = false;
         if (client->ssl_ctx == NULL)
         {
             USP_ERR_SetMessage("%s: SSL_CTX_new failed", __FUNCTION__);
@@ -1803,7 +1936,7 @@ void MQTT_Stop(void)
 int EnableClient(mqtt_client_t* client)
 {
     USP_ASSERT(client != NULL);
-    client->scheduled_action = kScheduledAction_Off;
+    client->schedule_reconnect = kScheduledAction_Off;
 
     // Add response topic as a new "subscription"
     mqtt_subscription_t resp_sub = { 0 };
@@ -1840,22 +1973,25 @@ int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subsc
 
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
+    // See if we're enabling an existing MQTT client for this instance
     client = FindMqttClientByInstance(mqtt_params->instance);
     if (client == NULL)
     {
-        // Look for an unused client instead
+        // If no pre-existing MQTT client for this instance, then attempt to allocate one
         client = FindUnusedMqttClient_Local();
+        if (client == NULL)
+        {
+            USP_LOG_Error("%s: No internal MQTT client matching Device.MQTT.Connection.%d", __FUNCTION__, mqtt_params->instance);
+            err = USP_ERR_INTERNAL_ERROR;
+            goto exit;
+        }
+
+        // Mark the client as 'in-use'
+        client->conn_params.instance = mqtt_params->instance;
     }
 
-    if (client == NULL)
-    {
-        USP_LOG_Error("%s: No internal MQTT client matching Device.MQTT.Connection.%d", __FUNCTION__, mqtt_params->instance);
-        err = USP_ERR_INTERNAL_ERROR;
-        goto exit;
-    }
-
-    client->conn_params.instance = mqtt_params->instance;
-    if (client->state != kMqttState_Idle && client->state != kMqttState_ErrorRetrying)
+    // Exit if the caller needs to disable this MQTT client first
+    if ((client->state != kMqttState_Idle) && (client->state != kMqttState_ErrorRetrying))
     {
         USP_LOG_Error("%s: Unexpected state: %s for client %d. Failing connection..",
             __FUNCTION__, mqtt_state_names[client->state], client->conn_params.instance);
@@ -1890,47 +2026,132 @@ exit:
     return err;
 }
 
-int MQTT_DisableClient(int instance, bool purge_queued_messages)
+/*********************************************************************//**
+**
+** CleanMqttClient
+**
+** Frees all dynamically allocated member variables of the MQTT client structure
+** (apart from those protected by the 'is_reconnect' flag)
+**
+** \param   client - pointer to MQTT client to free all member variables of
+** \param   is_reconnect - Set if this function is called as part of a reconnect sequence
+**                         (in which case the send queue is not purged and the next_params are not freed)
+**
+** \return  None
+**
+**************************************************************************/
+void CleanMqttClient(mqtt_client_t *client, bool is_reconnect)
 {
+    // Always ensure the cert chain and current connection params are freed
+    FreeMqttClientCertChain(client);
+    MQTT_DestroyConnParams(&client->conn_params);
+
+    // Exit if this function is being called as part of a reconnect sequence, nothing more to do
+    if (is_reconnect)
+    {
+        return;
+    }
+
+    // If this function is not being called as part of a reconnect sequence...
+    // Purge the send queue
+    while (client->usp_record_send_queue.head)
+    {
+        PopClientUspQueue(client);
+    }
+
+    // Free the next_params
+    MQTT_DestroyConnParams(&client->next_params);
+}
+
+/*********************************************************************//**
+**
+** DisableMqttClient
+**
+** Tears down the specified MQTT client, disconnecting from the broker and
+** freeing all dynamically allocated member variables
+**
+** \param   client - pointer to MQTT client to tear down
+** \param   is_reconnect - Set if this function is called as part of a reconnect sequence
+**                         (in which case the send queue is not purged and the next_params are not freed)
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INTERNAL_ERROR if libmosquitto returned an error when we tried to disconnect
+**
+**************************************************************************/
+int DisableMqttClient(mqtt_client_t *client, bool is_reconnect)
+{
+    int err = USP_ERR_OK;
+
+    // Nothing to do, if state is already Idle
+    if (client->state == kMqttState_Idle)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Tell libmosquitto to disconnect from the broker
+    err = DisconnectClient(client);
+
+    // Free all member variables (unless they're needed for a reconnect)
+    CleanMqttClient(client, is_reconnect);
+
+    // Mark MQTT client as 'not-in-use'
+    MoveState(&client->state, kMqttState_Idle, "Disable Client");
+    client->conn_params.instance = INVALID;
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** MQTT_DisableClient
+**
+** Disables the specified MQTT client
+**
+** \param   instance - Instance number in Device.MQTT.Client.{i}
+** \param   is_reconnect - Set if this function is called as part of a reconnect sequence
+**                         (in which case the send queue is not purged and the next_params are not freed)
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int MQTT_DisableClient(int instance, bool is_reconnect)
+{
+    int err;
+    mqtt_client_t *client;
+
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
-    mqtt_client_t *client = NULL;
+    // Exit if no client exists with the specified instance number
     client = FindMqttClientByInstance(instance);
-    int err = USP_ERR_GENERAL_FAILURE;
-
-    if (!client)
+    if (client == NULL)
     {
-        goto error;
+        err = USP_ERR_INTERNAL_ERROR;
+        goto exit;
     }
 
-    if (client->conn_params.instance != INVALID && client->state != kMqttState_Idle)
+    // Exit if the client is already in the Idle state after a graceful disconnect, freeing the rest of the structure
+    // (which we couldn't do at the time of the graceful disconnect, because we needed the instance number to persist)
+    if (client->state == kMqttState_Idle)
     {
-        err = DisconnectClient(client);
-
-        if (purge_queued_messages)
-        {
-            while(client->usp_record_send_queue.head)
-            {
-                PopClientUspQueue(client);
-            }
-        }
-
-        MoveState(&client->state, kMqttState_Idle, "Disable Client");
-        client->conn_params.instance = INVALID;
+        CleanMqttClient(client, is_reconnect);
+        err = USP_ERR_OK;
+        goto exit;
     }
 
-    if (client->cert_chain != NULL)
+    // Exit if the MQTT MTP thread is performing a blocking connect because libwebsockets won't allow the disconnect to happen at the same time
+    // Instead set a flag to perform the disable, after the blocking connect has returned
+    if (client->in_tcp_connect)
     {
-        sk_X509_pop_free(client->cert_chain, X509_free);
-        client->cert_chain = NULL;
+        USP_ASSERT(is_reconnect == false);
+        client->disconnect_after_tcp_connect = true;
+        err = USP_ERR_OK;
+        goto exit;
     }
 
-    MQTT_DestroyConnParams(&client->conn_params);
-    // NOTE: next_params are not freed here because in MQTT_UpdateAllSockSet(), when performing a reconnect with different
-    // connection parameters, this is achieved using MQTT_DisableClient, immediately followed by EnableClient()
-    // so freeing next_params here would break that.
+    // Disable the MQTT Client
+    err = DisableMqttClient(client, is_reconnect);
 
-error:
+exit:
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);
 
     // Wakeup via the socket
@@ -1953,6 +2174,7 @@ int MQTT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, cha
     if (is_mqtt_mtp_thread_exited)
     {
         OS_UTILS_UnlockMutex(&mqtt_access_mutex);
+        USP_FREE(pbuf);
         return USP_ERR_OK;
     }
 
@@ -1971,6 +2193,7 @@ int MQTT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, cha
     if (IsUspRecordInMqttQueue(client, pbuf, pbuf_len))
     {
         // No error, just return success
+        USP_FREE(pbuf);
         err = USP_ERR_OK;
         goto exit;
     }
@@ -2030,14 +2253,9 @@ void MQTT_ProcessAllSocketActivity(socket_set_t* set)
             switch(client->state)
             {
                 case kMqttState_SendingConnect:
-                    if (Connect(client) != USP_ERR_OK)
-                    {
-                        HandleMqttError(client, kMqttFailure_Connect, "Failed to connect to client");
-                    }
-                    else
-                    {
-                        MoveState(&client->state, kMqttState_AwaitingConnect, "Connect sent");
-                    }
+                    // NOTE: the MQTT mutex is released temporarily around mosquitto_connect() in the following call
+                    Connect(client);
+
                     // fall through
                 default:
                     if (client->socket_fd != INVALID)
@@ -2111,13 +2329,13 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
                             USP_LOG_Error("%s: Failed to send head of the queue, leaving there to try again", __FUNCTION__);
                         }
                     }
-                    else if (client->scheduled_action == kScheduledAction_Activated)
+                    else if (client->schedule_reconnect == kScheduledAction_Activated)
                     {
                         // Responses would be sent if here
                         USP_LOG_Debug("%s: Schedule reconnect ready!", __FUNCTION__);
 
                         // Stop the current client
-                        MQTT_DisableClient(client->next_params.instance, true /* purge - will be empty anyway*/);
+                        MQTT_DisableClient(client->next_params.instance, true);
 
                         // Copy in the next_params, so that we have the correct
                         // conn_params for the next connection
@@ -2130,7 +2348,7 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
                 case kMqttState_ErrorRetrying:
                     {
                         time_t cur_time = time(NULL);
-                        if (client->scheduled_action == kScheduledAction_Activated)
+                        if (client->schedule_reconnect == kScheduledAction_Activated)
                         {
                             USP_LOG_Debug("%s: Scheduled reconnect in error due to reconfig.", __FUNCTION__);
 
@@ -2205,7 +2423,7 @@ void MQTT_ScheduleReconnect(mqtt_conn_params_t *mqtt_params)
     // Make sure we use the same instance
     client->next_params.instance = client->conn_params.instance;
 
-    client->scheduled_action = kScheduledAction_Signalled;
+    client->schedule_reconnect = kScheduledAction_Signalled;
 
 exit:
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);
@@ -2234,9 +2452,9 @@ void MQTT_ActivateScheduledActions(void)
     for (i=0; i < MAX_MQTT_CLIENTS; i++)
     {
         client = &mqtt_clients[i];
-        if (client->scheduled_action == kScheduledAction_Signalled)
+        if (client->schedule_reconnect == kScheduledAction_Signalled)
         {
-            client->scheduled_action = kScheduledAction_Activated;
+            client->schedule_reconnect = kScheduledAction_Activated;
 
             OS_UTILS_UnlockMutex(&mqtt_access_mutex);
             MTP_EXEC_MqttWakeup();

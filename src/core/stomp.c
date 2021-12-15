@@ -629,6 +629,7 @@ int STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, ch
     // Exit if MTP thread has exited
     if (is_stomp_mtp_thread_exited)
     {
+        USP_FREE(pbuf);
         OS_UTILS_UnlockMutex(&stomp_access_mutex);
         return USP_ERR_OK;
     }

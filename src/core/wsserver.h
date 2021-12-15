@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2021, Broadband Forum
+ * Copyright (C) 2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,11 +33,43 @@
  */
 
 /**
- * \file version.h
+ * \file wsserver.h
  *
- * USP Agent Software version number file
+ * Header file for WebSockets connection (agent acting as websocket server)
  *
  */
+#ifndef WSSERVER_H
+#define WSSERVER_H
 
- /* Lines below main version may include patch version numbers */
-#define AGENT_SOFTWARE_VERSION  "5.0.0"
+#include "common_defs.h"
+#include "usp-msg.pb-c.h"
+#include "device.h"             // for mtp_reply_to_t
+#include "mtp_exec.h"           // for mtp_status_t
+
+
+//------------------------------------------------------------------------------
+// Structure containing configuration parameters for the agent's websocket server
+typedef struct
+{
+    unsigned port;              // port to listen on
+    char *path;                 // resource path in the URL to the websocket server
+    bool enable_encryption;     // set if the server should use TLS connections
+    unsigned keep_alive;        // Keep alive interval (in seconds)
+} wsserv_config_t;
+
+//------------------------------------------------------------------------------
+// API
+int WSSERVER_Init(void);
+int WSSERVER_Start(void);
+void WSSERVER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int conn_id,
+                             unsigned char *pbuf, int pbuf_len, mtp_content_type_t content_type, time_t expiry_time);
+void *WSSERVER_Main(void *args);
+int WSSERVER_EnableServer(wsserv_config_t *config);
+int WSSERVER_DisableServer(void);
+void WSSERVER_ActivateScheduledActions(void);
+mtp_status_t WSSERVER_GetMtpStatus();
+void WSSERVER_DisconnectEndpoint(char *endpoint_id);
+int WSSERVER_GetMTPForEndpointId(char *endpoint_id, mtp_reply_to_t *mrt);
+
+#endif
+

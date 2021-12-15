@@ -50,6 +50,7 @@
 #define MQTT_EXITED     0x00000004
 #define BDC_EXITED      0x00000008
 #define WSCLIENT_EXITED 0x00000010
+#define WSSERVER_EXITED 0x00000020
 
 //------------------------------------------------------------------------------
 // API functions

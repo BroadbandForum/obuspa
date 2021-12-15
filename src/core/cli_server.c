@@ -51,7 +51,18 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <string.h>
+#include <curl/curl.h>
+#include <sqlite3.h>
+#include <zlib.h>
 
+
+#ifdef ENABLE_WEBSOCKETS
+#include <libwebsockets.h>
+#endif
+
+#ifdef ENABLE_MQTT
+#include <mosquitto.h>
+#endif
 
 #include "common_defs.h"
 #include "cli.h"
@@ -652,8 +663,19 @@ int ExecuteCli_Help(char *arg1, char *arg2, char *usage)
 **************************************************************************/
 int ExecuteCli_Version(char *arg1, char *arg2, char *usage)
 {
-    SendCliResponse("Version=%s\n", AGENT_SOFTWARE_VERSION);
+    SendCliResponse("Agent Version=%s\n", AGENT_SOFTWARE_VERSION);
+    SendCliResponse("OpenSSL Version=%s\n", OPENSSL_VERSION_TEXT);
+    SendCliResponse("Sqlite Version=%s\n", SQLITE_VERSION);
+    SendCliResponse("Curl Version=%s\n", curl_version());
+    SendCliResponse("zlib Version=%s\n", ZLIB_VERSION);
 
+#ifdef ENABLE_MQTT
+    SendCliResponse("libmosquitto Version=%d.%d.%d\n", LIBMOSQUITTO_MAJOR, LIBMOSQUITTO_MINOR, LIBMOSQUITTO_REVISION);
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+    SendCliResponse("libwebsockets Version=%s\n", LWS_LIBRARY_VERSION);
+#endif
     return USP_ERR_OK;
 }
 

@@ -359,8 +359,7 @@ void DEVICE_MQTT_Stop(void)
         DestroyMQTTClient(&mqtt_client_params[i]);
     }
 
-    // Delete all the clients and mosquitto in the core
-    MQTT_Destroy();
+    // NOTE: No need to call MQTT_Destroy() from here, as the MQTT MTP thread will already have been destroyed before this function is called
 }
 
 /*********************************************************************//**
@@ -445,7 +444,7 @@ int Get_MqttClientStatus(dm_req_t *req, char *buf, int len)
     mqtt_conn_params_t* conn_params;
     const char *status;
 
-    // Determine stomp connection to be read
+    // Determine MQTT connection to be read
     conn_params = FindMqttParamsByInstance(inst1);
     USP_ASSERT(conn_params != NULL);
 
@@ -1083,7 +1082,7 @@ int NotifyChange_MQTTEnable(dm_req_t *req, char *value)
     // However, as it is unlikely to be the case that a controller would ever do this, I have not added extra code to support this
     if ((old_value == true) && (val_bool == false))
     {
-        MQTT_DisableClient(mqttclient->conn_params.instance, true);
+        MQTT_DisableClient(mqttclient->conn_params.instance, false);
     }
 
     // Set the new value, we do this inbetween stopping and starting the connection because both must have the enable set to true
@@ -2649,7 +2648,7 @@ void DestroyMQTTClient(client_t *client)
     mqtt_conn_params_t* mp = &client->conn_params;
 
     // Disable the lower level connection
-    MQTT_DisableClient(mp->instance, true);
+    MQTT_DisableClient(mp->instance, false);
 
     // Free and DeInitialise the slot
     MQTT_DestroyConnParams(mp);

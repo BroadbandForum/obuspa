@@ -122,7 +122,8 @@ typedef struct
     // Following member variables only set if reply_to was specified and USP message was received over Websockets
     int wsclient_cont_instance;         // Controller instance number in Device.LocalAgent.Controller.{i}
     int wsclient_mtp_instance;          // MTP instance number in Device.LocalAgent.Controller.{i}.MTP.{i}
-
+    int wsserv_conn_id;                 // If USP record was received by agent's websockets server, then this uniquely identifies the connection.
+                                        // It is set to INVALID for USP Records received by the agent's websocket client.
 
 } mtp_reply_to_t;
 

@@ -35,7 +35,7 @@
 /**
  * \file wsclient.h
  *
- * Header file for WebSockets connection
+ * Header file for WebSockets connection (agent acting as websocket client)
  *
  */
 #ifndef WSCLIENT_H
@@ -71,6 +71,7 @@ void WSCLIENT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int cont_ins
                              unsigned char *pbuf, int pbuf_len, mtp_content_type_t content_type, time_t expiry_time);
 unsigned WSCLIENT_GetRetryCount(int cont_instance, int mtp_instance);
 void *WSCLIENT_Main(void *args);
+bool WSCLIENT_IsEndpointConnected(char *endpoint_id);
 
 //------------------------------------------------------------------------------
 // Exported global variables
