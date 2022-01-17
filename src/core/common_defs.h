@@ -54,10 +54,14 @@
 #define NUM_ELEM(x) (sizeof((x)) / sizeof((x)[0]))
 
 // Minimum of two values
+#ifndef MIN
 #define MIN(x, y)  ( ((x) <= (y)) ? (x) : (y) )
+#endif
 
 // Maximum of two values
+#ifndef MAX
 #define MAX(x, y)  ( ((x) >= (y)) ? (x) : (y) )
+#endif
 
 // Whether a character is an alphanumeric symbol character
 #define IS_ALPHA(c)  ( ((c >= 'a') && (c <= 'z')) || ((c >= 'A') && (c <= 'Z')) )
