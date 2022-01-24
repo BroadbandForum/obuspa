@@ -350,8 +350,13 @@ void SubsRetryExec(int id)
             // Determine if it is time to try resending the message
             if (cur_time >= sr->next_retry_time)
             {
+                usp_send_item_t usp_send_item = USP_SEND_ITEM_INIT;
+                usp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__NOTIFY;
+                usp_send_item.msg_packed = sr->pbuf;
+                usp_send_item.msg_packed_size = sr->pbuf_len;
+
                 // Try resending the saved serialized USP message
-                MSG_HANDLER_QueueUspRecord(USP__HEADER__MSG_TYPE__NOTIFY, sr->dest_endpoint, sr->pbuf, sr->pbuf_len, sr->msg_id, &mtp_reply_to, sr->retry_expiry_time);
+                MSG_HANDLER_QueueUspRecord(&usp_send_item, sr->dest_endpoint, sr->msg_id, &mtp_reply_to, sr->retry_expiry_time);
 
                 // Calculate next time until this message is retried
                 sr->retry_count++;

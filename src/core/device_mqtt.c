@@ -523,18 +523,18 @@ int DEVICE_MQTT_CountEnabledConnections(void)
 **
 ** Function called to queue a message on the specified MQTT connection
 **
-** \param   usp_msg_type - Type of USP message contained in pbuf. This is used for debug logging when the message is sent by the MTP.
+** \param   msi - Information about the content to send. The ownership of
+**                the payload buffer is passed to this function, unless an error is returned.
 ** \param   instance - instance number of the MQTT connection in Device.MQTT.Client.{i}
 ** \param   topic - MQTT client subscribed topic
-** \param   pbuf - pointer to buffer containing binary protobuf message. Ownership of this buffer passes to this code, if successful
-** \param   pbuf_len - length of buffer containing protobuf binary message
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DEVICE_MQTT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *topic, char *response_topic, unsigned char *pbuf, int pbuf_len)
+int DEVICE_MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *topic, char *response_topic)
 {
     mqtt_conn_params_t *mp;
+    USP_ASSERT(msi != NULL);
 
     // Exit if unable to find the specified MQTT client
     mp = FindMqttParamsByInstance(instance);
@@ -544,7 +544,7 @@ int DEVICE_MQTT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instan
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    if (MQTT_QueueBinaryMessage(usp_msg_type, instance, topic, pbuf, pbuf_len) != USP_ERR_OK)
+    if (MQTT_QueueBinaryMessage(msi, instance, topic) != USP_ERR_OK)
     {
         USP_ERR_SetMessage("%s: No internal MQTT Queue Binary message for topic %s", __FUNCTION__, topic);
         return USP_ERR_INTERNAL_ERROR;

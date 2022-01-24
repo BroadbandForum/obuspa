@@ -45,6 +45,8 @@
 #include <openssl/ssl.h>
 #include <stdbool.h>
 
+#include "vendor_defs.h"  // For MAX_DM_INSTANCE_ORDER
+
 //-----------------------------------------------------------------------------------------
 // Key-value pair type
 typedef struct

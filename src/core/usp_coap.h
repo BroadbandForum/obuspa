@@ -307,7 +307,7 @@ int COAP_CLIENT_Start(int cont_instance, int mtp_instance, char *endpoint_id);
 void COAP_CLIENT_Stop(int cont_instance, int mtp_instance);
 void COAP_CLIENT_UpdateAllSockSet(socket_set_t *set);
 void COAP_CLIENT_ProcessAllSocketActivity(socket_set_t *set);
-int COAP_CLIENT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int cont_instance, int mtp_instance, unsigned char *pbuf, int pbuf_len, mtp_reply_to_t *mrt, time_t expiry_time);
+int COAP_CLIENT_QueueBinaryMessage(mtp_send_item_t *msi, int cont_instance, int mtp_instance, mtp_reply_to_t *mrt, time_t expiry_time);
 bool COAP_CLIENT_AreAllResponsesSent(void);
 
 // coap_common.c

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -182,7 +182,7 @@ int UpdateAssignedRole(controller_t *cont, char *reference);
 int ValidateMtpUniqueness(mtp_protocol_t protocol, int cont_inst, int mtp_inst);
 int ValidateMtpResourceAvailable(mtp_protocol_t protocol, int cont_inst, int mtp_inst);
 int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp, mtp_reply_to_t *dest);
-int QueueBinaryMessageOnMtp(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *usp_msg_id, mtp_reply_to_t *mrt, controller_t *cont, controller_mtp_t *mtp, time_t expiry_time);
+int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mrt, controller_t *cont, controller_mtp_t *mtp, time_t expiry_time);
 
 #ifndef DISABLE_STOMP
 int Notify_ControllerMtpStompReference(dm_req_t *req, char *value);
@@ -642,10 +642,9 @@ void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role)
 ** Queues a binary message to be sent to a controller
 ** NOTE: This function determines the destination MTP, if the message is a USP notification
 **
-** \param   usp_msg_type - Type of USP message contained in pbuf. This is used for debug logging when the message is sent by the MTP.
+** \param   msi - Information about the content to send. The ownership of
+**                the payload buffer is passed to this function, unless an error is returned.
 ** \param   endpoint_id - controller to send the message to
-** \param   pbuf - pointer to buffer containing binary protobuf message. Ownership of this buffer passes to protocol handler, if successful
-** \param   pbuf_len - length of buffer containing protobuf binary message
 ** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
 ** \param   mrt - details of where this USP response message should be sent. NOTE: This may not be specified if the message is a notification
 ** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
@@ -653,12 +652,13 @@ void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time)
+int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time)
 {
-    int err = USP_ERR_INTERNAL_ERROR;
+    int err = USP_ERR_GENERAL_FAILURE;
     controller_t *cont;
     controller_mtp_t *mtp;
     mtp_reply_to_t dest;
+    USP_ASSERT(msi != NULL);
 
     // Take a copy of the MTP destination parameters we've been given
     // because we may modify it (and we don't want the caller to free anything we put in it, as they are owned by the data model)
@@ -694,8 +694,8 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, char
     }
 
     // Send the response
-    // NOTE: Ownership of pbuf passes to the MTP, if successful
-    err = QueueBinaryMessageOnMtp(usp_msg_type, endpoint_id, pbuf, pbuf_len, usp_msg_id, &dest, cont, mtp, expiry_time);
+    // NOTE: Ownership of msi->pbuf passes to the MTP, if successful
+    err = QueueBinaryMessageOnMtp(msi, endpoint_id, usp_msg_id, &dest, cont, mtp, expiry_time);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -930,10 +930,9 @@ void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
 **
 ** Queues a binary message on the specified MTP
 **
-** \param   usp_msg_type - Type of USP message contained in pbuf. This is used for debug logging when the message is sent by the MTP.
+** \param   msi - Information about the content to send. The ownership of
+**                the payload buffer is passed to this function, unless an error is returned.
 ** \param   endpoint_id - controller to send the message to
-** \param   pbuf - pointer to buffer containing binary protobuf message. Ownership of this buffer passes to protocol handler, if successful
-** \param   pbuf_len - length of buffer containing protobuf binary message
 ** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
 ** \param   mrt - details of where this USP response message should be sent
 ** \param   cont - pointer to controller instance to send the message to (only used by CoAP)
@@ -943,9 +942,10 @@ void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int QueueBinaryMessageOnMtp(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *usp_msg_id, mtp_reply_to_t *mrt, controller_t *cont, controller_mtp_t *mtp, time_t expiry_time)
+int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mrt, controller_t *cont, controller_mtp_t *mtp, time_t expiry_time)
 {
     int err = USP_ERR_OK;
+    USP_ASSERT(msi != NULL);
 
     switch(mrt->protocol)
     {
@@ -960,7 +960,7 @@ int QueueBinaryMessageOnMtp(Usp__Header__MsgType usp_msg_type, char *endpoint_id
             USP_SNPRINTF(raw_err_id_header, sizeof(raw_err_id_header), "%s/%s", endpoint_id, usp_msg_id);
             TEXT_UTILS_ReplaceCharInString(raw_err_id_header, ':', "\\c", err_id_header, sizeof(err_id_header));
 
-            err = DEVICE_STOMP_QueueBinaryMessage(usp_msg_type, mrt->stomp_instance, mrt->stomp_dest, agent_queue, pbuf, pbuf_len, err_id_header, expiry_time);
+            err = DEVICE_STOMP_QueueBinaryMessage(msi, mrt->stomp_instance, mrt->stomp_dest, agent_queue, err_id_header, expiry_time);
         }
             break;
 #endif
@@ -973,7 +973,7 @@ int QueueBinaryMessageOnMtp(Usp__Header__MsgType usp_msg_type, char *endpoint_id
                 return USP_ERR_INTERNAL_ERROR;
             }
 
-            err = COAP_CLIENT_QueueBinaryMessage(usp_msg_type, cont->instance, mtp->instance, pbuf, pbuf_len, mrt, expiry_time);
+            err = COAP_CLIENT_QueueBinaryMessage(msi, cont->instance, mtp->instance, mrt, expiry_time);
             break;
 #endif
 
@@ -981,7 +981,7 @@ int QueueBinaryMessageOnMtp(Usp__Header__MsgType usp_msg_type, char *endpoint_id
         case kMtpProtocol_MQTT:
         {
             char *response_topic = DEVICE_MTP_GetAgentMqttResponseTopic(mrt->mqtt_instance);
-            err = DEVICE_MQTT_QueueBinaryMessage(usp_msg_type, mrt->mqtt_instance, mrt->mqtt_topic, response_topic, pbuf, pbuf_len);
+            err = DEVICE_MQTT_QueueBinaryMessage(msi, mrt->mqtt_instance, mrt->mqtt_topic, response_topic);
         }
             break;
 #endif
@@ -990,11 +990,11 @@ int QueueBinaryMessageOnMtp(Usp__Header__MsgType usp_msg_type, char *endpoint_id
         case kMtpProtocol_WebSockets:
             if (mrt->wsserv_conn_id == INVALID)
             {
-                WSCLIENT_QueueBinaryMessage(usp_msg_type, mrt->wsclient_cont_instance, mrt->wsclient_mtp_instance, pbuf, pbuf_len, kMtpContentType_UspRecord, expiry_time);
+                WSCLIENT_QueueBinaryMessage(msi, mrt->wsclient_cont_instance, mrt->wsclient_mtp_instance, expiry_time);
             }
             else
             {
-                WSSERVER_QueueBinaryMessage(usp_msg_type, mrt->wsserv_conn_id, pbuf, pbuf_len, kMtpContentType_UspRecord, expiry_time);
+                WSSERVER_QueueBinaryMessage(msi, mrt->wsserv_conn_id, expiry_time);
             }
             err = USP_ERR_OK;
             break;
@@ -1047,7 +1047,6 @@ exit:
     // Log output results
     USP_LOG_Info("=== SendOnBoardRequest Operation completed with result=%d ===", err);
 
-    //
     return err;
 }
 
@@ -1123,6 +1122,7 @@ void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
     time_t retry_expiry_time;
     char *dest_endpoint;
     mtp_reply_to_t mtp_reply_to = {0};  // Ensures mtp_reply_to.is_reply_to_specified=false
+    usp_send_item_t usp_send_item = USP_SEND_ITEM_INIT;
 
     // Exit if unable to determine the endpoint of the controller
     // This could occur if the controller had been deleted
@@ -1143,12 +1143,16 @@ void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
     // Determine the time at which we should give up retrying, or expire the message in the MTP's send queue
     retry_expiry_time = END_OF_TIME;       // default to never expire
 
+    usp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__NOTIFY;
+    usp_send_item.msg_packed = pbuf;
+    usp_send_item.msg_packed_size = pbuf_len;
+
     // Send the message
     // NOTE: Intentionally ignoring error here. If the controller has been disabled or deleted, then
     // allow the subs retry code to remove any previous attempts from the retry array
-    MSG_HANDLER_QueueUspRecord(USP__HEADER__MSG_TYPE__NOTIFY, dest_endpoint, pbuf, pbuf_len, req->header->msg_id, &mtp_reply_to, retry_expiry_time);
+    MSG_HANDLER_QueueUspRecord(&usp_send_item, dest_endpoint, req->header->msg_id, &mtp_reply_to, retry_expiry_time);
 
-    // Free the serialized USP message as we don't need it for subs retry
+    // Free the serialized USP Message because it is now encapsulated in USP Record messages.
     USP_FREE(pbuf);
 }
 
@@ -1240,8 +1244,14 @@ int ValidateAdd_ControllerMtp(dm_req_t *req)
     controller_t *cont;
     controller_mtp_t *mtp;
 
+    // Exit if unable to find the parent controller
+    // NOTE: This occurs in the case of a USP Add message containing a nested add (of Controller and MTP)
     cont = FindControllerByInstance(inst1);
-    USP_ASSERT(cont != NULL);
+    if (cont == NULL)
+    {
+        USP_ERR_SetMessage("%s: %s.%d does not exist. Adding both Controller and MTP using a single USP message are not supported", __FUNCTION__, device_cont_root, inst1);
+        return USP_ERR_CREATION_FAILURE;
+    }
 
     // Exit if unable to find a free MTP slot
     mtp = FindUnusedControllerMtp(cont);

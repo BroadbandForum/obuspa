@@ -205,14 +205,11 @@ typedef struct
 static stomp_connection_t stomp_connections[MAX_STOMP_CONNECTIONS];
 
 //------------------------------------------------------------------------------
-// USP Message to send in queue
+// Payload to send in STOMP queue
 typedef struct
 {
     double_link_t link;     // Doubly linked list pointers. These must always be first in this structure
-    Usp__Header__MsgType usp_msg_type;  // Type of USP message contained within pbuf (if content_type==kMtpContentType_UspRecord)
-    unsigned char *pbuf;    // content of STOMP frame to send
-    int pbuf_len;           // Length of content to send
-    mtp_content_type_t content_type; // Type of content stored in pbuf
+    mtp_send_item_t item;   // Information about the content to send
     char *controller_queue; // Name of the STOMP queue to send this message to
     char *agent_queue;      // Name of the STOMP queue used by this agent
     char *err_id_header;    // Value of 'usp-err-id' STOMP header to put in the STOMP frame
@@ -259,7 +256,7 @@ void HandleStompSocketError(stomp_connection_t *sc, stomp_failure_t failure_code
 unsigned CalculateStompRetryWaitTime(unsigned retry_count, double interval, double multiplier);
 int StartSendingFrame_STOMP(stomp_connection_t *sc);
 int StartSendingFrame_SUBSCRIBE(stomp_connection_t *sc);
-int StartSendingFrame_SEND(stomp_connection_t *sc, char *controller_queue, char *agent_queue, Usp__Header__MsgType usp_msg_type, unsigned char *pbuf, int pbuf_len, mtp_content_type_t content_type, char *err_id_header);
+int StartSendingFrame_SEND(stomp_connection_t *sc, char *controller_queue, char *agent_queue, mtp_send_item_t *msi, char *err_id_header);
 int StartSendingFrame_UNSUBSCRIBE(stomp_connection_t *sc);
 char *AddrInfoToStr(struct addrinfo *addr, char *buf, int len);
 void UpdateNextHeartbeatTime(stomp_connection_t *sc);
@@ -603,25 +600,23 @@ void STOMP_ProcessAllSocketActivity(socket_set_t *set)
 **
 ** Function called to queue a message on the specified STOMP connection
 **
-** \param   usp_msg_type - Type of USP message contained in pbuf. This is used for debug logging when the message is sent by the MTP.
+** \param   msi - Information about the content to send. The ownership of
+**                the payload buffer is passed to this function, unless an error is returned.
 ** \param   instance - instance number of the stomp connection in Device.STOMP.Connection.{i}
 ** \param   controller_queue - name of STOMP queue to send this message to
 ** \param   agent_queue - name of agent's STOMP queue configured for this connection in the data model
-** \param   pbuf - pointer to buffer containing binary protobuf message. Ownership of this buffer passes to this code, if successful
-** \param   pbuf_len - length of buffer containing protobuf binary message
-** \param   content_type - Type of content in the pbuf buffer
 ** \param   err_id_header - pointer to string containing the STOMP usp-err-id header
 ** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *controller_queue, char *agent_queue,
-                             unsigned char *pbuf, int pbuf_len, mtp_content_type_t content_type, char *err_id_header, time_t expiry_time)
+int STOMP_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *controller_queue, char *agent_queue,
+                             char *err_id_header, time_t expiry_time)
 {
     stomp_connection_t *sc;
     stomp_send_item_t *send_item;
-    int err;
+    int err = USP_ERR_GENERAL_FAILURE;
     bool is_duplicate;
 
     OS_UTILS_LockMutex(&stomp_access_mutex);
@@ -629,7 +624,7 @@ int STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, ch
     // Exit if MTP thread has exited
     if (is_stomp_mtp_thread_exited)
     {
-        USP_FREE(pbuf);
+        USP_FREE(msi->pbuf);
         OS_UTILS_UnlockMutex(&stomp_access_mutex);
         return USP_ERR_OK;
     }
@@ -645,10 +640,10 @@ int STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, ch
 
     // Do not add this message to the queue, if it is already present in the queue
     // This situation could occur if a notify is being retried to be sent, but is already held up in the queue pending sending
-    is_duplicate = IsUspRecordInStompQueue(sc, pbuf, pbuf_len);
+    is_duplicate = IsUspRecordInStompQueue(sc, msi->pbuf, msi->pbuf_len);
     if (is_duplicate)
     {
-        USP_FREE(pbuf);
+        USP_FREE(msi->pbuf);
         err = USP_ERR_OK;
         goto exit;
     }
@@ -661,12 +656,9 @@ int STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, ch
 
     // Add the item to the queue
     send_item = USP_MALLOC(sizeof(stomp_send_item_t));
-    send_item->usp_msg_type = usp_msg_type;
-    send_item->pbuf = pbuf;
-    send_item->pbuf_len = pbuf_len;
+    send_item->item = *msi;  // NOTE: Ownership of the payload buffer passes to the STOMP message queue
     send_item->controller_queue = USP_STRDUP(controller_queue);
     send_item->agent_queue = USP_STRDUP(agent_queue);
-    send_item->content_type = content_type;
     send_item->err_id_header = USP_STRDUP(err_id_header);
     send_item->expiry_time = expiry_time;
 
@@ -1920,7 +1912,7 @@ int GetNextStompMsgToSend(stomp_connection_t *sc)
         queued_msg = (stomp_send_item_t *) sc->usp_record_send_queue.head;
         if (queued_msg != NULL)
         {
-            err = StartSendingFrame_SEND(sc, queued_msg->controller_queue, queued_msg->agent_queue, queued_msg->usp_msg_type, queued_msg->pbuf, queued_msg->pbuf_len, queued_msg->content_type, queued_msg->err_id_header);
+            err = StartSendingFrame_SEND(sc, queued_msg->controller_queue, queued_msg->agent_queue, &queued_msg->item, queued_msg->err_id_header);
         }
     }
 
@@ -3359,22 +3351,21 @@ int StartSendingFrame_SUBSCRIBE(stomp_connection_t *sc)
 ** \param   sc - pointer to STOMP connection
 ** \param   controller_queue - name of STOMP queue to send this message to
 ** \param   agent_queue - name of agent's STOMP queue configured for this connection in the data model
-** \param   usp_msg_type - Type of USP message contained in pbuf. This is used for debug logging when the message is sent by the MTP.
-** \param   pbuf - pointer to buffer containing message in binary format
-** \param   pbuf_len - length of protobuf message buffer
-** \param   content_type - type of content in the pbuf buffer
+** \param   msi - Information about the content to send. The ownership of 
+**                          the payload buffer is not passed to this function and stays with the caller.
 ** \param   err_id_header - pointer to buffer containing the value of the 'usp-err-id' STOMP header to put in the message
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int StartSendingFrame_SEND(stomp_connection_t *sc, char *controller_queue, char *agent_queue, Usp__Header__MsgType usp_msg_type, unsigned char *pbuf, int pbuf_len, mtp_content_type_t content_type, char *err_id_header)
+int StartSendingFrame_SEND(stomp_connection_t *sc, char *controller_queue, char *agent_queue, mtp_send_item_t *msi, char *err_id_header)
 {
     unsigned char *buf;
     int len;                    // Total number of bytes in the entire STOMP frame including NULL terminator
     int body_offset;            // Offset from the start of the STOMP message (in bytes) to the message's body (which will contain the google protocol buf encoded USP message)
     char content_length[16];    // Temporary string containing the content length digits
     char *content_type_str;
+    USP_ASSERT(msi != NULL);
 
     // Exit if unable to get the name of the controller's queue on this connection
     if ((controller_queue == NULL) || (*controller_queue == '\0'))
@@ -3397,10 +3388,10 @@ int StartSendingFrame_SEND(stomp_connection_t *sc, char *controller_queue, char 
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    content_type_str = (content_type==kMtpContentType_UspRecord) ? BBF_STOMP_CONTENT_TYPE : BBF_STOMP_ERROR_CONTENT_TYPE;
+    content_type_str = (msi->content_type==kMtpContentType_UspRecord) ? BBF_STOMP_CONTENT_TYPE : BBF_STOMP_ERROR_CONTENT_TYPE;
 
     // Determine the size of the USP message
-    USP_SNPRINTF(content_length, sizeof(content_length), "%d", pbuf_len);
+    USP_SNPRINTF(content_length, sizeof(content_length), "%d", msi->pbuf_len);
 
     #define SEND_FRAME_FORMAT   "SEND\n" \
                                 "content-length:%s\n" \
@@ -3419,18 +3410,18 @@ int StartSendingFrame_SEND(stomp_connection_t *sc, char *controller_queue, char 
           strlen(agent_queue) +
           strlen(controller_queue) - 10 + // Minus 10 to remove all "%s" from the frame
           sizeof(STOMP_BODY_SEPARATOR)-1 + // Minus 1 to not include NULL terminator in STOMP_BODY_SEPARATOR
-          pbuf_len;
+          msi->pbuf_len;
     buf = USP_MALLOC(len);
 
     // Form the STOMP headers
     body_offset = USP_SNPRINTF((char *)buf, len, SEND_FRAME_FORMAT, content_length, content_type_str, err_id_header, agent_queue, controller_queue);
 
-    MSG_HANDLER_LogMessageToSend(usp_msg_type, pbuf, pbuf_len, kMtpProtocol_STOMP, sc->host, buf, content_type);
+    MSG_HANDLER_LogMessageToSend(msi, kMtpProtocol_STOMP, sc->host, buf);
 
     // Form the STOMP body
     memcpy(&buf[body_offset], STOMP_BODY_SEPARATOR, sizeof(STOMP_BODY_SEPARATOR)-1);
     body_offset += 2;
-    memcpy(&buf[body_offset], pbuf, pbuf_len);
+    memcpy(&buf[body_offset], msi->pbuf, msi->pbuf_len);
 
     // Terminate the STOMP message
     buf[len-1] = '\0';
@@ -4033,7 +4024,7 @@ void RemoveStompQueueItem(stomp_connection_t *sc, stomp_send_item_t *queued_msg)
     // Free all dynamically allocated member variables
     USP_FREE(queued_msg->controller_queue);
     USP_FREE(queued_msg->agent_queue);
-    USP_FREE(queued_msg->pbuf);
+    USP_FREE(queued_msg->item.pbuf);
     USP_FREE(queued_msg->err_id_header);
 
     // Remove the specified item from the queue, and free the item itself
@@ -4064,7 +4055,7 @@ bool IsUspRecordInStompQueue(stomp_connection_t *sc, unsigned char *pbuf, int pb
     while (queued_msg != NULL)
     {
         // Exit if the USP record is already in the queue
-        if ((queued_msg->pbuf_len == pbuf_len) && (memcmp(queued_msg->pbuf, pbuf, pbuf_len)==0))
+        if ((queued_msg->item.pbuf_len == pbuf_len) && (memcmp(queued_msg->item.pbuf, pbuf, pbuf_len)==0))
         {
              return true;
         }

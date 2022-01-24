@@ -44,6 +44,9 @@
 
 #include <time.h>
 #include <stdbool.h>
+
+#include "usp-msg.pb-c.h"
+
 #include "vendor_defs.h"  // for ENABLE_COAP
 
 //-----------------------------------------------------------------------------------------------
@@ -84,6 +87,29 @@ typedef enum
     kMtpContentType_UspRecord,        // Protobuf encoded USP Record
     kMtpContentType_Text,             // Plain text
 } mtp_content_type_t;
+
+//------------------------------------------------------------------------------
+// Structure containing common elements about USP message to send
+typedef struct
+{
+    Usp__Header__MsgType usp_msg_type;  // USP Message type (For log usage only)
+    uint8_t *msg_packed;                // Protobuf encoded USP Message to be encapsulate in USP Record
+    int msg_packed_size;                // Length of the payload
+} usp_send_item_t;
+#define USP_SEND_ITEM_INIT \
+ { USP__HEADER__MSG_TYPE__ERROR, NULL, 0 }
+
+//------------------------------------------------------------------------------
+// Structure containing common elements about payload/body content to send by the MTP
+typedef struct
+{
+    mtp_content_type_t content_type;    // Type of content in the payload.
+    Usp__Header__MsgType usp_msg_type;  // USP Message type (For log usage only)
+    uint8_t *pbuf;                      // Payload to be sent by the MTP
+    int pbuf_len;                       // Length of the payload
+} mtp_send_item_t;
+#define MTP_SEND_ITEM_INIT \
+ { kMtpContentType_Text, USP__HEADER__MSG_TYPE__ERROR, NULL, 0 }
 
 //------------------------------------------------------------------------------
 // Structure containing a count of causes of connectivity failures for a particular MTP (eg STOMP, HTTP)

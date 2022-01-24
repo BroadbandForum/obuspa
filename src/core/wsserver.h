@@ -61,8 +61,7 @@ typedef struct
 // API
 int WSSERVER_Init(void);
 int WSSERVER_Start(void);
-void WSSERVER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int conn_id,
-                             unsigned char *pbuf, int pbuf_len, mtp_content_type_t content_type, time_t expiry_time);
+void WSSERVER_QueueBinaryMessage(mtp_send_item_t *msi, int conn_id, time_t expiry_time);
 void *WSSERVER_Main(void *args);
 int WSSERVER_EnableServer(wsserv_config_t *config);
 int WSSERVER_DisableServer(void);

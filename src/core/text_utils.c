@@ -401,7 +401,7 @@ int TEXT_UTILS_StringToBinary(char *str, unsigned char *buf, int len, int *bytes
 **
 ** \param   str - pointer to input string to convert (in base64 format)
 ** \param   buf - pointer to buffer in which to write the binary data
-** \param   len - length of the buffer
+** \param   len - length of the binary buffer
 ** \param   bytes_written - pointer to variable in which to return the number of bytes written into the buffer, or NULL if not required
 **
 ** \return  USP_ERR_OK if successful.

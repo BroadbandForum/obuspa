@@ -50,7 +50,7 @@
 
 //-------------------------------------------------------------------------
 // API functions
-int OS_UTILS_CreateThread(void *(* start_routine)(void *), void *args);
+int OS_UTILS_CreateThread(const char* name, void *(* start_routine)(void *), void *args);
 void OS_UTILS_SetDataModelThread(void);
 bool OS_UTILS_IsDataModelThread(const char *caller, bool print_warning);
 int OS_UTILS_InitMutex(pthread_mutex_t *mutex);

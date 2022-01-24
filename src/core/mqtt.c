@@ -1,8 +1,8 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2020, BT PLC
- * Copyright (C) 2020-2021  CommScope, Inc
+ * Copyright (C) 2020-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -146,12 +146,12 @@ char *mqtt_state_names[kMqttState_Max] =
     "Error/Retring"
 };
 
+//------------------------------------------------------------------------------
+// Payload to send in MQTT queue
 typedef struct
 {
     double_link_t link;     // Doubly linked list pointers. These must always be first in this structure
-    Usp__Header__MsgType usp_msg_type;  // Type of USP message contained within pbuf
-    unsigned char *pbuf;    // Protobuf format message to send in binary format
-    int pbuf_len;           // Length of protobuf message to send
+    mtp_send_item_t item;   // Information about the content to send
     char *topic;            // Name of the MQTT Topic to send to
     mqtt_qos_t qos;         // QOS to request when sending message
     int mid;                // MQTT message ID
@@ -459,6 +459,7 @@ int PerformMqttClientConnect(mqtt_client_t *client)
     mosquitto_property *proplist = NULL;
     int mosq_err = MOSQ_ERR_SUCCESS;
     int err = USP_ERR_OK;
+    int keep_alive;
 
     // Exit if unable to configure username/password for this mosquitto context
     if (strlen(client->conn_params.username) > 0)
@@ -499,6 +500,17 @@ int PerformMqttClientConnect(mqtt_client_t *client)
         }
     }
 
+    // Calculate the keep alive period to pass to libmosquitto. We might need to alter this, because libmosquitto does not support keep alive < 5 seconds
+    keep_alive = client->conn_params.keepalive;
+    if (keep_alive == 0)
+    {
+        keep_alive = 60*60*18;  // Set to 18 hours which is the largest that libmosquitto accepts (it truncates the arg to uint16 internally)
+    }
+    else if (keep_alive < 5)
+    {
+        keep_alive = 5;
+    }
+
     // Release the access mutex temporarily whilst performing the connect call
     // We do this to prevent the data model thread from potentially being blocked, whilst the connect call is taking place
     client->in_tcp_connect = true;
@@ -510,12 +522,12 @@ int PerformMqttClientConnect(mqtt_client_t *client)
     if (version == kMqttProtocol_5_0)
     {
         mosq_err = mosquitto_connect_bind_v5(client->mosq, client->conn_params.host, client->conn_params.port,
-                                             client->conn_params.keepalive, NULL, proplist);
+                                             keep_alive, NULL, proplist);
     }
     else
     {
         mosq_err = mosquitto_connect(client->mosq, client->conn_params.host, client->conn_params.port,
-                                     client->conn_params.keepalive);
+                                     keep_alive);
     }
 
     // Take the access mutex again
@@ -783,7 +795,7 @@ int PublishV5(mqtt_client_t *client, mqtt_send_item_t *msg)
         goto error;
     }
 
-    int mosq_err = mosquitto_publish_v5(client->mosq, &msg->mid, msg->topic, msg->pbuf_len, msg->pbuf, msg->qos, false /* retain */, proplist);
+    int mosq_err = mosquitto_publish_v5(client->mosq, &msg->mid, msg->topic, msg->item.pbuf_len, msg->item.pbuf, msg->qos, false /* retain */, proplist);
     if (mosq_err != MOSQ_ERR_SUCCESS)
     {
         USP_LOG_Error("%s: Failed to publish to v5 with error %d", __FUNCTION__, mosq_err);
@@ -805,7 +817,7 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
     USP_ASSERT(msg != NULL);
     USP_ASSERT(msg->topic != NULL);
 
-    MSG_HANDLER_LogMessageToSend(msg->usp_msg_type, msg->pbuf, msg->pbuf_len, kMtpProtocol_MQTT, client->conn_params.host, NULL, kMtpContentType_UspRecord);
+    MSG_HANDLER_LogMessageToSend(&msg->item, kMtpProtocol_MQTT, client->conn_params.host, NULL);
 
     int version = client->conn_params.version;
     if (version == kMqttProtocol_5_0)
@@ -814,7 +826,7 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
     }
     else
     {
-        if (mosquitto_publish(client->mosq, &msg->mid, msg->topic, msg->pbuf_len, msg->pbuf, msg->qos, false /*retain*/) != MOSQ_ERR_SUCCESS)
+        if (mosquitto_publish(client->mosq, &msg->mid, msg->topic, msg->item.pbuf_len, msg->item.pbuf, msg->qos, false /*retain*/) != MOSQ_ERR_SUCCESS)
         {
             USP_LOG_Error("%s: Failed to publish to v3.1.1. Params:\n MID:%d\n topic:%s\n msg->qos:%d\n", __FUNCTION__, msg->mid, msg->topic, msg->qos);
             err = USP_ERR_INTERNAL_ERROR;
@@ -912,7 +924,7 @@ void PopClientUspQueue(mqtt_client_t *client)
         if (head != NULL)
         {
             USP_SAFE_FREE(head->topic);
-            USP_SAFE_FREE(head->pbuf);
+            USP_SAFE_FREE(head->item.pbuf);
             DLLIST_Unlink(&client->usp_record_send_queue, head);
             USP_SAFE_FREE(head);
         }
@@ -972,7 +984,7 @@ bool IsUspRecordInMqttQueue(mqtt_client_t *client, unsigned char *pbuf, int pbuf
     q_msg = (mqtt_send_item_t *) client->usp_record_send_queue.head;
     while (q_msg != NULL)
     {
-        if ((q_msg->pbuf_len == pbuf_len) && (memcmp(q_msg->pbuf, pbuf, pbuf_len)==0))
+        if ((q_msg->item.pbuf_len == pbuf_len) && (memcmp(q_msg->item.pbuf, pbuf, pbuf_len)==0))
         {
             return true;
         }
@@ -1190,8 +1202,8 @@ void MessageV5Callback(struct mosquitto *mosq, void *userdata, const struct mosq
     }
     else
     {
-        USP_LOG_Info("%s: Received Message: Topic: %s", __FUNCTION__, message->topic);
-        //USP_LOG_Info("%s: Received Message: Payload: %s", __FUNCTION__, (char*)message->payload);
+        USP_LOG_Info("%s: Received Message: Topic: '%s' PayloadLength: %d bytes", __FUNCTION__, 
+                     message->topic, message->payloadlen);
 
         if (client->state == kMqttState_Running)
         {
@@ -1628,7 +1640,8 @@ void MessageCallback(struct mosquitto *mosq, void *userdata, const struct mosqui
     }
     else
     {
-        USP_LOG_Info("%s: Received Message: Topic: %s Payload: %s", __FUNCTION__, message->topic, (char*)message->payload);
+        USP_LOG_Info("%s: Received Message: Topic: '%s' PayloadLength: %d bytes", __FUNCTION__, 
+                     message->topic, message->payloadlen);
 
         if (client->state == kMqttState_Running)
         {
@@ -2163,10 +2176,10 @@ exit:
     return err;
 }
 
-int MQTT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char* topic,
-        unsigned char *pbuf, int pbuf_len)
+int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char* topic)
 {
     int err = USP_ERR_GENERAL_FAILURE;
+    USP_ASSERT(msi != NULL);
 
     // Add the message to the back of the queue
     OS_UTILS_LockMutex(&mqtt_access_mutex);
@@ -2174,7 +2187,7 @@ int MQTT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, cha
     if (is_mqtt_mtp_thread_exited)
     {
         OS_UTILS_UnlockMutex(&mqtt_access_mutex);
-        USP_FREE(pbuf);
+        USP_FREE(msi->pbuf);
         return USP_ERR_OK;
     }
 
@@ -2190,21 +2203,17 @@ int MQTT_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, cha
 
     // Find if this is a duplicate in the queue
     // May have been tried to be resent by the MTP_EXEC thread
-    if (IsUspRecordInMqttQueue(client, pbuf, pbuf_len))
+    if (IsUspRecordInMqttQueue(client, msi->pbuf, msi->pbuf_len))
     {
         // No error, just return success
-        USP_FREE(pbuf);
+        USP_FREE(msi->pbuf);
         err = USP_ERR_OK;
         goto exit;
     }
 
     mqtt_send_item_t *send_item;
     send_item = USP_MALLOC(sizeof(mqtt_send_item_t));
-    send_item->usp_msg_type = usp_msg_type;
-
-    // pbuf is our responsibility in MTP layer now
-    send_item->pbuf = pbuf;
-    send_item->pbuf_len = pbuf_len;
+    send_item->item = *msi;  // NOTE: Ownership of the payload buffer passes to the MQTT client
 
     if (topic != NULL)
     {

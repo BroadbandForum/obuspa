@@ -289,7 +289,7 @@ int main(int argc, char *argv[])
 
     // Exit if unable to spawn off a thread to service the MTPs
 #ifndef DISABLE_STOMP
-    err = OS_UTILS_CreateThread(MTP_EXEC_StompMain, NULL);
+    err = OS_UTILS_CreateThread("MTP_STOMP", MTP_EXEC_StompMain, NULL);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -297,7 +297,7 @@ int main(int argc, char *argv[])
 #endif
 
 #ifdef ENABLE_COAP
-    err = OS_UTILS_CreateThread(MTP_EXEC_CoapMain, NULL);
+    err = OS_UTILS_CreateThread("MTP_CoAP", MTP_EXEC_CoapMain, NULL);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -305,7 +305,7 @@ int main(int argc, char *argv[])
 #endif
 
 #ifdef ENABLE_MQTT
-    err = OS_UTILS_CreateThread(MTP_EXEC_MqttMain, NULL);
+    err = OS_UTILS_CreateThread("MTP_MQTT", MTP_EXEC_MqttMain, NULL);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -313,7 +313,7 @@ int main(int argc, char *argv[])
 #endif
 
 #ifdef ENABLE_WEBSOCKETS
-    err = OS_UTILS_CreateThread(WSCLIENT_Main, NULL);
+    err = OS_UTILS_CreateThread("MTP_WSClient", WSCLIENT_Main, NULL);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -321,7 +321,7 @@ int main(int argc, char *argv[])
 #endif
 
     // Exit if unable to spawn off a thread to perform bulk data collection posts
-    err = OS_UTILS_CreateThread(BDC_EXEC_Main, NULL);
+    err = OS_UTILS_CreateThread("BulkDataColl", BDC_EXEC_Main, NULL);
     if (err != USP_ERR_OK)
     {
         goto exit;

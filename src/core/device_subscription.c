@@ -2146,6 +2146,7 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
     char *msg_id;
     char *dest_endpoint;
     mtp_reply_to_t mtp_reply_to = {0};  // Ensures mtp_reply_to.is_reply_to_specified=false
+    usp_send_item_t usp_send_item = USP_SEND_ITEM_INIT;
 
     // Exit if unable to determine the endpoint of the controller
     // This could occur if the controller had been deleted
@@ -2171,10 +2172,14 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
         retry_expiry_time = cur_time + sub->retry_expiry_period;
     }
 
+    usp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__NOTIFY;
+    usp_send_item.msg_packed = pbuf;
+    usp_send_item.msg_packed_size = pbuf_len;
+
     // Send the message
     // NOTE: Intentionally ignoring error here. If the controller has been disabled or deleted, then
     // allow the subs retry code to remove any previous attempts from the retry array
-    MSG_HANDLER_QueueUspRecord(USP__HEADER__MSG_TYPE__NOTIFY, dest_endpoint, pbuf, pbuf_len, req->header->msg_id, &mtp_reply_to, retry_expiry_time);
+    MSG_HANDLER_QueueUspRecord(&usp_send_item, dest_endpoint, req->header->msg_id, &mtp_reply_to, retry_expiry_time);
 
     // If the message should be retried until a NotifyResponse is received, then...
     if (sub->notification_retry)
@@ -2187,7 +2192,7 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
     }
     else
     {
-        // Free the serialized USP message as we don't need it for subs retry
+        // Free the serialized USP Message because it is now encapsulated in USP Record messages.
         USP_FREE(pbuf);
     }
 }

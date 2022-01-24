@@ -56,13 +56,14 @@ pthread_t usp_core_thread;
 **
 ** Wrapper function to start a POSIX thread
 **
+** \param   name - 16-chars NULL-terminated name to give to the thread.
 ** \param   start_routine - function pointer to the 'main' function for the thread
 ** \param   args - pointer to input conditions for the operation
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int OS_UTILS_CreateThread(void *(* start_routine)(void *), void *args)
+int OS_UTILS_CreateThread(const char* name, void *(* start_routine)(void *), void *args)
 {
     int err;
     pthread_t thread;
@@ -94,6 +95,14 @@ int OS_UTILS_CreateThread(void *(* start_routine)(void *), void *args)
         goto exit;
     }
 
+    err = pthread_setname_np(thread, name);
+    if (err != 0)
+    {
+        USP_ERR_ERRNO("pthread_setname_np", err);
+        err = USP_ERR_INTERNAL_ERROR;
+        goto exit;
+    }
+
     err = USP_ERR_OK;
 
 exit:
@@ -117,6 +126,11 @@ exit:
 void OS_UTILS_SetDataModelThread(void)
 {
     usp_core_thread = pthread_self();
+    int err = pthread_setname_np(usp_core_thread, "DataModel");
+    if (err != 0)
+    {
+        USP_ERR_ERRNO("pthread_setname_np", err);
+    }
 }
 
 /*********************************************************************//**

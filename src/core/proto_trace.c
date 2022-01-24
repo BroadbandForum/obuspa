@@ -248,7 +248,8 @@ void PrintProtobufFieldRecursive(const ProtobufCFieldDescriptor *fields, void *p
             break;
 
         case PROTOBUF_C_TYPE_BYTES:      /**< arbitrary byte sequence */
-            // We do not print anything out here. This will get triggered by USP Agent when printing out a USP Record, for the encapsulated USP Message.
+            USP_PROTOCOL("%*s%s[%zu]", indent, "", fields->name, ((ProtobufCBinaryData *) p_value)->len);
+            // We do not print the content out here, only its length. This will get triggered by USP Agent when printing out a USP Record, for the encapsulated USP Message.
             break;
 
         case PROTOBUF_C_TYPE_MESSAGE:    /**< nested message */

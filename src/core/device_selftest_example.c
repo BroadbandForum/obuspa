@@ -155,7 +155,7 @@ int DEVICE_SELF_TEST_Operate(dm_req_t *req, kv_vector_t *input_args, int instanc
 
     // Exit if unable to start a thread to perform this operation
     // NOTE: ownership of input conditions passes to the thread
-    err = OS_UTILS_CreateThread(SelfTestDiagThreadMain, cond);
+    err = OS_UTILS_CreateThread("SelfTestDiag", SelfTestDiagThreadMain, cond);
     if (err != USP_ERR_OK)
     {
         err = USP_ERR_COMMAND_FAILURE;

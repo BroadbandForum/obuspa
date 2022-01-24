@@ -60,9 +60,9 @@ typedef int (*paramerror_extractor_t)(Usp__Msg *src_msg, Usp__Msg *err_msg);
 // API functions
 int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt);
 int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *controller_endpoint, mtp_reply_to_t *mrt);
-void MSG_HANDLER_LogMessageToSend(Usp__Header__MsgType usp_msg_type, unsigned char *pbuf, int pbuf_len, mtp_protocol_t protocol, char *host, unsigned char *stomp_header, mtp_content_type_t content_type);
+void MSG_HANDLER_LogMessageToSend(mtp_send_item_t *msi, mtp_protocol_t protocol, char *host, unsigned char *stomp_header);
 int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *mrt);
-int MSG_HANDLER_QueueUspRecord(Usp__Header__MsgType usp_msg_type, char *endpoint_id, unsigned char *pbuf, int pbuf_len, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time);
+int MSG_HANDLER_QueueUspRecord(usp_send_item_t *usi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time);
 int MSG_HANDLER_GetMsgControllerInstance(void);
 void MSG_HANDLER_GetMsgRole(combined_role_t *combined_role);
 void MSG_HANDLER_GetControllerInfo(controller_info_t *controller_info);

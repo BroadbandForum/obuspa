@@ -431,7 +431,7 @@ void USP_ARG_AddDateTime(kv_vector_t *kvv, char *key, time_t value)
 **
 ** \param   kvv - pointer to key-value pair vector structure
 ** \param   key - pointer to name of key to get the value of
-** \param   key - pointer to default value to return (this could be NULL if we want a return indicator that the key did not exist)
+** \param   default_value - pointer to default value to return (this could be NULL if we want a return indicator that the key did not exist)
 **
 ** \return  pointer to value
 **

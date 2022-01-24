@@ -49,6 +49,7 @@
 #include "subs_vector.h"
 #include "device.h"
 #include "group_set_vector.h"
+#include "vendor_defs.h"  // For MAX_DM_INSTANCE_ORDER
 
 //-----------------------------------------------------------------------------------------
 // Type of each data model node

@@ -84,7 +84,7 @@ int STOMP_Start(void);
 void STOMP_UpdateAllSockSet(socket_set_t *set);
 bool STOMP_AreAllResponsesSent(void);
 void STOMP_ProcessAllSocketActivity(socket_set_t *set);
-int STOMP_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int instance, char *controller_queue, char *agent_queue, unsigned char *pbuf, int pbuf_len, mtp_content_type_t content_type, char *err_id_header, time_t expiry_time);
+int STOMP_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *controller_queue, char *agent_queue, char *err_id_header, time_t expiry_time);
 int STOMP_EnableConnection(stomp_conn_params_t *sp, char *stomp_queue);
 int STOMP_DisableConnection(int instance, bool purge_queued_messages);
 void STOMP_ScheduleReconnect(stomp_conn_params_t *sp, char *stomp_queue);

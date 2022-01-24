@@ -1016,7 +1016,7 @@ int Start_ScheduleTimer(dm_req_t *req, kv_vector_t *input_args, int instance)
 
     // Exit if unable to start a thread to perform this operation
     // NOTE: ownership of input conditions passes to the thread
-    err = OS_UTILS_CreateThread(ScheduleTimerThreadMain, cond);
+    err = OS_UTILS_CreateThread("ScheduleTimer", ScheduleTimerThreadMain, cond);
     if (err != USP_ERR_OK)
     {
         goto exit;

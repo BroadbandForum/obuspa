@@ -1258,6 +1258,7 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
             char *buf;
             int len;
             char *err_msg;
+            mtp_send_item_t mtp_send_item = MTP_SEND_ITEM_INIT;
 
             // Exit if the controller did not send a 'usp-err-id' STOMP header to identify this broken USP record
             // (We can't send back a response unless they did)
@@ -1272,10 +1273,16 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
             err_msg = USP_ERR_GetMessage();
             len = USP_SNPRINTF(buf, MAX_ERR_ID_PAYLOAD_LEN, "err_code:%d\nerr_msg:%s", err, err_msg);
 
+            mtp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;
+            mtp_send_item.pbuf = (unsigned char *)buf;
+            mtp_send_item.pbuf_len = len;
+            mtp_send_item.content_type = kMtpContentType_Text;
+
             // Send a 'usp-err-id' STOMP frame
             // NOTE: The trailing NULL in the pbuf contents is not part of the final STOMP frame but is necessary for printing out the pbuf contents in MSG_HANDLER_LogMessageToSend
             agent_queue = DEVICE_MTP_GetAgentStompQueue(mrt->stomp_instance);
-            err = STOMP_QueueBinaryMessage(USP__HEADER__MSG_TYPE__ERROR, mrt->stomp_instance, mrt->stomp_dest, agent_queue, (unsigned char *)buf, len, kMtpContentType_Text, mrt->stomp_err_id, END_OF_TIME);
+
+            err = STOMP_QueueBinaryMessage(&mtp_send_item, mrt->stomp_instance, mrt->stomp_dest, agent_queue, mrt->stomp_err_id, END_OF_TIME);
             if (err != USP_ERR_OK)
             {
                 USP_FREE(buf);  // Free the payload, if ownership did not pass to STOMP MTP
@@ -1303,15 +1310,20 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
             // or the USP Record was received on the agent's websocket server, but the controller was already connected
             // via the agent's websocket client (only one connection to a controller is allowed)
             char *err_msg = USP_STRDUP( USP_ERR_GetMessage());
+
+            mtp_send_item_t mtp_send_item = MTP_SEND_ITEM_INIT;
+            mtp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;
+            mtp_send_item.pbuf = (unsigned char *)err_msg;
+            mtp_send_item.pbuf_len = strlen(err_msg);
+            mtp_send_item.content_type = kMtpContentType_Text;
+
             if (mrt->wsserv_conn_id == INVALID)
             {
-                WSCLIENT_QueueBinaryMessage(USP__HEADER__MSG_TYPE__ERROR, mrt->wsclient_cont_instance, mrt->wsclient_mtp_instance,
-                                 (unsigned char *)err_msg, strlen(err_msg), kMtpContentType_Text, END_OF_TIME);
+                WSCLIENT_QueueBinaryMessage(&mtp_send_item, mrt->wsclient_cont_instance, mrt->wsclient_mtp_instance, END_OF_TIME);
             }
             else
             {
-                WSSERVER_QueueBinaryMessage(USP__HEADER__MSG_TYPE__ERROR, mrt->wsserv_conn_id,
-                                 (unsigned char *)err_msg, strlen(err_msg), kMtpContentType_Text, END_OF_TIME);
+                WSSERVER_QueueBinaryMessage(&mtp_send_item, mrt->wsserv_conn_id, END_OF_TIME);
             }
         }
             break;

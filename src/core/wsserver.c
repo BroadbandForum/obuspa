@@ -72,14 +72,11 @@ typedef struct
 static wsserv_t wsserv;
 
 //------------------------------------------------------------------------------
-// USP Message to send in queue
+// Payload to send in WebSocket queue
 typedef struct
 {
     double_link_t link;     // Doubly linked list pointers. These must always be first in this structure
-    Usp__Header__MsgType usp_msg_type;  // Type of USP message contained within pbuf (if content_type==kMtpContentType_UspRecord)
-    unsigned char *pbuf;    // content of STOMP frame to send
-    int pbuf_len;           // Length of content to send
-    mtp_content_type_t content_type;// Content of the pbuf buffer. If it is kMtpContentType_Text, the contents must be sent in a websocket close frame must be sent
+    mtp_send_item_t item;   // Information about the content to send
     time_t expiry_time;     // Time at which this message should be removed from the queue
 } wsserv_send_item_t;
 
@@ -406,27 +403,25 @@ exit:
 **
 ** Function called to queue a message on the specified WebSocket connection
 **
-** \param   usp_msg_type - Type of USP message contained in pbuf. This is used for debug logging when the message is sent by the MTP.
+** \param   msi - Information about the content to send. The ownership of
+**                the payload buffer is always passed to this function.
 ** \param   conn_id - handle used to lookup the connection to send the USP message to
-** \param   pbuf - pointer to buffer containing binary protobuf message. Ownership of this buffer passes to this code, if no error returned
-** \param   pbuf_len - length of buffer containing protobuf binary message
-** \param   content_type - Type of content in the pbuf buffer
 ** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
 **
 ** \return  None
 **
 **************************************************************************/
-void WSSERVER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int conn_id,
-                             unsigned char *pbuf, int pbuf_len, mtp_content_type_t content_type, time_t expiry_time)
+void WSSERVER_QueueBinaryMessage(mtp_send_item_t *msi, int conn_id, time_t expiry_time)
 {
     wsconn_t *wc;
     wsserv_send_item_t *si;
     bool is_duplicate;
+    USP_ASSERT(msi != NULL);
 
     // Exit if websocket server MTP has shutdown
     if (is_wsserv_mtp_shutdown)
     {
-        USP_FREE(pbuf);
+        USP_FREE(msi->pbuf);
         return;
     }
 
@@ -436,7 +431,7 @@ void WSSERVER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int conn_id,
     wc = FindWsConnectionByConnId(conn_id);
     if (wc == NULL)
     {
-        USP_FREE(pbuf);
+        USP_FREE(msi->pbuf);
         goto exit;
     }
 
@@ -445,20 +440,17 @@ void WSSERVER_QueueBinaryMessage(Usp__Header__MsgType usp_msg_type, int conn_id,
 
     // Do not add this message to the queue, if it is already present in the queue
     // This situation could occur if a notify is being retried to be sent, but is already held up in the queue pending sending
-    is_duplicate = IsUspRecordInWsservQueue(wc, pbuf, pbuf_len);
+    is_duplicate = IsUspRecordInWsservQueue(wc, msi->pbuf, msi->pbuf_len);
     if (is_duplicate)
     {
-        USP_FREE(pbuf);
+        USP_FREE(msi->pbuf);
         return;
     }
 
     // Add USP Record to queue
     si = USP_MALLOC(sizeof(wsserv_send_item_t));
     memset(si, 0, sizeof(wsserv_send_item_t));
-    si->usp_msg_type = usp_msg_type;
-    si->pbuf = pbuf;
-    si->pbuf_len = pbuf_len;
-    si->content_type = content_type;
+    si->item = *msi;  // NOTE: Ownership of the payload buffer passes to the websock message queue
     si->expiry_time = expiry_time;
     DLLIST_LinkToTail(&wc->usp_record_send_queue, si);
 
@@ -509,6 +501,7 @@ void WSSERVER_DisconnectEndpoint(char *endpoint_id)
 {
     wsconn_t *wc;
     char buf[256];
+    mtp_send_item_t mtp_send_item = MTP_SEND_ITEM_INIT;
 
     OS_UTILS_LockMutex(&wss_access_mutex);
 
@@ -522,7 +515,12 @@ void WSSERVER_DisconnectEndpoint(char *endpoint_id)
     // Disconnect the endpoint
     USP_LOG_Info("%s: Disconnecting %s from the agent's websocket server, because the agent has connected to the endpoint's websocket server", __FUNCTION__, endpoint_id);
     USP_SNPRINTF(buf, sizeof(buf), "Agent's websocket client has connected, so closing this connection");
-    WSSERVER_QueueBinaryMessage(USP__HEADER__MSG_TYPE__ERROR, wc->conn_id, (unsigned char *)USP_STRDUP(buf), strlen(buf), kMtpContentType_Text, END_OF_TIME);
+    
+    mtp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;
+    mtp_send_item.pbuf = USP_STRDUP(buf);
+    mtp_send_item.pbuf_len = strlen(buf);
+    mtp_send_item.content_type = kMtpContentType_Text;
+    WSSERVER_QueueBinaryMessage(&mtp_send_item, wc->conn_id, END_OF_TIME);
 
 exit:
     OS_UTILS_UnlockMutex(&wss_access_mutex);
@@ -769,7 +767,7 @@ int StartWebsockServer(wsserv_config_t *config, bool start_thread)
     // Start the websocket server thread, if required
     if (start_thread)
     {
-        err = OS_UTILS_CreateThread(WSSERVER_Main, NULL);
+        err = OS_UTILS_CreateThread("MTP_WSServer", WSSERVER_Main, NULL);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -1461,9 +1459,9 @@ int HandleWssEvent_Transmit(struct lws *handle)
     }
 
     // Exit if item indicates that a close frame must be sent, closing the connection
-    if (si->content_type == kMtpContentType_Text)
+    if (si->item.content_type == kMtpContentType_Text)
     {
-        CloseWsservConnection(handle, LWS_CLOSE_STATUS_UNACCEPTABLE_OPCODE, "%s", si->pbuf);
+        CloseWsservConnection(handle, LWS_CLOSE_STATUS_UNACCEPTABLE_OPCODE, "%s", si->item.pbuf);
 
         // Free USP Record and remove the item from the queue
         // NOTE: This must be done after the above call, because above call uses si->pbuf (which is freed by below call)
@@ -1486,7 +1484,7 @@ int HandleWssEvent_Transmit(struct lws *handle)
     if (wc->tx_index == 0)
     {
         // Log the USP Record before we send the first chunk
-        MSG_HANDLER_LogMessageToSend(si->usp_msg_type, si->pbuf, si->pbuf_len, kMtpProtocol_WebSockets, wc->peer, NULL, kMtpContentType_UspRecord);
+        MSG_HANDLER_LogMessageToSend(&si->item, kMtpProtocol_WebSockets, wc->peer, NULL);
         write_flags = LWS_WRITE_BINARY;
     }
     else
@@ -1496,7 +1494,7 @@ int HandleWssEvent_Transmit(struct lws *handle)
     }
 
     // Determine whether we are sending the last chunk
-    bytes_remaining = si->pbuf_len - wc->tx_index;
+    bytes_remaining = si->item.pbuf_len - wc->tx_index;
     if (bytes_remaining <= TX_CHUNK_SIZE)
     {
         // This is the last chunk
@@ -1511,19 +1509,19 @@ int HandleWssEvent_Transmit(struct lws *handle)
 
     // Copy a chunk into our local buffer
     USP_ASSERT(bytes_remaining > 0);
-    memcpy(&tx_buf[LWS_PRE], &si->pbuf[wc->tx_index], chunk_len);
+    memcpy(&tx_buf[LWS_PRE], &si->item.pbuf[wc->tx_index], chunk_len);
 
     // Exit if unable to send the chunk
     // NOTE: We do not expect this call to fail, as libwebsockets buffers the data if you try to send too much
     bytes_written = lws_write(handle, &tx_buf[LWS_PRE], chunk_len, write_flags);
     if (bytes_written < chunk_len)
     {
-        return CloseWsservConnection(handle, LWS_CLOSE_STATUS_UNEXPECTED_CONDITION, "%s: lws_write wrote only %d bytes (wanted %d bytes)", __FUNCTION__, bytes_written, si->pbuf_len);
+        return CloseWsservConnection(handle, LWS_CLOSE_STATUS_UNEXPECTED_CONDITION, "%s: lws_write wrote only %d bytes (wanted %d bytes)", __FUNCTION__, bytes_written, si->item.pbuf_len);
     }
 
     // Free the USP Record from the queue, if all chunks of it have been sent
     wc->tx_index += chunk_len;
-    if (wc->tx_index >= si->pbuf_len)
+    if (wc->tx_index >= si->item.pbuf_len)
     {
         RemoveWsservSendItem(wc, si);
         wc->tx_index = 0;
@@ -1842,7 +1840,7 @@ bool IsUspRecordInWsservQueue(wsconn_t *wc, unsigned char *pbuf, int pbuf_len)
     while (si != NULL)
     {
         // Exit if the USP record is already in the queue
-        if ((si->pbuf_len == pbuf_len) && (memcmp(si->pbuf, pbuf, pbuf_len)==0))
+        if ((si->item.pbuf_len == pbuf_len) && (memcmp(si->item.pbuf, pbuf, pbuf_len)==0))
         {
              return true;
         }
@@ -1909,7 +1907,7 @@ void RemoveExpiredWsservMessages(wsconn_t *wc)
 void RemoveWsservSendItem(wsconn_t *wc, wsserv_send_item_t *si)
 {
     DLLIST_Unlink(&wc->usp_record_send_queue, si);
-    USP_FREE(si->pbuf);
+    USP_FREE(si->item.pbuf);
     USP_FREE(si);
 }
 
