@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -756,11 +756,12 @@ int KV_VECTOR_GetEnum(kv_vector_t *kvv, char *key, void *value, int default_valu
 **
 ** \param   args - pointer to key-value vector containing the argument names in the key (may contain instance numbers)
 ** \param   buf - pointer to string vector containing the schema for the argument names
+** \param   flags - bitmask of flags controlling operation of this function e.g. IGNORE_UNKNOWN_ARGS
 **
 ** \return  USP_ERR_OK if argument names validate successfully
 **
 **************************************************************************/
-int KV_VECTOR_ValidateArguments(kv_vector_t *args, str_vector_t *expected_schema)
+int KV_VECTOR_ValidateArguments(kv_vector_t *args, str_vector_t *expected_schema, unsigned flags)
 {
     int i;
     int index;
@@ -778,6 +779,14 @@ int KV_VECTOR_ValidateArguments(kv_vector_t *args, str_vector_t *expected_schema
             USP_ERR_SetMessage("%s: Duplicate input argument (%s) found", __FUNCTION__, kv->key);
             return USP_ERR_INVALID_ARGUMENTS;
         }
+    }
+
+    // Exit if the caller does not care about arguments which are not present in the data model schema
+    // This case is used to graciously handle the case of the agent supporting an older version of the data model
+    // than the controller (in the case of the USP data model being upgraded with extra arguments).
+    if (flags & IGNORE_UNKNOWN_ARGS)
+    {
+        return USP_ERR_OK;
     }
 
     // Iterate over all args, checking that it matches a name registered in the schema

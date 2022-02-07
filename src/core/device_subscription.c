@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -60,6 +60,10 @@
 #include "expr_vector.h"
 #include "json.h"
 #include "group_get_vector.h"
+
+//-------------------------------------------------------------------------
+// The prefix to use when forming the auto-assigned value of an ID parameter
+#define DEFAULT_ID_PREFIX "cpe-"
 
 //------------------------------------------------------------------------------
 // List of notification types that USP Agent currently supports
@@ -135,6 +139,7 @@ int NotifyChange_SubsRefList(dm_req_t *req, char *value);
 int NotifyChange_SubsTimeToLive(dm_req_t *req, char *value);
 int NotifyChange_NotifRetry(dm_req_t *req, char *value);
 int NotifyChange_NotifExpiration(dm_req_t *req, char *value);
+int AutoPopulate_SubsID(dm_req_t *req, char *buf, int len);
 int Validate_SubsID(dm_req_t *req, char *value);
 int Validate_SubsNotifType(dm_req_t *req, char *value);
 int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list);
@@ -179,14 +184,17 @@ int DEVICE_SUBSCRIPTION_Init(void)
     int err = USP_ERR_OK;
 
     // Register parameters implemented by Subscription table
+    // NOTE: Recipient is registered before ID, as we want it to be auto assigned before ID,
+    // in order that an auto-assigned ID can be validated as unique per recipient
     err |= USP_REGISTER_Object(DEVICE_SUBS_ROOT ".{i}", NULL, NULL, NotifySubsAdded,
                                                         NULL, NULL, NotifySubsDeleted);
     err |= USP_REGISTER_Param_NumEntries(DEVICE_SUBS_ROOT "NumberOfEntries", "Device.LocalAgent.Subscription.{i}");
     err |= USP_REGISTER_DBParam_Alias(DEVICE_SUBS_ROOT ".{i}.Alias", NULL);
 
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.Enable", "false", NULL, NotifyChange_SubsEnable, DM_BOOL);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.ID", "", Validate_SubsID, NotifyChange_SubsID, DM_STRING);
+
     err |= USP_REGISTER_DBParam_ReadOnlyAuto(DEVICE_SUBS_ROOT ".{i}.Recipient", GetAuto_Recipient, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWriteAuto(DEVICE_SUBS_ROOT ".{i}.ID",  AutoPopulate_SubsID, Validate_SubsID, NotifyChange_SubsID, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadOnlyAuto(DEVICE_SUBS_ROOT ".{i}.CreationDate", GetAuto_CreationDate, DM_DATETIME);
 
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.NotifType", "", Validate_SubsNotifType, NotifyChange_NotifyType, DM_STRING);
@@ -422,7 +430,7 @@ void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, 
         USP_ASSERT(node != NULL);
 
         info = &node->registered.event_info;
-        err = KV_VECTOR_ValidateArguments(output_args, &info->event_args);
+        err = KV_VECTOR_ValidateArguments(output_args, &info->event_args, NO_FLAGS);
         if (err != USP_ERR_OK)
         {
             USP_LOG_Warning("%s: Output argument names do not match those registered (%s). Please check code.", __FUNCTION__, event_name);
@@ -1121,6 +1129,29 @@ int NotifyChange_NotifExpiration(dm_req_t *req, char *value)
     // Update the retry_expiry_period for this subscription.
     // This will take effect the next time a NotifyRequest is fired off from this subscription
     err = TEXT_UTILS_StringToUnsigned(value, &sub->retry_expiry_period);
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** AutoPopulate_SubsID
+**
+** Called to get an auto-populated parameter value for the Subscription ID parameter
+**
+** \param   req - pointer to structure identifying the path
+** \param   buf - pointer to buffer in which to store the value to use to auto-populate the parameter's value
+** \param   len - length of return buffer
+**
+** \return  USP_ERR_OK if auto assigned ID was unique
+**
+**************************************************************************/
+int AutoPopulate_SubsID(dm_req_t *req, char *buf, int len)
+{
+    int err;
+
+    USP_SNPRINTF(buf, len, DEFAULT_ID_PREFIX "%d", inst1);
+    err = Validate_SubsID(req, buf);
 
     return err;
 }

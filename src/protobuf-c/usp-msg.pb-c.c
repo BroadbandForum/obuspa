@@ -2033,7 +2033,7 @@ const ProtobufCMessageDescriptor usp__error__descriptor =
   (ProtobufCMessageInit) usp__error__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor usp__get__field_descriptors[1] =
+static const ProtobufCFieldDescriptor usp__get__field_descriptors[2] =
 {
   {
     "param_paths",
@@ -2047,14 +2047,27 @@ static const ProtobufCFieldDescriptor usp__get__field_descriptors[1] =
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "max_depth",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_FIXED32,
+    0,   /* quantifier_offset */
+    offsetof(Usp__Get, max_depth),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned usp__get__field_indices_by_name[] = {
+  1,   /* field[1] = max_depth */
   0,   /* field[0] = param_paths */
 };
 static const ProtobufCIntRange usp__get__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 1 }
+  { 0, 2 }
 };
 const ProtobufCMessageDescriptor usp__get__descriptor =
 {
@@ -2064,7 +2077,7 @@ const ProtobufCMessageDescriptor usp__get__descriptor =
   "Usp__Get",
   "usp",
   sizeof(Usp__Get),
-  1,
+  2,
   usp__get__field_descriptors,
   usp__get__field_indices_by_name,
   1,  usp__get__number_ranges,
@@ -2468,7 +2481,7 @@ const ProtobufCMessageDescriptor usp__get_supported_dmresp__requested_object_res
   (ProtobufCMessageInit) usp__get_supported_dmresp__requested_object_result__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_object_result__field_descriptors[6] =
+static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_object_result__field_descriptors[7] =
 {
   {
     "supported_obj_path",
@@ -2542,9 +2555,22 @@ static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_objec
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "divergent_paths",
+    7,
+    PROTOBUF_C_LABEL_REPEATED,
+    PROTOBUF_C_TYPE_STRING,
+    offsetof(Usp__GetSupportedDMResp__SupportedObjectResult, n_divergent_paths),
+    offsetof(Usp__GetSupportedDMResp__SupportedObjectResult, divergent_paths),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned usp__get_supported_dmresp__supported_object_result__field_indices_by_name[] = {
   1,   /* field[1] = access */
+  6,   /* field[6] = divergent_paths */
   2,   /* field[2] = is_multi_instance */
   3,   /* field[3] = supported_commands */
   4,   /* field[4] = supported_events */
@@ -2554,7 +2580,7 @@ static const unsigned usp__get_supported_dmresp__supported_object_result__field_
 static const ProtobufCIntRange usp__get_supported_dmresp__supported_object_result__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 6 }
+  { 0, 7 }
 };
 const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_object_result__descriptor =
 {
@@ -2564,14 +2590,14 @@ const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_object_res
   "Usp__GetSupportedDMResp__SupportedObjectResult",
   "usp",
   sizeof(Usp__GetSupportedDMResp__SupportedObjectResult),
-  6,
+  7,
   usp__get_supported_dmresp__supported_object_result__field_descriptors,
   usp__get_supported_dmresp__supported_object_result__field_indices_by_name,
   1,  usp__get_supported_dmresp__supported_object_result__number_ranges,
   (ProtobufCMessageInit) usp__get_supported_dmresp__supported_object_result__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_param_result__field_descriptors[2] =
+static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_param_result__field_descriptors[4] =
 {
   {
     "param_name",
@@ -2597,15 +2623,41 @@ static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_param
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "value_type",
+    3,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(Usp__GetSupportedDMResp__SupportedParamResult, value_type),
+    &usp__get_supported_dmresp__param_value_type__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "value_change",
+    4,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(Usp__GetSupportedDMResp__SupportedParamResult, value_change),
+    &usp__get_supported_dmresp__value_change_type__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned usp__get_supported_dmresp__supported_param_result__field_indices_by_name[] = {
   1,   /* field[1] = access */
   0,   /* field[0] = param_name */
+  3,   /* field[3] = value_change */
+  2,   /* field[2] = value_type */
 };
 static const ProtobufCIntRange usp__get_supported_dmresp__supported_param_result__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 2 }
+  { 0, 4 }
 };
 const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_param_result__descriptor =
 {
@@ -2615,14 +2667,14 @@ const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_param_resu
   "Usp__GetSupportedDMResp__SupportedParamResult",
   "usp",
   sizeof(Usp__GetSupportedDMResp__SupportedParamResult),
-  2,
+  4,
   usp__get_supported_dmresp__supported_param_result__field_descriptors,
   usp__get_supported_dmresp__supported_param_result__field_indices_by_name,
   1,  usp__get_supported_dmresp__supported_param_result__number_ranges,
   (ProtobufCMessageInit) usp__get_supported_dmresp__supported_param_result__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_command_result__field_descriptors[3] =
+static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_command_result__field_descriptors[4] =
 {
   {
     "command_name",
@@ -2660,16 +2712,29 @@ static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_comma
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "command_type",
+    4,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(Usp__GetSupportedDMResp__SupportedCommandResult, command_type),
+    &usp__get_supported_dmresp__cmd_type__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned usp__get_supported_dmresp__supported_command_result__field_indices_by_name[] = {
   0,   /* field[0] = command_name */
+  3,   /* field[3] = command_type */
   1,   /* field[1] = input_arg_names */
   2,   /* field[2] = output_arg_names */
 };
 static const ProtobufCIntRange usp__get_supported_dmresp__supported_command_result__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 3 }
+  { 0, 4 }
 };
 const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_command_result__descriptor =
 {
@@ -2679,7 +2744,7 @@ const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_command_re
   "Usp__GetSupportedDMResp__SupportedCommandResult",
   "usp",
   sizeof(Usp__GetSupportedDMResp__SupportedCommandResult),
-  3,
+  4,
   usp__get_supported_dmresp__supported_command_result__field_descriptors,
   usp__get_supported_dmresp__supported_command_result__field_indices_by_name,
   1,  usp__get_supported_dmresp__supported_command_result__number_ranges,
@@ -2797,6 +2862,112 @@ const ProtobufCEnumDescriptor usp__get_supported_dmresp__obj_access_type__descri
   usp__get_supported_dmresp__obj_access_type__enum_values_by_name,
   1,
   usp__get_supported_dmresp__obj_access_type__value_ranges,
+  NULL,NULL,NULL,NULL   /* reserved[1234] */
+};
+static const ProtobufCEnumValue usp__get_supported_dmresp__param_value_type__enum_values_by_number[11] =
+{
+  { "PARAM_UNKNOWN", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_UNKNOWN", 0 },
+  { "PARAM_BASE_64", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_BASE_64", 1 },
+  { "PARAM_BOOLEAN", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_BOOLEAN", 2 },
+  { "PARAM_DATE_TIME", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_DATE_TIME", 3 },
+  { "PARAM_DECIMAL", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_DECIMAL", 4 },
+  { "PARAM_HEX_BINARY", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_HEX_BINARY", 5 },
+  { "PARAM_INT", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_INT", 6 },
+  { "PARAM_LONG", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_LONG", 7 },
+  { "PARAM_STRING", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_STRING", 8 },
+  { "PARAM_UNSIGNED_INT", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_UNSIGNED_INT", 9 },
+  { "PARAM_UNSIGNED_LONG", "USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_UNSIGNED_LONG", 10 },
+};
+static const ProtobufCIntRange usp__get_supported_dmresp__param_value_type__value_ranges[] = {
+{0, 0},{0, 11}
+};
+static const ProtobufCEnumValueIndex usp__get_supported_dmresp__param_value_type__enum_values_by_name[11] =
+{
+  { "PARAM_BASE_64", 1 },
+  { "PARAM_BOOLEAN", 2 },
+  { "PARAM_DATE_TIME", 3 },
+  { "PARAM_DECIMAL", 4 },
+  { "PARAM_HEX_BINARY", 5 },
+  { "PARAM_INT", 6 },
+  { "PARAM_LONG", 7 },
+  { "PARAM_STRING", 8 },
+  { "PARAM_UNKNOWN", 0 },
+  { "PARAM_UNSIGNED_INT", 9 },
+  { "PARAM_UNSIGNED_LONG", 10 },
+};
+const ProtobufCEnumDescriptor usp__get_supported_dmresp__param_value_type__descriptor =
+{
+  PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
+  "usp.GetSupportedDMResp.ParamValueType",
+  "ParamValueType",
+  "Usp__GetSupportedDMResp__ParamValueType",
+  "usp",
+  11,
+  usp__get_supported_dmresp__param_value_type__enum_values_by_number,
+  11,
+  usp__get_supported_dmresp__param_value_type__enum_values_by_name,
+  1,
+  usp__get_supported_dmresp__param_value_type__value_ranges,
+  NULL,NULL,NULL,NULL   /* reserved[1234] */
+};
+static const ProtobufCEnumValue usp__get_supported_dmresp__value_change_type__enum_values_by_number[3] =
+{
+  { "VALUE_CHANGE_UNKNOWN", "USP__GET_SUPPORTED_DMRESP__VALUE_CHANGE_TYPE__VALUE_CHANGE_UNKNOWN", 0 },
+  { "VALUE_CHANGE_ALLOWED", "USP__GET_SUPPORTED_DMRESP__VALUE_CHANGE_TYPE__VALUE_CHANGE_ALLOWED", 1 },
+  { "VALUE_CHANGE_WILL_IGNORE", "USP__GET_SUPPORTED_DMRESP__VALUE_CHANGE_TYPE__VALUE_CHANGE_WILL_IGNORE", 2 },
+};
+static const ProtobufCIntRange usp__get_supported_dmresp__value_change_type__value_ranges[] = {
+{0, 0},{0, 3}
+};
+static const ProtobufCEnumValueIndex usp__get_supported_dmresp__value_change_type__enum_values_by_name[3] =
+{
+  { "VALUE_CHANGE_ALLOWED", 1 },
+  { "VALUE_CHANGE_UNKNOWN", 0 },
+  { "VALUE_CHANGE_WILL_IGNORE", 2 },
+};
+const ProtobufCEnumDescriptor usp__get_supported_dmresp__value_change_type__descriptor =
+{
+  PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
+  "usp.GetSupportedDMResp.ValueChangeType",
+  "ValueChangeType",
+  "Usp__GetSupportedDMResp__ValueChangeType",
+  "usp",
+  3,
+  usp__get_supported_dmresp__value_change_type__enum_values_by_number,
+  3,
+  usp__get_supported_dmresp__value_change_type__enum_values_by_name,
+  1,
+  usp__get_supported_dmresp__value_change_type__value_ranges,
+  NULL,NULL,NULL,NULL   /* reserved[1234] */
+};
+static const ProtobufCEnumValue usp__get_supported_dmresp__cmd_type__enum_values_by_number[3] =
+{
+  { "CMD_UNKNOWN", "USP__GET_SUPPORTED_DMRESP__CMD_TYPE__CMD_UNKNOWN", 0 },
+  { "CMD_SYNC", "USP__GET_SUPPORTED_DMRESP__CMD_TYPE__CMD_SYNC", 1 },
+  { "CMD_ASYNC", "USP__GET_SUPPORTED_DMRESP__CMD_TYPE__CMD_ASYNC", 2 },
+};
+static const ProtobufCIntRange usp__get_supported_dmresp__cmd_type__value_ranges[] = {
+{0, 0},{0, 3}
+};
+static const ProtobufCEnumValueIndex usp__get_supported_dmresp__cmd_type__enum_values_by_name[3] =
+{
+  { "CMD_ASYNC", 2 },
+  { "CMD_SYNC", 1 },
+  { "CMD_UNKNOWN", 0 },
+};
+const ProtobufCEnumDescriptor usp__get_supported_dmresp__cmd_type__descriptor =
+{
+  PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
+  "usp.GetSupportedDMResp.CmdType",
+  "CmdType",
+  "Usp__GetSupportedDMResp__CmdType",
+  "usp",
+  3,
+  usp__get_supported_dmresp__cmd_type__enum_values_by_number,
+  3,
+  usp__get_supported_dmresp__cmd_type__enum_values_by_name,
+  1,
+  usp__get_supported_dmresp__cmd_type__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
 static const ProtobufCFieldDescriptor usp__get_supported_dmresp__field_descriptors[1] =

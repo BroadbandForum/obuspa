@@ -142,10 +142,190 @@ void   usp_record__session_context_record__free_unpacked
   assert(message->base.descriptor == &usp_record__session_context_record__descriptor);
   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
 }
+void   usp_record__web_socket_connect_record__init
+                     (UspRecord__WebSocketConnectRecord         *message)
+{
+  static const UspRecord__WebSocketConnectRecord init_value = USP_RECORD__WEB_SOCKET_CONNECT_RECORD__INIT;
+  *message = init_value;
+}
+size_t usp_record__web_socket_connect_record__get_packed_size
+                     (const UspRecord__WebSocketConnectRecord *message)
+{
+  assert(message->base.descriptor == &usp_record__web_socket_connect_record__descriptor);
+  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
+}
+size_t usp_record__web_socket_connect_record__pack
+                     (const UspRecord__WebSocketConnectRecord *message,
+                      uint8_t       *out)
+{
+  assert(message->base.descriptor == &usp_record__web_socket_connect_record__descriptor);
+  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
+}
+size_t usp_record__web_socket_connect_record__pack_to_buffer
+                     (const UspRecord__WebSocketConnectRecord *message,
+                      ProtobufCBuffer *buffer)
+{
+  assert(message->base.descriptor == &usp_record__web_socket_connect_record__descriptor);
+  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
+}
+UspRecord__WebSocketConnectRecord *
+       usp_record__web_socket_connect_record__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data)
+{
+  return (UspRecord__WebSocketConnectRecord *)
+     protobuf_c_message_unpack (&usp_record__web_socket_connect_record__descriptor,
+                                allocator, len, data);
+}
+void   usp_record__web_socket_connect_record__free_unpacked
+                     (UspRecord__WebSocketConnectRecord *message,
+                      ProtobufCAllocator *allocator)
+{
+  if(!message)
+    return;
+  assert(message->base.descriptor == &usp_record__web_socket_connect_record__descriptor);
+  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+}
+void   usp_record__mqttconnect_record__init
+                     (UspRecord__MQTTConnectRecord         *message)
+{
+  static const UspRecord__MQTTConnectRecord init_value = USP_RECORD__MQTTCONNECT_RECORD__INIT;
+  *message = init_value;
+}
+size_t usp_record__mqttconnect_record__get_packed_size
+                     (const UspRecord__MQTTConnectRecord *message)
+{
+  assert(message->base.descriptor == &usp_record__mqttconnect_record__descriptor);
+  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
+}
+size_t usp_record__mqttconnect_record__pack
+                     (const UspRecord__MQTTConnectRecord *message,
+                      uint8_t       *out)
+{
+  assert(message->base.descriptor == &usp_record__mqttconnect_record__descriptor);
+  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
+}
+size_t usp_record__mqttconnect_record__pack_to_buffer
+                     (const UspRecord__MQTTConnectRecord *message,
+                      ProtobufCBuffer *buffer)
+{
+  assert(message->base.descriptor == &usp_record__mqttconnect_record__descriptor);
+  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
+}
+UspRecord__MQTTConnectRecord *
+       usp_record__mqttconnect_record__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data)
+{
+  return (UspRecord__MQTTConnectRecord *)
+     protobuf_c_message_unpack (&usp_record__mqttconnect_record__descriptor,
+                                allocator, len, data);
+}
+void   usp_record__mqttconnect_record__free_unpacked
+                     (UspRecord__MQTTConnectRecord *message,
+                      ProtobufCAllocator *allocator)
+{
+  if(!message)
+    return;
+  assert(message->base.descriptor == &usp_record__mqttconnect_record__descriptor);
+  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+}
+void   usp_record__stompconnect_record__init
+                     (UspRecord__STOMPConnectRecord         *message)
+{
+  static const UspRecord__STOMPConnectRecord init_value = USP_RECORD__STOMPCONNECT_RECORD__INIT;
+  *message = init_value;
+}
+size_t usp_record__stompconnect_record__get_packed_size
+                     (const UspRecord__STOMPConnectRecord *message)
+{
+  assert(message->base.descriptor == &usp_record__stompconnect_record__descriptor);
+  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
+}
+size_t usp_record__stompconnect_record__pack
+                     (const UspRecord__STOMPConnectRecord *message,
+                      uint8_t       *out)
+{
+  assert(message->base.descriptor == &usp_record__stompconnect_record__descriptor);
+  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
+}
+size_t usp_record__stompconnect_record__pack_to_buffer
+                     (const UspRecord__STOMPConnectRecord *message,
+                      ProtobufCBuffer *buffer)
+{
+  assert(message->base.descriptor == &usp_record__stompconnect_record__descriptor);
+  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
+}
+UspRecord__STOMPConnectRecord *
+       usp_record__stompconnect_record__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data)
+{
+  return (UspRecord__STOMPConnectRecord *)
+     protobuf_c_message_unpack (&usp_record__stompconnect_record__descriptor,
+                                allocator, len, data);
+}
+void   usp_record__stompconnect_record__free_unpacked
+                     (UspRecord__STOMPConnectRecord *message,
+                      ProtobufCAllocator *allocator)
+{
+  if(!message)
+    return;
+  assert(message->base.descriptor == &usp_record__stompconnect_record__descriptor);
+  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+}
+void   usp_record__disconnect_record__init
+                     (UspRecord__DisconnectRecord         *message)
+{
+  static const UspRecord__DisconnectRecord init_value = USP_RECORD__DISCONNECT_RECORD__INIT;
+  *message = init_value;
+}
+size_t usp_record__disconnect_record__get_packed_size
+                     (const UspRecord__DisconnectRecord *message)
+{
+  assert(message->base.descriptor == &usp_record__disconnect_record__descriptor);
+  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
+}
+size_t usp_record__disconnect_record__pack
+                     (const UspRecord__DisconnectRecord *message,
+                      uint8_t       *out)
+{
+  assert(message->base.descriptor == &usp_record__disconnect_record__descriptor);
+  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
+}
+size_t usp_record__disconnect_record__pack_to_buffer
+                     (const UspRecord__DisconnectRecord *message,
+                      ProtobufCBuffer *buffer)
+{
+  assert(message->base.descriptor == &usp_record__disconnect_record__descriptor);
+  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
+}
+UspRecord__DisconnectRecord *
+       usp_record__disconnect_record__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data)
+{
+  return (UspRecord__DisconnectRecord *)
+     protobuf_c_message_unpack (&usp_record__disconnect_record__descriptor,
+                                allocator, len, data);
+}
+void   usp_record__disconnect_record__free_unpacked
+                     (UspRecord__DisconnectRecord *message,
+                      ProtobufCAllocator *allocator)
+{
+  if(!message)
+    return;
+  assert(message->base.descriptor == &usp_record__disconnect_record__descriptor);
+  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+}
 static const ProtobufCEnumValue usp_record__record__payload_security__enum_values_by_number[2] =
 {
   { "PLAINTEXT", "USP_RECORD__RECORD__PAYLOAD_SECURITY__PLAINTEXT", 0 },
-  { "TLS", "USP_RECORD__RECORD__PAYLOAD_SECURITY__TLS", 1 },
+  { "TLS12", "USP_RECORD__RECORD__PAYLOAD_SECURITY__TLS12", 1 },
 };
 static const ProtobufCIntRange usp_record__record__payload_security__value_ranges[] = {
 {0, 0},{0, 2}
@@ -153,7 +333,7 @@ static const ProtobufCIntRange usp_record__record__payload_security__value_range
 static const ProtobufCEnumValueIndex usp_record__record__payload_security__enum_values_by_name[2] =
 {
   { "PLAINTEXT", 0 },
-  { "TLS", 1 },
+  { "TLS12", 1 },
 };
 const ProtobufCEnumDescriptor usp_record__record__payload_security__descriptor =
 {
@@ -170,7 +350,7 @@ const ProtobufCEnumDescriptor usp_record__record__payload_security__descriptor =
   usp_record__record__payload_security__value_ranges,
   NULL,NULL,NULL,NULL   /* reserved[1234] */
 };
-static const ProtobufCFieldDescriptor usp_record__record__field_descriptors[8] =
+static const ProtobufCFieldDescriptor usp_record__record__field_descriptors[12] =
 {
   {
     "version",
@@ -268,21 +448,73 @@ static const ProtobufCFieldDescriptor usp_record__record__field_descriptors[8] =
     0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "websocket_connect",
+    9,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_MESSAGE,
+    offsetof(UspRecord__Record, record_type_case),
+    offsetof(UspRecord__Record, websocket_connect),
+    &usp_record__web_socket_connect_record__descriptor,
+    NULL,
+    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "mqtt_connect",
+    10,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_MESSAGE,
+    offsetof(UspRecord__Record, record_type_case),
+    offsetof(UspRecord__Record, mqtt_connect),
+    &usp_record__mqttconnect_record__descriptor,
+    NULL,
+    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "stomp_connect",
+    11,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_MESSAGE,
+    offsetof(UspRecord__Record, record_type_case),
+    offsetof(UspRecord__Record, stomp_connect),
+    &usp_record__stompconnect_record__descriptor,
+    NULL,
+    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "disconnect",
+    12,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_MESSAGE,
+    offsetof(UspRecord__Record, record_type_case),
+    offsetof(UspRecord__Record, disconnect),
+    &usp_record__disconnect_record__descriptor,
+    NULL,
+    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned usp_record__record__field_indices_by_name[] = {
+  11,   /* field[11] = disconnect */
   2,   /* field[2] = from_id */
   4,   /* field[4] = mac_signature */
+  9,   /* field[9] = mqtt_connect */
   6,   /* field[6] = no_session_context */
   3,   /* field[3] = payload_security */
   5,   /* field[5] = sender_cert */
   7,   /* field[7] = session_context */
+  10,   /* field[10] = stomp_connect */
   1,   /* field[1] = to_id */
   0,   /* field[0] = version */
+  8,   /* field[8] = websocket_connect */
 };
 static const ProtobufCIntRange usp_record__record__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 8 }
+  { 0, 12 }
 };
 const ProtobufCMessageDescriptor usp_record__record__descriptor =
 {
@@ -292,7 +524,7 @@ const ProtobufCMessageDescriptor usp_record__record__descriptor =
   "UspRecord__Record",
   "usp_record",
   sizeof(UspRecord__Record),
-  8,
+  12,
   usp_record__record__field_descriptors,
   usp_record__record__field_indices_by_name,
   1,  usp_record__record__number_ranges,
@@ -483,5 +715,230 @@ const ProtobufCMessageDescriptor usp_record__session_context_record__descriptor 
   usp_record__session_context_record__field_indices_by_name,
   1,  usp_record__session_context_record__number_ranges,
   (ProtobufCMessageInit) usp_record__session_context_record__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+#define usp_record__web_socket_connect_record__field_descriptors NULL
+#define usp_record__web_socket_connect_record__field_indices_by_name NULL
+#define usp_record__web_socket_connect_record__number_ranges NULL
+const ProtobufCMessageDescriptor usp_record__web_socket_connect_record__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "usp_record.WebSocketConnectRecord",
+  "WebSocketConnectRecord",
+  "UspRecord__WebSocketConnectRecord",
+  "usp_record",
+  sizeof(UspRecord__WebSocketConnectRecord),
+  0,
+  usp_record__web_socket_connect_record__field_descriptors,
+  usp_record__web_socket_connect_record__field_indices_by_name,
+  0,  usp_record__web_socket_connect_record__number_ranges,
+  (ProtobufCMessageInit) usp_record__web_socket_connect_record__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+static const ProtobufCEnumValue usp_record__mqttconnect_record__mqttversion__enum_values_by_number[2] =
+{
+  { "V3_1_1", "USP_RECORD__MQTTCONNECT_RECORD__MQTTVERSION__V3_1_1", 0 },
+  { "V5", "USP_RECORD__MQTTCONNECT_RECORD__MQTTVERSION__V5", 1 },
+};
+static const ProtobufCIntRange usp_record__mqttconnect_record__mqttversion__value_ranges[] = {
+{0, 0},{0, 2}
+};
+static const ProtobufCEnumValueIndex usp_record__mqttconnect_record__mqttversion__enum_values_by_name[2] =
+{
+  { "V3_1_1", 0 },
+  { "V5", 1 },
+};
+const ProtobufCEnumDescriptor usp_record__mqttconnect_record__mqttversion__descriptor =
+{
+  PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
+  "usp_record.MQTTConnectRecord.MQTTVersion",
+  "MQTTVersion",
+  "UspRecord__MQTTConnectRecord__MQTTVersion",
+  "usp_record",
+  2,
+  usp_record__mqttconnect_record__mqttversion__enum_values_by_number,
+  2,
+  usp_record__mqttconnect_record__mqttversion__enum_values_by_name,
+  1,
+  usp_record__mqttconnect_record__mqttversion__value_ranges,
+  NULL,NULL,NULL,NULL   /* reserved[1234] */
+};
+static const ProtobufCFieldDescriptor usp_record__mqttconnect_record__field_descriptors[2] =
+{
+  {
+    "version",
+    1,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(UspRecord__MQTTConnectRecord, version),
+    &usp_record__mqttconnect_record__mqttversion__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "subscribed_topic",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(UspRecord__MQTTConnectRecord, subscribed_topic),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned usp_record__mqttconnect_record__field_indices_by_name[] = {
+  1,   /* field[1] = subscribed_topic */
+  0,   /* field[0] = version */
+};
+static const ProtobufCIntRange usp_record__mqttconnect_record__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 2 }
+};
+const ProtobufCMessageDescriptor usp_record__mqttconnect_record__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "usp_record.MQTTConnectRecord",
+  "MQTTConnectRecord",
+  "UspRecord__MQTTConnectRecord",
+  "usp_record",
+  sizeof(UspRecord__MQTTConnectRecord),
+  2,
+  usp_record__mqttconnect_record__field_descriptors,
+  usp_record__mqttconnect_record__field_indices_by_name,
+  1,  usp_record__mqttconnect_record__number_ranges,
+  (ProtobufCMessageInit) usp_record__mqttconnect_record__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+static const ProtobufCEnumValue usp_record__stompconnect_record__stompversion__enum_values_by_number[1] =
+{
+  { "V1_2", "USP_RECORD__STOMPCONNECT_RECORD__STOMPVERSION__V1_2", 0 },
+};
+static const ProtobufCIntRange usp_record__stompconnect_record__stompversion__value_ranges[] = {
+{0, 0},{0, 1}
+};
+static const ProtobufCEnumValueIndex usp_record__stompconnect_record__stompversion__enum_values_by_name[1] =
+{
+  { "V1_2", 0 },
+};
+const ProtobufCEnumDescriptor usp_record__stompconnect_record__stompversion__descriptor =
+{
+  PROTOBUF_C__ENUM_DESCRIPTOR_MAGIC,
+  "usp_record.STOMPConnectRecord.STOMPVersion",
+  "STOMPVersion",
+  "UspRecord__STOMPConnectRecord__STOMPVersion",
+  "usp_record",
+  1,
+  usp_record__stompconnect_record__stompversion__enum_values_by_number,
+  1,
+  usp_record__stompconnect_record__stompversion__enum_values_by_name,
+  1,
+  usp_record__stompconnect_record__stompversion__value_ranges,
+  NULL,NULL,NULL,NULL   /* reserved[1234] */
+};
+static const ProtobufCFieldDescriptor usp_record__stompconnect_record__field_descriptors[2] =
+{
+  {
+    "version",
+    1,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_ENUM,
+    0,   /* quantifier_offset */
+    offsetof(UspRecord__STOMPConnectRecord, version),
+    &usp_record__stompconnect_record__stompversion__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "subscribed_destination",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(UspRecord__STOMPConnectRecord, subscribed_destination),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned usp_record__stompconnect_record__field_indices_by_name[] = {
+  1,   /* field[1] = subscribed_destination */
+  0,   /* field[0] = version */
+};
+static const ProtobufCIntRange usp_record__stompconnect_record__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 2 }
+};
+const ProtobufCMessageDescriptor usp_record__stompconnect_record__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "usp_record.STOMPConnectRecord",
+  "STOMPConnectRecord",
+  "UspRecord__STOMPConnectRecord",
+  "usp_record",
+  sizeof(UspRecord__STOMPConnectRecord),
+  2,
+  usp_record__stompconnect_record__field_descriptors,
+  usp_record__stompconnect_record__field_indices_by_name,
+  1,  usp_record__stompconnect_record__number_ranges,
+  (ProtobufCMessageInit) usp_record__stompconnect_record__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+static const ProtobufCFieldDescriptor usp_record__disconnect_record__field_descriptors[2] =
+{
+  {
+    "reason",
+    1,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_STRING,
+    0,   /* quantifier_offset */
+    offsetof(UspRecord__DisconnectRecord, reason),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+  {
+    "reason_code",
+    2,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_FIXED32,
+    0,   /* quantifier_offset */
+    offsetof(UspRecord__DisconnectRecord, reason_code),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned usp_record__disconnect_record__field_indices_by_name[] = {
+  0,   /* field[0] = reason */
+  1,   /* field[1] = reason_code */
+};
+static const ProtobufCIntRange usp_record__disconnect_record__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 2 }
+};
+const ProtobufCMessageDescriptor usp_record__disconnect_record__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "usp_record.DisconnectRecord",
+  "DisconnectRecord",
+  "UspRecord__DisconnectRecord",
+  "usp_record",
+  sizeof(UspRecord__DisconnectRecord),
+  2,
+  usp_record__disconnect_record__field_descriptors,
+  usp_record__disconnect_record__field_indices_by_name,
+  1,  usp_record__disconnect_record__number_ranges,
+  (ProtobufCMessageInit) usp_record__disconnect_record__init,
   NULL,NULL,NULL    /* reserved[123] */
 };

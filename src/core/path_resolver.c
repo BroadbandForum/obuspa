@@ -356,6 +356,8 @@ int ExpandPath(char *resolved, char *unresolved, resolver_state_t *state)
             case kResolveOp_Set:
             case kResolveOp_Instances:
             case kResolveOp_Any:
+            case kResolveOp_StrictRef:
+            case kResolveOp_ForgivingRef:
                 // These cases do not process a partial path - just remove any trailing '.'
                 resolved[len-1] = '\0';
                 break;
@@ -536,6 +538,7 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
     int err;
     unsigned flags;
     unsigned short permission_bitmask;
+    char *p;
 
     // Exit if this is a Bulk Data collection operation, which does not allow reference following
     // (because the alt-name reduction rules in TR-157 do not support it)
@@ -556,7 +559,9 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
     if ((permission_bitmask & PERMIT_GET) == 0)
     {
         // Get operations are forgiving of permissions, so just give up further resolution here
-        if ((state->op == kResolveOp_Get) || (state->op == kResolveOp_SubsValChange))
+        #define IS_FORGIVING(op) ((op == kResolveOp_Get) || (op == kResolveOp_SubsValChange) || (op == kResolveOp_ForgivingRef))
+        #define IS_STRICT(op)    ((op != kResolveOp_Get) && (op != kResolveOp_SubsValChange) && (op != kResolveOp_ForgivingRef))
+        if (IS_FORGIVING(state->op))
         {
             return USP_ERR_OK;
         }
@@ -578,12 +583,55 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
     // NOTE: A get parameter value is forgiving in this case, whilst a set fails
     if (dereferenced[0] == '\0')
     {
-        if ((state->op != kResolveOp_Get) && (state->op != kResolveOp_SubsValChange))
+        if (IS_STRICT(state->op))
         {
             USP_ERR_SetMessage("%s: The dereferenced path contained in %s was empty", __FUNCTION__, resolved);
             return USP_ERR_OBJECT_DOES_NOT_EXIST;
         }
         return USP_ERR_OK;
+    }
+
+    // Truncate string to just the first reference, if the reference contains a list of references
+    // The USP Spec says that only the first reference should be used if the '#' operator is omitted before the '+' operator
+    p = strchr(dereferenced, ',');
+    if (p != NULL)
+    {
+        *p = '\0';
+    }
+
+    // Resolve the reference if it contains a search expression, reference following or wildcard
+    if (strpbrk(dereferenced, "[+#*]") != NULL)
+    {
+        str_vector_t sv;
+        resolve_op_t op;
+
+        // Determine resolve operation to use when resolving the reference
+        op = IS_FORGIVING(state->op) ? kResolveOp_ForgivingRef : kResolveOp_StrictRef;
+
+        // Exit if unable to resolve any search expressions contained in the reference
+        STR_VECTOR_Init(&sv);
+        err = PATH_RESOLVER_ResolvePath(dereferenced, &sv, NULL, op, NULL, state->combined_role, 0);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
+        // Exit if the reference resolved to zero paths
+        // NOTE: This may be the case. For example, if the reference contains unique key based addressing and the role does not have permissions to read them
+        if (sv.num_entries == 0)
+        {
+            // NOTE: No need to destroy sv, as we already know that number of entries is zero
+            if (IS_STRICT(state->op))
+            {
+                USP_ERR_SetMessage("%s: The dereferenced path contained in %s (%s) resolved to empty", __FUNCTION__, resolved, dereferenced);
+                return USP_ERR_OBJECT_DOES_NOT_EXIST;
+            }
+            return USP_ERR_OK;
+        }
+
+        // Replace the value of the reference parameter with its first resolved path
+        USP_STRNCPY(dereferenced, sv.vector[0], sizeof(dereferenced));
+        STR_VECTOR_Destroy(&sv);
     }
 
     // Exit if the dereferenced path is not a fully qualified object
@@ -599,7 +647,7 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
     // NOTE: A get parameter value is forgiving in this case, whilst a set fails
     if ((flags & PP_INSTANCE_NUMBERS_EXIST) == 0)
     {
-        if ((state->op != kResolveOp_Get) && (state->op != kResolveOp_SubsValChange))
+        if (IS_STRICT(state->op))
         {
             USP_ERR_SetMessage("%s: The dereferenced object %s does not exist", __FUNCTION__, dereferenced);
             return USP_ERR_OBJECT_DOES_NOT_EXIST;
@@ -608,7 +656,7 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
     }
 
     // If the code gets here then the resolved path has been successfully dereferenced,
-    // so continue resolving the path, using the dereferened path
+    // so continue resolving the path, using the dereferenced path
     err = ExpandNextSubPath(dereferenced, unresolved, state);
 
     return err;
@@ -701,7 +749,7 @@ int CheckPathPermission(char *path, resolver_state_t *state, int *gid, int *para
         *has_permission = false;
         // Get operations are forgiving of permissions, so just indicate that none of the instances match
         // NOTE: BulkData get operations are not forgiving of permissions, so will return an error
-        if ((state->op != kResolveOp_Get) && (state->op != kResolveOp_SubsValChange))
+        if (IS_STRICT(state->op))
         {
             USP_ERR_SetMessage("%s: Not permitted to read unique key %s", __FUNCTION__, path);
             return USP_ERR_PERMISSION_DENIED;
@@ -850,7 +898,7 @@ int ResolveIntermediateReferences(str_vector_t *params, resolver_state_t *state,
                 // NOTE: This applies to both gets and sets. Sets are forgiving if ANY instance matches, when using keys containing references
                 if(strlen(gge->value) == 0)
                 {
-                    if ((state->op != kResolveOp_Get) && (state->op != kResolveOp_SubsValChange))
+                    if (IS_STRICT(state->op))
                     {
                         USP_ERR_SetMessage("%s: The dereferenced path contained in '%s' was not an object instance (got the value '%s')", __FUNCTION__, gge->path, gge->value);
                     }
@@ -1908,6 +1956,8 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
             break;
 
         case kResolveOp_Any:
+        case kResolveOp_StrictRef:
+        case kResolveOp_ForgivingRef:
             // Not applicable, as this operation just validates the expression
             break;
 
@@ -1976,6 +2026,8 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
             break;
 
         case kResolveOp_Any:
+        case kResolveOp_StrictRef:
+        case kResolveOp_ForgivingRef:
             // Not applicable, as this operation just validates the expression
             break;
 
@@ -2083,6 +2135,8 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
             break;
 
         case kResolveOp_Any:
+        case kResolveOp_StrictRef:
+        case kResolveOp_ForgivingRef:
             // Not applicable, as this operation just validates the expression
             break;
 
@@ -2126,6 +2180,8 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
             break;
 
         case kResolveOp_Any:
+        case kResolveOp_StrictRef:
+        case kResolveOp_ForgivingRef:
             // Not applicable, as this operation just validates the expression
             break;
 

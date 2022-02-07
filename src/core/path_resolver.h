@@ -65,10 +65,14 @@ typedef enum
     // Special resolve operations
     kResolveOp_GetBulkData, // Resolves get parameters. Unforgiving of permissions. Only allows partial path and wildcards.
 
-    kResolveOp_Any,     // This just checks that the expression is syntactically correct, but does not check resolved paths for validity
+    // The following resolve operations just check that the expression is syntactically correct.
+    // They do not check resolved paths for validity
+    kResolveOp_ForgivingRef,  // Forgiving of permissions and errors. Used when resolving a reference containing a search expression.
+    kResolveOp_StrictRef,     // Not forgiving of permissions and errors. Used when resolving a reference containing a search expression.
+    kResolveOp_Any,           // Not forgiving of permissions and errors.
 } resolve_op_t;
 
-// Bitmask for the flags argument of PATH_RESOLVER_ResolvePath(). Thse flags control resolving of the path
+// Bitmask for the flags argument of PATH_RESOLVER_ResolvePath(). These flags control resolving of the path
 #define GET_ALL_INSTANCES 0x0001
 
 // API

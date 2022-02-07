@@ -54,6 +54,7 @@
 #include "retry_wait.h"
 #include "nu_ipaddr.h"
 #include "nu_macaddr.h"
+#include "text_utils.h"
 
 //------------------------------------------------------------------------------
 // State of a websocket client connection
@@ -2095,7 +2096,7 @@ int AddWsclientUspExtension(struct lws *handle, unsigned char **ppHeaders, int h
 
     // If unable to add the header, then return an error, which will cause the connection to be retried
     pHeadersEnd = (*ppHeaders) + headers_len;
-    len = USP_SNPRINTF(buf, sizeof(buf), "bbf-usp-protocol; eid=%s", DEVICE_LOCAL_AGENT_GetEndpointID());
+    len = USP_SNPRINTF(buf, sizeof(buf), "bbf-usp-protocol; eid=\"%s\"", DEVICE_LOCAL_AGENT_GetEndpointID());
     err = lws_add_http_header_by_token(handle, WSI_TOKEN_EXTENSIONS, (unsigned char *)buf, len, ppHeaders, pHeadersEnd);
     if (err != 0)
     {
@@ -2181,6 +2182,9 @@ int ValidateReceivedWsclientSubProtocol(struct lws *handle)
         return 0;
     }
     endpoint_id += sizeof(EID_SEPARATOR)-1;   // Skip the separator to point to the endpoint_id
+
+    // Strip whitespace and speech marks
+    endpoint_id = TEXT_UTILS_TrimDelimitedBuffer(endpoint_id, "\"\"");
 
     // Exit if endpoint_id is empty. NOTE: This is not an error
     if (*endpoint_id == '\0')

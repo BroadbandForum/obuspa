@@ -109,6 +109,7 @@ int NotifyChange_MQTTCleanSession(dm_req_t *req, char *value);
 int NotifyChange_MQTTCleanStart(dm_req_t *req, char *value);
 int NotifyChange_MQTTRequestResponseInfo(dm_req_t *req, char *value);
 int NotifyChange_MQTTRequestProblemInfo(dm_req_t *req, char *value);
+int Get_MqttResponseInformation(dm_req_t *req, char *buf, int len);
 #if 0
 // TODO: Removed as these are not yet used
 int NotifyChange_MQTTSessionExpiryInterval(dm_req_t *req, char *value);
@@ -257,7 +258,7 @@ int DEVICE_MQTT_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.ConnectRetryIntervalMultiplier", "2000", Validate_MQTTConnectRetryIntervalMultiplier, NotifyChange_MQTTConnectRetryIntervalMultiplier , DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.ConnectRetryMaxInterval", "30720", Validate_MQTTConnectRetryMaxInterval, NotifyChange_MQTTConnectRetryMaxInterval , DM_UINT);
 
-    err |= USP_REGISTER_DBParam_ReadOnly(DEVICE_MQTT_CLIENT ".{i}.ResponseInformation", "", DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_MQTT_CLIENT ".{i}.ResponseInformation", Get_MqttResponseInformation, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_MQTT_CLIENT ".{i}.Status", Get_MqttClientStatus, DM_STRING);
 
     err |= USP_REGISTER_Object(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.", ValidateAdd_MqttClientSubscriptions, NULL, Notify_MqttClientSubcriptionsAdded,
@@ -459,6 +460,24 @@ int Get_MqttClientStatus(dm_req_t *req, char *buf, int len)
 
     USP_STRNCPY(buf, status, len);
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Get_MqttResponseInformation
+**
+** Gets the value of Device.MQTT.Client.{i}.ResponseInformation
+**
+** \param   req - pointer to structure identifying the path
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Get_MqttResponseInformation(dm_req_t *req, char *buf, int len)
+{
+    return MQTT_GetAgentResponseTopicDiscovered(inst1, buf, len);
 }
 
 /*********************************************************************//**

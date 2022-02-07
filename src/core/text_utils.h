@@ -81,6 +81,7 @@ void TEXT_UTILS_PercentEncodeString(char *src, char *dst, int dst_len, char *saf
 void TEXT_UTILS_PercentDecodeString(char *buf);
 void TEXT_UTILS_ReplaceCharInString(char *src, char match_char, char *replacement, char *dst, int dst_len);
 char *TEXT_UTILS_TrimBuffer(char *buf);
+char *TEXT_UTILS_TrimDelimitedBuffer(char *buf, char *delimiters);
 void TEXT_UTILS_StripChars(char *strip, char *src, char *dest, int dest_len);
 int TEXT_UTILS_HexStringToValue(char *s);
 int TEXT_UTILS_HexDigitToValue(char c);

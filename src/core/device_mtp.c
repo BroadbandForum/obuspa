@@ -160,6 +160,7 @@ int NotifyChange_AgentMtpMqtt_ResponseTopicConfigured(dm_req_t *req, char *value
 int NotifyChange_AgentMtpMqttReference(dm_req_t *req, char *value);
 int Validate_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value);
 int NotifyChange_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value);
+int Get_MqttResponseTopicDiscovered(dm_req_t *req, char *buf, int len);
 #endif
 
 #ifdef ENABLE_COAP
@@ -232,6 +233,7 @@ int DEVICE_MTP_Init(void)
 #ifdef ENABLE_MQTT
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.Reference", "", DEVICE_MTP_ValidateMqttReference, NotifyChange_AgentMtpMqttReference, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.ResponseTopicConfigured", "", NULL, NotifyChange_AgentMtpMqtt_ResponseTopicConfigured, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.ResponseTopicDiscovered", Get_MqttResponseTopicDiscovered, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.PublishQoS", "2", Validate_AgentMtpMQTTPublishQoS, NotifyChange_AgentMtpMQTTPublishQoS, DM_UINT);
 #endif
 
@@ -1987,7 +1989,32 @@ agent_mtp_t *FindAgentMtpByInstance(int instance)
     // If the code gets here, then no matching MTP was found
     return NULL;
 }
+
 #ifdef ENABLE_MQTT
+/*********************************************************************//**
+**
+** Get_MqttResponseTopicDiscovered
+**
+** Gets the value of Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicDiscovered
+**
+** \param   req - pointer to structure identifying the path
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Get_MqttResponseTopicDiscovered(dm_req_t *req, char *buf, int len)
+{
+    agent_mtp_t *mtp;
+
+    // Determine MTP reference to MQTT client
+    mtp = FindAgentMtpByInstance(inst1);
+    USP_ASSERT(mtp != NULL);
+
+    return MQTT_GetAgentResponseTopicDiscovered(mtp->mqtt_connection_instance, buf, len);
+}
+
 /******************************************************************//**
 **
 ** DEVICE_MTP_GetAgentMqttResponseTopic

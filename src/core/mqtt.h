@@ -449,4 +449,20 @@ void MQTT_SubscriptionReplace(mqtt_subscription_t *dest, mqtt_subscription_t *sr
 **************************************************************************/
 void MQTT_SubscriptionDestroy(mqtt_subscription_t *sub);
 
+/*********************************************************************//**
+**
+** MQTT_GetAgentResponseTopicDiscovered
+**
+** Reads the value of the CONNACK Response Information property supplied by a MQTT 5.0 broker
+** If this is not available (for example not MQTT v5.0 or CONNACK not received yet) then an empty string is returned
+**
+** \param   instance - instance in Device.MQTT.Client.{i}
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  Always USP_ERR_OK - an empty string is returned if the value cannot be determined
+**
+**************************************************************************/
+int MQTT_GetAgentResponseTopicDiscovered(int instance, char *buf, int len);
+
 #endif

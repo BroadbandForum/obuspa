@@ -956,6 +956,39 @@ char *TEXT_UTILS_TrimBuffer(char *buf)
 
 /*********************************************************************//**
 **
+** TEXT_UTILS_TrimDelimitedBuffer
+**
+** Trims the string in a buffer of leading/trailing whitespace and any quotes/brackets/braces etc by
+** truncating the string in the buffer and returning a new pointer to the start of the string in the buffer
+**
+** \param   buf - pointer to buffer containing string to trim
+** \param   delimiters - pointer to string containing two characters representing the delimiters
+**                       to remove from the start and end of the string eg [] or ""
+**
+** \return  pointer to string in buffer
+**
+**************************************************************************/
+char *TEXT_UTILS_TrimDelimitedBuffer(char *buf, char *delimiters)
+{
+    char *p;
+    int len;
+
+    // Strip leading/trailing whitespace from buffer
+    p = TEXT_UTILS_TrimBuffer(buf);
+
+    // Strip delimiters (if present) from buffer
+    len = strlen(p);
+    if ((p[0] == delimiters[0]) && (p[len-1] == delimiters[1]))
+    {
+        p[len-1] = '\0';
+        p++;
+    }
+
+    return p;
+}
+
+/*********************************************************************//**
+**
 ** TEXT_UTILS_StripChars
 **
 ** Forms the destination string by removing the specified characters from the input string

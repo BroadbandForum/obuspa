@@ -127,6 +127,7 @@ typedef struct
     SSL_CTX *ssl_ctx;           // SSL context used by this MQTT client instead of the default libmosquitto SSL context
     bool are_certs_loaded;      // Flag indicating whether the above ssl_ctx has been loaded with the trust store certs
                                 // It is used to ensure that the certs are loaded only once, rather than on every reconnect
+    char *agent_topic_from_connack;  // Saved copy of agent's topic (if received in the CONNACK)
 
     bool in_tcp_connect;        // Set when calling the mosquitto_connect (and MQTT v5 equivalent).
                                 // This flag causes the data model thread to delay performing any disconnect until after the connect call has returned
@@ -171,6 +172,7 @@ void MoveState_Private(mqtt_state_t *state, mqtt_state_t to, const char *event, 
 void HandleMqttError(mqtt_client_t *client, mqtt_failure_t failure_code, const char* message);
 int DisableMqttClient(mqtt_client_t *client, bool is_reconnect);
 void FreeMqttClientCertChain(mqtt_client_t *client);
+void SaveAgentTopicFromConnack(mqtt_client_t *client, char *agent_topic);
 
 //------------------------------------------------------------------------------------
 // Callbacks
@@ -1208,17 +1210,20 @@ void MessageV5Callback(struct mosquitto *mosq, void *userdata, const struct mosq
         if (client->state == kMqttState_Running)
         {
             // Now we have a message from somewhere
-            char response_info[512] = { 0 };
-            char *response_info_ptr = response_info;
+            char *response_info_ptr = NULL;
 
             if (mosquitto_property_read_string(props, RESPONSE_TOPIC,
                     &response_info_ptr, false) == NULL)
             {
-                USP_LOG_Debug("%s: Failed to read response topic in message info: \"%s\"\n", __FUNCTION__, response_info_ptr);
-                response_info_ptr = NULL;
+                USP_LOG_Debug("%s: No controller response topic present in received message", __FUNCTION__);
             }
 
             ReceiveMqttMessage(client, message, response_info_ptr);
+
+            if (response_info_ptr != NULL)
+            {
+                free(response_info_ptr);
+            }
         }
         else
         {
@@ -1312,13 +1317,13 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
             free(client_id_ptr);
         }
 
+        // Update the agent topic (if received in this CONNACK)
+        USP_SAFE_FREE(client->agent_topic_from_connack);
         if (mosquitto_property_read_string(props, RESPONSE_INFORMATION,
               &response_info_ptr, false) != NULL)
         {
             // Then replace the response_topic in subscription with this
-            USP_SAFE_FREE(client->response_subscription.topic);
-            USP_LOG_Debug("%s: Received response_info: \"%s\"", __FUNCTION__, response_info_ptr);
-            client->response_subscription.topic = USP_STRDUP(response_info_ptr);
+            SaveAgentTopicFromConnack(client, response_info_ptr);
             free(response_info_ptr);
         }
         else
@@ -1331,9 +1336,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
                 // we only want subscribe-topic user property
                 if (strcmp("subscribe-topic", userPropName) == 0)
                 {
-                    USP_LOG_Debug("%s: Received subcribe-topic: \"%s\"", __FUNCTION__, subscribe_topic_ptr);
-                    USP_SAFE_FREE(client->response_subscription.topic);
-                    client->response_subscription.topic = USP_STRDUP(subscribe_topic_ptr);
+                    SaveAgentTopicFromConnack(client, subscribe_topic_ptr);
                     free(subscribe_topic_ptr);
                     free(userPropName);
                 }
@@ -1348,9 +1351,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
                         // we only want subscribe-topic user property
                         if (strcmp("subscribe-topic", userPropName) == 0)
                         {
-                            USP_LOG_Debug("%s: Received subcribe-topic: \"%s\"", __FUNCTION__, subscribe_topic_ptr);
-                            USP_SAFE_FREE(client->response_subscription.topic);
-                            client->response_subscription.topic = USP_STRDUP(subscribe_topic_ptr);
+                            SaveAgentTopicFromConnack(client, subscribe_topic_ptr);
                         }
                         free(subscribe_topic_ptr);
                         free(userPropName);
@@ -1368,6 +1369,32 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
 
 exit:
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);
+}
+
+/*********************************************************************//**
+**
+** SaveAgentTopicFromConnack
+**
+** Saves the agent topic received in the CONNACK into the MQTT client structure
+**
+** \param   client - pointer to MQTT client structure to update the agent topic in
+** \param   agent_topic - value of agent response topic received in the CONNACK
+**
+** \return  None
+**
+**************************************************************************/
+void SaveAgentTopicFromConnack(mqtt_client_t *client, char *agent_topic)
+{
+    USP_LOG_Debug("%s: Received agent-topic: \"%s\"", __FUNCTION__, agent_topic);
+
+    // Override agent response topic configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured
+    USP_SAFE_FREE(client->response_subscription.topic);
+    client->response_subscription.topic = USP_STRDUP(agent_topic);
+
+    // Save the agent response topic received in the CONNACK into the MQTT client structure
+    // (so it can be read by Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicDiscovered and Device.MQTT.Client.{i}.ResponseInformation)
+    USP_SAFE_FREE(client->agent_topic_from_connack);
+    client->agent_topic_from_connack = USP_STRDUP(agent_topic);
 }
 
 //------------------------------------------------------------------------------
@@ -1775,6 +1802,7 @@ void InitClient(mqtt_client_t *client, int index)
     client->socket_fd = INVALID;
     client->ssl_ctx = NULL;   // NOTE: The SSL context is created in MQTT_Start()
     client->are_certs_loaded = false;
+    client->agent_topic_from_connack = NULL;
 
     ResetRetryCount(client);
 
@@ -2733,6 +2761,59 @@ int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *subscription)
     }
 
     return err;
+}
+
+/*********************************************************************//**
+**
+** MQTT_GetAgentResponseTopicDiscovered
+**
+** Reads the value of the CONNACK Response Information property supplied by a MQTT 5.0 broker
+** If this is not available (for example not MQTT v5.0 or CONNACK not received yet) then an empty string is returned
+**
+** \param   instance - instance in Device.MQTT.Client.{i}
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  Always USP_ERR_OK - an empty string is returned if the value cannot be determined
+**
+**************************************************************************/
+int MQTT_GetAgentResponseTopicDiscovered(int instance, char *buf, int len)
+{
+    mqtt_client_t *client;
+
+    OS_UTILS_LockMutex(&mqtt_access_mutex);
+
+    // Set default return value - an empty string
+    *buf = '\0';
+
+    // Exit if no client exists with the specified instance number
+    client = FindMqttClientByInstance(instance);
+    if (client == NULL)
+    {
+        goto exit;
+    }
+
+    // Exit if client is not currently connected
+    if (client->state != kMqttState_Running)
+    {
+        goto exit;
+    }
+
+    // Exit if client is not using MQTT v5 (earlier versions of MQTT do not allow for a response information property in the CONNACK)
+    if (client->conn_params.version != kMqttProtocol_5_0)
+    {
+        goto exit;
+    }
+
+    // Copy the agent's discovered response topic into the return buffer
+    if (client->agent_topic_from_connack != NULL)
+    {
+        USP_STRNCPY(buf, client->agent_topic_from_connack, len);
+    }
+
+exit:
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
+    return USP_ERR_OK;
 }
 
 #endif

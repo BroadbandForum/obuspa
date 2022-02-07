@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2017-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2017-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -230,7 +230,7 @@ void DEVICE_REQUEST_OperationComplete(int instance, int err_code, char *err_msg,
         USP_ASSERT(node != NULL);
 
         info = &node->registered.oper_info;
-        err = KV_VECTOR_ValidateArguments(output_args, &info->output_args);
+        err = KV_VECTOR_ValidateArguments(output_args, &info->output_args, NO_FLAGS);
         if (err != USP_ERR_OK)
         {
             USP_LOG_Warning("%s: Output argument names do not match those registered (%s). Please check code.", __FUNCTION__, command);

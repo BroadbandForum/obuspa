@@ -80,6 +80,9 @@ extern int USP_SNPRINTF(char *dest, size_t size, const char *fmt, ...) __attribu
 // Used to make while loops that do not have an outer level exit condition, readable
 #define FOREVER 1
 
+// Define to be used with all flags arguments to functions, if no flag in the bitmask needs to be set
+#define NO_FLAGS 0
+
 //------------------------------------------------------------------------------
 // Common defines for time
 #define SECONDS 1000   // 1 second in milliseconds

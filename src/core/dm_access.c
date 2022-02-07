@@ -1013,7 +1013,7 @@ int DM_ACCESS_DontRestartAsyncOperation(dm_req_t *req, int instance, bool *is_re
 ** DM_ACCESS_PopulateAliasParam
 **
 ** Called to get an auto-populated parameter value for an Alias parameter
-** This function takes account of the multi-dimentionality of the object
+** This function takes account of the multi-dimensionality of the object
 ** Using the highest order dimension to number the instance
 **
 ** \param   req - pointer to structure identifying the path

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -62,7 +62,7 @@ void KV_VECTOR_AddHexNumber(kv_vector_t *kvv, char *key, unsigned char *buf, int
 void KV_VECTOR_Destroy(kv_vector_t *kvv);
 void KV_VECTOR_Dump(kv_vector_t *kvv);
 int  KV_VECTOR_FindKey(kv_vector_t *kvv, char *key, int start_index);
-int KV_VECTOR_ValidateArguments(kv_vector_t *args, str_vector_t *expected_schema);
+int KV_VECTOR_ValidateArguments(kv_vector_t *args, str_vector_t *expected_schema, unsigned flags);
 
 char *KV_VECTOR_Get(kv_vector_t *kvv, char *key, char *default_value, int start_index);
 int KV_VECTOR_GetUnsigned(kv_vector_t *kvv, char *key, unsigned default_value, unsigned *value);
@@ -74,5 +74,8 @@ int KV_VECTOR_GetDateTime(kv_vector_t *kvv, char *key, char *default_value, time
 int KV_VECTOR_GetHexNumber(kv_vector_t *kvv, char *key, unsigned char *buf, int len, int *bytes_copied);
 int KV_VECTOR_GetEnum(kv_vector_t *kvv, char *key, void *value, int default_value, const enum_entry_t *enums, int num_enums);
 
+//-----------------------------------------------------------------------------------------
+// Defines for flags parameter of KV_VECTOR_ValidateArguments()
+#define IGNORE_UNKNOWN_ARGS 0x00000001
 
 #endif

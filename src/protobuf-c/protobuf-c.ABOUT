@@ -1,8 +1,8 @@
 about_resource: .
 name: protobuf-c
-version: 1.2.1
+version: 1.4.0
 homepage_url: https://github.com/protobuf-c/protobuf-c
-download_url: https://github.com/protobuf-c/protobuf-c/releases/download/v1.2.1/protobuf-c-1.2.1.tar.gz
+download_url: https://github.com/protobuf-c/protobuf-c/releases/download/v1.4.0/protobuf-c-1.4.0.tar.gz
 licenses:
     -   key: bsd-simplified
         name: BSD-2-Clause

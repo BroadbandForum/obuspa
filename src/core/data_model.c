@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -1402,7 +1402,7 @@ int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_
     }
 
     // Exit if input arguments do not match those registered in the data model for this operation
-    err = KV_VECTOR_ValidateArguments(input_args, &info->input_args);
+    err = KV_VECTOR_ValidateArguments(input_args, &info->input_args, IGNORE_UNKNOWN_ARGS);
     if (err != USP_ERR_OK)
     {
         return USP_ERR_COMMAND_FAILURE;
@@ -1428,7 +1428,7 @@ int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_
 
             #ifdef VALIDATE_OUTPUT_ARG_NAMES
             // Validate the names of the output arguments
-            err = KV_VECTOR_ValidateArguments(output_args, &info->output_args);
+            err = KV_VECTOR_ValidateArguments(output_args, &info->output_args, NO_FLAGS);
             if (err != USP_ERR_OK)
             {
                 USP_LOG_Warning("%s: Output arguments names do not match those registered (%s). Please check code.", __FUNCTION__, path);

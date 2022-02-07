@@ -54,6 +54,7 @@
 #include "retry_wait.h"
 #include "nu_ipaddr.h"
 #include "nu_macaddr.h"
+#include "text_utils.h"
 
 //------------------------------------------------------------------------------
 // Server context structure
@@ -515,7 +516,7 @@ void WSSERVER_DisconnectEndpoint(char *endpoint_id)
     // Disconnect the endpoint
     USP_LOG_Info("%s: Disconnecting %s from the agent's websocket server, because the agent has connected to the endpoint's websocket server", __FUNCTION__, endpoint_id);
     USP_SNPRINTF(buf, sizeof(buf), "Agent's websocket client has connected, so closing this connection");
-    
+
     mtp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;
     mtp_send_item.pbuf = USP_STRDUP(buf);
     mtp_send_item.pbuf_len = strlen(buf);
@@ -1201,6 +1202,9 @@ int ValidateReceivedWsservProtocolExtension(struct lws *handle)
     }
     endpoint_id += sizeof(EID_SEPARATOR)-1;   // Skip the separator to point to the endpoint_id
 
+    // Strip whitespace and speech marks
+    endpoint_id = TEXT_UTILS_TrimDelimitedBuffer(endpoint_id, "\"\"");
+
     // Exit if endpoint_id is empty. NOTE: This is not an error
     if (*endpoint_id == '\0')
     {
@@ -1264,7 +1268,7 @@ int AddWsservUspExtension(struct lws *handle, char **ppHeaders, int headers_len)
 
     // If unable to add the header, then return an error, which will cause the connection to be dropped
     pHeadersEnd = (*ppHeaders) + headers_len;
-    len = USP_SNPRINTF(buf, sizeof(buf), "bbf-usp-protocol; eid=%s", DEVICE_LOCAL_AGENT_GetEndpointID());
+    len = USP_SNPRINTF(buf, sizeof(buf), "bbf-usp-protocol; eid=\"%s\"", DEVICE_LOCAL_AGENT_GetEndpointID());
     err = lws_add_http_header_by_token(handle, WSI_TOKEN_EXTENSIONS, (unsigned char *)buf, len, (unsigned char **)ppHeaders, (unsigned char *)pHeadersEnd);
     if (err != 0)
     {
