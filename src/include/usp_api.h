@@ -277,6 +277,7 @@ typedef int (*get_agent_cert_cb_t)(agent_cert_info_t *info);
 // Miscellaneous vendor hooks
 typedef int (*get_hardware_version_cb_t)(char *buf, int len);
 typedef unsigned long long (*stats_collection_enable_cb_t)(bool enable, char *interface_name);
+typedef int (*dm_vendor_get_mtp_username_cb_t)(int instance, char *buf, int len);
 typedef int (*dm_vendor_get_mtp_password_cb_t)(int instance, char *buf, int len);
 typedef int (*load_agent_cert_cb_t)(SSL_CTX *ctx);
 typedef void (*log_message_cb_t)(const char *buf);
@@ -308,6 +309,7 @@ typedef struct
     get_hardware_version_cb_t               get_hardware_version_cb;
 #endif
 
+    dm_vendor_get_mtp_username_cb_t         get_mtp_username_cb;
     dm_vendor_get_mtp_password_cb_t         get_mtp_password_cb;
     load_agent_cert_cb_t                    load_agent_cert_cb;
     log_message_cb_t                        log_message_cb;

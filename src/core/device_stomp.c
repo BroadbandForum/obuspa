@@ -915,6 +915,9 @@ int NotifyChange_StompUsername(dm_req_t *req, char *value)
 {
     stomp_conn_params_t *sp;
     bool schedule_reconnect = false;
+    char buf[MAX_DM_SHORT_VALUE_LEN];
+    dm_vendor_get_mtp_username_cb_t   get_mtp_username_cb;
+    int err;
 
     // Determine stomp connection to be updated
     sp = FindStompParamsByInstance(inst1);
@@ -924,6 +927,23 @@ int NotifyChange_StompUsername(dm_req_t *req, char *value)
     if ((strcmp(sp->username, value) != 0) && (sp->enable))
     {
         schedule_reconnect = true;
+    }
+
+    // Override a blank username in the database with that provided by a core vendor hook
+    if (*value == '\0')
+    {
+        get_mtp_username_cb = vendor_hook_callbacks.get_mtp_username_cb;
+        if (get_mtp_username_cb != NULL)
+        {
+            // Exit if vendor hook failed
+            err = get_mtp_username_cb(inst1, buf, sizeof(buf));
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
+
+            value = buf;
+        }
     }
 
     // Set the new value. This must be done before scheduling a reconnect, so that the reconnect uses the correct values
@@ -1254,6 +1274,9 @@ int ProcessStompConnAdded(int instance)
     stomp_conn_params_t *sp;
     int err;
     char path[MAX_DM_PATH];
+    char buf[MAX_DM_SHORT_VALUE_LEN];
+    dm_vendor_get_mtp_username_cb_t   get_mtp_username_cb;
+    dm_vendor_get_mtp_password_cb_t   get_mtp_password_cb;
 
     // Exit if unable to add another STOMP connection
     sp = FindUnusedStompParams();
@@ -1298,6 +1321,25 @@ int ProcessStompConnAdded(int instance)
         goto exit;
     }
 
+    // Override a blank username in the database with that provided by a core vendor hook
+    if (sp->username[0] == '\0')
+    {
+        get_mtp_username_cb = vendor_hook_callbacks.get_mtp_username_cb;
+        if (get_mtp_username_cb != NULL)
+        {
+            // Exit if vendor hook failed
+            err = get_mtp_username_cb(instance, buf, sizeof(buf));
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+
+            // Replace the blank password from the database with the password retrieved via core vendor hook
+            USP_SAFE_FREE(sp->username);
+            sp->username = USP_STRDUP(buf);
+        }
+    }
+
     // Exit if unable to get the password for this STOMP connection
     USP_SNPRINTF(path, sizeof(path), "%s.%d.Password", device_stomp_conn_root, instance);
     err = DM_ACCESS_GetPassword(path, &sp->password);
@@ -1309,9 +1351,6 @@ int ProcessStompConnAdded(int instance)
     // Override a blank password in the database with that provided by a core vendor hook
     if (sp->password[0] == '\0')
     {
-        char buf[MAX_DM_SHORT_VALUE_LEN];
-        dm_vendor_get_mtp_password_cb_t   get_mtp_password_cb;
-
         get_mtp_password_cb = vendor_hook_callbacks.get_mtp_password_cb;
         if (get_mtp_password_cb != NULL)
         {

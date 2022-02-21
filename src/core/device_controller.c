@@ -65,6 +65,10 @@
 #include "usp_coap.h"
 #endif
 
+#ifdef ENABLE_MQTT
+#include "mqtt.h"
+#endif
+
 #ifdef ENABLE_WEBSOCKETS
 #include "wsclient.h"
 #include "wsserver.h"
@@ -980,8 +984,7 @@ int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_m
 #ifdef ENABLE_MQTT
         case kMtpProtocol_MQTT:
         {
-            char *response_topic = DEVICE_MTP_GetAgentMqttResponseTopic(mrt->mqtt_instance);
-            err = DEVICE_MQTT_QueueBinaryMessage(msi, mrt->mqtt_instance, mrt->mqtt_topic, response_topic);
+            err = MQTT_QueueBinaryMessage(msi, mrt->mqtt_instance, mrt->mqtt_topic);
         }
             break;
 #endif
@@ -1889,7 +1892,7 @@ int Notify_ControllerMtpProtocol(dm_req_t *req, char *value)
     mtp = FindControllerMtpFromReq(req, &cont);
     USP_ASSERT(mtp != NULL);
 
-#ifdef ENABLE_COAP
+#if defined(ENABLE_COAP) || defined(ENABLE_WEBSOCKETS)
     mtp_protocol_t old_protocol;
     old_protocol = mtp->protocol;
 #endif

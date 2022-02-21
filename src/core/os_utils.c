@@ -126,11 +126,6 @@ exit:
 void OS_UTILS_SetDataModelThread(void)
 {
     usp_core_thread = pthread_self();
-    int err = pthread_setname_np(usp_core_thread, "DataModel");
-    if (err != 0)
-    {
-        USP_ERR_ERRNO("pthread_setname_np", err);
-    }
 }
 
 /*********************************************************************//**

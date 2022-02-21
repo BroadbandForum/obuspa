@@ -1,5 +1,21 @@
 # OB-USP-AGENT Changelog since Release 5.0.0
 
+## 2022-02-21
+
+### Added
+- MTP credentials username core vendor hook
+- Functions for creation of Connect and Disconnect USP Records
+
+### Fixed
+- 'killall obuspa' doesn't work anymore
+- Compilation fails when WebSockets enabled and CoAP disabled
+- MQTT does not wait until all responses are sent when disabling MTP (GH Issue 33)
+
+### Modified
+- Updated quick start guide with instructions for cloning from github (GH Issue 39)
+
+
+
 ## 2022-02-07
 
 ### Added

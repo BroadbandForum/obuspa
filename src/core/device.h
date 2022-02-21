@@ -239,7 +239,6 @@ int DEVICE_MTP_GetMqttReference(char *path, int *mqtt_connection_instance);
 void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance);
 void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance);
 int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value);
-int DEVICE_MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *topic, char *response_topic);
 void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role);
 char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance);
 

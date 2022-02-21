@@ -87,7 +87,8 @@ SOURCES = src/core/main.c \
                     src/core/mqtt.c \
                     src/core/device_mqtt.c \
                     src/core/wsclient.c \
-                    src/core/wsserver.c
+                    src/core/wsserver.c \
+                    src/core/usp_record.c
 
 
 obuspa_SOURCES = $(SOURCES)

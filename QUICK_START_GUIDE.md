@@ -28,8 +28,13 @@ $ sudo apt-get install libmosquitto-dev libwebsockets-dev
 ```
 > **_NOTE:_**   libwebsockets must be compiled without support for event loop libraries (e.g. LWS_WITH_LIBUV=false) and without websocket extensions (LWS_WITHOUT_EXTENSIONS=true). These are the defaults but many distros choose to override them. 
 
-3. Install OB-USP-AGENT from source:
+3. Clone the repository. Use the following instructions for the github repository:
 ```
+$ git clone https://github.com/BroadbandForum/obuspa.git
+```
+4. Install OB-USP-AGENT from source:
+```
+$ cd obuspa
 $ autoreconf --force --install
 $ ./configure
 $ make
