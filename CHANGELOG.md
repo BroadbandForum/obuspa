@@ -1,5 +1,15 @@
 # OB-USP-AGENT Changelog since Release 5.0.0
 
+## 2022-03-23
+
+### Fixed
+- STOMP DISCONNECT frame should be sent before disconnecting if no agent destination configured (USP Compliance Test 6.7)
+
+### Modified
+- The GET_RESPONSE_SIMPLE_FORMAT define has been enabled (as default) to make the GetResponse contain a resolved_path_result for every object (and sub object).
+
+
+
 ## 2022-02-21
 
 ### Added

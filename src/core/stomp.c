@@ -258,6 +258,7 @@ int StartSendingFrame_STOMP(stomp_connection_t *sc);
 int StartSendingFrame_SUBSCRIBE(stomp_connection_t *sc);
 int StartSendingFrame_SEND(stomp_connection_t *sc, char *controller_queue, char *agent_queue, mtp_send_item_t *msi, char *err_id_header);
 int StartSendingFrame_UNSUBSCRIBE(stomp_connection_t *sc);
+int StartSendingFrame_DISCONNECT(stomp_connection_t *sc);
 char *AddrInfoToStr(struct addrinfo *addr, char *buf, int len);
 void UpdateNextHeartbeatTime(stomp_connection_t *sc);
 int UpdateMgmtInterface(void);
@@ -2789,6 +2790,9 @@ void HandleRxMsg_AwaitingConnectedFrameState(stomp_connection_t *sc, int msg_siz
     err = StartSendingFrame_SUBSCRIBE(sc);
     if (err != USP_ERR_OK)
     {
+        // Attempt to send disconnect frame before closing the socket
+        StartSendingFrame_DISCONNECT(sc);
+        TransmitStompMessage(sc);
         HandleStompSocketError(sc, kStompFailure_Misconfigured);
         return;
     }
@@ -3466,6 +3470,47 @@ int StartSendingFrame_UNSUBSCRIBE(stomp_connection_t *sc)
 
     // Form the UNSUBSCRIBE frame
     USP_SNPRINTF(((char *)buf), len, UNSUBSCRIBE_FRAME_FORMAT);
+    USP_PROTOCOL("%s", buf);
+
+    // Save the frame to transmit
+    USP_ASSERT(sc->txframe == NULL);
+    sc->txframe = buf;
+    sc->txframe_len = len;
+    sc->txframe_sent_count = 0;
+    sc->txframe_contains_usp_record = false;
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** StartSendingFrame_DISCONNECT
+**
+** Creates a DISCONNECT frame, and sets up state to transmit it
+**
+** \param   sc - pointer to STOMP connection
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int StartSendingFrame_DISCONNECT(stomp_connection_t *sc)
+{
+    unsigned char *buf;
+    int len;
+
+    USP_LOG_Info("Sending DISCONNECT frame to (host=%s, port=%d)", sc->host, sc->port);
+
+    // NOTE: We do not open multiple subscriptions with the server, hence the "id:" header can be hardcoded
+    #define DISCONNECT_FRAME_FORMAT  "DISCONNECT\n" \
+                                      "\n"        \
+                                      EMPTY_BODY
+
+    // Allocate buffer to store the frame in
+    len = sizeof(DISCONNECT_FRAME_FORMAT);
+    buf = USP_MALLOC(len);
+
+    // Form the DISCONNECT frame
+    USP_SNPRINTF(((char *)buf), len, DISCONNECT_FRAME_FORMAT);
     USP_PROTOCOL("%s", buf);
 
     // Save the frame to transmit

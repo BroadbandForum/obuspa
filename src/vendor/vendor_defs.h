@@ -131,7 +131,7 @@
 
 //-----------------------------------------------------------------------------------------
 // Uncomment the following define for the GetResponse to contain a resolved_path_result for every object (and sub object)
-//#define GET_RESPONSE_SIMPLE_FORMAT
+#define GET_RESPONSE_SIMPLE_FORMAT
 
 //-----------------------------------------------------------------------------------------
 // OUI (Organization Unique Identifier) to use for this CPE. This code will be unique to the manufacturer
