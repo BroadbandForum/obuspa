@@ -863,7 +863,9 @@ int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp,
 void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
 {
     int err;
+#if defined(ENABLE_MQTT) || !defined(DISABLE_STOMP)
     char *status;
+#endif
     mtp_reply_to_t wsserv_dest;
 
     // Exit if controller is not connected to agent's websocket server
