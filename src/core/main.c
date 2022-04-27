@@ -92,10 +92,10 @@ static struct option long_options[] =
 #ifdef HAVE_EXECINFO_H
     {"error",      no_argument,       NULL, 'e'},    // Prints the callstack whenever an error is detected
 #endif
-    {"prototrace" ,no_argument,       NULL, 'p'},    // Enables logging of the protocol trace
+    {"prototrace", no_argument,       NULL, 'p'},    // Enables logging of the protocol trace
     {"command",    no_argument,       NULL, 'c'},    // The rest of the command line is a command to invoke on the active USP Agent.
                                                      // Using this option turns this executable into just a CLI for the active USP Agent.
-    {"authcert",   no_argument,       NULL, 'a'},    // Specifies the location of a file containing the client certificate to use authenticating this device
+    {"authcert",   required_argument, NULL, 'a'},    // Specifies the location of a file containing the client certificate to use authenticating this device
     {"truststore", required_argument, NULL, 't'},    // Specifies the location of a file containing the trust store certificates to use
     {"resetfile",  required_argument, NULL, 'r'},    // Specifies the location of a text file containing factory reset parameters
     {"interface",  required_argument, NULL, 'i'},    // Specifies the networking interface to use for communications
