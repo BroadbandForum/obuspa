@@ -3220,6 +3220,8 @@ int StartSendingFrame_STOMP(stomp_connection_t *sc)
     char password_args[256];
     char debug_pw_args[256];
     char escaped_endpoint_id[256];
+    char escaped_username[256];
+    char escaped_password[256];
     char *endpoint_id;
 
     // Write the heartbeat header arguments into a buffer (if enabled)
@@ -3237,8 +3239,10 @@ int StartSendingFrame_STOMP(stomp_connection_t *sc)
     password_args[0] = '\0';
     if ((sc->username != NULL) && (sc->username[0] != '\0') && (sc->password != NULL) && (sc->password[0] != '\0'))
     {
-        USP_SNPRINTF(password_args, sizeof(password_args), "login:%s\npasscode:%s\n", sc->username, sc->password);
-        USP_SNPRINTF(debug_pw_args, sizeof(debug_pw_args), "login:%s\npasscode:\n", sc->username);
+        EscapeStompHeader(sc->username, escaped_username, sizeof(escaped_username));
+        EscapeStompHeader(sc->password, escaped_password, sizeof(escaped_password));
+        USP_SNPRINTF(password_args, sizeof(password_args), "login:%s\npasscode:%s\n", escaped_username, escaped_password);
+        USP_SNPRINTF(debug_pw_args, sizeof(debug_pw_args), "login:%s\npasscode:\n", escaped_username);
     }
     else
     {
@@ -3355,7 +3359,7 @@ int StartSendingFrame_SUBSCRIBE(stomp_connection_t *sc)
 ** \param   sc - pointer to STOMP connection
 ** \param   controller_queue - name of STOMP queue to send this message to
 ** \param   agent_queue - name of agent's STOMP queue configured for this connection in the data model
-** \param   msi - Information about the content to send. The ownership of 
+** \param   msi - Information about the content to send. The ownership of
 **                          the payload buffer is not passed to this function and stays with the caller.
 ** \param   err_id_header - pointer to buffer containing the value of the 'usp-err-id' STOMP header to put in the message
 **
@@ -3607,6 +3611,18 @@ void EscapeStompHeader(char *src, char *dest, int dest_len)
         {
             *dest++ = '\\';
             *dest++ = '\\';
+            dest_len -= 2;
+        }
+        else if (c == '\r')
+        {
+            *dest++ = '\\';
+            *dest++ = 'r';
+            dest_len -= 2;
+        }
+        else if (c == '\n')
+        {
+            *dest++ = '\\';
+            *dest++ = 'n';
             dest_len -= 2;
         }
         else

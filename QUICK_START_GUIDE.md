@@ -26,7 +26,7 @@ $ sudo apt-add-repository ppa:mosquitto-dev/mosquitto-ppa
 $ sudo apt-get update
 $ sudo apt-get install libmosquitto-dev libwebsockets-dev
 ```
-> **_NOTE:_**   libwebsockets must be compiled without support for event loop libraries (e.g. LWS_WITH_LIBUV=false) and without websocket extensions (LWS_WITHOUT_EXTENSIONS=true). These are the defaults but many distros choose to override them. 
+> **_NOTE:_**   libwebsockets must be compiled without support for event loop libraries (e.g. LWS_WITH_LIBUV=false) and without websocket extensions (LWS_WITHOUT_EXTENSIONS=true). These are the defaults but many distros choose to override them.
 
 3. Clone the repository. Use the following instructions for the github repository:
 ```
@@ -235,10 +235,14 @@ The following defines are most likely to need modifying:
 * VENDOR_MANUFACTURER - The value of Device.DeviceInfo.Manufacturer
 * VENDOR_MODEL_NAME - The value of Device.DeviceInfo.ModelName
 * SYSTEM_CERT_PATH - Location of file or directory containing certificates. These are reported in Device.Security.Certificate and not used in OB-USP-AGENT's trust store (use '-t' option to specify trust store certificates).
+* E2ESESSION_EXPERIMENTAL_USP_V_1_2 - If defined the End-to-End Session Context is supported and the following TR-369 parameters are available under the `Device.LocalAgent.Controller.{i}.` instance:
+  * E2ESession.SessionMode (by default: Allow)
+  * E2ESession.Status
+  * E2ESession.MaxUSPRecordSize (because E2ESession.SegmentedPayloadChunkSize is deprecated in USP Device:2.16 data model)
 
 
 ## Extending the Data Model
-Use the USP_REGISTER_XXX() set of functions to register USP data model objects, parameters, cammands and Events.
+Use the USP_REGISTER_XXX() set of functions to register USP data model objects, parameters, commands and Events.
 * Integrators should always call USP_REGISTER_XXX() from VENDOR_Init() in src/vendor/vendor.c
 * Contributors should create a new device_XXX.c file in src/core, and call USP_REGISTER_XX() from a
   DEVICE_XXX_Init() located in the new device_XXX.c file.
@@ -328,7 +332,7 @@ whilst certificates provided to the '--authcert' and '--truststore' invocation a
 
 ## Advanced APIs
 ### Extending the Data Model using grouped parameter and object API
-With some integrations, the data model is implemented by other executables and OB-USP-AGENT must communicate with the other executables to get or set parameters or add or delete object instances. 
+With some integrations, the data model is implemented by other executables and OB-USP-AGENT must communicate with the other executables to get or set parameters or add or delete object instances.
 
 Use the USP_REGISTER_GroupXXX() set of functions to register the group of parameters and objects implemented by the other executable. When getting or setting grouped parameters, OB-USP-AGENT passes a list of all affected parameters in the group to a single group get or set callback function, improving communication efficiency with the other executable.
 
@@ -341,9 +345,9 @@ int VENDOR_Init(void)
 
     #define MY_GROUP 1
     err |= USP_REGISTER_GroupedObject(MY_GROUP, "Device.MyObject.{i}", true);
-    
+
     err |= USP_REGISTER_GroupedVendorParam_ReadWrite(MY_GROUP, "Device.MyObject.{i}.MyParam", DM_BOOL);
-    
+
     err |= USP_REGISTER_GroupVendorHooks(MY_GROUP, GetMyParams, SetMyParams, AddMyObject, DelMyObject);
 
     if (err != USP_ERR_OK)
@@ -389,7 +393,7 @@ int DelMyObject(int group_id, char *path)
 ```
 
 ### Refreshing Object Instances
-Changes to object instances are normally signalled using the USP_SIGNAL_ObjectAdded() and 
+Changes to object instances are normally signalled using the USP_SIGNAL_ObjectAdded() and
 USP_SIGNAL_ObjectDeleted() functions. However for some data model objects these events can only be determined by periodically polling the object's instances. This is wasteful to perform continuously, as the object instances are only required when forming a USP response.
 
 Use USP_REGISTER_Object_RefreshInstances() to register an object instance query function which is called on demand.
@@ -402,9 +406,9 @@ int VENDOR_Init(void)
     int err = USP_ERR_OK;
 
     err |= USP_REGISTER_Object("Device.IP.Interface.{i}", NULL, NULL, NULL, NULL, NULL, NULL);
-    
+
     err |= USP_REGISTER_ObjectRefreshInstances("Device.IP.Interface.{i}", RefreshIPInterfaceInstances);
-    
+
     if (err != USP_ERR_OK)
     {
         return USP_ERR_INTERNAL_ERROR;
@@ -418,7 +422,7 @@ int RefreshIPInterfaceInstances(int group_id, char *path, int *expiry_period)
     // Register the currently valid instances for this object and all child objects
     USP_DM_RefreshInstance("Device.IP.Interface.1");
     USP_DM_RefreshInstance("Device.IP.Interface.1.IPv4Address.1");
-    
+
     // cache the object instance numbers for 30 seconds
     *expiry_period = 30;
     return USP_ERR_OK;
@@ -426,5 +430,3 @@ int RefreshIPInterfaceInstances(int group_id, char *path, int *expiry_period)
 
 
 ```
-
-

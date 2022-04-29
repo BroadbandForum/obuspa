@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -92,4 +92,3 @@ char *TEXT_UTILS_StrDupWithTrailingDot(char *path);
 int TEXT_UTILS_KeyValueFromString(char *buf, char **key, char **value);
 
 #endif
-

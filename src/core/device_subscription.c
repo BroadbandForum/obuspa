@@ -38,17 +38,19 @@
  * Implements the Device.LocalAgent.Subscription data model object
  *
  */
+#include "device.h"
 
 #include <time.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "json.h"
+
 #include "common_defs.h"
 #include "dm_trans.h"
 #include "usp_api.h"
 #include "dm_access.h"
-#include "device.h"
 #include "iso8601.h"
 #include "subs_vector.h"
 #include "path_resolver.h"
@@ -58,8 +60,10 @@
 #include "subs_retry.h"
 #include "text_utils.h"
 #include "expr_vector.h"
-#include "json.h"
 #include "group_get_vector.h"
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+#include "e2e_context.h"
+#endif
 
 //-------------------------------------------------------------------------
 // The prefix to use when forming the auto-assigned value of an ID parameter
@@ -2177,7 +2181,7 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
     char *msg_id;
     char *dest_endpoint;
     mtp_reply_to_t mtp_reply_to = {0};  // Ensures mtp_reply_to.is_reply_to_specified=false
-    usp_send_item_t usp_send_item = USP_SEND_ITEM_INIT;
+    usp_send_item_t usp_send_item;
 
     // Exit if unable to determine the endpoint of the controller
     // This could occur if the controller had been deleted
@@ -2203,9 +2207,17 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
         retry_expiry_time = cur_time + sub->retry_expiry_period;
     }
 
+    USPREC_UspSendItem_Init(&usp_send_item);
     usp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__NOTIFY;
     usp_send_item.msg_packed = pbuf;
     usp_send_item.msg_packed_size = pbuf_len;
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+    usp_send_item.curr_e2e_session = DEVICE_CONTROLLER_FindE2ESessionByInstance(sub->cont_instance);
+
+    // If using E2ESession, log the USP Message before queueing in the MTP.
+    // This is because it is hard (without reassembly) for the MTP to log it at the point of sending
+    E2E_CONTEXT_LogUspMsgIfSessionContext(req, &usp_send_item);
+#endif
 
     // Send the message
     // NOTE: Intentionally ignoring error here. If the controller has been disabled or deleted, then
@@ -2405,4 +2417,3 @@ void RefreshInstancesForObjLifetimeSubscriptions(void)
         }
     }
 }
-

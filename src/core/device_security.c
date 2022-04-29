@@ -289,12 +289,6 @@ int DEVICE_SECURITY_Init(void)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Exit if any errors occurred
-    if (err != USP_ERR_OK)
-    {
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
     // Initialise SSL
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     SSL_library_init();

@@ -44,6 +44,21 @@
 #include "common_defs.h"
 #include "usp-record.pb-c.h"
 #include "mqtt.h"
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+#include "e2e_defs.h"
+#endif
+
+//------------------------------------------------------------------------------
+// Structure containing common elements about USP Message to send
+typedef struct
+{
+    Usp__Header__MsgType usp_msg_type;  // USP Message type (For log usage only)
+    uint8_t *msg_packed;                // Protobuf encoded USP Message to be encapsulate in USP Record
+    int msg_packed_size;                // Length of the payload
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+    e2e_session_t *curr_e2e_session;    // Associated E2E session values
+#endif
+} usp_send_item_t;
 
 //------------------------------------------------------------------------------
 // API
@@ -51,5 +66,6 @@ UspRecord__Record *USPREC_WebSocketConnect_Create(void);
 UspRecord__Record *USPREC_MqttConnect_Create(mqtt_protocolver_t version, char* topic);
 UspRecord__Record *USPREC_StompConnect_Create(char* destination);
 UspRecord__Record *USPREC_Disconnect_Create(uint32_t reason_code, char* reason_str);
+void USPREC_UspSendItem_Init(usp_send_item_t *usi);
 
 #endif

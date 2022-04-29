@@ -3,6 +3,7 @@
  * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2022  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
+ * Copyright (C) 2022, Snom Technology GmbH
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,9 +37,10 @@
 /**
  * \file device_controller.c
  *
- * Implements the Device.Controller data model object
+ * Implements the Device.LocalAgent.Controller data model object
  *
  */
+#include "device.h"
 
 #include <stdio.h>
 #include <time.h>
@@ -47,15 +49,19 @@
 
 #include "common_defs.h"
 #include "data_model.h"
-#include "device.h"
 #include "usp_api.h"
 #include "dm_access.h"
 #include "dm_trans.h"
+#include "dm_exec.h"
 #include "mtp_exec.h"
 #include "msg_handler.h"
 #include "text_utils.h"
 #include "iso8601.h"
 #include "retry_wait.h"
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+#include "e2e_defs.h"
+#include "e2e_context.h"
+#endif
 
 #ifndef DISABLE_STOMP
 #include "stomp.h"
@@ -127,7 +133,9 @@ typedef struct
     unsigned periodic_interval;
     time_t next_time_to_fire;   // Absolute time at which periodic notification should fire for this controller
     combined_role_t combined_role; // Inherited and Assigned roles to use for this controller
-
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+    e2e_session_t e2e_session;
+#endif
     unsigned subs_retry_min_wait_interval;
     unsigned subs_retry_interval_multiplier;
 
@@ -216,6 +224,18 @@ int Notify_ControllerMtpWebsockKeepAlive(dm_req_t *req, char *value);
 int Notify_ControllerMtpWebsockRetryInterval(dm_req_t *req, char *value);
 int Notify_ControllerMtpWebsockRetryMultiplier(dm_req_t *req, char *value);
 void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt);
+#endif
+
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+int ProcessControllerE2ESessionAdded(controller_t *cont);
+int Validate_E2ESessionMode(dm_req_t *req, char *value);
+int Validate_E2ESessionMaxUSPRecordSize(dm_req_t *req, char *value);
+int Notify_E2ESessionMode(dm_req_t *req, char *value);
+int Notify_E2ESessionMaxUSPRecordSize(dm_req_t *req, char *value);
+int Get_E2ESessionStatus(dm_req_t *req, char *buf, int len);
+int Async_E2ESessionReset(dm_req_t *req, kv_vector_t *input_args, int request);
+
+extern const enum_entry_t e2e_session_modes[kE2EMode_Max];
 #endif
 
 /*********************************************************************//**
@@ -309,6 +329,13 @@ int DEVICE_CONTROLLER_Init(void)
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.CurrentRetryCount", Get_WebsockRetryCount, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.SessionRetryMinimumWaitInterval", "5", Validate_SessionRetryInterval, Notify_ControllerMtpWebsockRetryInterval, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.WebSocket.SessionRetryIntervalMultiplier", "2000", Validate_SessionRetryMultiplier, Notify_ControllerMtpWebsockRetryMultiplier, DM_UINT);
+#endif
+
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.E2ESession.SessionMode", "Allow", Validate_E2ESessionMode, Notify_E2ESessionMode, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.E2ESession.MaxUSPRecordSize", "0", Validate_E2ESessionMaxUSPRecordSize, Notify_E2ESessionMaxUSPRecordSize, DM_UINT);
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CONT_ROOT ".{i}.E2ESession.Status", Get_E2ESessionStatus, DM_STRING);
+    err |= USP_REGISTER_AsyncOperation(DEVICE_CONT_ROOT ".{i}.E2ESession.Reset()", Async_E2ESessionReset, NULL);
 #endif
 
     // Register unique keys for all tables
@@ -451,7 +478,7 @@ void DEVICE_CONTROLLER_Stop(void)
 **
 ** DEVICE_CONTROLLER_FindInstanceByEndpointId
 **
-** Gets the instance number of the enabled controller (in Device.Controller.{i}) based on the specified endpoint_id
+** Gets the instance number of the enabled controller (in Device.LocalAgent.Controller.{i}) based on the specified endpoint_id
 **
 ** \param   endpoint_id - controller that we want to find the instance number of
 **
@@ -485,7 +512,7 @@ int DEVICE_CONTROLLER_FindInstanceByEndpointId(char *endpoint_id)
 **
 ** Gets the endpoint_id of the specified enabled controller
 **
-** \param   instance - instance number of the controller in the Device.Controller.{i} table
+** \param   instance - instance number of the controller in the Device.LocalAgent.Controller.{i} table
 **
 ** \return  pointer to endpoint_id of the controller, or NULL if no controller found, or controller was disabled
 **
@@ -535,6 +562,56 @@ int DEVICE_CONTROLLER_GetSubsRetryParams(char *endpoint_id, unsigned *min_wait_i
     *interval_multiplier = cont->subs_retry_interval_multiplier;
     return USP_ERR_OK;
 }
+
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_FindE2ESessionByInstance
+**
+** Find the E2E Session to use with specified enabled controller
+**
+** \param   instance - instance number of the controller in Device.LocalAgent.Controller.{i}
+**
+** \return  pointer to E2ESession instance, or NULL
+**
+**************************************************************************/
+e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByInstance(int instance)
+{
+    // Exit if unable to find a matching enabled controller
+    controller_t *cont = FindControllerByInstance(instance);
+    if ((cont == NULL) || (cont->enable == false))
+    {
+        return NULL;
+    }
+
+    // Return pointer to the E2ESession instance
+    return &cont->e2e_session;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_FindE2ESessionByEndpointId
+**
+** Find the E2E Session to use with the controller matching the specified endpoint_id
+**
+** \param   endpoint_id - name of the controller to find
+**
+** \return  pointer to E2ESession instance, or NULL
+**
+**************************************************************************/
+e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByEndpointId(char *endpoint_id)
+{
+    // Exit if unable to find a matching enabled controller
+    controller_t *cont = FindControllerByEndpointId(endpoint_id);
+    if ((cont == NULL) || (cont->enable == false))
+    {
+        return NULL;
+    }
+
+    // Return pointer to the E2ESession instance
+    return &cont->e2e_session;
+}
+#endif
 
 /*********************************************************************//**
 **
@@ -863,7 +940,6 @@ int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp,
 void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
 {
     int err;
-    char *status;
     mtp_reply_to_t wsserv_dest;
 
     // Exit if controller is not connected to agent's websocket server
@@ -879,12 +955,15 @@ void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
     {
 #ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
+        {
+            char *status;
             status = STOMP_GetConnectionStatus(mrt->stomp_instance, NULL);
             if (strcmp(status, "Enabled") != 0)
             {
                 memcpy(mrt, &wsserv_dest, sizeof(mtp_reply_to_t));
             }
-            break;
+        }
+        break;
 #endif
 
 #ifdef ENABLE_COAP
@@ -895,13 +974,15 @@ void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
 
 #ifdef ENABLE_MQTT
         case kMtpProtocol_MQTT:
+        {
+            char *status;
             status = (char *) MQTT_GetClientStatus(mrt->mqtt_instance);
             if (strcmp(status, "Connected") != 0)
             {
                 memcpy(mrt, &wsserv_dest, sizeof(mtp_reply_to_t));
             }
-
-            break;
+        }
+        break;
 #endif
 
 #ifdef ENABLE_WEBSOCKETS
@@ -1114,7 +1195,7 @@ int ExecuteSendOnBoardRequest(controller_t* controller)
 ** \param   req - USP OnBoardRequest notify message
 ** \param   controller - point to the controller responsible for sending the OnBoardRequest notification
 **
-** \return  USP_ERR_OK if successful
+** \return  None
 **
 **************************************************************************/
 void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
@@ -1125,7 +1206,7 @@ void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
     time_t retry_expiry_time;
     char *dest_endpoint;
     mtp_reply_to_t mtp_reply_to = {0};  // Ensures mtp_reply_to.is_reply_to_specified=false
-    usp_send_item_t usp_send_item = USP_SEND_ITEM_INIT;
+    usp_send_item_t usp_send_item;
 
     // Exit if unable to determine the endpoint of the controller
     // This could occur if the controller had been deleted
@@ -1146,13 +1227,20 @@ void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
     // Determine the time at which we should give up retrying, or expire the message in the MTP's send queue
     retry_expiry_time = END_OF_TIME;       // default to never expire
 
+    USPREC_UspSendItem_Init(&usp_send_item);
     usp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__NOTIFY;
     usp_send_item.msg_packed = pbuf;
     usp_send_item.msg_packed_size = pbuf_len;
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+    usp_send_item.curr_e2e_session = &controller->e2e_session;
+
+    // If using E2ESession, log the USP Message before queueing in the MTP.
+    // This is because it is hard (without reassembly) for the MTP to log it at the point of sending
+    E2E_CONTEXT_LogUspMsgIfSessionContext(req, &usp_send_item);
+#endif
 
     // Send the message
-    // NOTE: Intentionally ignoring error here. If the controller has been disabled or deleted, then
-    // allow the subs retry code to remove any previous attempts from the retry array
+    // NOTE: Intentionally ignoring error here.
     MSG_HANDLER_QueueUspRecord(&usp_send_item, dest_endpoint, req->header->msg_id, &mtp_reply_to, retry_expiry_time);
 
     // Free the serialized USP Message because it is now encapsulated in USP Record messages.
@@ -2764,6 +2852,14 @@ int ProcessControllerAdded(int cont_instance)
         }
     }
 
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+    err = ProcessControllerE2ESessionAdded(cont);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+#endif
+
     // If the code gets here, then we successfully retrieved all data about the controller (even if some of the MTPs were not added)
     err = USP_ERR_OK;
 
@@ -3897,6 +3993,270 @@ int Notify_ControllerMtpMqttTopic(dm_req_t *req, char *value)
 }
 #endif
 
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+/*********************************************************************//**
+**
+** ProcessControllerE2ESessionAdded
+**
+** Function called when a E2ESession object has been added to Device.LocalAgent.Controller.{i}
+**
+** \param   cont - pointer to structure identifying the controller
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ProcessControllerE2ESessionAdded(controller_t *cont)
+{
+    int err = USP_ERR_OK;
+    char path[MAX_DM_PATH];
+
+    cont->e2e_session.current_session_id = (E2E_FIRST_VALID_SESS_ID - 1);
+    cont->e2e_session.last_sent_sequence_id = 0;
+    cont->e2e_session.last_recv_sequence_id = 0;
+    SAR_VECTOR_Init(&(cont->e2e_session.received_payloads));
+
+    // Exit if unable to get the End-to-End Session mode of this controller
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.E2ESession.SessionMode", device_cont_root, cont->instance);
+    err = DM_ACCESS_GetEnum(path, &cont->e2e_session.mode, e2e_session_modes, kE2EMode_Max);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // By default, the current E2ESession.SessionMode value
+    cont->e2e_session.mode_buffered = cont->e2e_session.mode;
+
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.E2ESession.MaxUSPRecordSize", device_cont_root, cont->instance);
+    err = DM_ACCESS_GetUnsigned(path, &cont->e2e_session.max_record_size);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    cont->e2e_session.status = kE2EStatus_Down;
+
+exit:
+    return err;
+}
+
+/*********************************************************************//**
+**
+** Validate_E2ESessionMode
+**
+** Validates Device.LocalAgent.Controller.{i}.E2ESession.SessionMode
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_E2ESessionMode(dm_req_t *req, char *value)
+{
+    int err = USP_ERR_OK;
+    int result = E2E_CONTEXT_E2eSessionModeToEnum(value);
+
+    if (result == INVALID)
+    {
+        USP_ERR_SetMessage("%s: Invalid or unsupported E2ESession mode %s", __FUNCTION__, value);
+        err = USP_ERR_INVALID_VALUE;
+    }
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** Validate_E2ESessionMaxUSPRecordSize
+**
+** Validates Device.LocalAgent.Controller.{i}.E2ESession.MaxUSPRecordSize
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_E2ESessionMaxUSPRecordSize(dm_req_t *req, char *value)
+{
+    if (val_uint == 0)
+    {
+        return USP_ERR_OK;
+    }
+    return DM_ACCESS_ValidateRange_Unsigned(req, 512, UINT_MAX);
+}
+
+/*********************************************************************//**
+**
+** Notify_E2ESessionMode
+**
+** Called when Device.LocalAgent.Controller.{i}.E2ESession.SessionMode is modified
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_E2ESessionMode(dm_req_t *req, char *value)
+{
+    static const e2e_event_t kE2E_EVENT_MAP[kE2EMode_Max][kE2EStatus_Max] = {
+    //  kE2EStatus_Up,         kE2EStatus_Negotiating, kE2EStatus_Down
+       {kE2EEvent_None,        kE2EEvent_None,         kE2EEvent_Establishment}, // kE2EMode_Require
+       {kE2EEvent_None,        kE2EEvent_None,         kE2EEvent_None},          // kE2EMode_Allow
+       {kE2EEvent_Termination, kE2EEvent_Termination,  kE2EEvent_None},          // kE2EMode_Forbid
+    };
+
+    e2e_session_mode_t mode = INVALID;
+    e2e_event_t event = kE2EEvent_None;
+    int err = USP_ERR_OK;
+
+    // Determine controller to be updated
+    controller_t *cont = FindControllerByInstance(inst1);
+    USP_ASSERT(cont != NULL);
+
+    mode = E2E_CONTEXT_E2eSessionModeToEnum(value);
+    USP_ASSERT(mode != INVALID); // Value must already have validated to have got here
+
+    // Store the given SessionMode value; will be applied during E2E_CONTEXT_E2eSessionEvent()
+    cont->e2e_session.mode_buffered = mode;
+
+    USP_ASSERT(cont->e2e_session.status < kE2EStatus_Max);
+    event = kE2E_EVENT_MAP[mode][cont->e2e_session.status];
+
+    // If an E2E event is needed or the mode changed
+    if (event != kE2EEvent_None ||
+        cont->e2e_session.mode != mode)
+    {
+        // Log the input for the event
+        USP_LOG_Info("=== E2ESession.SessionMode SET operation on Controller instance %d ===", inst1);
+        USP_LOG_Info("E2E Event: %s",E2E_CONTEXT_E2eSessionEventToString(event));
+        USP_LOG_Info("E2E Mode: %s => %s", E2E_CONTEXT_E2eSessionModeToString(cont->e2e_session.mode), E2E_CONTEXT_E2eSessionModeToString(mode));
+
+        // This async call will end in E2E_CONTEXT_E2eSessionEvent() function.
+        err = DM_EXEC_PostE2eEvent(event, INVALID, inst1);
+    }
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** Notify_E2ESessionMaxUSPRecordSize
+**
+** Called when Device.LocalAgent.Controller.{i}.E2ESession.MaxUSPRecordSize is modified
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_E2ESessionMaxUSPRecordSize(dm_req_t *req, char *value)
+{
+    // Determine controller to be updated
+    controller_t *cont = FindControllerByInstance(inst1);
+    USP_ASSERT(cont != NULL);
+
+    // Update cached value
+    cont->e2e_session.max_record_size = val_uint;
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Get_E2ESessionStatus
+**
+** Gets the value of Device.LocalAgent.Controller.{i}.E2ESession.Status
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   buf - pointer to buffer in which to return the value
+** \param   len - length of return buffer
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Get_E2ESessionStatus(dm_req_t *req, char *buf, int len)
+{
+    controller_t *cont = NULL;
+
+    // Determine controller to be read
+    cont = FindControllerByInstance(inst1);
+    USP_ASSERT(cont != NULL);
+
+    // Get the E2ESession status of this controller
+    USP_STRNCPY(buf, E2E_CONTEXT_E2eSessionStatusToString(cont->e2e_session.status), len);
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Async_E2ESessionReset
+**
+** Starts the asynchronous Reset operation for the E2ESession context.
+** Post a signal to perform the operation on the DataModel thread.
+**
+** \param   req - pointer to structure identifying the operation in the data model
+** \param   input_args - not used
+** \param   request - instance number of this operation in the Device.LocalAgent.Request table
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Async_E2ESessionReset(dm_req_t *req, kv_vector_t *input_args, int request)
+{
+    static const e2e_event_t kE2E_EVENT_MAP[kE2EMode_Max][kE2EStatus_Max] = {
+    //  kE2EStatus_Up,         kE2EStatus_Negotiating, kE2EStatus_Down
+       {kE2EEvent_Restart,     kE2EEvent_Restart,      kE2EEvent_Establishment}, // kE2EMode_Require
+       {kE2EEvent_Termination, kE2EEvent_Termination,  kE2EEvent_None},          // kE2EMode_Allow
+       {kE2EEvent_Termination, kE2EEvent_Termination,  kE2EEvent_None},          // kE2EMode_Forbid
+    };
+
+    int err = USP_ERR_OK;
+    e2e_session_t* curr_e2e_session = DEVICE_CONTROLLER_FindE2ESessionByInstance(inst1);
+    e2e_event_t event = kE2EEvent_None;
+
+    if (curr_e2e_session == NULL)
+    {
+        USP_ERR_SetMessage("%s: Device.LocalAgent.Controller.%d is not enabled", __FUNCTION__, inst1);
+        return USP_ERR_COMMAND_FAILURE;
+    }
+
+    USP_ASSERT(curr_e2e_session->mode < kE2EMode_Max);
+    USP_ASSERT(curr_e2e_session->status < kE2EStatus_Max);
+    event = kE2E_EVENT_MAP[curr_e2e_session->mode][curr_e2e_session->status];
+
+    if (event == kE2EEvent_None)
+    {
+        USP_ERR_SetMessage("%s: Nothing to do", __FUNCTION__);
+        return USP_ERR_COMMAND_FAILURE;
+    }
+
+    // Exit if unable to signal that this operation is active
+    err = USP_SIGNAL_OperationStatus(request, "Active");
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Log the input conditions for the operation
+    USP_LOG_Info("=== E2ESession.Reset async operation on Controller instance %d ===", inst1);
+    USP_LOG_Info("E2E Event: %s",E2E_CONTEXT_E2eSessionEventToString(event));
+
+    // This async call will end in E2E_CONTEXT_E2eSessionEvent() function.
+    err = DM_EXEC_PostE2eEvent(event, request, inst1);
+
+    if (err != USP_ERR_OK)
+    {
+        return USP_ERR_COMMAND_FAILURE;
+    }
+
+    return USP_ERR_OK;
+}
+#endif
+
 //------------------------------------------------------------------------------------------
 // Code to test the CalcNextPeriodicTime() function
 // NOTE: In test cases below, the periodic_interval is assumed to be 5 seconds
@@ -3945,7 +4305,3 @@ void TestCalcNextPeriodicTime(void)
     }
 }
 #endif
-
-
-
-

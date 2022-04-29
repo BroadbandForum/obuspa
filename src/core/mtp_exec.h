@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
@@ -89,17 +89,6 @@ typedef enum
 } mtp_content_type_t;
 
 //------------------------------------------------------------------------------
-// Structure containing common elements about USP message to send
-typedef struct
-{
-    Usp__Header__MsgType usp_msg_type;  // USP Message type (For log usage only)
-    uint8_t *msg_packed;                // Protobuf encoded USP Message to be encapsulate in USP Record
-    int msg_packed_size;                // Length of the payload
-} usp_send_item_t;
-#define USP_SEND_ITEM_INIT \
- { USP__HEADER__MSG_TYPE__ERROR, NULL, 0 }
-
-//------------------------------------------------------------------------------
 // Structure containing common elements about payload/body content to send by the MTP
 typedef struct
 {
@@ -108,8 +97,6 @@ typedef struct
     uint8_t *pbuf;                      // Payload to be sent by the MTP
     int pbuf_len;                       // Length of the payload
 } mtp_send_item_t;
-#define MTP_SEND_ITEM_INIT \
- { kMtpContentType_Text, USP__HEADER__MSG_TYPE__ERROR, NULL, 0 }
 
 //------------------------------------------------------------------------------
 // Structure containing a count of causes of connectivity failures for a particular MTP (eg STOMP, HTTP)
@@ -148,6 +135,7 @@ extern bool is_mqtt_mtp_thread_exited;
 
 //------------------------------------------------------------------------------
 // API functions
+void MTP_EXEC_MtpSendItem_Init(mtp_send_item_t *msi);
 int MTP_EXEC_Init(void);
 void MTP_EXEC_ScheduleExit(void);
 void MTP_EXEC_ActivateScheduledActions(void);

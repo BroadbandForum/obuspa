@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
@@ -49,9 +49,10 @@
 #include "usp_api.h"
 #include "subs_vector.h"
 #include "mtp_exec.h"
-#include "subs_vector.h"
-#include "usp-msg.pb-c.h"
 #include "mqtt.h"
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+#include "e2e_defs.h"
+#endif
 
 //------------------------------------------------------------------------------
 // Enumeration of what to do when USP Agent exits gracefully (ie after all USP responses have been sent)
@@ -153,6 +154,10 @@ void DEVICE_CONTROLLER_Stop(void);
 int DEVICE_CONTROLLER_FindInstanceByEndpointId(char *endpoint_id);
 int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mtp_reply_to, time_t expiry_time);
 char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance);
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByInstance(int instance);
+e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByEndpointId(char *endpoint_id);
+#endif
 int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_role);
 int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_role_t *combined_role);
 void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role);
@@ -266,4 +271,3 @@ extern char *usp_trust_store_file;
 #define UDP_ECHO_MAX_RESULTS 25
 
 #endif
-

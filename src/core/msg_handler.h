@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -46,6 +46,7 @@
 #include "mtp_exec.h"
 #include "vendor_defs.h"
 #include "device.h"
+#include "usp_record.h"
 
 //--------------------------------------------------------------------
 // Agent supported protocol versions
@@ -63,6 +64,7 @@ int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_ro
 void MSG_HANDLER_LogMessageToSend(mtp_send_item_t *msi, mtp_protocol_t protocol, char *host, unsigned char *stomp_header);
 int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *mrt);
 int MSG_HANDLER_QueueUspRecord(usp_send_item_t *usi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time);
+int MSG_HANDLER_QueueUspDisconnectRecord(char *endpoint_id, uint32_t reason_code, char* reason_str, mtp_reply_to_t *mrt, time_t expiry_time);
 int MSG_HANDLER_GetMsgControllerInstance(void);
 void MSG_HANDLER_GetMsgRole(combined_role_t *combined_role);
 void MSG_HANDLER_GetControllerInfo(controller_info_t *controller_info);
@@ -100,4 +102,3 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_Event(char *event_name, kv_vector_t *param
 Usp__Msg *MSG_HANDLER_CreateNotifyReq_OnBoard(char* oui, char* product_class, char* serial_number, bool send_resp);
 
 #endif
-

@@ -1,8 +1,9 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
+ * Copyright (C) 2022, Snom Technology GmbH
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -191,6 +192,10 @@
 #define BULKDATA_TOTAL_TIMEOUT   60   // Total timeout (in seconds) to connect and send to a bulk data collection server
                                       // BULKDATA_TOTAL_TIMEOUT includes BULKDATA_CONNECT_TIMEOUT, so should be larger than it.
 
+// Uncomment the following define to include the End-to-End Session context in OB-USP-A
+// The current E2E Session Context support is partial and lot of cases are not fully implemented yet.
+//#define E2ESESSION_EXPERIMENTAL_USP_V_1_2
+
 //-----------------------------------------------------------------------------------------
 // Static Declaration of all Controller Trust roles
 // The names of all enumerations may be altered, and enumerations added/deleted, but the last entry must always be kCTrustRole_Max
@@ -212,4 +217,3 @@ typedef enum
 
 
 #endif
-

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2021, Broadband Forum
+ * Copyright (C) 2021-2022, Broadband Forum
  * Copyright (C) 2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -502,7 +502,7 @@ void WSSERVER_DisconnectEndpoint(char *endpoint_id)
 {
     wsconn_t *wc;
     char buf[256];
-    mtp_send_item_t mtp_send_item = MTP_SEND_ITEM_INIT;
+    mtp_send_item_t mtp_send_item;
 
     OS_UTILS_LockMutex(&wss_access_mutex);
 
@@ -517,7 +517,7 @@ void WSSERVER_DisconnectEndpoint(char *endpoint_id)
     USP_LOG_Info("%s: Disconnecting %s from the agent's websocket server, because the agent has connected to the endpoint's websocket server", __FUNCTION__, endpoint_id);
     USP_SNPRINTF(buf, sizeof(buf), "Agent's websocket client has connected, so closing this connection");
 
-    mtp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;
+    MTP_EXEC_MtpSendItem_Init(&mtp_send_item);
     mtp_send_item.pbuf = USP_STRDUP(buf);
     mtp_send_item.pbuf_len = strlen(buf);
     mtp_send_item.content_type = kMtpContentType_Text;
