@@ -1,0 +1,34 @@
+##########################################################################################################
+#
+# This file contains a factory reset database in text format
+#
+# If no USP database exists when OB-USP-AGENT starts, then OB-USP-AGENT will create a database containing
+# the parameters specified in a text file located by the '-r' option.
+# Example:
+#    obuspa -p -v 4 -r factory_reset_example.txt
+#
+# Each line of this file contains either a comment (denoted by '#' at the start of the line)
+# or a USP data model parameter and its factory reset value.
+# The parameter and value are separated by whitespace.
+# The value may optionally be enclosed in speech marks "" (this is the only way to specify an empty string)
+#
+##########################################################################################################
+
+#Controller
+Device.LocalAgent.Controller.1.EndpointID "uspService1"
+Device.LocalAgent.Controller.1.Enable "true"
+Device.LocalAgent.Controller.1.MTP.1.Protocol "WebSocket"
+Device.LocalAgent.Controller.1.MTP.1.WebSocket.Host "127.0.0.1"
+Device.LocalAgent.Controller.1.MTP.1.WebSocket.Port "8081"
+Device.LocalAgent.Controller.1.MTP.1.WebSocket.Path "/uspHandler"
+Device.LocalAgent.Controller.1.MTP.1.WebSocket.EnableEncryption "false"
+Device.LocalAgent.Controller.1.MTP.1.Enable "true"
+
+#Agent
+Device.LocalAgent.EndpointID "cpe-1"
+Device.LocalAgent.MTP.1.Enable "true"
+Device.LocalAgent.MTP.1.Protocol "WebSocket"
+Device.LocalAgent.MTP.1.WebSocket.EnableEncryption "false"
+
+Internal.Reboot.Cause "LocalFactoryReset"
+
