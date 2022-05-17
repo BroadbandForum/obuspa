@@ -1972,6 +1972,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
     switch(state->op)
     {
         case kResolveOp_Get:
+        case kResolveOp_Set:
         case kResolveOp_Oper:
         case kResolveOp_Event:
         case kResolveOp_SubsValChange:
@@ -1981,7 +1982,6 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
             // Not applicable
             break;
 
-        case kResolveOp_Set:
         case kResolveOp_Del:
             // Exit if the path is not a fully qualified object instance
             if ((flags & PP_IS_OBJECT_INSTANCE)==0)

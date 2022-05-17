@@ -214,3 +214,24 @@ UspRecord__Record *USPREC_Disconnect_Create(uint32_t reason_code, char* reason_s
 
     return rec;
 }
+
+/*********************************************************************//**
+**
+** USPREC_UspSendItem_Init
+**
+** Initialises the usp_send_item_t struct with default values
+**
+** \param   usi - struct to initialize
+**
+** \return  None
+**
+**************************************************************************/
+void USPREC_UspSendItem_Init(usp_send_item_t *usi)
+{
+    usi->usp_msg_type = _USP__HEADER__MSG_TYPE_IS_INT_SIZE;
+    usi->msg_packed = NULL;
+    usi->msg_packed_size = 0;
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+    usi->curr_e2e_session = NULL;
+#endif
+}

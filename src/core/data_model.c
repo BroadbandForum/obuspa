@@ -731,9 +731,9 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags)
 ** Adds an instance to the data model
 ** This function may be called with either the agent or the controller allocating the instance number
 **   - If this code allocates the instance number, then 'instance' is non NULL,
-**     and the path is an object without trailing instance number (e.g. "Device.Controller")
+**     and the path is an object without trailing instance number (e.g. "Device.LocalAgent.Controller")
 **   - If the caller allocates the instance number, then 'instance' is NULL,
-**     and the path is an object with trailing instance number (e.g. "Device.Controller.1")
+**     and the path is an object with trailing instance number (e.g. "Device.LocalAgent.Controller.1")
 ** NOTE: If the path is specified with a trailing '.', then internally this is removed, to be consistent for notify callbacks etc
 **
 ** \param   path - path of the object to add an instance to
@@ -3764,7 +3764,7 @@ char *ParseInstanceInteger(char *p, int *p_value)
 ** \param   name - portion of the data model path that this node represents
 ** \param   type - type of node (eg object or parameter)
 ** \param   schema_path - path in the data model to this node. Used to calculate the hash for parameter nodes
-**                      eg 'Device.Controller.{i}.Enable'
+**                      eg 'Device.LocalAgent.Controller.{i}.Enable'
 **
 ** \return  pointer to created node
 **
@@ -4783,4 +4783,3 @@ int SetVendorParam(dm_node_t *node, char *path, dm_instances_t *inst, char *valu
 
     return USP_ERR_OK;
 }
-

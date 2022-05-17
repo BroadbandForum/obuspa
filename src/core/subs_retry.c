@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -49,6 +49,9 @@
 #include "device.h"
 #include "sync_timer.h"
 #include "retry_wait.h"
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+#include "e2e_context.h"
+#endif
 
 //------------------------------------------------------------------------
 // Structure containing NotifyRequest message to retry sending and associated state machine
@@ -350,10 +353,14 @@ void SubsRetryExec(int id)
             // Determine if it is time to try resending the message
             if (cur_time >= sr->next_retry_time)
             {
-                usp_send_item_t usp_send_item = USP_SEND_ITEM_INIT;
+                usp_send_item_t usp_send_item;
+                USPREC_UspSendItem_Init(&usp_send_item);
                 usp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__NOTIFY;
                 usp_send_item.msg_packed = sr->pbuf;
                 usp_send_item.msg_packed_size = sr->pbuf_len;
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+                usp_send_item.curr_e2e_session = DEVICE_CONTROLLER_FindE2ESessionByEndpointId(sr->dest_endpoint);
+#endif
 
                 // Try resending the saved serialized USP message
                 MSG_HANDLER_QueueUspRecord(&usp_send_item, sr->dest_endpoint, sr->msg_id, &mtp_reply_to, sr->retry_expiry_time);
@@ -543,4 +550,3 @@ void GarbageCollectSubsRetry(void)
     // Store the number of valid entries left in the vector
     subs_retry.num_entries = j;
 }
-

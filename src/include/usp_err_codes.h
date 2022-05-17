@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2019  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -84,13 +84,14 @@
 
 // Brokered USP Record Errors
 #define USP_ERR_RECORD_NOT_PARSED         7100       // Record could not be parsed
-#define USP_ERR_SECURE_SESS_REQUIRED      7101       // A secure session must be started before pasing any records
+#define USP_ERR_SECURE_SESS_REQUIRED      7101       // A secure session must be started before passing any records
 #define USP_ERR_SECURE_SESS_NOT_SUPPORTED 7102       // Secure session is not supported by this endpoint
 #define USP_ERR_SEG_NOT_SUPPORTED         7103       // Segmentation and reassembly is not supported by this endpoint
 #define USP_ERR_RECORD_FIELD_INVALID      7104       // A USP record field was invalid
+#define USP_ERR_SESS_CONTEXT_TERMINATED   7105       // Existing Session Context is being terminated
+#define USP_ERR_SESS_CONTEXT_NOT_ALLOWED  7106       // Use of Session Context is not allowed or not supported
 
 // Vendor defined error codes
 // These use codes 7800-7999. Currently USP Agent core does not define any codes in this range.
 
 #endif
-

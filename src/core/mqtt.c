@@ -1193,7 +1193,7 @@ void MessageV5Callback(struct mosquitto *mosq, void *userdata, const struct mosq
     }
     else
     {
-        USP_LOG_Info("%s: Received Message: Topic: '%s' PayloadLength: %d bytes", __FUNCTION__, 
+        USP_LOG_Info("%s: Received Message: Topic: '%s' PayloadLength: %d bytes", __FUNCTION__,
                      message->topic, message->payloadlen);
 
         if (client->state == kMqttState_Running)
@@ -1204,7 +1204,7 @@ void MessageV5Callback(struct mosquitto *mosq, void *userdata, const struct mosq
             if (mosquitto_property_read_string(props, RESPONSE_TOPIC,
                     &response_info_ptr, false) == NULL)
             {
-                USP_LOG_Debug("%s: No controller response topic present in received message", __FUNCTION__);
+                USP_LOG_Debug("%s: Failed to read response topic in message info: \"%s\"\n", __FUNCTION__, response_info_ptr);
             }
 
             ReceiveMqttMessage(client, message, response_info_ptr);
@@ -1657,7 +1657,7 @@ void MessageCallback(struct mosquitto *mosq, void *userdata, const struct mosqui
     }
     else
     {
-        USP_LOG_Info("%s: Received Message: Topic: '%s' PayloadLength: %d bytes", __FUNCTION__, 
+        USP_LOG_Info("%s: Received Message: Topic: '%s' PayloadLength: %d bytes", __FUNCTION__,
                      message->topic, message->payloadlen);
 
         if (client->state == kMqttState_Running)

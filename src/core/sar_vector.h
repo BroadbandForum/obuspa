@@ -1,8 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
- * Copyright (C) 2020, BT PLC
+ * Copyright (C) 2022, Broadband Forum
+ * Copyright (C) 2022, Snom Technology GmbH
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,44 +33,49 @@
  */
 
 /**
- * \file dm_exec.h
+ * \file sar_vector.h
  *
- * Header file for Main execution loop of data model thread
+ * Implements a vector used by the Segmentation and Reassembly (SAR)
+ * mechanism during the End-to-End Session Context.
  *
  */
-#ifndef DM_EXEC_H
-#define DM_EXEC_H
 
-#include "device.h"
+#ifndef SAR_VECTOR_H
+#define SAR_VECTOR_H
 
-#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-#include "e2e_defs.h"
-#endif
+#include <stdint.h>
+#include <stdlib.h>
 
-//------------------------------------------------------------------------------
-// Bitmask indicating which thread exited to DM_EXEC_PostMtpThreadExited()
-#define STOMP_EXITED    0x00000001
-#define COAP_EXITED     0x00000002
-#define MQTT_EXITED     0x00000004
-#define BDC_EXITED      0x00000008
-#define WSCLIENT_EXITED 0x00000010
-#define WSSERVER_EXITED 0x00000020
+#include "common_defs.h"
+#include "kv_vector.h"
 
 //------------------------------------------------------------------------------
-// API functions
-int DM_EXEC_Init(void);
-void DM_EXEC_Destroy(void);
-void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt);
-void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role);
-void DM_EXEC_PostMqttHandshakeComplete(int stomp_instance, ctrust_role_t role);
-void DM_EXEC_PostMtpThreadExited(unsigned flags);
-int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
-#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-int DM_EXEC_PostE2eEvent(e2e_event_t event, int request, int controller);
-#endif
-void DM_EXEC_HandleScheduledExit(void);
-bool DM_EXEC_IsNotificationsEnabled(void);
-void *DM_EXEC_Main(void *args);
+// Element of binary payload with metadata related to SAR.
+// The contained data is an arbitrary sequence of bytes. It may contain embedded
+// NULL characters and is not required to be NULL-terminated.
+typedef struct
+{
+    uint64_t sess_id;  // session_id associated to this data
+    uint64_t seq_id;  // sequence_id associated to this data
+	int	len;  // Number of bytes in the data field.
+	uint8_t	*data;  // Data bytes.
+} sar_payload_t;
+
 //------------------------------------------------------------------------------
+// Vector of SAR payload
+typedef struct
+{
+    int num_entries;
+    sar_payload_t *vector;
+    int sum_length;
+} sar_vector_t;
+
+//-----------------------------------------------------------------------------------------
+// E2E Session Context SAR Vector API
+void SAR_VECTOR_Init(sar_vector_t *sarv);
+bool SAR_VECTOR_Append(sar_vector_t *sarv, uint64_t sess_id, uint64_t seq_id, uint8_t *data, int len);
+void SAR_VECTOR_Destroy(sar_vector_t *sarv);
+sar_payload_t *SAR_VECTOR_Get(sar_vector_t *sarv, unsigned index);
+uint8_t* SAR_VECTOR_Serialize(sar_vector_t *sarv, int *len);
 
 #endif

@@ -88,11 +88,12 @@ SOURCES = src/core/main.c \
                     src/core/device_mqtt.c \
                     src/core/wsclient.c \
                     src/core/wsserver.c \
-                    src/core/usp_record.c
-
+                    src/core/usp_record.c \
+                    src/core/sar_vector.c \
+                    src/core/e2e_context.c
 
 obuspa_SOURCES = $(SOURCES)
-obuspa_CPPFLAGS = $(openssl_CFLAGS) $(sqlite3_CFLAGS) $(libcurl_CFLAGS) $(zlib_CFLAGS) $(libmosquitto_CFLAGS) $(libwebsockets_CFLAGS) 
+obuspa_CPPFLAGS = $(openssl_CFLAGS) $(sqlite3_CFLAGS) $(libcurl_CFLAGS) $(zlib_CFLAGS) $(libmosquitto_CFLAGS) $(libwebsockets_CFLAGS)
 obuspa_CPPFLAGS += -DOBUSPA_LOCAL_STATE_DIR=\"$(OBUSPA_LOCAL_STATE_DIR)\"
 obuspa_CPPFLAGS +=  $(AM_CPPFLAGS) \
                       -Werror \
@@ -125,4 +126,3 @@ uninstall-local:
 
 # Import vendor makefile
 include src/vendor/vendor.am
-

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
@@ -120,9 +120,26 @@ bool is_mqtt_mtp_thread_exited = false;
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
-void UpdateMtpSockSet(socket_set_t *set);
-void ProcessMtpSocketActivity(socket_set_t *set);
 void ProcessMtpWakeupQueueSocketActivity(socket_set_t *set, int sock);
+
+/*********************************************************************//**
+**
+** MTP_EXEC_MtpSendItem_Init
+**
+** Initialises the mtp_send_item_t struct with default values
+**
+** \param   msi - struct to initialize
+**
+** \return  None
+**
+**************************************************************************/
+void MTP_EXEC_MtpSendItem_Init(mtp_send_item_t *msi)
+{
+    msi->content_type = kMtpContentType_Text;
+    msi->usp_msg_type = _USP__HEADER__MSG_TYPE_IS_INT_SIZE;
+    msi->pbuf = NULL;
+    msi->pbuf_len = 0;
+}
 
 /*********************************************************************//**
 **
@@ -590,4 +607,3 @@ void ProcessMtpWakeupQueueSocketActivity(socket_set_t *set, int sock)
     // Throw the message away, it's only purpose is to break the select()
     USP_ASSERT(msg == WAKEUP_MESSAGE);
 }
-

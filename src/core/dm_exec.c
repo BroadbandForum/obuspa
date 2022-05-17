@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2021  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  *
@@ -60,6 +60,9 @@
 #include "dm_trans.h"
 #include "nu_ipaddr.h"
 #include "stomp.h"
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+#include "e2e_context.h"
+#endif
 
 #ifdef ENABLE_COAP
 #include "usp_coap.h"
@@ -92,13 +95,16 @@ typedef enum
     kDmExecMsg_MtpThreadExited,    // Sent to signal that the MTP thread has exited as requested by a scheduled exit
     kDmExecMsg_BdcTransferResult,  // Sent to signal that the BDC thread has sent (or failed to send) a report
     kDmExecMsg_MqttHandshakeComplete, // Sent from the MTP thread to notify the controller trust role to use for all controllers connected to the specified mqtt client
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+    kDmExecMsg_E2eSessionEvent,    // Sent from a thread to signal an event related to the E2E Session Context has occurred.
+#endif
 } dm_exec_msg_type_t;
 
 
 // Operation complete parameters in data model handler message
 typedef struct
 {
-    int instance;
+    int instance;  // Instance from the Device.LocalAgent.Request table
     int err_code;
     char *err_msg;
     kv_vector_t *output_args;
@@ -174,6 +180,16 @@ typedef struct
     bdc_transfer_result_t transfer_result;   // Result code of sending the report
 } bdc_transfer_result_msg_t;
 
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+// E2ESession Reset parameters in data model handler message
+typedef struct
+{
+    e2e_event_t event;  // Type of E2E Event
+    int request_instance;  // Instance from the Device.LocalAgent.Request table,
+                           // or INVALID when not called from the async operation
+    int controller_instance;  // Instance from the Device.LocalAgent.Controller table
+} e2e_event_msg_t;
+#endif
 
 // Structure of data model message
 typedef struct
@@ -192,6 +208,9 @@ typedef struct
         mgmt_ip_addr_msg_t mgmt_ip_addr;
         mtp_thread_exited_msg_t mtp_thread_exited;
         bdc_transfer_result_msg_t bdc_transfer_result;
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+        e2e_event_msg_t e2e_event;
+#endif
     } params;
 
 } dm_exec_msg_t;
@@ -730,8 +749,6 @@ void DM_EXEC_PostMtpThreadExited(unsigned flags)
     }
 }
 
-
-
 /*********************************************************************//**
 **
 ** DM_EXEC_NotifyBdcTransferResult
@@ -777,6 +794,64 @@ int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transf
 
     return USP_ERR_OK;
 }
+
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+/*********************************************************************//**
+**
+** DM_EXEC_PostE2eEvent
+**
+** Signal an E2E Event message on the data model's message queue
+** This function can be used by an operation thread to terminate/start/restart the
+** associated Device.LocalAgent.Controller.1.E2ESession context in a thread-safe way.
+**
+** \param   event - Type of E2E event happened
+** \param   request_instance - Instance from the Device.LocalAgent.Request table,
+**                             or INVALID when not called from the async operation
+** \param   controller_instance - Instance from the Device.LocalAgent.Controller table
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DM_EXEC_PostE2eEvent(e2e_event_t event, int request, int controller)
+{
+    dm_exec_msg_t  msg;
+    e2e_event_msg_t *erm;
+    int bytes_sent;
+
+    // Exit if this function has been called with invalid parameters
+    if (controller <= 0)
+    {
+        USP_LOG_Error("%s: Data Model instance must be valid", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if message queue is not setup yet
+    if (mq_tx_socket == -1)
+    {
+        USP_LOG_Error("%s is being called before data model has been initialised", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Form message
+    memset(&msg, 0, sizeof(msg));
+    msg.type = kDmExecMsg_E2eSessionEvent;
+    erm = &msg.params.e2e_event;
+    erm->event = event;
+    erm->controller_instance = controller;
+    erm->request_instance = request;
+
+    // Send the message
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    if (bytes_sent != sizeof(msg))
+    {
+        char buf[USP_ERR_MAXLEN];
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    return USP_ERR_OK;
+}
+#endif
 
 /*********************************************************************//**
 **
@@ -1148,6 +1223,16 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             DEVICE_BULKDATA_NotifyTransferResult(btr->profile_id, btr->transfer_result);
             break;
 
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+        case kDmExecMsg_E2eSessionEvent:
+        {
+            e2e_event_msg_t *eem = &msg.params.e2e_event;
+            USP_ERR_ClearMessage();
+            E2E_CONTEXT_E2eSessionEvent(eem->event, eem->request_instance, eem->controller_instance);
+            break;
+        }
+#endif
+
         default:
             TERMINATE_BAD_CASE(msg.type);
             break;
@@ -1258,7 +1343,7 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
             char *buf;
             int len;
             char *err_msg;
-            mtp_send_item_t mtp_send_item = MTP_SEND_ITEM_INIT;
+            mtp_send_item_t mtp_send_item;
 
             // Exit if the controller did not send a 'usp-err-id' STOMP header to identify this broken USP record
             // (We can't send back a response unless they did)
@@ -1273,6 +1358,7 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
             err_msg = USP_ERR_GetMessage();
             len = USP_SNPRINTF(buf, MAX_ERR_ID_PAYLOAD_LEN, "err_code:%d\nerr_msg:%s", err, err_msg);
 
+            MTP_EXEC_MtpSendItem_Init(&mtp_send_item);
             mtp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;
             mtp_send_item.pbuf = (unsigned char *)buf;
             mtp_send_item.pbuf_len = len;
@@ -1306,12 +1392,14 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
 #ifdef ENABLE_WEBSOCKETS
         case kMtpProtocol_WebSockets:
         {
+            mtp_send_item_t mtp_send_item;
+
             // Tell the MTP to close the connection, because there was a protobuf parsing error
             // or the USP Record was received on the agent's websocket server, but the controller was already connected
             // via the agent's websocket client (only one connection to a controller is allowed)
             char *err_msg = USP_STRDUP( USP_ERR_GetMessage());
 
-            mtp_send_item_t mtp_send_item = MTP_SEND_ITEM_INIT;
+            MTP_EXEC_MtpSendItem_Init(&mtp_send_item);
             mtp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;
             mtp_send_item.pbuf = (unsigned char *)err_msg;
             mtp_send_item.pbuf_len = strlen(err_msg);
@@ -1335,5 +1423,3 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
 
     } // end of switch
 }
-
-

@@ -1,8 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
- * Copyright (C) 2020, BT PLC
+ * Copyright (C) 2022, Broadband Forum
+ * Copyright (C) 2022, Snom Technology GmbH
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,44 +33,37 @@
  */
 
 /**
- * \file dm_exec.h
+ * \file e2e_context.h
  *
- * Header file for Main execution loop of data model thread
+ * Header file containing helpers and functions for End-to-End exchanges.
  *
  */
-#ifndef DM_EXEC_H
-#define DM_EXEC_H
+#ifndef E2E_CONTEXT_H
+#define E2E_CONTEXT_H
 
-#include "device.h"
-
+#include "vendor_defs.h"  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+
+#include "usp-record.pb-c.h"
+
 #include "e2e_defs.h"
-#endif
+#include "sar_vector.h"
+#include "device.h"
+#include "usp_record.h"
 
-//------------------------------------------------------------------------------
-// Bitmask indicating which thread exited to DM_EXEC_PostMtpThreadExited()
-#define STOMP_EXITED    0x00000001
-#define COAP_EXITED     0x00000002
-#define MQTT_EXITED     0x00000004
-#define BDC_EXITED      0x00000008
-#define WSCLIENT_EXITED 0x00000010
-#define WSSERVER_EXITED 0x00000020
-
-//------------------------------------------------------------------------------
-// API functions
-int DM_EXEC_Init(void);
-void DM_EXEC_Destroy(void);
-void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt);
-void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role);
-void DM_EXEC_PostMqttHandshakeComplete(int stomp_instance, ctrust_role_t role);
-void DM_EXEC_PostMtpThreadExited(unsigned flags);
-int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
-#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-int DM_EXEC_PostE2eEvent(e2e_event_t event, int request, int controller);
-#endif
-void DM_EXEC_HandleScheduledExit(void);
-bool DM_EXEC_IsNotificationsEnabled(void);
-void *DM_EXEC_Main(void *args);
-//------------------------------------------------------------------------------
+// Utility functions
+int E2E_CONTEXT_QueueUspSessionRecord(usp_send_item_t *usi, char *endpoint_id, char *usp_msg_id,
+                                      mtp_reply_to_t *mrt, time_t expiry_time);
+int E2E_CONTEXT_HandleUspRecord(UspRecord__Record *rec, ctrust_role_t role, mtp_reply_to_t *mrt);
+char *E2E_CONTEXT_SarStateToString(int state);
+char *E2E_CONTEXT_E2eSessionEventToString(int event);
+char *E2E_CONTEXT_E2eSessionStatusToString(int status);
+char *E2E_CONTEXT_E2eSessionModeToString(int mode);
+int E2E_CONTEXT_E2eSessionModeToEnum(char *str);
+void E2E_CONTEXT_E2eSessionEvent(e2e_event_t event, int request, int controller);
+int E2E_CONTEXT_ValidateSessionContextRecord(UspRecord__SessionContextRecord *ctx);
+bool E2E_CONTEXT_IsToSendThroughSessionContext(e2e_session_t *e2e);
+void E2E_CONTEXT_LogUspMsgIfSessionContext(Usp__Msg *usp, usp_send_item_t *usi);
+#endif  // #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 
 #endif

@@ -1,5 +1,21 @@
 # OB-USP-AGENT Changelog since Release 5.0.0
 
+## 2022-04-29
+
+### Added
+- Basic End-to-End session context support (mainly segmentation and reassembly aspects). Disabled by default. To enable, uncomment E2ESESSION_EXPERIMENTAL_USP_V_1_2 in vendor_defs.h
+- Device.DeviceInfo.UpTime parameter
+
+### Fixed
+- Compile error if MQTT and STOMP are disabled
+- getopt_long options structure was wrong for authcert option
+- Password in STOMP header should be escaped
+- Set Message obj_path is not required to contain an instance number
+
+### Modified
+- Removed GET_RESPONSE_SIMPLE_FORMAT from vendor_defs.h. In USP 1.2 it was clarified that only the simple format must be used.
+
+
 ## 2022-03-23
 
 ### Fixed

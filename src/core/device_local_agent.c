@@ -44,6 +44,7 @@
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/sysinfo.h>
 
 #include "common_defs.h"
 #include "usp_api.h"
@@ -118,7 +119,7 @@ static char *sched_timer_input_args[] =
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int Validate_DualStackPreference(dm_req_t *req, char *value);
 int NotifyChange_DualStackPreference(dm_req_t *req, char *value);
-int GetUpTime(dm_req_t *req, char *buf, int len);
+int GetAgentUpTime(dm_req_t *req, char *buf, int len);
 int ScheduleReboot(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
 int ScheduleFactoryReset(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
 int GetDefaultOUI(char *buf, int len);
@@ -131,6 +132,7 @@ void *ScheduleTimerThreadMain(void *param);
 int Restart_ScheduleTimer(dm_req_t *req, int instance, bool *is_restart, int *err_code, char *err_msg, int err_msg_len, kv_vector_t *output_args);
 #ifndef REMOVE_DEVICE_INFO
 int GetHardwareVersion(dm_req_t *req, char *buf, int len);
+int GetKernelUpTime(dm_req_t *req, char *buf, int len);
 #endif
 
 /*********************************************************************//**
@@ -155,7 +157,7 @@ int DEVICE_LOCAL_AGENT_Init(void)
     // Register parameters implemented by this component
     // NOTE: Device.LocalAgent.EndpointID is registered in DEVICE_LOCAL_AGENT_RegisterEndpointID()
     err = USP_ERR_OK;
-    err |= USP_REGISTER_VendorParam_ReadOnly("Device.LocalAgent.UpTime", GetUpTime, DM_UINT);
+    err |= USP_REGISTER_VendorParam_ReadOnly("Device.LocalAgent.UpTime", GetAgentUpTime, DM_UINT);
 
     // Register supported protocols and software version
     err |= USP_REGISTER_Param_SupportedList("Device.LocalAgent.SupportedProtocols", mtp_protocols, NUM_ELEM(mtp_protocols));
@@ -181,6 +183,7 @@ int DEVICE_LOCAL_AGENT_Init(void)
     err |= USP_REGISTER_Param_Constant("Device.DeviceInfo.Manufacturer", VENDOR_MANUFACTURER, DM_STRING);
     err |= USP_REGISTER_Param_Constant("Device.DeviceInfo.ModelName", VENDOR_MODEL_NAME, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.DeviceInfo.HardwareVersion", GetHardwareVersion, DM_STRING);
+    err |= USP_REGISTER_VendorParam_ReadOnly("Device.DeviceInfo.UpTime", GetKernelUpTime, DM_UINT);
 
     // NOTE: The default values of these database parameters are setup later in DEVICE_LOCAL_AGENT_SetDefaults()
     err |= USP_REGISTER_DBParam_ReadOnly(manufacturer_oui_path, "", DM_STRING);
@@ -543,9 +546,9 @@ int NotifyChange_DualStackPreference(dm_req_t *req, char *value)
 
 /*********************************************************************//**
 **
-** GetUpTime
+** GetAgentUpTime
 **
-** Gets the number of seconds that the agent software has been running
+** Gets the number of seconds that the agent software has been running (Device.LocalAgent.UpTime)
 **
 ** \param   req - pointer to structure identifying the parameter
 ** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
@@ -554,12 +557,45 @@ int NotifyChange_DualStackPreference(dm_req_t *req, char *value)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetUpTime(dm_req_t *req, char *buf, int len)
+int GetAgentUpTime(dm_req_t *req, char *buf, int len)
 {
     val_uint = (unsigned)tu_uptime_secs() - usp_agent_start_time;
 
     return USP_ERR_OK;
 }
+
+#ifndef REMOVE_DEVICE_INFO
+/*********************************************************************//**
+**
+** GetKernelUpTime
+**
+** Gets the total number of seconds that the cpe has been running (Device.DeviceInfo.UpTime)
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int GetKernelUpTime(dm_req_t *req, char *buf, int len)
+{
+    struct sysinfo info;
+    int err;
+
+    // Exit if unable to get the uptime of the Linux kernel
+    err = sysinfo(&info);
+    if (err != 0)
+    {
+        USP_ERR_ERRNO("sysinfo", errno);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    val_uint = (unsigned)info.uptime;
+
+    return USP_ERR_OK;
+}
+#endif
 
 /*********************************************************************//**
 **

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2020  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -328,7 +328,7 @@ char *USP_ERR_UspErrToString(int err)
             break;
 
         case USP_ERR_SECURE_SESS_REQUIRED:
-            s = "Secure seesion required";
+            s = "Secure session required";
             break;
 
         case USP_ERR_SECURE_SESS_NOT_SUPPORTED:
@@ -341,6 +341,14 @@ char *USP_ERR_UspErrToString(int err)
 
         case USP_ERR_RECORD_FIELD_INVALID:
             s = "USP Record field invalid";
+            break;
+
+        case USP_ERR_SESS_CONTEXT_TERMINATED:
+            s = "Session Context terminated";
+            break;
+
+        case USP_ERR_SESS_CONTEXT_NOT_ALLOWED:
+            s = "Session Context not allowed";
             break;
 
         default:
@@ -527,4 +535,3 @@ void SegFaultHandler(int sig)
     USP_LOG_Callstack();
     abort();    // call abort() rather than exit() so that a core dump is created
 }
-
