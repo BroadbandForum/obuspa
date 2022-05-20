@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -210,7 +210,7 @@ int CreateExpressionObjects(Usp__AddResp *add_resp, Usp__Add__CreateObject *cr, 
 
     // Return OperFailure if an internal error occurred
     MSG_HANDLER_GetMsgRole(&combined_role);
-    err = PATH_RESOLVER_ResolveDevicePath(cr->obj_path, &obj_paths, NULL, kResolveOp_Add, NULL, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(cr->obj_path, &obj_paths, NULL, kResolveOp_Add, FULL_DEPTH, &combined_role, 0);
     if (err != USP_ERR_OK)
     {
         AddResp_OperFailure(add_resp, cr->obj_path, NULL, err, USP_ERR_GetMessage());

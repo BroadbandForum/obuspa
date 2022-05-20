@@ -180,6 +180,71 @@ int TEXT_UTILS_StringToUnsignedLongLong(char *str, unsigned long long *value)
 
 /*********************************************************************//**
 **
+** TEXT_UTILS_StringToLongLong
+**
+** Converts a string to a long long (64 bit)
+**
+** \param   str - string containing value to convert
+** \param   value - pointer to variable to return converted value in
+**
+** \return  USP_ERR_OK if converted successfully
+**          USP_ERR_INVALID_TYPE if unable to convert the string
+**
+**************************************************************************/
+int TEXT_UTILS_StringToLongLong(char *str, long long *value)
+{
+    char *endptr = NULL;
+
+    // Do not allow the largest negative number as it is so large it is interpreted as +9223372036854775807 by sprintf() etc
+    if (strcmp(str, "-9223372036854775808")==0)
+    {
+        USP_ERR_SetMessage("%s: Largest negative long '%s' is not supported", __FUNCTION__, str);
+        return USP_ERR_INVALID_TYPE;
+    }
+
+    // Exit if unable to convert
+    errno = 0;
+    *value = strtoll(str, &endptr, 10);
+    if ((endptr == NULL) || (*endptr != '\0') || (errno != 0))
+    {
+        USP_ERR_SetMessage("%s: '%s' is not a valid long number", __FUNCTION__, str);
+        return USP_ERR_INVALID_TYPE;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** TEXT_UTILS_StringToDouble
+**
+** Converts a string to a double
+**
+** \param   str - string containing value to convert
+** \param   value - pointer to variable to return converted value in
+**
+** \return  USP_ERR_OK if converted successfully
+**          USP_ERR_INVALID_TYPE if unable to convert the string
+**
+**************************************************************************/
+int TEXT_UTILS_StringToDouble(char *str, double *value)
+{
+    char *endptr = NULL;
+
+    // Exit if unable to convert
+    errno = 0;
+    *value = strtod(str, &endptr);
+    if ((endptr == NULL) || (*endptr != '\0') || (errno != 0))
+    {
+        USP_ERR_SetMessage("%s: '%s' is not a valid decimal number", __FUNCTION__, str);
+        return USP_ERR_INVALID_TYPE;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** TEXT_UTILS_StringToBool
 **
 ** Converts a string to a boolean type
@@ -712,63 +777,6 @@ char *TEXT_UTILS_SplitPath(char *path, char *buf, int len)
     // Return a pointer to the right-hand-side
     return p;
 
-}
-
-/*********************************************************************//**
-**
-** TEXT_UTILS_SplitPathAtSeparator
-**
-** Splits the specified data model path into an object path (returned in a buffer) and the parameter/event/operation name
-** The position at where to split is based on a count of the number of separators ('.') to include in the object portion
-**
-** \param   path - pointer to data model parameter to split
-** \param   buf - pointer to buffer in which to return the path of the parent object of the parameter
-** \param   len - length of the return buffer
-** \param   separator_split - count of number of separators included in the 'object' portion of the path
-**
-** \return  pointer to parameter name - this is within the original 'path' input buffer
-**
-**************************************************************************/
-char *TEXT_UTILS_SplitPathAtSeparator(char *path, char *buf, int len, int separator_split)
-{
-    char *p;
-    int size;
-
-    // If no split is specified, then just split on the last object in the path
-    // NOTE: This maybe the case if the path was fully specified and did not require any resolution
-    if (separator_split == 0)
-    {
-        return TEXT_UTILS_SplitPath(path, buf, len);
-    }
-
-    // Skip to split point by counting separators
-    p = path;
-    while (separator_split > 0)
-    {
-        // Skip to the next separator
-        p = strchr(p, '.');
-
-        // If the number of separators to skip is greater than the number in the path string, then just split on the last object in the path
-        // NOTE: This should never occur (and does not in automated tests), however leaving code in for safety's sake
-        if (p == NULL)
-        {
-            return TEXT_UTILS_SplitPath(path, buf, len);
-        }
-
-        p++;    // Skip the '.' itself
-        separator_split--;
-    }
-
-    // If the code gets here, p points to the point at which we want to split the string
-
-    // Copy the left-hand-side into the return buffer
-    size = p - path;
-    size = MIN(size, len-1);
-    memcpy(buf, path, size);
-    buf[size] = '\0';
-
-    // Return a pointer to the right-hand-side
-    return p;
 }
 
 /*********************************************************************//**

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2017-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2017-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -637,7 +637,7 @@ int Validate_BulkDataReference(dm_req_t *req, char *value)
     // NOTE: The resolved paths are validated against the current controller's role.
     // So even if a partial path is specified here, it will fail to validate if permissions do not allow it
     MSG_HANDLER_GetMsgRole(&combined_role);
-    err = PATH_RESOLVER_ResolveDevicePath(value, NULL, NULL, kResolveOp_GetBulkData, NULL, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(value, NULL, NULL, kResolveOp_GetBulkData, FULL_DEPTH, &combined_role, 0);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -1802,7 +1802,7 @@ void bulkdata_expand_param_ref(param_ref_entry_t *pr, group_get_vector_t *ggv)
     // NOTE: We can safely use the FullAccess role here, because we have already validated the path expression against the controller's role
     combined_role.inherited = kCTrustRole_FullAccess;
     combined_role.assigned = kCTrustRole_FullAccess;
-    err = PATH_RESOLVER_ResolveDevicePath(pr->path_expr, &params, &group_ids, kResolveOp_GetBulkData, NULL, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(pr->path_expr, &params, &group_ids, kResolveOp_GetBulkData, FULL_DEPTH, &combined_role, 0);
     if (err != USP_ERR_OK)
     {
         STR_VECTOR_Destroy(&params);

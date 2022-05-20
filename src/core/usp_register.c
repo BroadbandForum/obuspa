@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -386,6 +386,27 @@ int USP_REGISTER_DBParam_ReadWrite(char *path, char *value, dm_validate_value_cb
 **************************************************************************/
 int USP_REGISTER_DBParam_Secure(char *path, char *value, dm_validate_value_cb_t validator_cb, dm_notify_set_cb_t notify_set_cb)
 {
+    return USP_REGISTER_DBParam_SecureWithType(path, value, validator_cb, notify_set_cb, DM_STRING);
+}
+
+/*********************************************************************//**
+**
+** USP_REGISTER_DBParam_SecureWithType
+**
+** Registers a parameter which may be written to, but when read back always returns an empty string
+** This function should be used to register all parameters which are passwords
+**
+** \param   path - full data model path for the parameter
+** \param   value - default value of the parameter
+** \param   validator_cb - callback called to validate a value, before allowing it to be set
+** \param   notify_set_cb - callback called after the value has been changed
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INTERNAL_ERROR if any other error occurred
+**
+**************************************************************************/
+int USP_REGISTER_DBParam_SecureWithType(char *path, char *value, dm_validate_value_cb_t validator_cb, dm_notify_set_cb_t notify_set_cb, unsigned type_flags)
+{
     dm_node_t *node;
     dm_param_info_t *info;
 
@@ -423,7 +444,7 @@ int USP_REGISTER_DBParam_Secure(char *path, char *value, dm_validate_value_cb_t 
     info->validator_cb = validator_cb;
     info->notify_set_cb = notify_set_cb;
     info->group_id = NON_GROUPED;
-    info->type_flags = DM_STRING;
+    info->type_flags = type_flags;
 
     return USP_ERR_OK;
 }

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -137,7 +137,7 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_rep
 
     // Exit if unable to resolve the paths to the operation
     MSG_HANDLER_GetMsgRole(&combined_role);
-    err = PATH_RESOLVER_ResolveDevicePath(oper->command, &paths, NULL, kResolveOp_Oper, NULL, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(oper->command, &paths, NULL, kResolveOp_Oper, FULL_DEPTH, &combined_role, 0);
     if (err != USP_ERR_OK)
     {
         resp = ERROR_RESP_CreateSingle(usp->header->msg_id, err, resp, NULL);

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -185,7 +185,7 @@ int DeleteExpressionObjects(Usp__DeleteResp *del_resp, char *exp_path, bool allo
     // Exit if unable to resolve to objects that are instantiated
     STR_VECTOR_Init(&obj_paths);
     MSG_HANDLER_GetMsgRole(&combined_role);
-    err = PATH_RESOLVER_ResolveDevicePath(exp_path, &obj_paths, NULL, kResolveOp_Del, NULL, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(exp_path, &obj_paths, NULL, kResolveOp_Del, FULL_DEPTH, &combined_role, 0);
     if (err != USP_ERR_OK)
     {
         AddDeleteResp_OperFailure(del_resp, exp_path, err, USP_ERR_GetMessage());

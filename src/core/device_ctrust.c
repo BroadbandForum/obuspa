@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2021, Broadband Forum
- * Copyright (C) 2017-2021  CommScope, Inc
+ * Copyright (C) 2022, Broadband Forum
+ * Copyright (C) 2017-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -258,9 +258,9 @@ int DEVICE_CTRUST_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Role", "", Validate_ChallengeRole, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Enable", "false", NULL, NULL, DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Type", CHALLENGE_TYPE, Validate_ChallengeType, NULL, DM_STRING);
-    err |= USP_REGISTER_DBParam_Secure(DEVICE_CHALLENGE_ROOT ".Value", "", DM_ACCESS_ValidateBase64, NULL);
+    err |= USP_REGISTER_DBParam_SecureWithType(DEVICE_CHALLENGE_ROOT ".Value", "", DM_ACCESS_ValidateBase64, NULL, DM_BASE64);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".ValueType", CHALLENGE_VALUE_TYPE, Validate_ChallengeValueType, NULL, DM_STRING);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Instruction", "", DM_ACCESS_ValidateBase64, NULL, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Instruction", "", DM_ACCESS_ValidateBase64, NULL, DM_BASE64);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".InstructionType", CHALLENGE_INSTRUCTION_TYPE, Validate_ChallengeInstructionType, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".Retries", "", NULL, NULL, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CHALLENGE_ROOT ".LockoutPeriod", "30", NULL, NULL, DM_INT);
@@ -325,10 +325,8 @@ int initialise_challenge_table()
         return err;
     }
 
-    if (num == 0)
-    {
-        return USP_ERR_OK;
-    }
+    // Ensure there are some entries in the challenge table
+    num = MAX(num, MAX_CONTROLLERS);
 
     // allocate the challenge table and initialize it
     challenge_table = (challenge_table_t *) USP_MALLOC(sizeof(challenge_table_t) * num);

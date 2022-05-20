@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -104,6 +104,8 @@ typedef union
     int value_int;
     unsigned value_uint;
     unsigned long long value_ulong;
+    double value_decimal;
+    long long value_long;
 } dm_val_union_t;
 
 //-------------------------------------------------------------------------
@@ -165,7 +167,9 @@ typedef enum
 #define val_bool      req->val_union.value_bool
 #define val_int       req->val_union.value_int
 #define val_uint      req->val_union.value_uint
+#define val_long      req->val_union.value_long
 #define val_ulong     req->val_union.value_ulong
+#define val_decimal   req->val_union.value_decimal
 
 
 //------------------------------------------------------------------------------
@@ -324,6 +328,10 @@ typedef struct
 #define DM_INT          0x00000008
 #define DM_UINT         0x00000010
 #define DM_ULONG        0x00000020
+#define DM_BASE64       0x00000040
+#define DM_HEXBIN       0x00000080
+#define DM_DECIMAL      0x00000100
+#define DM_LONG         0x00000200
 
 //-------------------------------------------------------------------------
 // Functions to register the data model
@@ -340,6 +348,7 @@ int USP_REGISTER_DBParam_ReadWriteAuto(char *path, dm_get_value_cb_t get_cb, dm_
 int USP_REGISTER_DBParam_Alias(char *path, dm_notify_set_cb_t notify_set_cb);
 int USP_REGISTER_DBParam_ReadOnly(char *path, char *value, unsigned type_flags);
 int USP_REGISTER_DBParam_Secure(char *path, char *value, dm_validate_value_cb_t validator_cb, dm_notify_set_cb_t notify_set_cb);
+int USP_REGISTER_DBParam_SecureWithType(char *path, char *value, dm_validate_value_cb_t validator_cb, dm_notify_set_cb_t notify_set_cb, unsigned type_flags);
 int USP_REGISTER_Object(char *path, dm_validate_add_cb_t validate_add_cb, dm_add_cb_t add_cb, dm_notify_add_cb_t notify_add_cb,
                                    dm_validate_del_cb_t validate_del_cb, dm_del_cb_t del_cb, dm_notify_del_cb_t notify_del_cb);
 int USP_REGISTER_Object_UniqueKey(char *path, char **params, int num_params);

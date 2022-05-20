@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -704,7 +704,7 @@ int ExecuteCli_Get(char *arg1, char *arg2, char *usage)
     // Exit if unable to get a list of all parameters referenced by the expression
     STR_VECTOR_Init(&params);
     INT_VECTOR_Init(&group_ids);
-    err = PATH_RESOLVER_ResolvePath(arg1, &params, &group_ids, kResolveOp_Get, NULL, INTERNAL_ROLE, 0);
+    err = PATH_RESOLVER_ResolvePath(arg1, &params, &group_ids, kResolveOp_Get, FULL_DEPTH, INTERNAL_ROLE, 0);
     if (err != USP_ERR_OK)
     {
         STR_VECTOR_Destroy(&params);
@@ -778,7 +778,7 @@ int ExecuteCli_Set(char *arg1, char *arg2, char *usage)
     }
 
     // Exit if unable to get a list of all objects referenced by the expression
-    err = PATH_RESOLVER_ResolvePath(search_path, &objects, NULL, kResolveOp_Set, NULL, INTERNAL_ROLE, 0);
+    err = PATH_RESOLVER_ResolvePath(search_path, &objects, NULL, kResolveOp_Set, FULL_DEPTH, INTERNAL_ROLE, 0);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -863,7 +863,7 @@ int ExecuteCli_Add(char *arg1, char *arg2, char *usage)
     search_path = arg1;
 
     // Exit if unable to get a list of all objects referenced by the expression
-    err = PATH_RESOLVER_ResolvePath(search_path, &objects, NULL, kResolveOp_Add, NULL, INTERNAL_ROLE, 0);
+    err = PATH_RESOLVER_ResolvePath(search_path, &objects, NULL, kResolveOp_Add, FULL_DEPTH, INTERNAL_ROLE, 0);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -974,7 +974,7 @@ int ExecuteCli_Del(char *arg1, char *arg2, char *usage)
     STR_VECTOR_Init(&objects);
 
     // Exit if unable to get a list of all objects referenced by the expression
-    err = PATH_RESOLVER_ResolvePath(arg1, &objects, NULL, kResolveOp_Del, NULL, INTERNAL_ROLE, 0);
+    err = PATH_RESOLVER_ResolvePath(arg1, &objects, NULL, kResolveOp_Del, FULL_DEPTH, INTERNAL_ROLE, 0);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -1088,7 +1088,7 @@ int ExecuteCli_Operate(char *arg1, char *arg2, char *usage)
     EXPR_VECTOR_ToKeyValueVector(&temp_ev, &input_args);
 
     // Exit if unable to get a list of all operations referenced by the expression
-    err = PATH_RESOLVER_ResolvePath(path, &operations, NULL, kResolveOp_Oper, NULL, INTERNAL_ROLE, 0);
+    err = PATH_RESOLVER_ResolvePath(path, &operations, NULL, kResolveOp_Oper, FULL_DEPTH, INTERNAL_ROLE, 0);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -1229,7 +1229,7 @@ int ExecuteCli_Event(char *arg1, char *arg2, char *usage)
 
 resolved:
     // Exit if unable to get a list of all events referenced by the expression
-    err = PATH_RESOLVER_ResolvePath(arg1, &events, NULL, kResolveOp_Event, NULL, INTERNAL_ROLE, 0);
+    err = PATH_RESOLVER_ResolvePath(arg1, &events, NULL, kResolveOp_Event, FULL_DEPTH, INTERNAL_ROLE, 0);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -1272,7 +1272,7 @@ int ExecuteCli_GetInstances(char *arg1, char *arg2, char *usage)
 
     // Exit if unable to get a list of all parameters referenced by the expression
     STR_VECTOR_Init(&obj_paths);
-    err = PATH_RESOLVER_ResolvePath(arg1, &obj_paths, NULL, kResolveOp_Instances, NULL, INTERNAL_ROLE, GET_ALL_INSTANCES);
+    err = PATH_RESOLVER_ResolvePath(arg1, &obj_paths, NULL, kResolveOp_Instances, FULL_DEPTH, INTERNAL_ROLE, GET_ALL_INSTANCES);
     if (err != USP_ERR_OK)
     {
         goto exit;

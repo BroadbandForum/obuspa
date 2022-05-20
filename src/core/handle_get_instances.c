@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -138,7 +138,7 @@ void ProcessRequestedPathInstances(char *requested_path, bool first_level_only, 
 
     // Exit if unable to resolve the requested path
     flags = (first_level_only==false) ? GET_ALL_INSTANCES : 0;
-    err = PATH_RESOLVER_ResolveDevicePath(requested_path, &obj_paths, NULL, kResolveOp_Instances, NULL, &combined_role, flags);
+    err = PATH_RESOLVER_ResolveDevicePath(requested_path, &obj_paths, NULL, kResolveOp_Instances, FULL_DEPTH, &combined_role, flags);
     if (err != USP_ERR_OK)
     {
         AddGetInstances_RequestedPathResult(gi_resp, requested_path, err, USP_ERR_GetMessage());
