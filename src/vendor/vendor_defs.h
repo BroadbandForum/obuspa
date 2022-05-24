@@ -131,10 +131,6 @@
 #define CONNECT_ONLY_OVER_WAN_INTERFACE
 
 //-----------------------------------------------------------------------------------------
-// Uncomment the following define for the GetResponse to contain a resolved_path_result for every object (and sub object)
-#define GET_RESPONSE_SIMPLE_FORMAT
-
-//-----------------------------------------------------------------------------------------
 // OUI (Organization Unique Identifier) to use for this CPE. This code will be unique to the manufacturer
 // This may be overridden by an environment variable. See GetDefaultOUI(). Or by a vendor hook for Device.DeviceInfo.ManufacturerOUI (if REMOVE_DEVICE_INFO is defined)
 #define VENDOR_OUI "012345"

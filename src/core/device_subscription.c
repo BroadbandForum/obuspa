@@ -1438,7 +1438,7 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
         }
 
         // Exit if path expression is invalid
-        err = PATH_RESOLVER_ResolveDevicePath(path, NULL, NULL, op, NULL, &combined_role, 0);
+        err = PATH_RESOLVER_ResolveDevicePath(path, NULL, NULL, op, FULL_DEPTH, &combined_role, 0);
         if (err != USP_ERR_OK)
         {
             goto exit;
@@ -1915,7 +1915,7 @@ void ResolveAllPathExpressions(int subs_instance, str_vector_t *path_expressions
     for (i=0; i < path_expressions->num_entries; i++)
     {
         expr = path_expressions->vector[i];
-        err = PATH_RESOLVER_ResolveDevicePath(expr, resolved_paths, group_ids, op, NULL, &combined_role, 0);
+        err = PATH_RESOLVER_ResolveDevicePath(expr, resolved_paths, group_ids, op, FULL_DEPTH, &combined_role, 0);
         if (err != USP_ERR_OK)
         {
             // NOTE: Just logging the error, but ignoring it. It should not have occured (should have been caught by Validate_SubsRefList call)

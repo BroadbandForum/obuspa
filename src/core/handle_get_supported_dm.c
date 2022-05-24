@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -73,6 +73,7 @@ void AddSupportedObjResult_SupportedEventResult(Usp__GetSupportedDMResp__Support
 void AddSupportedObjResult_SupportedParamResult(Usp__GetSupportedDMResp__SupportedObjectResult *sor, dm_node_t *node, unsigned short permissions);
 Usp__GetSupportedDMResp__ObjAccessType  CalcDMSchemaObjAccess(bool is_add_allowed, bool is_del_allowed);
 Usp__GetSupportedDMResp__ParamAccessType  CalcDMSchemaParamAccess(bool is_read_allowed, bool is_write_allowed);
+Usp__GetSupportedDMResp__ParamValueType CalcDMSchemaParamType(dm_node_t *node);
 
 /*********************************************************************//**
 **
@@ -449,6 +450,10 @@ AddReqObjResult_SupportedObjResult(Usp__GetSupportedDMResp__RequestedObjectResul
     // Set the Access enumeration, based on peroperties calculated above
     sor->access = CalcDMSchemaObjAccess(is_add_allowed, is_del_allowed);
 
+    // Divergent paths are not currently supported, so no divergent object instances to indicate
+    sor->n_divergent_paths = 0;
+    sor->divergent_paths = NULL;
+
     return sor;
 }
 
@@ -484,6 +489,7 @@ void AddSupportedObjResult_SupportedCommandResult(Usp__GetSupportedDMResp__Suppo
 
     // Fill in the SupportedCommandResult object
     cr->command_name = USP_STRDUP(node->name);
+    cr->command_type = (node->type == kDMNodeType_SyncOperation) ? USP__GET_SUPPORTED_DMRESP__CMD_TYPE__CMD_SYNC : USP__GET_SUPPORTED_DMRESP__CMD_TYPE__CMD_ASYNC;
 
     // Copy the command's input arguments into the SupportedCommandResult
     info = &node->registered.oper_info;
@@ -642,6 +648,8 @@ void AddSupportedObjResult_SupportedParamResult(Usp__GetSupportedDMResp__Support
     // Fill in the SupportedCommandResult object
     pr->param_name = USP_STRDUP(node->name);
     pr->access = CalcDMSchemaParamAccess(is_read_allowed, is_write_allowed);
+    pr->value_type = CalcDMSchemaParamType(node);
+    pr->value_change = USP__GET_SUPPORTED_DMRESP__VALUE_CHANGE_TYPE__VALUE_CHANGE_ALLOWED;  // Our implementation supports value change reporting on any parameter
 }
 
 /*********************************************************************//**
@@ -736,3 +744,69 @@ CalcDMSchemaParamAccess(bool is_read_allowed, bool is_write_allowed)
     // however to keep the compiler happy, return a value here;
     return USP__GET_SUPPORTED_DMRESP__PARAM_ACCESS_TYPE__PARAM_WRITE_ONLY;
 }
+
+/*********************************************************************//**
+**
+** CalcDMSchemaParamType
+**
+** Calculates the type of the specified parameter to put in the GetSupportedDM response
+**
+** \param   node - Data model node for parameter
+**
+** \return  type of the parameter
+**
+**************************************************************************/
+Usp__GetSupportedDMResp__ParamValueType CalcDMSchemaParamType(dm_node_t *node)
+{
+    unsigned type_flags;
+
+    type_flags = node->registered.param_info.type_flags;
+    if (type_flags & DM_STRING)
+    {
+        return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_STRING;
+    }
+    else if (type_flags & DM_DATETIME)
+    {
+        return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_DATE_TIME;
+    }
+    else if (type_flags & DM_BOOL)
+    {
+        return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_BOOLEAN;
+    }
+    else if (type_flags & DM_INT)
+    {
+        return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_INT;
+    }
+    else if (type_flags & DM_UINT)
+    {
+        return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_UNSIGNED_INT;
+    }
+    else if (type_flags & DM_ULONG)
+    {
+        return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_UNSIGNED_LONG;
+    }
+    else if (type_flags & DM_BASE64)
+    {
+        return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_BASE_64;
+    }
+    else if (type_flags & DM_HEXBIN)
+    {
+        return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_HEX_BINARY;
+    }
+    else if (type_flags & DM_DECIMAL)
+    {
+        return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_DECIMAL;
+    }
+    else if (type_flags & DM_LONG)
+    {
+        return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_LONG;
+    }
+    else
+    {
+        // This assert should only fire if this function is not updated when new types are added to the data model
+        USP_ASSERT(false);
+    }
+
+    return USP__GET_SUPPORTED_DMRESP__PARAM_VALUE_TYPE__PARAM_UNKNOWN;
+}
+

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -41,6 +41,8 @@
 #ifndef PATH_RESOLVER_H
 #define PATH_RESOLVER_H
 
+#include <limits.h>
+
 #include "str_vector.h"
 
 // Enumeration determining what we are attempting to resolve with the path expression
@@ -75,9 +77,12 @@ typedef enum
 // Bitmask for the flags argument of PATH_RESOLVER_ResolvePath(). These flags control resolving of the path
 #define GET_ALL_INSTANCES 0x0001
 
+// Constant for depth argument to indicate traversal of all hierarchical levels in the data model when performing partial path resolution
+#define FULL_DEPTH  (INT_MAX)
+
 // API
-int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int *separator_split, combined_role_t *combined_role, unsigned flags);
-int PATH_RESOLVER_ResolvePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int *separator_split, combined_role_t *combined_role, unsigned flags);
+int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int depth, combined_role_t *combined_role, unsigned flags);
+int PATH_RESOLVER_ResolvePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int depth, combined_role_t *combined_role, unsigned flags);
 
 
 

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -234,7 +234,7 @@ void ExpandSetPathExpression(Usp__Set__UpdateObject *up, set_expr_info_t *si, gr
 
     // Exit if unable to resolve the path expression specifying the objects to update
     MSG_HANDLER_GetMsgRole(&combined_role);
-    err = PATH_RESOLVER_ResolveDevicePath(up->obj_path, &si->resolved_objs, NULL, kResolveOp_Set, NULL, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(up->obj_path, &si->resolved_objs, NULL, kResolveOp_Set, FULL_DEPTH, &combined_role, 0);
     if (err != USP_ERR_OK)
     {
         si->err_code = err;

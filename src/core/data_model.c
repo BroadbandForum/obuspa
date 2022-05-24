@@ -2602,7 +2602,7 @@ char DATA_MODEL_GetJSONParameterType(char *path)
 
     // Calculate the type of this parameter
     type_flags = node->registered.param_info.type_flags;
-    if (type_flags & (DM_INT | DM_UINT | DM_ULONG))
+    if (type_flags & (DM_INT | DM_UINT | DM_ULONG | DM_DECIMAL | DM_LONG))
     {
         type = 'N';
     }
@@ -2612,7 +2612,7 @@ char DATA_MODEL_GetJSONParameterType(char *path)
     }
     else
     {
-        // Default, and also for DM_STRING and DM_DATETIME
+        // Default, and also for DM_STRING, DM_DATETIME, DM_BASE64, DM_HEXBIN
         type = 'S';
     }
 
@@ -2733,6 +2733,7 @@ int DM_PRIV_InitSetRequest(dm_req_t *req, dm_node_t *node, char *path, dm_instan
     DM_PRIV_RequestInit(req, node, path, inst);
 
     // If the value is not a string, then convert it to its native type
+    // NOTE: DM_HEXBIN and DM_BASE64 are treated as strings (carried in buf)
     type_flags = node->registered.param_info.type_flags;
     if (type_flags & DM_DATETIME)
     {
@@ -2759,6 +2760,16 @@ int DM_PRIV_InitSetRequest(dm_req_t *req, dm_node_t *node, char *path, dm_instan
     {
         type_name = "ulong";
         err = TEXT_UTILS_StringToUnsignedLongLong(new_value, &req->val_union.value_ulong);
+    }
+    else if (type_flags & DM_DECIMAL)
+    {
+        type_name = "decimal";
+        err = TEXT_UTILS_StringToDouble(new_value, &req->val_union.value_decimal);
+    }
+    else if (type_flags & DM_LONG)
+    {
+        type_name = "long";
+        err = TEXT_UTILS_StringToLongLong(new_value, &req->val_union.value_long);
     }
 
     // Set a more useful error message containing the name of the parameter in error
@@ -3571,6 +3582,14 @@ void SerializeNativeValue(dm_req_t *req, dm_node_t *node, char *buf, int len)
     else if (type_flags & DM_ULONG)
     {
         USP_SNPRINTF(buf, len, "%llu", req->val_union.value_ulong);
+    }
+    else if (type_flags & DM_DECIMAL)
+    {
+        USP_SNPRINTF(buf, len, "%lf", req->val_union.value_decimal);
+    }
+    else if (type_flags & DM_LONG)
+    {
+        USP_SNPRINTF(buf, len, "%lld", req->val_union.value_long);
     }
 }
 

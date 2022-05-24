@@ -1,5 +1,11 @@
 # OB-USP-AGENT Changelog since Release 5.0.0
 
+## 2022-05-20
+### Added
+- Get request and response upgraded to USP 1.2 spec (max_depth field)
+- GetSupportedDM response upgraded to USP 1.2 spec (value_type, value_change and command_type fields)
+- Added extra parameter types: DM_BASE_64, DM_DECIMAL, DM_LONG and DM_HEX_BINARY
+
 ## 2022-04-29
 
 ### Added

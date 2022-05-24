@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -62,7 +62,7 @@ typedef struct
     int_vector_t *gv;       // pointer to integer vector in which to return the group_id of the resolved parameters
                             // or NULL if we are not interesetd in group_id (eg if the expression describes objects not parameters)
     resolve_op_t op;        // operation being performed that requires path resolution
-    int separator_count;    // Count of the number of separators before the last resolved part of the path
+    int depth;              // Number of hierarchical levels to traverse in the data model when performing partial path resolution
     combined_role_t *combined_role;  // pointer to role to use when performing the path resolution.
                             // If the search path resolves to an object or param which there is no permission for,
                             // then a error will be generated (or the path forgivingly ignored in the case of a get)
@@ -94,11 +94,10 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
 int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state);
 int DoesInstanceMatchUniqueKey(char *object, int instance, expr_vector_t *keys, bool *is_match, resolver_state_t *state);
 int ResolvePartialPath(char *path, resolver_state_t *state);
-int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *inst, resolver_state_t *state);
-int GetChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *node, dm_instances_t *inst, resolver_state_t *state);
+int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *inst, resolver_state_t *state, int depth_remaining);
+int GetChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *node, dm_instances_t *inst, resolver_state_t *state, int depth_remaining);
 int AddPathFound(char *path, resolver_state_t *state);
 int CountPathSeparator(char *path);
-int ExpandNextSubPath(char *resolved, char *unresolved, resolver_state_t *state);
 int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector, unsigned *path_properties, int *group_id);
 int GetGroupIdForUniqueKeys(char *object, expr_vector_t *keys, resolver_state_t *state, int_vector_t *group_ids, int_vector_t *key_types, int_vector_t *perm);
 void ExpandUniqueKeysOverAllInstances(char *object, int_vector_t *instances, int_vector_t *group_ids, int_vector_t *key_types, int_vector_t *perm, search_param_t *sp);
@@ -132,17 +131,14 @@ void RefreshInstances_LifecycleSubscriptionEndingInPartialPath(char *path);
 **               or NULL if the caller is not interested in this
 **               NOTE: values in sv and gv relate by index
 ** \param   op - operation being performed that requires path resolution
-** \param   separator_split - pointer to variable in which to return where to split the resolved paths
-**                            Used to split resolved parameter path into resolved object and resolved sub-path.
-**                            It is a count of number of separators included in the 'object' portion of the path
-**                            NOTE: This argument may be NULL if the caller is not interested in the value
+** \param   depth - Number of hierarchical levels to traverse in the data model when performing partial path resolution
 ** \param   combined_role - role to use when performing the resolution. If set to INTERNAL_ROLE, then permissions are ignored (used internally)
-*  \param   flags - flags controlling resolving of the path eg GET_ALL_INSTANCES
+** \param   flags - flags controlling resolving of the path eg GET_ALL_INSTANCES
 **
 ** \return  USP_ERR_OK if successful, or no instances found
 **
 **************************************************************************/
-int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int *separator_split, combined_role_t *combined_role, unsigned flags)
+int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int depth, combined_role_t *combined_role, unsigned flags)
 {
     int err;
     int len;
@@ -178,7 +174,7 @@ int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *
         }
     }
 
-    err = PATH_RESOLVER_ResolvePath(path, sv, gv, op, separator_split, combined_role, flags);
+    err = PATH_RESOLVER_ResolvePath(path, sv, gv, op, depth, combined_role, flags);
     return err;
 }
 
@@ -201,17 +197,14 @@ int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *
 **               or NULL if the caller is not interested in this
 **               NOTE: values in sv and gv relate by index
 ** \param   op - operation being performed that requires path resolution
-** \param   separator_split - pointer to variable in which to return where to split the resolved paths
-**                            Used to split resolved parameter path into resolved object and resolved sub-path.
-**                            It is a count of number of separators included in the 'object' portion of the path
-**                            NOTE: This argument may be NULL if the caller is not interested in the value
+** \param   depth - Number of hierarchical levels to traverse in the data model when performing partial path resolution
 ** \param   combined_role - role to use when performing the resolution
 *  \param   flags - flags controlling resolving of the path eg GET_ALL_INSTANCES
 **
 ** \return  USP_ERR_OK if successful, or no instances found
 **
 **************************************************************************/
-int PATH_RESOLVER_ResolvePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int *separator_split, combined_role_t *combined_role, unsigned flags)
+int PATH_RESOLVER_ResolvePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int depth, combined_role_t *combined_role, unsigned flags)
 {
     char resolved[MAX_DM_PATH];
     char unresolved[MAX_DM_PATH];
@@ -236,17 +229,11 @@ int PATH_RESOLVER_ResolvePath(char *path, str_vector_t *sv, int_vector_t *gv, re
     state.sv = sv;
     state.gv = gv;
     state.op = op;
-    state.separator_count = 0;
+    state.depth = depth;
     state.combined_role = combined_role;
     state.flags = flags;
 
     err = ExpandPath(resolved, unresolved, &state);
-
-    // Return the point at which to split the path
-    if (separator_split != NULL)
-    {
-        *separator_split = state.separator_count;
-    }
 
     return err;
 }
@@ -504,7 +491,7 @@ int ExpandWildcard(char *resolved, char *unresolved, resolver_state_t *state)
     for (i=0; i < iv.num_entries; i++)
     {
         USP_SNPRINTF(p, len_left, "%d", iv.vector[i]);
-        err = ExpandNextSubPath(resolved, unresolved, state);
+        err = ExpandPath(resolved, unresolved, state);
         if (err != USP_ERR_OK)
         {
             goto exit;
@@ -610,7 +597,7 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
 
         // Exit if unable to resolve any search expressions contained in the reference
         STR_VECTOR_Init(&sv);
-        err = PATH_RESOLVER_ResolvePath(dereferenced, &sv, NULL, op, NULL, state->combined_role, 0);
+        err = PATH_RESOLVER_ResolvePath(dereferenced, &sv, NULL, op, FULL_DEPTH, state->combined_role, 0);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -657,7 +644,7 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
 
     // If the code gets here then the resolved path has been successfully dereferenced,
     // so continue resolving the path, using the dereferenced path
-    err = ExpandNextSubPath(dereferenced, unresolved, state);
+    err = ExpandPath(dereferenced, unresolved, state);
 
     return err;
 }
@@ -1213,7 +1200,7 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
         if (is_match & is_ref_match)
         {
             USP_SNPRINTF(temp, sizeof(temp), "%s%d", resolved, instances.vector[i]);
-            err = ExpandNextSubPath(temp, unresolved, state);
+            err = ExpandPath(temp, unresolved, state);
             if (err != USP_ERR_OK)
             {
                 goto exit;
@@ -1410,7 +1397,7 @@ int DoUniqueKeysMatch(int index, search_param_t *sp, bool *is_match)
         USP_ASSERT(gge->value != NULL);     // GROUP_GET_VECTOR_GetValues() should have set an error message if the vendor hook didn't set a value for the parameter
 
         // Determine the function to call to perform the comparison
-        if (type_flags & (DM_INT | DM_UINT | DM_ULONG))
+        if (type_flags & (DM_INT | DM_UINT | DM_ULONG | DM_LONG | DM_DECIMAL))
         {
             cmp_cb = DM_ACCESS_CompareNumber;
         }
@@ -1424,7 +1411,7 @@ int DoUniqueKeysMatch(int index, search_param_t *sp, bool *is_match)
         }
         else
         {
-            // Default, and also for DM_STRING
+            // Default, and also for DM_STRING, DM_BASE64, DM_HEXBIN
             cmp_cb = DM_ACCESS_CompareString;
         }
 
@@ -1445,46 +1432,6 @@ int DoUniqueKeysMatch(int index, search_param_t *sp, bool *is_match)
 
     // If the code gets here, then the instance matches all key expressions in the compound unique key
     *is_match = true;
-    return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
-** ExpandNextSubPath
-**
-** Called after one part of the path has been resolved to update the separator
-** count. This function, then continues resolution of the path.
-** Iterates over all unresolved aspects of the path, resolving them into a path
-** NOTE: This function is recursive
-**
-** \param   resolved - pointer to buffer containing data model path that has been resolved so far
-** \param   unresolved - pointer to rest of search path to resolve
-** \param   state - pointer to structure containing state variables to use with this resolution
-**
-** \return  USP_ERR_OK if successful, or no instances found
-**
-**************************************************************************/
-int ExpandNextSubPath(char *resolved, char *unresolved, resolver_state_t *state)
-{
-    int err;
-    int separator_count;
-
-    // Determine the point at which the last resolution occurred in the path
-    separator_count = CountPathSeparator(resolved) + 1;     // Plus 1 because we want to include the instance number that the caller has just resolved
-
-    // Update the point at which the last resolution occurred in the path
-    if (separator_count > state->separator_count)
-    {
-        state->separator_count = separator_count;
-    }
-
-    // Exit if an error occurred in resolving the path further
-    err = ExpandPath(resolved, unresolved, state);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
     return USP_ERR_OK;
 }
 
@@ -1511,7 +1458,6 @@ int ResolvePartialPath(char *path, resolver_state_t *state)
     int len;
     int err;
     bool is_qualified_instance;
-    int separator_count;
 
     // Exit if unable to find node representing this object
     node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
@@ -1540,26 +1486,19 @@ int ResolvePartialPath(char *path, resolver_state_t *state)
         return USP_ERR_OK;
     }
 
-    // Determine the point at which the last resolution occurred in the path, and update
-    separator_count = CountPathSeparator(path) + 1; // Plus 1 to add back in the partial path trailing '.'
-    if (separator_count > state->separator_count)
-    {
-        state->separator_count = separator_count;
-    }
-
     len = strlen(path);
     USP_STRNCPY(child_path, path, sizeof(child_path));
 
     if (is_qualified_instance)
     {
         // Object is specified with trailing instance number or is a single instance object
-        err = GetChildParams(child_path, len, node, &inst, state);
+        err = GetChildParams(child_path, len, node, &inst, state, state->depth);
     }
     else
     {
         // Object is specified without trailing instance number
         USP_ASSERT(node->type == kDMNodeType_Object_MultiInstance); // SingleInstance objects should have (is_qualified_instance==true), and hence shouldn't have got here
-        err = GetChildParams_MultiInstanceObject(child_path, len, node, &inst, state);
+        err = GetChildParams_MultiInstanceObject(child_path, len, node, &inst, state, state->depth);
     }
 
     return err;
@@ -1578,16 +1517,23 @@ int ResolvePartialPath(char *path, resolver_state_t *state)
 ** \param   node - Node to get children of
 ** \param   inst - pointer to instance structure locating the parent node
 ** \param   state - pointer to structure containing state variables to use with this resolution
+** \param   depth_remaining - number of hierarchical levels to continue to traverse in the data model
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *inst, resolver_state_t *state)
+int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *inst, resolver_state_t *state, int depth_remaining)
 {
     int err;
     dm_node_t *child;
     unsigned short permission_bitmask;
     bool add_to_vector;
+
+    // Exit if we should abort recursing any further into the data model
+    if (depth_remaining <= 0)
+    {
+        return USP_ERR_OK;
+    }
 
     // Iterate over list of children
     child = (dm_node_t *) node->child_nodes.head;
@@ -1601,7 +1547,7 @@ int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *in
                 {
                     int len;
                     len = USP_SNPRINTF(&path[path_len], MAX_DM_PATH-path_len, ".%s", child->name);
-                    err = GetChildParams(path, path_len+len, child, inst, state);
+                    err = GetChildParams(path, path_len+len, child, inst, state, depth_remaining-1);
                     if (err != USP_ERR_OK)
                     {
                         return err;
@@ -1614,7 +1560,7 @@ int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *in
                 {
                     int len;
                     len = USP_SNPRINTF(&path[path_len], MAX_DM_PATH-path_len, ".%s", child->name);
-                    err = GetChildParams_MultiInstanceObject(path, path_len+len, child, inst, state);
+                    err = GetChildParams_MultiInstanceObject(path, path_len+len, child, inst, state, depth_remaining-1);
                     if (err != USP_ERR_OK)
                     {
                         return err;
@@ -1725,11 +1671,12 @@ int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *in
 ** \param   node - Node to get children of
 ** \param   inst - pointer to instance structure locating the parent node
 ** \param   state - pointer to structure containing state variables to use with this resolution
+** \param   depth_remaining - number of hierarchical levels to continue to traverse in the data model
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *node, dm_instances_t *inst, resolver_state_t *state)
+int GetChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *node, dm_instances_t *inst, resolver_state_t *state, int depth_remaining)
 {
     int_vector_t iv;
     int instance;
@@ -1737,6 +1684,12 @@ int GetChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *node
     int order;
     int i;
     int err;
+
+    // Exit if we should abort recursing any further into the data model
+    if (depth_remaining <= 0)
+    {
+        return USP_ERR_OK;
+    }
 
     // Get an array of instances for this specific object
     INT_VECTOR_Init(&iv);
@@ -1761,7 +1714,7 @@ int GetChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *node
 
         // Get all child parameters of this object
         inst->instances[order] = instance;
-        err = GetChildParams(path, path_len+len, node, inst, state);
+        err = GetChildParams(path, path_len+len, node, inst, state, depth_remaining);
         if (err != USP_ERR_OK)
         {
             goto exit;
