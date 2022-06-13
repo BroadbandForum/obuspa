@@ -39,15 +39,16 @@
  *
  */
 
-#include "vendor_defs.h"  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
-#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-#include "e2e_context.h"
-
 #include <inttypes.h>  // For PRIu64
 #include <math.h>
 
+#include "vendor_defs.h"  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
+
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+
 #include "mtp_exec.h"
 #include "msg_handler.h"
+#include "e2e_context.h"
 #include "iso8601.h"
 #include "proto_trace.h"
 #include "text_utils.h"
@@ -120,6 +121,22 @@ int E2E_CONTEXT_QueueUspSessionRecord(usp_send_item_t *usi, char *endpoint_id, c
     unsigned max_payload_size = UINT_MAX;
     int bytes_queued = 0;
     const bool segmentation_enabled = (e2esession->max_record_size > 0);
+    mtp_content_type_t content_type;
+
+    USP_LOG_Debug("%s: Length of the USP Message to send: %d bytes", __FUNCTION__, usi->msg_packed_size);
+
+    // Log the USP Message (if available)
+    // For E2E records, logging is performed here, as it cannot be done later by the MTP, as the message is segmented by then
+    // NOTE: The MTP does not log USP records of content_type=kMtpContentType_E2E_XXX, as they could be segmented
+    if (usi->usp_msg != NULL)
+    {
+        char time_buf[MAX_ISO8601_LEN];
+        USP_PROTOCOL("\n");
+        USP_LOG_Info("%s built at time %s",
+                     MSG_HANDLER_UspMsgTypeToString(usi->usp_msg->header->msg_type),
+                     iso8601_cur_time(time_buf, sizeof(time_buf)));
+        PROTO_TRACE_ProtobufMessage(&usi->usp_msg->base);
+    }
 
     // Establish an E2E Session Context if not already set
     USP_ASSERT(e2esession != NULL);
@@ -179,20 +196,24 @@ int E2E_CONTEXT_QueueUspSessionRecord(usp_send_item_t *usi, char *endpoint_id, c
             if (remaining_size <= segment.len)
             {
                 ctxSession.payload_sar_state = USP_RECORD__SESSION_CONTEXT_RECORD__PAYLOAD_SARSTATE__NONE;
+                content_type = kMtpContentType_E2E_FullMessage;
             }
             else
             {
                 ctxSession.payload_sar_state = USP_RECORD__SESSION_CONTEXT_RECORD__PAYLOAD_SARSTATE__BEGIN;
+                content_type = kMtpContentType_E2E_Begin;
             }
         }
         // No more segmentation required; this is the last segment
         else if (remaining_size <= segment.len)
         {
             ctxSession.payload_sar_state = USP_RECORD__SESSION_CONTEXT_RECORD__PAYLOAD_SARSTATE__COMPLETE;
+            content_type = kMtpContentType_E2E_Complete;
         }
         else
         {
             ctxSession.payload_sar_state = USP_RECORD__SESSION_CONTEXT_RECORD__PAYLOAD_SARSTATE__INPROCESS;
+            content_type = kMtpContentType_E2E_InProcess;
         }
 
         // Assign the sequence_id for this USP Record.
@@ -215,7 +236,7 @@ int E2E_CONTEXT_QueueUspSessionRecord(usp_send_item_t *usi, char *endpoint_id, c
             // Prepare the MTP item information now it is serialized.
             MTP_EXEC_MtpSendItem_Init(&mtp_send_item);
             mtp_send_item.usp_msg_type = usi->usp_msg_type;
-            mtp_send_item.content_type = kMtpContentType_UspRecord;
+            mtp_send_item.content_type = content_type;
             mtp_send_item.pbuf = buf;
             mtp_send_item.pbuf_len = len;
         }
@@ -270,6 +291,10 @@ int E2E_CONTEXT_HandleUspRecord(UspRecord__Record *rec, ctrust_role_t role, mtp_
             err = ValidateNoSessionContextHandling(rec);
             if (err != USP_ERR_OK)
             {
+                // If an error did occur, ValidateNoSessionContextHandling will send an E2E session termination disconnect record
+                // Do not return an error, as this would cause a USP disconnect record to be sent in ProcessBinaryUspRecord(),
+                // causing the MTP to be disconnected
+                err = USP_ERR_OK;
                 goto exit;
             }
 
@@ -473,7 +498,8 @@ void E2E_CONTEXT_E2eSessionEvent(e2e_event_t event, int request, int controller)
     {
         USP_ERR_ReplaceEmptyMessage("%s", USP_ERR_UspErrToString(USP_ERR_SESS_CONTEXT_TERMINATED));
         // Send the Disconnect Record to the related controller
-        MSG_HANDLER_QueueUspDisconnectRecord(dest_endpoint,
+        MSG_HANDLER_QueueUspDisconnectRecord(kMtpContentType_E2E_SessTermination,
+                                             dest_endpoint,
                                              USP_ERR_SESS_CONTEXT_TERMINATED,
                                              USP_ERR_GetMessage(),
                                              &mtp_reply_to,
@@ -483,9 +509,11 @@ void E2E_CONTEXT_E2eSessionEvent(e2e_event_t event, int request, int controller)
     if (event == kE2EEvent_Establishment || event == kE2EEvent_Restart)
     {
         // Send a USP Record with empty payload to kick off the E2E.
-        USPREC_UspSendItem_Init(&usp_send_item);
+        MSG_HANDLER_UspSendItem_Init(&usp_send_item);
+        usp_send_item.usp_msg_type = INVALID_USP_MSG_TYPE;
         usp_send_item.msg_packed_size = 0;
         usp_send_item.curr_e2e_session = curr_e2e_session;
+        usp_send_item.usp_msg = NULL;
         MSG_HANDLER_QueueUspRecord(&usp_send_item, dest_endpoint, NULL, &mtp_reply_to, END_OF_TIME);
     }
 
@@ -573,45 +601,6 @@ bool E2E_CONTEXT_IsToSendThroughSessionContext(e2e_session_t *e2e)
     }
 
     return false;
-}
-
-/*********************************************************************//**
-**
-** E2E_CONTEXT_LogUspMsgIfSessionContext
-**
-** Logs a USP protobuf message structure in Protobuf debug format if
-** this message is to encapsulate in a SessionContext record type.
-**
-** This function is used to print the USP Message before queuing it in
-** the MTP, if E2E Session is used.
-** - If printed after MSG_HANDLER_QueueUspRecord(), the USP Message logs
-**   are mixed along USP Records and difficult to read.
-** - Because the USP Message is segmented into multiple USP Records,
-**   it cannot be logged by the MSG_HANDLER_LogMessageToSend() callback
-**   without reimplementing a second reassembly mechanism (i.e. memory consumption).
-** - Another option would be to print all USP Messages before queuing
-**   in the MTP, instead of unpacking the serialized payload in MSG_HANDLER_LogMessageToSend().
-**   This will however change the order of logged Records/Message.
-**
-** \param   usp - protobuf struct of the USP Message
-** \param   usi - Information about the USP Message to send
-**
-** \return  None
-**
-**************************************************************************/
-void E2E_CONTEXT_LogUspMsgIfSessionContext(Usp__Msg *usp, usp_send_item_t *usi)
-{
-    if (E2E_CONTEXT_IsToSendThroughSessionContext(usi->curr_e2e_session))
-    {
-        char buf[MAX_ISO8601_LEN];
-
-        // Log the USP Message
-        USP_PROTOCOL("\n");
-        USP_LOG_Info("%s built at time %s",
-                     MSG_HANDLER_UspMsgTypeToString(usp->header->msg_type),
-                     iso8601_cur_time(buf, sizeof(buf)));
-        PROTO_TRACE_ProtobufMessage(&usp->base);
-    }
 }
 
 /*********************************************************************//**

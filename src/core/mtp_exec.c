@@ -39,6 +39,7 @@
  * Main loop for MTP thread dealing with STOMP and CoAP Communications
  *
  */
+
 #include <string.h>
 #include <sys/socket.h>
 #include <errno.h>
@@ -47,6 +48,7 @@
 #include "mtp_exec.h"
 #include "dm_exec.h"
 #include "os_utils.h"
+#include "msg_handler.h"
 
 #ifndef DISABLE_STOMP
 #include "stomp.h"
@@ -135,8 +137,8 @@ void ProcessMtpWakeupQueueSocketActivity(socket_set_t *set, int sock);
 **************************************************************************/
 void MTP_EXEC_MtpSendItem_Init(mtp_send_item_t *msi)
 {
-    msi->content_type = kMtpContentType_Text;
-    msi->usp_msg_type = _USP__HEADER__MSG_TYPE_IS_INT_SIZE;
+    msi->content_type = kMtpContentType_DisconnectRecord;
+    msi->usp_msg_type = INVALID_USP_MSG_TYPE;
     msi->pbuf = NULL;
     msi->pbuf_len = 0;
 }

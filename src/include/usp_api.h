@@ -96,16 +96,17 @@ typedef enum
 
 //-------------------------------------------------------------------------
 // Union containing the native value for a parameter in a Get or Set ParameterValue operation
-// NOTE: Strings are not transferred by this union, instead, they are transferred using the buf parameter of the vendor hook
+// NOTE: Strings (DM_STRING, DM_BASE64, DM_HEXBIN) are not transferred by this union.
+//       Instead, they are transferred using the buf parameter of the vendor hook
 typedef union
 {
-    time_t value_datetime;
-    bool value_bool;
-    int value_int;
-    unsigned value_uint;
-    unsigned long long value_ulong;
-    double value_decimal;
-    long long value_long;
+    time_t value_datetime;              // For DM_DATETIME parameters
+    bool value_bool;                    // For DM_BOOL parameters
+    int value_int;                      // For DM_INT parameters
+    unsigned value_uint;                // For DM_UINT parameters
+    unsigned long long value_ulong;     // For DM_ULONG parameters
+    double value_decimal;               // For DM_DECIMAL parameters
+    long long value_long;               // For DM_LONG parameters
 } dm_val_union_t;
 
 //-------------------------------------------------------------------------
@@ -322,16 +323,16 @@ typedef struct
 
 //-------------------------------------------------------------------------
 // Defines for type_flags argument of registration functions
-#define DM_STRING       0x00000001
-#define DM_DATETIME     0x00000002
-#define DM_BOOL         0x00000004
-#define DM_INT          0x00000008
-#define DM_UINT         0x00000010
-#define DM_ULONG        0x00000020
-#define DM_BASE64       0x00000040
-#define DM_HEXBIN       0x00000080
-#define DM_DECIMAL      0x00000100
-#define DM_LONG         0x00000200
+#define DM_STRING       0x00000001      // String
+#define DM_DATETIME     0x00000002      // ISO-8601 formatted time
+#define DM_BOOL         0x00000004      // Boolean
+#define DM_INT          0x00000008      // 32 bit signed integer (int)
+#define DM_UINT         0x00000010      // 32 bit unsigned integer (unsigned int)
+#define DM_ULONG        0x00000020      // 64 bit unsigned integer (unsigned long long)
+#define DM_BASE64       0x00000040      // Base64 encoded binary (string)
+#define DM_HEXBIN       0x00000080      // Hex encoded binary (string)
+#define DM_DECIMAL      0x00000100      // 64 bit floating point number (double)
+#define DM_LONG         0x00000200      // 64 bit signed integer (long long)
 
 //-------------------------------------------------------------------------
 // Functions to register the data model

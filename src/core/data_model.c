@@ -2602,10 +2602,26 @@ char DATA_MODEL_GetJSONParameterType(char *path)
 
     // Calculate the type of this parameter
     type_flags = node->registered.param_info.type_flags;
+
+#ifdef REPRESENT_JSON_NUMBERS_WITH_FULL_PRECISION
+    if (type_flags & (DM_INT | DM_LONG))
+    {
+        type = 'L';
+    }
+    else if (type_flags & (DM_UINT | DM_ULONG))
+    {
+        type = 'U';
+    }
+    else if (type_flags & DM_DECIMAL)
+    {
+        type = 'N';
+    }
+#else
     if (type_flags & (DM_INT | DM_UINT | DM_ULONG | DM_DECIMAL | DM_LONG))
     {
         type = 'N';
     }
+#endif
     else if (type_flags & DM_BOOL)
     {
         type = 'B';

@@ -42,11 +42,13 @@
 #ifndef DM_EXEC_H
 #define DM_EXEC_H
 
-#include "device.h"
+#include "vendor_defs.h"  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_defs.h"
 #endif
+
+#include "device.h"
 
 //------------------------------------------------------------------------------
 // Bitmask indicating which thread exited to DM_EXEC_PostMtpThreadExited()
@@ -62,8 +64,8 @@
 int DM_EXEC_Init(void);
 void DM_EXEC_Destroy(void);
 void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt);
-void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role);
-void DM_EXEC_PostMqttHandshakeComplete(int stomp_instance, ctrust_role_t role);
+void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, ctrust_role_t role);
+void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, ctrust_role_t role);
 void DM_EXEC_PostMtpThreadExited(unsigned flags);
 int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)

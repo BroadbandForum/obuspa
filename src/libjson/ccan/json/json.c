@@ -348,6 +348,12 @@ static void emit_array              (SB *out, const JsonNode *array);
 static void emit_array_indented     (SB *out, const JsonNode *array, const char *space, int indent_level);
 static void emit_object             (SB *out, const JsonNode *object);
 static void emit_object_indented    (SB *out, const JsonNode *object, const char *space, int indent_level);
+#if 1
+// Copyright (C) 2022, Broadband Forum
+// Copyright (C) 2022  CommScope, Inc
+static void emit_ll_number(SB *out, long long num);
+static void emit_ull_number(SB *out, unsigned long long num);
+#endif
 
 static int write_hex16(char *out, uint16_t val);
 
@@ -524,6 +530,24 @@ JsonNode *json_mknumber(double n)
 	node->number_ = n;
 	return node;
 }
+
+#if 1
+// Copyright (C) 2022, Broadband Forum
+// Copyright (C) 2022  CommScope, Inc
+JsonNode *json_mklonglong(long long n)
+{
+	JsonNode *node = mknode(JSON_LL_NUMBER);
+	node->ll_number_ = n;
+	return node;
+}
+
+JsonNode *json_mkulonglong(unsigned long long n)
+{
+	JsonNode *node = mknode(JSON_ULL_NUMBER);
+	node->ull_number_ = n;
+	return node;
+}
+#endif
 
 JsonNode *json_mkarray(void)
 {
@@ -989,6 +1013,16 @@ static void emit_value(SB *out, const JsonNode *node)
 		case JSON_NUMBER:
 			emit_number(out, node->number_);
 			break;
+#if 1
+// Copyright (C) 2022, Broadband Forum
+// Copyright (C) 2022  CommScope, Inc
+		case JSON_LL_NUMBER:
+			emit_ll_number(out, node->ll_number_);
+			break;
+		case JSON_ULL_NUMBER:
+			emit_ull_number(out, node->ull_number_);
+			break;
+#endif
 		case JSON_ARRAY:
 			emit_array(out, node);
 			break;
@@ -1016,6 +1050,16 @@ void emit_value_indented(SB *out, const JsonNode *node, const char *space, int i
 		case JSON_NUMBER:
 			emit_number(out, node->number_);
 			break;
+#if 1
+// Copyright (C) 2022, Broadband Forum
+// Copyright (C) 2022  CommScope, Inc
+		case JSON_LL_NUMBER:
+			emit_ll_number(out, node->ll_number_);
+			break;
+		case JSON_ULL_NUMBER:
+			emit_ull_number(out, node->ull_number_);
+			break;
+#endif
 		case JSON_ARRAY:
 			emit_array_indented(out, node, space, indent_level);
 			break;
@@ -1240,6 +1284,34 @@ static void emit_number(SB *out, double num)
 	else
 		sb_puts(out, "null");
 }
+
+#if 1
+// Copyright (C) 2022, Broadband Forum
+// Copyright (C) 2022  CommScope, Inc
+static void emit_ll_number(SB *out, long long num)
+{
+	char buf[64];
+	snprintf(buf, sizeof(buf), "%lld", num);
+	buf[sizeof(buf)-1] = '\0';
+
+	if (number_is_valid(buf))
+		sb_puts(out, buf);
+	else
+		sb_puts(out, "null");
+}
+
+static void emit_ull_number(SB *out, unsigned long long num)
+{
+	char buf[64];
+	snprintf(buf, sizeof(buf), "%llu", num);
+	buf[sizeof(buf)-1] = '\0';
+
+	if (number_is_valid(buf))
+		sb_puts(out, buf);
+	else
+		sb_puts(out, "null");
+}
+#endif
 
 static bool tag_is_valid(unsigned int tag)
 {

@@ -75,7 +75,7 @@ typedef struct
 {
     double_link_t link;     // Doubly linked list pointers. These must always be first in this structure
     mtp_send_item_t item;   // Information about the content to send
-    time_t expiry_time;     // Time at which this message should be removed from the queue
+    time_t expiry_time;     // Time at which this USP record should be removed from the queue
 } wsclient_send_item_t;
 
 //------------------------------------------------------------------------------
@@ -105,7 +105,7 @@ typedef struct
     // Configuration info
     int cont_instance;              // instance number of controller in Device.LocalAgent.Controller.{i}
     int mtp_instance;               // mtp_instance - instance number of MTP in Device.LocalAgent.Controller.{i}.MTP.(i)
-    char *cont_endpoint_id;         // endpoint_id of the controller being connected to (only used for debug messages)
+    char *cont_endpoint_id;         // endpoint_id of the controller being connected to
     char *host;                     // host to send USP messages to the controller on
     unsigned port;                  // port to send USP messages to the controller on
     char *path;                     // Path to send USP messages to the controller on
@@ -129,6 +129,7 @@ typedef struct
     int rx_buf_max_len;             // Current allocated size of rx_buf. This will hold the current websocket fragment. If the USP Record is contained in multiple websocket fragments, then the buffer is reallocated to include the new fragment
     int tx_index;                   // Counts the number of bytes sent of the current USP Record to tx (i.e. at the head of the usp_record_send_queue)
 
+    bool disconnect_sent;           // Set if a USP Disconnect record is being sent. Causes a reconnect after the record has been transmitted.
     scheduled_action_t  schedule_reconnect;  // Sets whether a reconnect is scheduled after the send queue has cleared
     scheduled_action_t  schedule_close;      // Sets whether a close is scheduled after the send queue has cleared
 
@@ -172,7 +173,7 @@ typedef struct
     int mtp_instance;               // mtp_instance - instance number of MTP in Device.LocalAgent.Controller.{i}.MTP.(i)
 
     mtp_send_item_t item;           // Information about the content to send
-    time_t expiry_time;             // time at which the USP message should be removed from the MTP send queue
+    time_t expiry_time;             // time at which the USP record should be removed from the MTP send queue
 } queue_client_usp_record_msg_t;
 
 //------------------------------------------------------------------------------
@@ -263,6 +264,7 @@ void RemoveExpiredWsclientMessages(wsclient_t *wc);
 void RemoveWsclientSendItem(wsclient_t *wc, wsclient_send_item_t *si);
 bool AreAllWsclientResponsesSent(void);
 void PurgeWsclientMessageQueue(void);
+void QueueUspConnectRecord_Wsclient(wsclient_t *wc);
 
 // Code to help debug mutex issues
 //static int mtx_count = 0;
@@ -551,13 +553,13 @@ void WSCLIENT_ActivateScheduledActions(void)
 **
 ** WSCLIENT_QueueBinaryMessage
 **
-** Function called to queue a message on the specified WebSocket connection
+** Function called to queue a USP record on the specified WebSocket connection
 **
 ** \param   msi - Information about the content to send. The ownership of
 **                the payload buffer is always passed to this function.
 ** \param   cont_instance - instance number of controller in Device.LocalAgent.Controller.{i}
 ** \param   mtp_instance - instance number of MTP in Device.LocalAgent.Controller.{i}.MTP.(i)
-** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
+** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
 **
 ** \return  None
 **
@@ -852,6 +854,7 @@ void HandleWsclient_StartClient(start_client_msg_t *scm)
     wc->ws_handle = NULL;
     memset(&wc->retry_timer, 0, sizeof(wc->retry_timer));
     wc->close_reason = kWebSockCloseReason_Unknown;
+    wc->disconnect_sent = false;
     wc->schedule_reconnect = kScheduledAction_Off;
     wc->schedule_close = kScheduledAction_Off;
     wc->rx_buf = NULL;
@@ -1159,6 +1162,7 @@ void AttemptWsclientConnect(wsclient_t *wc)
     // Store state of connection in websock client structure
     wc->state = kWebsockState_AwaitingConnected;
     wc->close_reason = kWebSockCloseReason_Unknown;
+    wc->disconnect_sent = false;
     wc->schedule_reconnect = kScheduledAction_Off;
     wc->schedule_close = kScheduledAction_Off;
     wc->rx_buf = NULL;
@@ -1280,15 +1284,19 @@ void ServiceWsclientSendQueue(void)
             {
                 if (wc->close_reason == kWebSockCloseReason_Unknown)
                 {
-                    if ((wc->schedule_close == kScheduledAction_Activated) || (mtp_exit_scheduled == kScheduledAction_Activated))
+                    if (wc->disconnect_sent)
+                    {
+                        GracefullyCloseWsclient(wc, kWebSockCloseReason_BadUspRecord);
+                    }
+                    else if (wc->schedule_reconnect == kScheduledAction_Activated)
+                    {
+                        GracefullyCloseWsclient(wc, kWebSockCloseReason_ConnParamsChanged);
+                    }
+                    else if ((wc->schedule_close == kScheduledAction_Activated) || (mtp_exit_scheduled == kScheduledAction_Activated))
                     {
                         GracefullyCloseWsclient(wc, kWebSockCloseReason_GracefulClose);
                     }
 
-                    if (wc->schedule_reconnect == kScheduledAction_Activated)
-                    {
-                        GracefullyCloseWsclient(wc, kWebSockCloseReason_ConnParamsChanged);
-                    }
                 }
             }
             else
@@ -1729,6 +1737,9 @@ int HandleWscEvent_Connected(struct lws *handle)
     // Set a timer to expire when it is time to send the websocket PING frame
     lws_set_timer_usecs(handle, wc->keep_alive_interval * LWS_USEC_PER_SEC);
 
+    // Ensure a USP Connect record is sent
+    QueueUspConnectRecord_Wsclient(wc);
+
     return 0;
 }
 
@@ -1810,6 +1821,7 @@ int HandleWscEvent_Receive(struct lws *handle, unsigned char *chunk, int chunk_l
     mtp_reply_to.wsclient_cont_instance = wc->cont_instance;
     mtp_reply_to.wsclient_mtp_instance = wc->mtp_instance;
     mtp_reply_to.wsserv_conn_id = INVALID;
+    mtp_reply_to.cont_endpoint_id = wc->cont_endpoint_id;
     DM_EXEC_PostUspRecord(wc->rx_buf, wc->rx_buf_len, wc->role, &mtp_reply_to);
 
     // Free receive buffer
@@ -1868,22 +1880,6 @@ int HandleWscEvent_Transmit(struct lws *handle)
         }
 
         return 0;
-    }
-
-    // Exit if item indicates that a close frame must be sent, closing the connection
-    if (si->item.content_type == kMtpContentType_Text)
-    {
-        // Set the reason for closing
-        if (wc->close_reason == kWebSockCloseReason_Unknown)
-        {
-            wc->close_reason = kWebSockCloseReason_BadUspRecord;
-        }
-        lws_close_reason(wc->ws_handle, LWS_CLOSE_STATUS_UNACCEPTABLE_OPCODE, si->item.pbuf, si->item.pbuf_len);
-
-        // Free USP Record and remove the item from the queue
-        RemoveWsclientSendItem(wc, si);
-
-        return -1;      // Returning an error is what forces libwebsockets to send the close frame
     }
 
     // Exit if all of the USP records in the send queue were notifications that have expired
@@ -1945,6 +1941,13 @@ int HandleWscEvent_Transmit(struct lws *handle)
         return -1;
     }
 
+    // If this is a disconnect record, schedule the websocket close and reconnect after the disconnect record has been sent
+    // NOTE: USP Disconnect records closing an E2E session (kMtpContentType_E2E_SessTermination) do not close the connection
+    if (si->item.content_type == kMtpContentType_DisconnectRecord)
+    {
+        wc->disconnect_sent = true;
+    }
+
     // Free the USP Record from the queue, if all chunks of it have been sent
     wc->tx_index += chunk_len;
     if (wc->tx_index >= si->item.pbuf_len)
@@ -1954,6 +1957,51 @@ int HandleWscEvent_Transmit(struct lws *handle)
     }
 
     return 0;
+}
+
+/*********************************************************************//**
+**
+** QueueUspConnectRecord_Wsclient
+**
+** Adds the USP connect record at the front of the queue, ensuring that there is only one connect record in the queue
+**
+** \param   wc - pointer to websocket client connection to send the connect record to
+**
+** \return  None
+**
+**************************************************************************/
+void QueueUspConnectRecord_Wsclient(wsclient_t *wc)
+{
+    wsclient_send_item_t *cur_msg;
+    wsclient_send_item_t *next_msg;
+    wsclient_send_item_t *send_item;
+    mtp_content_type_t type;
+
+    // Iterate over USP Records in the queue, removing all stale connect and disconnect records
+    // A connect or disconnect record may still be in the queue if the connection failed before the record was fully sent
+    cur_msg = (wsclient_send_item_t *) wc->usp_record_send_queue.head;
+    while (cur_msg != NULL)
+    {
+        // Save pointer to next message, as we may remove the current message
+        next_msg = (wsclient_send_item_t *) cur_msg->link.next;
+
+        // Remove current message if it is a connect or disconnect record
+        type = cur_msg->item.content_type;
+        if (IsUspConnectOrDisconnectRecord(type))
+        {
+            RemoveWsclientSendItem(wc, cur_msg);
+        }
+
+        // Move to next message in the queue
+        cur_msg = next_msg;
+    }
+
+    // Add the new connect record to the queue
+    send_item = USP_MALLOC(sizeof(wsclient_send_item_t));
+    USPREC_WebSocketConnect_Create(wc->cont_endpoint_id, &send_item->item);
+    send_item->expiry_time = END_OF_TIME;
+
+    DLLIST_LinkToHead(&wc->usp_record_send_queue, send_item);
 }
 
 /*********************************************************************//**
@@ -2190,6 +2238,15 @@ int ValidateReceivedWsclientSubProtocol(struct lws *handle)
     if (*endpoint_id == '\0')
     {
         return 0;
+    }
+
+    // Exit if we connected to a different controller than configured.
+    // We disconnect in this case, because otherwise notifications aren't sent on the right MTP, and the agent code gets complicated having to cope with this inconsistent state
+    if (strcmp(endpoint_id, wc->cont_endpoint_id) != 0)
+    {
+        USP_LOG_Error("%s: Disconnecting as server is wrong controller (got '%s', expected '%s')", __FUNCTION__, endpoint_id, wc->cont_endpoint_id);
+        wc->close_reason = kWebSockCloseReason_InternalError;
+        return -1;
     }
 
     // Disconnect this endpoint from the websocket server (if already connected to it).

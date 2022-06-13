@@ -126,7 +126,7 @@ typedef struct
                                         // that the USP response must be sent back on a new DTLS session also. Wihout this,
                                         // the CoAP retry mechanism will cause the DTLS session to restart, but it is a while
                                         // before the retry is triggered, so this hint speeds up communications
-    time_t expiry_time;     // Time at which this message should be removed from the queue
+    time_t expiry_time;     // Time at which this USP record should be removed from the queue
 } coap_send_item_t;
 
 //------------------------------------------------------------------------------------
@@ -493,14 +493,14 @@ void COAP_CLIENT_ProcessAllSocketActivity(socket_set_t *set)
 **
 ** COAP_CLIENT_QueueBinaryMessage
 **
-** Function called to queue a message to send to the specified controller (over CoAP)
+** Function called to queue a USP record to send to the specified controller (over CoAP)
 **
 ** \param   msi - Information about the content to send. The ownership of
 **                the payload buffer is passed to this function.
 ** \param   cont_instance -  Instance number of the controller in Device.LocalAgent.Controller.{i}
 ** \param   mtp_instance -   Instance number of this MTP in Device.LocalAgent.Controller.{i}.MTP.{i}
 ** \param   mrt - pointer to structure containing CoAP parameters describing CoAP destination to send to
-** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
+** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
 **

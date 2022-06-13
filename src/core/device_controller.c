@@ -40,14 +40,13 @@
  * Implements the Device.LocalAgent.Controller data model object
  *
  */
-#include "device.h"
-
 #include <stdio.h>
 #include <time.h>
 #include <string.h>
 #include <limits.h>
 
 #include "common_defs.h"
+#include "device.h"
 #include "data_model.h"
 #include "usp_api.h"
 #include "dm_access.h"
@@ -58,6 +57,8 @@
 #include "text_utils.h"
 #include "iso8601.h"
 #include "retry_wait.h"
+#include "usp_record.h"
+
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_defs.h"
 #include "e2e_context.h"
@@ -534,6 +535,100 @@ char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance)
 
 /*********************************************************************//**
 **
+** DEVICE_CONTROLLER_FindEndpointByMTP
+**
+** Finds the endpoint_id of the first controller connected to the MTP on which we received a packet
+**
+** \param   mrt - pointer to structure specifying which protocol (and MTP instance) a packet was received on
+**
+** \return  endpoint_id or NULL if unable to determine one
+**
+**************************************************************************/
+char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_reply_to_t *mrt)
+{
+    int i, j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    USP_ASSERT(mrt->cont_endpoint_id == NULL);
+    USP_ASSERT(mrt->protocol != kMtpProtocol_None);
+
+#ifdef ENABLE_WEBSOCKETS
+    // Exit if packet was received on agent's websocket server and endpoint_id was not provided to the MTP in the
+    // Sec-WebSocket-Extensions. We can't use the data model configuration to determine the Controller's endpoint_id in this case
+    if ((mrt->protocol == kMtpProtocol_WebSockets) && (mrt->wsserv_conn_id != INVALID))
+    {
+        return NULL;
+    }
+#endif
+
+#ifdef ENABLE_COAP
+    // Exit if packet was received on agent's CoAP server. In this case, it's not possible to determine endpoint_id from the data model configuration
+    if (mrt->protocol == kMtpProtocol_CoAP)
+    {
+        return NULL;
+    }
+#endif
+
+    // Iterate over all enabled controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if ((cont->instance != INVALID) && (cont->enable == true))
+        {
+            // Iterate over all enabled MTPs which match the protocol that the packet was received on
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->enable == true) && (mtp->protocol == mrt->protocol))
+                {
+                    // Return this controller's endpoint_id, if this MTP matches the MTP that the packet was received on
+                    switch(mtp->protocol)
+                    {
+#ifndef DISABLE_STOMP
+                        case kMtpProtocol_STOMP:
+                            if (mtp->stomp_connection_instance == mrt->stomp_instance)
+                            {
+                                return cont->endpoint_id;
+                            }
+                            break;
+#endif
+
+#ifdef ENABLE_MQTT
+                        case kMtpProtocol_MQTT:
+                            if (mtp->mqtt_connection_instance == mrt->mqtt_instance)
+                            {
+                                return cont->endpoint_id;
+                            }
+                            break;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+                        case kMtpProtocol_WebSockets:
+                            // NOTE: This is Websocket client case. Websocket server case already handled earlier in this function
+                            USP_ASSERT(mrt->wsserv_conn_id == INVALID);
+                            if ((mrt->wsclient_cont_instance == cont->instance) && (mrt->wsclient_mtp_instance == mtp->instance))
+                            {
+                                return cont->endpoint_id;
+                            }
+                            break;
+#endif
+
+                        default:
+                            TERMINATE_BAD_CASE(mtp->protocol);
+                            break;
+                    }
+                }
+            }
+        }
+    }
+
+    // If the code gets here, then no match was found
+    return NULL;
+}
+
+/*********************************************************************//**
+**
 ** DEVICE_CONTROLLER_GetSubsRetryParams
 **
 ** Gets the subscription retry parameters for the specified endpoint_id
@@ -785,7 +880,102 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id
     return USP_ERR_OK;
 }
 
+#ifdef ENABLE_MQTT
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_QueueMqttConnectRecord
+**
+** Queues a connect record for all Controllers attached to the specified MQTT connection
+** The connect record is sent immediately after a successful connection to an MQTT broker to
+** inform the attached Controllers of the presence of the agent, and the STOMP queue on which the agent can be contacted
+**
+** \param   mqtt_instance - Instance number of the connection in Device.MQTT.Client.{i}
+** \param   version - MQTT version in use on the connection
+** \param   agent_topic - MQTT topic which the agent has actually subscribed to
+**                        NOTE: This may have been set by Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured, or it may have been set by the subscribe-topic user prop in the CONNACK
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_CONTROLLER_QueueMqttConnectRecord(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic)
+{
+    int i;
+    int j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Iterate over all controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        // Iterate over all MTP slots for this controller, clearing out all references to the deleted MQTT connection
+        cont = &controllers[i];
+        if (cont->instance != INVALID)
+        {
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
+                {
+                    mtp_send_item_t msi;
+
+                    USPREC_MqttConnect_Create(cont->endpoint_id, version, agent_topic, &msi);
+                    MQTT_QueueBinaryMessage(&msi, mqtt_instance, mtp->mqtt_controller_topic);
+                    // NOTE: No need to free any members of the msi structure, since ownership of the payload buffer has passed to MQTT MTP layer
+                }
+            }
+        }
+    }
+
+}
+#endif
+
 #ifndef DISABLE_STOMP
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_QueueStompConnectRecord
+**
+** Queues a connect record for all Controllers attached to the specified STOMP connection
+** The connect record is sent immediately after a successful connection to a STOMP broker to
+** inform the attached Controllers of the presence of the agent, and the STOMP queue on which the agent can be contacted
+**
+** \param   stomp_instance - Instance number of the STOMP connection in Device.STOMP.Connection.{i}
+** \param   agent_queue - STOMP destination which the agent has actually subscribed to
+**                        NOTE: This may have been set by Device.LocalAgent.MTP.{i}.STOMP.Destination, or it may have been set by the subscribe-dest STOMP header in the CONNECTED frame
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_CONTROLLER_QueueStompConnectRecord(int stomp_instance, char *agent_queue)
+{
+    int i;
+    int j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Iterate over all controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        // Iterate over all MTP slots for this controller, clearing out all references to the deleted STOMP connection
+        cont = &controllers[i];
+        if (cont->instance != INVALID)
+        {
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_STOMP) && (mtp->stomp_connection_instance == stomp_instance))
+                {
+                    mtp_send_item_t msi;
+
+                    USPREC_StompConnect_Create(cont->endpoint_id, agent_queue, &msi);
+                    DEVICE_STOMP_QueueBinaryMessage(&msi, stomp_instance, mtp->stomp_controller_queue, agent_queue, END_OF_TIME);
+                    // NOTE: No need to free any members of the msi structure, since ownership of the payload buffer has passed to STOMP MTP layer
+                }
+            }
+        }
+    }
+
+}
+
 /*********************************************************************//**
 **
 ** DEVICE_CONTROLLER_NotifyStompConnDeleted
@@ -1037,15 +1227,9 @@ int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_m
 #ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
         {
-            char raw_err_id_header[256];        // header's contents before colons have been escaped (to '\c')
-            char err_id_header[256];            // header's contents after colons have been escaped (to '\c')
             char *agent_queue = DEVICE_MTP_GetAgentStompQueue(mrt->stomp_instance);
 
-            // Form the colon escaped contents of the 'usp-err-id' header
-            USP_SNPRINTF(raw_err_id_header, sizeof(raw_err_id_header), "%s/%s", endpoint_id, usp_msg_id);
-            TEXT_UTILS_ReplaceCharInString(raw_err_id_header, ':', "\\c", err_id_header, sizeof(err_id_header));
-
-            err = DEVICE_STOMP_QueueBinaryMessage(msi, mrt->stomp_instance, mrt->stomp_dest, agent_queue, err_id_header, expiry_time);
+            err = DEVICE_STOMP_QueueBinaryMessage(msi, mrt->stomp_instance, mrt->stomp_dest, agent_queue, expiry_time);
         }
             break;
 #endif
@@ -1227,16 +1411,14 @@ void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
     // Determine the time at which we should give up retrying, or expire the message in the MTP's send queue
     retry_expiry_time = END_OF_TIME;       // default to never expire
 
-    USPREC_UspSendItem_Init(&usp_send_item);
+    // Marshal parameters to pass to MSG_HANDLER_QueueUspRecord()
+    MSG_HANDLER_UspSendItem_Init(&usp_send_item);
     usp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__NOTIFY;
     usp_send_item.msg_packed = pbuf;
     usp_send_item.msg_packed_size = pbuf_len;
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
     usp_send_item.curr_e2e_session = &controller->e2e_session;
-
-    // If using E2ESession, log the USP Message before queueing in the MTP.
-    // This is because it is hard (without reassembly) for the MTP to log it at the point of sending
-    E2E_CONTEXT_LogUspMsgIfSessionContext(req, &usp_send_item);
+    usp_send_item.usp_msg = req;
 #endif
 
     // Send the message

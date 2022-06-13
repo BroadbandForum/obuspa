@@ -562,13 +562,13 @@ int Validate_NumberOfRetainedFailedReports(dm_req_t *req, char *value)
 **************************************************************************/
 int Validate_BulkDataProtocol(dm_req_t *req, char *value)
 {
-    int err;
     bdc_protocol_t protocol;
 
-    err = DM_ACCESS_GetEnum(req->path, &protocol, bdc_protocols, NUM_ELEM(bdc_protocols));
-    if (err != USP_ERR_OK)
+    protocol = TEXT_UTILS_StringToEnum(value, bdc_protocols, NUM_ELEM(bdc_protocols));
+    if (protocol == INVALID)
     {
-        return err;
+        USP_ERR_SetMessage("%s: Invalid or unsupported protocol (%s)", __FUNCTION__, value);
+        return USP_ERR_INVALID_VALUE;
     }
 
     return USP_ERR_OK;
@@ -2571,6 +2571,8 @@ char *bulkdata_generate_json_report(bulkdata_profile_t *bp, char *report_timesta
     kv_vector_t *report_map;
     report_t *report;
     double value_as_number;
+    long long value_as_ll;
+    unsigned long long value_as_ull;
     bool value_as_bool;
     char *result;
     int i, j;
@@ -2615,6 +2617,16 @@ char *bulkdata_generate_json_report(bulkdata_profile_t *bp, char *report_timesta
             {
                 case 'S':
                     json_append_member(element, param_path, json_mkstring(param_value) );
+                    break;
+
+                case 'U':
+                    value_as_ull = strtoull(param_value, NULL, 10);
+                    json_append_member(element, kv->key, json_mkulonglong(value_as_ull) );
+                    break;
+
+                case 'L':
+                    value_as_ll = strtoll(param_value, NULL, 10);
+                    json_append_member(element, kv->key, json_mklonglong(value_as_ll) );
                     break;
 
                 case 'N':

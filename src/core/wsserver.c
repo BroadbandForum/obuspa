@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2021-2022, Broadband Forum
+ * Copyright (C) 2022, Broadband Forum
  * Copyright (C) 2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -78,7 +78,7 @@ typedef struct
 {
     double_link_t link;     // Doubly linked list pointers. These must always be first in this structure
     mtp_send_item_t item;   // Information about the content to send
-    time_t expiry_time;     // Time at which this message should be removed from the queue
+    time_t expiry_time;     // Time at which this USP record should be removed from the queue
 } wsserv_send_item_t;
 
 //------------------------------------------------------------------------------
@@ -90,6 +90,7 @@ typedef struct
 
     // State variables
     double_linked_list_t usp_record_send_queue;  // Queue of USP Records to send to this controller
+    bool disconnect_sent;           // Set if a USP Disconnect record is being sent. Causes a close after the record has been transmitted.
 
     unsigned char *rx_buf;  // Buffer used to build up the USP record as chunks are received
     int rx_buf_len;         // Current size of received USP Record in rx_buf
@@ -101,7 +102,8 @@ typedef struct
     bool send_ping;         // Set if the next LWS_CALLBACK_SERVER_WRITEABLE event should send a ping frame (rather than servicing the USP record send queue)
     int ping_count;         // Number of websocket ping frames sent without corresponding pong responses
 
-    char peer[64];         // Name of peer, either endpoint_id (if available in Sec-WebSocket-Extensions) or an IP address.
+    char peer[64];          // Name of peer, either endpoint_id (if available in Sec-WebSocket-Extensions) or an IP address.
+    bool is_peer_an_eid;    // Set if the above peer string is an endpoint_id. False if it is an IP address.
 } wsconn_t;
 
 //------------------------------------------------------------------------------
@@ -156,6 +158,7 @@ int HandleWssEvent_PingTimer(struct lws *handle);
 int HandleWssEvent_PongReceived(struct lws *handle);
 int SendWsservPing(wsconn_t *wc);
 int CloseWsservConnection(struct lws *handle, int close_status, char *fmt, ...);
+void QueueUspConnectRecord_Wsserv(wsconn_t *wc);
 
 /*********************************************************************//**
 **
@@ -402,12 +405,12 @@ exit:
 **
 ** WSSERVER_QueueBinaryMessage
 **
-** Function called to queue a message on the specified WebSocket connection
+** Function called to queue a USP record on the specified WebSocket connection
 **
 ** \param   msi - Information about the content to send. The ownership of
 **                the payload buffer is always passed to this function.
 ** \param   conn_id - handle used to lookup the connection to send the USP message to
-** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
+** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
 **
 ** \return  None
 **
@@ -501,7 +504,6 @@ mtp_status_t WSSERVER_GetMtpStatus(void)
 void WSSERVER_DisconnectEndpoint(char *endpoint_id)
 {
     wsconn_t *wc;
-    char buf[256];
     mtp_send_item_t mtp_send_item;
 
     OS_UTILS_LockMutex(&wss_access_mutex);
@@ -513,20 +515,14 @@ void WSSERVER_DisconnectEndpoint(char *endpoint_id)
         goto exit;
     }
 
-    // Disconnect the endpoint
-    USP_LOG_Info("%s: Disconnecting %s from the agent's websocket server, because the agent has connected to the endpoint's websocket server", __FUNCTION__, endpoint_id);
-    USP_SNPRINTF(buf, sizeof(buf), "Agent's websocket client has connected, so closing this connection");
-
-    MTP_EXEC_MtpSendItem_Init(&mtp_send_item);
-    mtp_send_item.pbuf = USP_STRDUP(buf);
-    mtp_send_item.pbuf_len = strlen(buf);
-    mtp_send_item.content_type = kMtpContentType_Text;
+    // Send a disconnect record, which will result in the controller connected to the websocket server being disconnected
+    USPREC_Disconnect_Create(kMtpContentType_DisconnectRecord, endpoint_id, USP_ERR_PERMISSION_DENIED,
+                             "Agent's websocket client has connected, so closing this connection", &mtp_send_item);
     WSSERVER_QueueBinaryMessage(&mtp_send_item, wc->conn_id, END_OF_TIME);
 
 exit:
     OS_UTILS_UnlockMutex(&wss_access_mutex);
 }
-
 
 /*********************************************************************//**
 **
@@ -639,7 +635,7 @@ void *WSSERVER_Main(void *args)
             wc = &ws_connections[i];
             if (wc->ws_handle != NULL)
             {
-                if ((wc->usp_record_send_queue.head != NULL) || (wanting_to_stop))
+                if ((wc->usp_record_send_queue.head != NULL) || (wanting_to_stop) || (wc->disconnect_sent))
                 {
                     err = lws_callback_on_writable(wc->ws_handle);
                     if (err != 1)
@@ -831,7 +827,7 @@ void StopWebsockServer(void)
 ** Stops the agent's websocket server, freeing all memory associated with it
 ** NOTE: It is assumed that the caller closes the associated libwebsockets ws_handle
 **
-** \param   wc - pointer to websocket client connection to free
+** \param   wc - pointer to websocket server connection to free
 **
 ** \return  None
 **
@@ -1038,6 +1034,7 @@ int HandleWssEvent_NewClient(struct lws *handle)
     wc->send_ping = false;
     wc->ping_count = 0;
     wc->role = ROLE_DEFAULT;
+    wc->disconnect_sent = false;
 
     // Assign a unique server handle for this connection
     wc->conn_id = conn_id_counter++;
@@ -1048,6 +1045,7 @@ int HandleWssEvent_NewClient(struct lws *handle)
 
     // Determine the IP address of the peer to use in debug. This will be overridden with endpoint_id if present in Sec_WebSocket_Extensions header
     // NOTE: libwebsockets insists on using a IPv4 mapped IPv6 address to represent IPv4 addresses
+    wc->is_peer_an_eid = false;
     lws_get_peer_simple(handle, wc->peer, sizeof(wc->peer));
     USP_LOG_Info("%s: %s is attempting to connect", __FUNCTION__, wc->peer);
 
@@ -1230,6 +1228,7 @@ int ValidateReceivedWsservProtocolExtension(struct lws *handle)
     wc = lws_get_opaque_user_data(handle);
     USP_ASSERT(wc != NULL);
     USP_STRNCPY(wc->peer, endpoint_id, sizeof(wc->peer));
+    wc->is_peer_an_eid = true;
 
     // NOTE: No need to validate the Sec-WebSocket-Protocol header provided by the client in the session initiation request
     // libwebsockets ensures that the list of websocket sub-protocols provided in the header contains the sub-protocol that we support
@@ -1321,6 +1320,9 @@ int HandleWssEvent_Established(struct lws *handle)
 
     USP_LOG_Info("%s: Accepted connection from %s", __FUNCTION__, wc->peer);
 
+    // Ensure a USP Connect record is sent
+    QueueUspConnectRecord_Wsserv(wc);
+
     // Set a timer to expire when it is time to send the websocket PING frame
     lws_set_timer_usecs(handle, wsserv.cur_config.keep_alive * LWS_USEC_PER_SEC);
 
@@ -1358,7 +1360,7 @@ int HandleWssEvent_Receive(struct lws *handle, unsigned char *chunk, int chunk_l
     wc->ping_count = 0;
 
     // Exit, sending a close frame if we received a text frame, instead of a binary frame
-    if (!lws_frame_is_binary(handle))
+    if (lws_frame_is_binary(handle)==false)
     {
         return CloseWsservConnection(handle, LWS_CLOSE_STATUS_INVALID_PAYLOAD, "%s: Text frame received from %s. Expecting binary frame.", __FUNCTION__, wc->peer);
     }
@@ -1403,6 +1405,7 @@ int HandleWssEvent_Receive(struct lws *handle, unsigned char *chunk, int chunk_l
     mtp_reply_to.wsclient_cont_instance = INVALID;
     mtp_reply_to.wsclient_mtp_instance = INVALID;
     mtp_reply_to.wsserv_conn_id = wc->conn_id;
+    mtp_reply_to.cont_endpoint_id = (wc->is_peer_an_eid) ? wc->peer : NULL;
     DM_EXEC_PostUspRecord(wc->rx_buf, wc->rx_buf_len, wc->role, &mtp_reply_to);
 
     // Free receive buffer
@@ -1440,6 +1443,13 @@ int HandleWssEvent_Transmit(struct lws *handle)
     wc = lws_get_opaque_user_data(handle);
     USP_ASSERT(wc != NULL);
 
+    // Exit, causing the websocket to close if a disconnect frame has just been sent
+    if (wc->disconnect_sent)
+    {
+        wc->disconnect_sent = false;    // Ensure that idf this function is called again before closing that it doesn't repeat this action
+        return CloseWsservConnection(handle, LWS_CLOSE_STATUS_POLICY_VIOLATION, "%s: Disconnect Record sent", __FUNCTION__);
+    }
+
     // Exit, sending a Ping frame, if is time to do so
     // NOTE: Its is safe to send a ping frame whilst in the middle of sending the chunks of a USP Record
     // (because each chunk is sent as a separate Binary or Continuation frame)
@@ -1461,18 +1471,6 @@ int HandleWssEvent_Transmit(struct lws *handle)
 
         return 0;
     }
-
-    // Exit if item indicates that a close frame must be sent, closing the connection
-    if (si->item.content_type == kMtpContentType_Text)
-    {
-        CloseWsservConnection(handle, LWS_CLOSE_STATUS_UNACCEPTABLE_OPCODE, "%s", si->item.pbuf);
-
-        // Free USP Record and remove the item from the queue
-        // NOTE: This must be done after the above call, because above call uses si->pbuf (which is freed by below call)
-        RemoveWsservSendItem(wc, si);
-        return -1;
-    }
-
 
     // Exit if all of the USP records in the send queue were notifications that have expired
     RemoveExpiredWsservMessages(wc);
@@ -1521,6 +1519,13 @@ int HandleWssEvent_Transmit(struct lws *handle)
     if (bytes_written < chunk_len)
     {
         return CloseWsservConnection(handle, LWS_CLOSE_STATUS_UNEXPECTED_CONDITION, "%s: lws_write wrote only %d bytes (wanted %d bytes)", __FUNCTION__, bytes_written, si->item.pbuf_len);
+    }
+
+    // If this is a disconnect record, schedule the websocket close after the disconnect record has been sent
+    // NOTE: USP Disconnect records closing an E2E session (kMtpContentType_E2E_SessTermination) do not close the connection
+    if (si->item.content_type == kMtpContentType_DisconnectRecord)
+    {
+        wc->disconnect_sent = true;
     }
 
     // Free the USP Record from the queue, if all chunks of it have been sent
@@ -1639,6 +1644,58 @@ int SendWsservPing(wsconn_t *wc)
     }
 
     return 0;
+}
+
+/*********************************************************************//**
+**
+** QueueUspConnectRecord_Wsserv
+**
+** Adds the USP connect record at the front of the queue, ensuring that there is only one connect record in the queue
+**
+** \param   wc - pointer to websocket server connection to send the connect record to
+**
+** \return  None
+**
+**************************************************************************/
+void QueueUspConnectRecord_Wsserv(wsconn_t *wc)
+{
+    wsserv_send_item_t *cur_msg;
+    wsserv_send_item_t *next_msg;
+    wsserv_send_item_t *send_item;
+    mtp_content_type_t type;
+
+    // Iterate over USP Records in the queue, removing all stale connect and disconnect records
+    // A connect or disconnect record may still be in the queue if the connection failed before the record was fully sent
+    cur_msg = (wsserv_send_item_t *) wc->usp_record_send_queue.head;
+    while (cur_msg != NULL)
+    {
+        // Save pointer to next message, as we may remove the current message
+        next_msg = (wsserv_send_item_t *) cur_msg->link.next;
+
+        // Remove current message if it is a connect or disconnect record
+        type = cur_msg->item.content_type;
+        if (IsUspConnectOrDisconnectRecord(type))
+        {
+            RemoveWsservSendItem(wc, cur_msg);
+        }
+
+        // Move to next message in the queue
+        cur_msg = next_msg;
+    }
+
+    // Exit if we don't have a endpoint_id for the controller that has connected
+    // (because we can't send a record if we don't know which controller to address it to)
+    if (wc->is_peer_an_eid == false)
+    {
+        return;
+    }
+
+    // Add the new connect record to the queue
+    send_item = USP_MALLOC(sizeof(wsserv_send_item_t));
+    USPREC_WebSocketConnect_Create(wc->peer, &send_item->item);
+    send_item->expiry_time = END_OF_TIME;
+
+    DLLIST_LinkToHead(&wc->usp_record_send_queue, send_item);
 }
 
 /*********************************************************************//**

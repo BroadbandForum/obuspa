@@ -45,9 +45,8 @@
 #include <time.h>
 #include <stdbool.h>
 
+#include "vendor_defs.h"    // for E2ESESSION_EXPERIMENTAL_USP_V_1_2
 #include "usp-msg.pb-c.h"
-
-#include "vendor_defs.h"  // for ENABLE_COAP
 
 //-----------------------------------------------------------------------------------------------
 // Enumeration of Device.LocalAgent.MTP.{i}.Status
@@ -84,9 +83,27 @@ typedef enum
 // Enumeration describing what the contents of pbuf are to MSG_HANDLER_LogMessageToSend()
 typedef enum
 {
-    kMtpContentType_UspRecord,        // Protobuf encoded USP Record
-    kMtpContentType_Text,             // Plain text
+    kMtpContentType_UspMessage,       // Protobuf encoded USP Record containing an unsegmented USP message. No session context.
+    kMtpContentType_ConnectRecord,    // A STOMP, MQTT or WebSockets USP Connect record
+    kMtpContentType_DisconnectRecord, // A USP Disconnect record that causes the MTP to disconnect (and retry)
+#ifdef E2ESESSION_EXPERIMENTAL_USP_V_1_2
+    kMtpContentType_E2E_SessTermination, // A USP Disconnect record that doesn't cause the MTP to disconnect (used to terminate an E2E session)
+    kMtpContentType_E2E_FullMessage,  // USP Record containing a full USP message in a session context
+                                      // NOTE: The reason this is differentiated from kMtpContentType_UspMessage is that this USP message is logged before sending
+    kMtpContentType_E2E_Begin,        // USP Record containing the first fragment of a segmented USP message
+    kMtpContentType_E2E_InProcess,    // USP Record containing a middle fragment of a segmented USP message
+    kMtpContentType_E2E_Complete,     // USP Record containing the last fragment of a segmented USP message
+#endif
 } mtp_content_type_t;
+
+//------------------------------------------------------------------------------
+// Macro to determine whether the content is a connect or disconnect record
+// Used to ensure there are no stale USP connect or disconnect records in the MTP's USP record message queue
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+    #define IsUspConnectOrDisconnectRecord(type)  ((type == kMtpContentType_ConnectRecord) || (type == kMtpContentType_DisconnectRecord) || (type == kMtpContentType_E2E_SessTermination))
+#else
+    #define IsUspConnectOrDisconnectRecord(type)  ((type == kMtpContentType_ConnectRecord) || (type == kMtpContentType_DisconnectRecord))
+#endif
 
 //------------------------------------------------------------------------------
 // Structure containing common elements about payload/body content to send by the MTP
@@ -94,7 +111,7 @@ typedef struct
 {
     mtp_content_type_t content_type;    // Type of content in the payload.
     Usp__Header__MsgType usp_msg_type;  // USP Message type (For log usage only)
-    uint8_t *pbuf;                      // Payload to be sent by the MTP
+    uint8_t *pbuf;                      // Payload to be sent by the MTP (USP Record)
     int pbuf_len;                       // Length of the payload
 } mtp_send_item_t;
 

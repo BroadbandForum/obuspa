@@ -63,7 +63,6 @@ int E2E_CONTEXT_E2eSessionModeToEnum(char *str);
 void E2E_CONTEXT_E2eSessionEvent(e2e_event_t event, int request, int controller);
 int E2E_CONTEXT_ValidateSessionContextRecord(UspRecord__SessionContextRecord *ctx);
 bool E2E_CONTEXT_IsToSendThroughSessionContext(e2e_session_t *e2e);
-void E2E_CONTEXT_LogUspMsgIfSessionContext(Usp__Msg *usp, usp_send_item_t *usi);
 #endif  // #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 
 #endif

@@ -32,6 +32,12 @@ typedef enum {
 	JSON_BOOL,
 	JSON_STRING,
 	JSON_NUMBER,
+#if 1
+// Copyright (C) 2022, Broadband Forum
+// Copyright (C) 2022  CommScope, Inc
+	JSON_LL_NUMBER,
+	JSON_ULL_NUMBER,
+#endif
 	JSON_ARRAY,
 	JSON_OBJECT,
 } JsonTag;
@@ -57,7 +63,15 @@ struct JsonNode
 		
 		/* JSON_NUMBER */
 		double number_;
-		
+#if 1
+// Copyright (C) 2022, Broadband Forum
+// Copyright (C) 2022  CommScope, Inc
+		/* JSON_LL_NUMBER */
+		long long ll_number_;
+
+		/* JSON_ULL_NUMBER */
+		unsigned long long ull_number_;
+#endif
 		/* JSON_ARRAY */
 		/* JSON_OBJECT */
 		struct {
@@ -96,6 +110,12 @@ JsonNode *json_mkstring(const char *s);
 JsonNode *json_mknumber(double n);
 JsonNode *json_mkarray(void);
 JsonNode *json_mkobject(void);
+#if 1
+// Copyright (C) 2022, Broadband Forum
+// Copyright (C) 2022  CommScope, Inc
+JsonNode *json_mklonglong(long long n);
+JsonNode *json_mkulonglong(unsigned long long n);
+#endif
 
 void json_append_element(JsonNode *array, JsonNode *element);
 void json_prepend_element(JsonNode *array, JsonNode *element);

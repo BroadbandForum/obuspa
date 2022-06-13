@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2016-2022  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  * Copyright (C) 2022, Snom Technology GmbH
  *
@@ -41,12 +41,10 @@
  *
  */
 
-#include "msg_handler.h"
 
 #include <string.h>
 #include <inttypes.h>  // For PRIu64
 
-#include "usp-record.pb-c.h"
 
 #include "common_defs.h"
 #include "data_model.h"
@@ -54,9 +52,12 @@
 #include "iso8601.h"
 #include "proto_trace.h"
 #include "text_utils.h"
+#include "usp-record.pb-c.h"
 #include "stomp.h"
 #include "wsclient.h"
+#include "msg_handler.h"
 #include "usp_record.h"
+
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_context.h"
 #endif
@@ -76,7 +77,7 @@ static combined_role_t cur_msg_combined_role = { ROLE_DEFAULT, ROLE_DEFAULT};
 static controller_info_t cur_msg_controller_info;
 
 //------------------------------------------------------------------------
-// Array used to convert from an enumeration to it's string representation
+// Array used to convert from the USP Message type enumeration to it's string representation
 static enum_entry_t usp_msg_types[] = {
     { USP__HEADER__MSG_TYPE__ERROR,            "ERROR"},
     { USP__HEADER__MSG_TYPE__GET,              "GET"},
@@ -100,9 +101,25 @@ static enum_entry_t usp_msg_types[] = {
 };
 
 //------------------------------------------------------------------------------
+// Array used to convert from the MTP content type enumeration to it's string representation
+static enum_entry_t mtp_content_types[] = {
+    { kMtpContentType_UspMessage,           "USP_MESSAGE" }, // Not actually used by MtpSendItemToString - the usp_msg_type[] is used instead
+    { kMtpContentType_ConnectRecord,        "USP_CONNECT_RECORD" },
+    { kMtpContentType_DisconnectRecord,     "USP_DISCONNECT_RECORD" },
+#ifdef E2ESESSION_EXPERIMENTAL_USP_V_1_2
+    { kMtpContentType_E2E_SessTermination,  "E2E_DISCONNECT_RECORD" },
+    { kMtpContentType_E2E_FullMessage,      "E2E_FULL_MESSAGE" },
+    { kMtpContentType_E2E_Begin,            "E2E_BEGIN" },
+    { kMtpContentType_E2E_InProcess,        "E2E_INPROCESS" },
+    { kMtpContentType_E2E_Complete,         "E2E_COMPLETE" },
+#endif
+};
+
+//------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
 int ValidateUspRecord(UspRecord__Record *rec);
+char *MtpSendItemToString(mtp_send_item_t *msi);
 void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_protocol_t protocol);
 int QueueUspNoSessionRecord(usp_send_item_t *usi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time);
 
@@ -131,6 +148,13 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_rol
     {
         USP_ERR_SetMessage("%s: usp_record__record__unpack failed. Ignoring USP Record", __FUNCTION__);
         return USP_ERR_RECORD_NOT_PARSED;
+    }
+
+    // Save off the controller sending this message into the mtp_reply_to_t structure, if not already
+    // set by MTP (websockets can get this from Sec-WebSocket_extensions header))
+    if (mrt->cont_endpoint_id == NULL)
+    {
+        mrt->cont_endpoint_id = USP_STRDUP(rec->from_id);
     }
 
 #ifdef ENABLE_WEBSOCKETS
@@ -247,125 +271,59 @@ void MSG_HANDLER_LogMessageToSend(mtp_send_item_t *msi,
                                   unsigned char *stomp_header)
 {
     char buf[MAX_ISO8601_LEN];
-    Usp__Msg *msg = NULL;
-    UspRecord__Record *rec = NULL;
-    ProtobufCBinaryData *payload = NULL;
+    UspRecord__Record *rec;
+    ProtobufCBinaryData *payload;
+    Usp__Msg *msg;
     USP_ASSERT(msi != NULL);
 
     // Log the message
     USP_PROTOCOL("\n");
     USP_LOG_Info("%s sending at time %s, to host %s over %s",
-                MSG_HANDLER_UspMsgTypeToString(msi->usp_msg_type),
+                MtpSendItemToString(msi),
                 iso8601_cur_time(buf, sizeof(buf)),
                 host,
                 DEVICE_MTP_EnumToString(protocol) );
 
-    // Exit if protocol trace is not enabled
-    if (enable_protocol_trace == false)
+    // Print STOMP header (if message is being sent out on STOMP)
+    if ((enable_protocol_trace) && (stomp_header != NULL))
     {
-        return;
+        USP_PROTOCOL("%s", stomp_header);
     }
 
-    // Exit if message is not a USP Record message.
-    // Printing out the buffer as plaintext.
-    if (msi->content_type != kMtpContentType_UspRecord)
-    {
-        // Print STOMP header (if message is being sent out on STOMP)
-        if (stomp_header != NULL)
-        {
-            USP_PROTOCOL("%s", stomp_header);
-        }
-
-        USP_PROTOCOL("%s\n", msi->pbuf);
-        return;
-    }
-
-    // Exit if unable to unpack the USP record
+    // Unpack the USP record and log it
     rec = usp_record__record__unpack(pbuf_allocator, msi->pbuf_len, msi->pbuf);
-    if (rec == NULL)
-    {
-        USP_ERR_SetMessage("%s(%d): usp_record__record__unpack failed", __FUNCTION__, __LINE__);
-        return;
-    }
+    USP_ASSERT(rec != NULL);
+    PROTO_TRACE_ProtobufMessage(&rec->base);
 
-    if (rec->record_type_case == USP_RECORD__RECORD__RECORD_TYPE_NO_SESSION_CONTEXT)
-    {
-        // Exit if no USP message was contained in this type of record
-        // NOTE: We should never try sending a message with a blank USP message, so this check is just for safety
-        UspRecord__NoSessionContextRecord *ctx = rec->no_session_context;
-        if ((ctx == NULL) || (ctx->payload.len == 0) || (ctx->payload.data == NULL))
-        {
-            USP_ERR_SetMessage("%s(%d): Unpacked NoSessionContextRecord was incorrect", __FUNCTION__, __LINE__);
-            goto exit;
-        }
-
-        if (enable_protocol_trace)
-        {
-            payload = &(ctx->payload);
-        }
-    }
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-    else if (rec->record_type_case == USP_RECORD__RECORD__RECORD_TYPE_SESSION_CONTEXT)
+    if (rec->record_type_case == USP_RECORD__RECORD__RECORD_TYPE_SESSION_CONTEXT)
     {
         UspRecord__SessionContextRecord *ctx = rec->session_context;
-        if (ctx == NULL)
-        {
-            USP_ERR_SetMessage("%s(%d): Unpacked SessionContextRecord was incorrect", __FUNCTION__, __LINE__);
-            goto exit;
-        }
-
+        USP_ASSERT(ctx != NULL)
         USP_LOG_Info("within E2ESession Record(session_id=%"PRIu64", sequence_id=%"PRIu64", state=%s, n_payload=%zu)",
                      rec->session_context->session_id,
                      rec->session_context->sequence_id,
                      E2E_CONTEXT_SarStateToString(ctx->payload_sar_state),
                      rec->session_context->n_payload);
-
-        // The USP Message sent through E2ESession is not printed here,
-        // because already done in MSG_HANDLER_QueueMessage();
+        // NOTE: The USP Message sent through E2ESession is not printed here, because already done in E2E_CONTEXT_QueueUspSessionRecord
     }
 #endif
-    else if (rec->record_type_case == USP_RECORD__RECORD__RECORD_TYPE_DISCONNECT)
-    {
-        UspRecord__DisconnectRecord *disc = rec->disconnect;
-        if ((disc == NULL) || (disc->reason_code == 0) || (disc->reason == NULL))
-        {
-            USP_ERR_SetMessage("%s(%d): Unpacked DisconnectRecord was incorrect", __FUNCTION__, __LINE__);
-            goto exit;
-        }
-    }
-    else
-    {
-        USP_ERR_SetMessage("%s(%d): USP Record type was unexpected (type: %d)", __FUNCTION__, __LINE__, rec->record_type_case);
-        goto exit;
-    }
 
-    // If printable, unpack the contained USP Message.
-    if (payload != NULL)
+    // Unpack the encapsulated USP Message and log it (if not empty)
+    if (rec->record_type_case == USP_RECORD__RECORD__RECORD_TYPE_NO_SESSION_CONTEXT)
     {
-        // Unpack the encapsulated USP message into a protobuf structure
-        msg = usp__msg__unpack(pbuf_allocator, payload->len, payload->data);
-        if (msg == NULL)
+        USP_ASSERT(rec->no_session_context != NULL);
+        payload = &rec->no_session_context->payload;
+        if ((payload != NULL) && (payload->data != NULL) && (payload->len != 0))
         {
-            USP_ERR_SetMessage("%s(%d): usp__msg__unpack failed", __FUNCTION__, __LINE__);
-            goto exit;
+            msg = usp__msg__unpack(pbuf_allocator, payload->len, payload->data);
+            USP_ASSERT(msg != NULL);
+            PROTO_TRACE_ProtobufMessage(&msg->base);
+            usp__msg__free_unpacked(msg, pbuf_allocator);
         }
     }
 
-    USP_LOG_Info("to_id=%s\nfrom_id=%s", rec->to_id, rec->from_id);
-
-    // Print STOMP header (if message is being sent out on STOMP)
-    if (stomp_header != NULL)
-    {
-        USP_PROTOCOL("%s", stomp_header);  // STOMP Header
-    }
-
-    // Print USP Record header in human readable form
-    PROTO_TRACE_ProtobufMessage(&rec->base);
-    if (msg) { PROTO_TRACE_ProtobufMessage(&msg->base); }
-
-exit:
-    // Free the protobuf structures
-    usp__msg__free_unpacked(msg, pbuf_allocator);
+    // Free the USP record protobuf structures
     usp_record__record__free_unpacked(rec, pbuf_allocator);
 }
 
@@ -409,6 +367,9 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *m
 {
     int err;
     usp_send_item_t usp_send_item;
+    int pbuf_len;
+    unsigned char *pbuf;
+    int size;
 
     // Exit if parameters not specified
     if ((endpoint_id == NULL) || (usp == NULL))
@@ -418,25 +379,19 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *m
     }
 
     // Serialize the USP message into a buffer
-    {
-        const int pbuf_len = usp__msg__get_packed_size(usp);
-        unsigned char *pbuf = USP_MALLOC(pbuf_len);
-        const int size = usp__msg__pack(usp, pbuf);
-        USP_ASSERT(size == pbuf_len);          // If these are not equal, then we may have had a buffer overrun, so terminate
+    pbuf_len = usp__msg__get_packed_size(usp);
+    pbuf = USP_MALLOC(pbuf_len);
+    size = usp__msg__pack(usp, pbuf);
+    USP_ASSERT(size == pbuf_len);          // If these are not equal, then we may have had a buffer overrun, so terminate
 
-        USPREC_UspSendItem_Init(&usp_send_item);
-        usp_send_item.usp_msg_type = usp->header->msg_type;
-        usp_send_item.msg_packed = pbuf;
-        usp_send_item.msg_packed_size = pbuf_len;
+    // Marshal parameters to pass to MSG_HANDLER_QueueUspRecord()
+    MSG_HANDLER_UspSendItem_Init(&usp_send_item);
+    usp_send_item.usp_msg_type = usp->header->msg_type;
+    usp_send_item.msg_packed = pbuf;
+    usp_send_item.msg_packed_size = pbuf_len;
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-        usp_send_item.curr_e2e_session = DEVICE_CONTROLLER_FindE2ESessionByInstance(MSG_HANDLER_GetMsgControllerInstance());;
-#endif
-    }
-
-#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-    // If using E2ESession, log the USP Message before queueing in the MTP.
-    // This is because it is hard (without reassembly) for the MTP to log it at the point of sending
-    E2E_CONTEXT_LogUspMsgIfSessionContext(usp, &usp_send_item);
+    usp_send_item.curr_e2e_session = DEVICE_CONTROLLER_FindE2ESessionByInstance(MSG_HANDLER_GetMsgControllerInstance());;
+    usp_send_item.usp_msg = usp;
 #endif
 
     // Encapsulate this message in a USP record, then queue the record, to send to a controller
@@ -460,7 +415,7 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_reply_to_t *m
 ** \param   endpoint_id - controller to send the message to
 ** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
 ** \param   mrt - details of where this USP response message should be sent
-** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
+** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -474,8 +429,6 @@ int MSG_HANDLER_QueueUspRecord(usp_send_item_t *usi, char *endpoint_id, char *us
     {
         return USP_ERR_OK;
     }
-
-    USP_LOG_Debug("%s: Length of the USP Message to send: %d bytes", __FUNCTION__, usi->msg_packed_size);
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
     if (E2E_CONTEXT_IsToSendThroughSessionContext(usi->curr_e2e_session))
@@ -498,24 +451,23 @@ int MSG_HANDLER_QueueUspRecord(usp_send_item_t *usi, char *endpoint_id, char *us
 ** Serializes a protobuf USP DisconnectRecord structure to a buffer,
 ** then queues it, to be sent to a controller.
 **
-** \param   endpoint_id - controller to send the record to
+** \param   content_type - indicates whether the disconnect record is to close an E2E session or not
+** \param   cont_endpoint_id - controller to send the record to
 ** \param   reason_code - code of the message number to be printed in the Disconnect record
 ** \param   reason_str - pointer to the message to be printed in the Disconnect record.
-**                       If NULL, the message related to reason_code is used instead.
 ** \param   mrt - details of where this USP record should be sent
 ** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MSG_HANDLER_QueueUspDisconnectRecord(char *endpoint_id, uint32_t reason_code, char* reason_str, mtp_reply_to_t *mrt, time_t expiry_time)
+int MSG_HANDLER_QueueUspDisconnectRecord(mtp_content_type_t content_type, char *cont_endpoint_id, uint32_t reason_code, char* reason_str, mtp_reply_to_t *mrt, time_t expiry_time)
 {
     mtp_send_item_t mtp_send_item;
-    UspRecord__Record *rec = NULL;
     int err = USP_ERR_OK;
 
     // Exit if no controller setup to send the message to
-    if (endpoint_id == NULL)
+    if (cont_endpoint_id == NULL)
     {
         return USP_ERR_OK;
     }
@@ -523,34 +475,15 @@ int MSG_HANDLER_QueueUspDisconnectRecord(char *endpoint_id, uint32_t reason_code
     USP_LOG_Debug("%s: USP Disconnect to send with reason %u", __FUNCTION__, reason_code);
 
     // Fill in the USP Record structure
-    rec = USPREC_Disconnect_Create(reason_code, reason_str);
-    rec->to_id = USP_STRDUP(endpoint_id);
-    rec->from_id = USP_STRDUP(DEVICE_LOCAL_AGENT_GetEndpointID());
-
-    // Serialize the protobuf record structure into a buffer
-    {
-        const int len = usp_record__record__get_packed_size(rec);
-        uint8_t *buf = USP_MALLOC(len);
-        const int size = usp_record__record__pack(rec, buf);
-        USP_ASSERT(size == len);  // If these are not equal, then we may have had a buffer overrun, so terminate
-
-        // Prepare the MTP item information now it is serialized.
-        MTP_EXEC_MtpSendItem_Init(&mtp_send_item);
-        mtp_send_item.content_type = kMtpContentType_UspRecord;
-        mtp_send_item.pbuf = buf;  // Ownership of the serialized USP Record passes to the queue, unless an error is returned.
-        mtp_send_item.pbuf_len = len;
-    }
+    USPREC_Disconnect_Create(content_type, cont_endpoint_id, reason_code, reason_str, &mtp_send_item);
 
     // Exit if unable to queue the message, to send to a controller
-    // NOTE: If successful, ownership of the buffer passes to the MTP layer. If not successful, buffer is freed here
-    err = DEVICE_CONTROLLER_QueueBinaryMessage(&mtp_send_item, endpoint_id, NULL, mrt, expiry_time);
+    // NOTE: If successful, ownership of the USP record buffer passes to the MTP layer. If not successful, buffer is freed here
+    err = DEVICE_CONTROLLER_QueueBinaryMessage(&mtp_send_item, cont_endpoint_id, NULL, mrt, expiry_time);
     if (err != USP_ERR_OK)
     {
         USP_FREE(mtp_send_item.pbuf);
     }
-
-    // Free the unpacked USP Record
-    usp_record__record__free_unpacked(rec, pbuf_allocator);
 
     return err;
 }
@@ -657,9 +590,35 @@ char *MSG_HANDLER_GetMsgControllerEndpointId(void)
 **************************************************************************/
 char *MSG_HANDLER_UspMsgTypeToString(int msg_type)
 {
-    // When the USP Record does not encapsulate a USP Message content
-    if (msg_type == INT_MAX) { return "USP Record"; }
-    else return TEXT_UTILS_EnumToString(msg_type, usp_msg_types, NUM_ELEM(usp_msg_types));
+    // Exit if this is an E2E session initiation USP Record with empty payload
+    if (msg_type == INVALID_USP_MSG_TYPE)
+    {
+        return "USP Record";
+    }
+
+    return TEXT_UTILS_EnumToString(msg_type, usp_msg_types, NUM_ELEM(usp_msg_types));
+}
+
+/*********************************************************************//**
+**
+** MSG_HANDLER_UspSendItem_Init
+**
+** Initialises the usp_send_item_t struct with default values
+**
+** \param   usi - struct to initialize
+**
+** \return  None
+**
+**************************************************************************/
+void MSG_HANDLER_UspSendItem_Init(usp_send_item_t *usi)
+{
+    usi->usp_msg_type = INVALID_USP_MSG_TYPE;
+    usi->msg_packed = NULL;
+    usi->msg_packed_size = 0;
+#if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+    usi->curr_e2e_session = NULL;
+    usi->usp_msg = NULL;
+#endif
 }
 
 /*********************************************************************//**
@@ -853,6 +812,30 @@ int ValidateUspRecord(UspRecord__Record *rec)
 
 /*********************************************************************//**
 **
+** MtpSendItemToString
+**
+** Returns a string summarizing the contents of the send item
+**
+** \param   msi - Information about the content to send. The ownership of
+**                the payload buffer is not passed to this function and stays with the caller.
+**
+** \return  pointer to string summarizing the contents of the send item
+**
+**************************************************************************/
+char *MtpSendItemToString(mtp_send_item_t *msi)
+{
+    // Exit if send item contains a full USP message, returning the USP message type
+    if (msi->content_type == kMtpContentType_UspMessage)
+    {
+        return MSG_HANDLER_UspMsgTypeToString(msi->usp_msg_type);
+    }
+
+    // Otherwise return the type of content in the send item
+    return TEXT_UTILS_EnumToString(msi->content_type, mtp_content_types, NUM_ELEM(mtp_content_types));
+}
+
+/*********************************************************************//**
+**
 ** CacheControllerRoleForCurMsg
 **
 ** Retrieves the role to use for the specified controller, and caches it locally, so that
@@ -932,7 +915,7 @@ void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_pro
 ** \param   endpoint_id - controller to send the message to
 ** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
 ** \param   mrt - details of where this USP response message should be sent
-** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
+** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -970,7 +953,7 @@ int QueueUspNoSessionRecord(usp_send_item_t *usi, char *endpoint_id, char *usp_m
         // Prepare the MTP item information now it is serialized.
         MTP_EXEC_MtpSendItem_Init(&mtp_send_item);
         mtp_send_item.usp_msg_type = usi->usp_msg_type;
-        mtp_send_item.content_type = kMtpContentType_UspRecord;
+        mtp_send_item.content_type = kMtpContentType_UspMessage;
         mtp_send_item.pbuf = buf;  // Ownership of the serialized USP Record passes to the queue, unless an error is returned.
         mtp_send_item.pbuf_len = len;
     }

@@ -1,5 +1,19 @@
 # OB-USP-AGENT Changelog since Release 5.0.0
 
+## 2022-06-13
+
+### Added
+- USP 1.2 Connect and Disconnect record support
+- WebSockets example factory reset file
+
+### Fixed
+- 64 bit signed and unsigned integer parameter values are now represented with full precision in JSON encoded data (for Bulk Data Collection reports and Boot! event). To enable the old behavior (which represented them as floating point doubles) comment out the REPRESENT_JSON_NUMBERS_WITH_FULL_PRECISION define in vendor_defs.h
+- Bulk Data Collection Protocol parameter is validating against old value, not new value
+- Empty Subscription ID should not be allowed
+
+### Modified
+- MQTT function header comments
+
 ## 2022-05-20
 ### Added
 - Get request and response upgraded to USP 1.2 spec (max_depth field)

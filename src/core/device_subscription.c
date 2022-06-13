@@ -38,16 +38,13 @@
  * Implements the Device.LocalAgent.Subscription data model object
  *
  */
-#include "device.h"
-
 #include <time.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "json.h"
-
 #include "common_defs.h"
+#include "device.h"
 #include "dm_trans.h"
 #include "usp_api.h"
 #include "dm_access.h"
@@ -60,7 +57,9 @@
 #include "subs_retry.h"
 #include "text_utils.h"
 #include "expr_vector.h"
+#include "json.h"
 #include "group_get_vector.h"
+
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_context.h"
 #endif
@@ -1181,6 +1180,13 @@ int Validate_SubsID(dm_req_t *req, char *value)
     subs_t *sub;
     int controller_instance;
 
+    // Exit if no value set for subscription ID (i.e. set to an empty string)
+    if (*value == '\0')
+    {
+        USP_ERR_SetMessage("%s: Subscription ID must be set to a non-empty string", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
     // Exit if unable to get the recipient for this entry in the subscription table
     USP_SNPRINTF(path, sizeof(path), "%s.%d.Recipient", device_subs_root, inst1);
     err = DATA_MODEL_GetParameterValue(path, controller_path, sizeof(controller_path), 0);
@@ -2073,6 +2079,8 @@ char *SerializeToJSONObject(kv_vector_t *param_values)
 {
     JsonNode *top;          // top of report
     double value_as_number;
+    long long value_as_ll;
+    unsigned long long value_as_ull;
     bool value_as_bool;
     int i;
     kv_pair_t *kv;
@@ -2091,6 +2099,16 @@ char *SerializeToJSONObject(kv_vector_t *param_values)
         {
             case 'S':
                 json_append_member(top, kv->key, json_mkstring(kv->value) );
+                break;
+
+            case 'U':
+                value_as_ull = strtoull(kv->value, NULL, 10);
+                json_append_member(top, kv->key, json_mkulonglong(value_as_ull) );
+                break;
+
+            case 'L':
+                value_as_ll = strtoll(kv->value, NULL, 10);
+                json_append_member(top, kv->key, json_mklonglong(value_as_ll) );
                 break;
 
             case 'N':
@@ -2207,16 +2225,14 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
         retry_expiry_time = cur_time + sub->retry_expiry_period;
     }
 
-    USPREC_UspSendItem_Init(&usp_send_item);
+    // Marshal parameters to pass to MSG_HANDLER_QueueUspRecord()
+    MSG_HANDLER_UspSendItem_Init(&usp_send_item);
     usp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__NOTIFY;
     usp_send_item.msg_packed = pbuf;
     usp_send_item.msg_packed_size = pbuf_len;
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
     usp_send_item.curr_e2e_session = DEVICE_CONTROLLER_FindE2ESessionByInstance(sub->cont_instance);
-
-    // If using E2ESession, log the USP Message before queueing in the MTP.
-    // This is because it is hard (without reassembly) for the MTP to log it at the point of sending
-    E2E_CONTEXT_LogUspMsgIfSessionContext(req, &usp_send_item);
+    usp_send_item.usp_msg = req;
 #endif
 
     // Send the message

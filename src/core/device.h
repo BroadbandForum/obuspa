@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2016-2022  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -45,11 +45,13 @@
 #include <openssl/ssl.h>
 #include <curl/curl.h>
 
+#include "vendor_defs.h"  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
 #include "kv_vector.h"
 #include "usp_api.h"
 #include "subs_vector.h"
 #include "mtp_exec.h"
 #include "mqtt.h"
+
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_defs.h"
 #endif
@@ -98,29 +100,31 @@ typedef struct
 {
     bool is_reply_to_specified; // Set if reply_to was specified in the received MTP frame
     mtp_protocol_t protocol;    // Protocol on which the USP message was received
+    char *cont_endpoint_id;     // endpoint_id of the controller which sent this USP message
+                                // NOTE: For websockets, this field is filled in by the MTP from the received Sec-WebSocket-Extensions header
+                                // For all other MTPs, the message handler fills in this field. All other fields in this structure are filled in by the MTP
 
-    // Following member variables only set if reply_to was specified and USP message was received over STOMP
-    char *stomp_dest;
+    // Following member variables only set if USP message was received over STOMP
     int stomp_instance;
-    char *stomp_err_id;         // if the USP record or USP message are formed incorrectly, this is used to identify the STOMP frame that was in error to the controller
+    char *stomp_dest;           // only set if reply_to was specified in the received STOMP frame
 
-    // Following member variables only set if reply_to was specified and USP message was received over MQTT
-    char *mqtt_topic;
+    // Following member variables only set if USP message was received over MQTT
     int mqtt_instance;
+    char *mqtt_topic;           // only set if reply_to was specified in the received MQTT packet
 
 
-    // Following member variables only set if reply_to was specified and USP message was received over CoAP
+    // Following member variables only set if USP message was received over CoAP
     char *coap_host;                    // Percent encoded hostname
     int coap_port;
     char *coap_resource;                // Percent encoded resource name
     bool coap_encryption;
     bool coap_reset_session_hint;       // Set if an existing DTLS session with this host should be reset.
                                         // If we know that the USP request came in on a new DTLS session, then it is likely
-                                        // that the USP response must be sent back on a new DTLS session also. Wihout this,
+                                        // that the USP response must be sent back on a new DTLS session also. Without this,
                                         // the CoAP retry mechanism will cause the DTLS session to restart, but it is a while
                                         // before the retry is triggered, so this hint speeds up communications
 
-    // Following member variables only set if reply_to was specified and USP message was received over Websockets
+    // Following member variables only set if USP message was received over Websockets
     int wsclient_cont_instance;         // Controller instance number in Device.LocalAgent.Controller.{i}
     int wsclient_mtp_instance;          // MTP instance number in Device.LocalAgent.Controller.{i}.MTP.{i}
     int wsserv_conn_id;                 // If USP record was received by agent's websockets server, then this uniquely identifies the connection.
@@ -154,6 +158,7 @@ void DEVICE_CONTROLLER_Stop(void);
 int DEVICE_CONTROLLER_FindInstanceByEndpointId(char *endpoint_id);
 int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mtp_reply_to, time_t expiry_time);
 char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance);
+char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_reply_to_t *mrt);
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByInstance(int instance);
 e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByEndpointId(char *endpoint_id);
@@ -162,6 +167,8 @@ int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_ro
 int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_role_t *combined_role);
 void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role);
 int DEVICE_CONTROLLER_GetSubsRetryParams(char *endpoint_id, unsigned *min_wait_interval, unsigned *interval_multiplier);
+void DEVICE_CONTROLLER_QueueMqttConnectRecord(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic);
+void DEVICE_CONTROLLER_QueueStompConnectRecord(int stomp_instance, char *agent_queue);
 void DEVICE_CONTROLLER_NotifyStompConnDeleted(int stomp_instance);
 int DEVICE_MTP_Init(void);
 int DEVICE_MTP_Start(void);
@@ -175,7 +182,7 @@ int DEVICE_STOMP_Init(void);
 int DEVICE_STOMP_Start(void);
 void DEVICE_STOMP_Stop(void);
 int DEVICE_STOMP_StartAllConnections(void);
-int DEVICE_STOMP_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *controller_queue, char *agent_queue, char *err_id_header, time_t expiry_time);
+int DEVICE_STOMP_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *controller_queue, char *agent_queue, time_t expiry_time);
 void DEVICE_STOMP_ScheduleReconnect(int instance);
 mtp_status_t DEVICE_STOMP_GetMtpStatus(int instance);
 int DEVICE_STOMP_CountEnabledConnections(void);

@@ -188,6 +188,13 @@
 #define BULKDATA_TOTAL_TIMEOUT   60   // Total timeout (in seconds) to connect and send to a bulk data collection server
                                       // BULKDATA_TOTAL_TIMEOUT includes BULKDATA_CONNECT_TIMEOUT, so should be larger than it.
 
+//-----------------------------------------------------------------------------------------
+// Uncomment the following define to ensure that DM_LONG and DM_ULONG values are represented with full precision
+// in JSON formatted data (e.g. Bulk Data Collection reports and USP Boot! event)
+// If this if undefined, they are represented as floating point doubles, with some loss of precision
+#define REPRESENT_JSON_NUMBERS_WITH_FULL_PRECISION
+
+//-----------------------------------------------------------------------------------------
 // Uncomment the following define to include the End-to-End Session context in OB-USP-A
 // The current E2E Session Context support is partial and lot of cases are not fully implemented yet.
 //#define E2ESESSION_EXPERIMENTAL_USP_V_1_2

@@ -60,6 +60,7 @@
 #include "dm_trans.h"
 #include "nu_ipaddr.h"
 #include "stomp.h"
+
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_context.h"
 #endif
@@ -134,18 +135,21 @@ typedef struct
     mtp_reply_to_t mtp_reply_to;    // destination to send the USP message response to
 } process_usp_record_msg_t;
 
-// Notify controller trust role for all controllers connected to the specified STOMP connection
+// Notify controller trust role for all controllers connected to the specified STOMP connection, and send connect records to them
 typedef struct
 {
     int stomp_instance;
+    char *agent_queue;
     ctrust_role_t role;
 } stomp_complete_msg_t;
 
-// Notify controller trust role for all controllers connected to the specified MQTT client
+// Notify controller trust role for all controllers connected to the specified MQTT client, and send connect records to them
 typedef struct
 {
     int mqtt_instance;
     ctrust_role_t role;
+    mqtt_protocolver_t version;
+    char *agent_topic;
 } mqtt_complete_msg_t;
 
 
@@ -591,9 +595,9 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role
     pur->role = role;
     pur->mtp_reply_to.protocol = mrt->protocol;
     pur->mtp_reply_to.is_reply_to_specified = mrt->is_reply_to_specified;
+    pur->mtp_reply_to.cont_endpoint_id = USP_STRDUP(mrt->cont_endpoint_id);  // NOTE: Only filled in for WebSockets MTPs. Other MTPs fill in later after parsing the USP Record
     pur->mtp_reply_to.stomp_dest = USP_STRDUP(mrt->stomp_dest);
     pur->mtp_reply_to.stomp_instance = mrt->stomp_instance;
-    pur->mtp_reply_to.stomp_err_id = USP_STRDUP(mrt->stomp_err_id);
     pur->mtp_reply_to.coap_host = USP_STRDUP(mrt->coap_host);
     pur->mtp_reply_to.coap_port = mrt->coap_port;
     pur->mtp_reply_to.coap_resource = USP_STRDUP(mrt->coap_resource);
@@ -626,12 +630,14 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role
 ** Note: Restarting of async operations are also held up, because we want them to occur after the Boot! event
 **
 ** \param   stomp_instance - instance number of STOMP connection in Device.STOMP.Connection.{i}
+** \param   agent_queue - STOMP destination which the agent has actually subscribed to
+**                        NOTE: This may have been set by Device.LocalAgent.MTP.{i}.STOMP.Destination, or it may have been set by the subscribe-dest STOMP header in the CONNECTED frame
 ** \param   role - Role to use for controllers connected to the specified STOMP connection
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role)
+void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, ctrust_role_t role)
 {
     dm_exec_msg_t  msg;
     stomp_complete_msg_t *scm;
@@ -649,6 +655,7 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role)
     msg.type = kDmExecMsg_StompHandshakeComplete;
     scm = &msg.params.stomp_complete;
     scm->stomp_instance = stomp_instance;
+    scm->agent_queue = USP_STRDUP(agent_queue);
     scm->role = role;
 
     // Send the message
@@ -671,13 +678,15 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, ctrust_role_t role)
 ** trust role associated with each controller is known (otherwise they would use the wrong role when getting data)
 ** Note: Restarting of async operations are also held up, because we want them to occur after the Boot! event
 **
-** \param   stomp_instance - instance number of STOMP connection in Device.STOMP.Connection.{i}
+** \param   mqtt_instance - instance number of connection in Device.MQTT.Client.{i}
+** \param   version - MQTT version in use on the connection
+** \param   agent_topic - MQTT topic that the agent actually subscribed to
 ** \param   role - Role to use for controllers connected to the specified STOMP connection
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, ctrust_role_t role)
+void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, ctrust_role_t role)
 {
     dm_exec_msg_t  msg;
     mqtt_complete_msg_t *mcm;
@@ -695,6 +704,8 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, ctrust_role_t role)
     msg.type = kDmExecMsg_MqttHandshakeComplete;
     mcm = &msg.params.mqtt_complete;
     mcm->mqtt_instance = mqtt_instance;
+    mcm->version = version;
+    mcm->agent_topic = USP_STRDUP(agent_topic);
     mcm->role = role;
 
     // Send the message
@@ -1097,10 +1108,10 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             // Free all arguments passed in this message
             USP_FREE(pur->pbuf);
             USP_SAFE_FREE(mrt->stomp_dest);
-            USP_SAFE_FREE(mrt->stomp_err_id);
             USP_SAFE_FREE(mrt->coap_host);
             USP_SAFE_FREE(mrt->coap_resource);
             USP_SAFE_FREE(mrt->mqtt_topic);
+            USP_SAFE_FREE(mrt->cont_endpoint_id);
             break;
 
 #ifndef DISABLE_STOMP
@@ -1108,8 +1119,13 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         {
             stomp_complete_msg_t *scm;
             scm = &msg.params.stomp_complete;
+
+            DEVICE_CONTROLLER_QueueStompConnectRecord(scm->stomp_instance, scm->agent_queue);
             DEVICE_CONTROLLER_SetRolesFromStomp(scm->stomp_instance, scm->role);
             DM_EXEC_EnableNotifications();
+
+            // Free all arguments passed in this message
+            USP_SAFE_FREE(scm->agent_queue);
         }
             break;
 #endif
@@ -1119,8 +1135,12 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         {
             mqtt_complete_msg_t *mcm;
             mcm = &msg.params.mqtt_complete;
+            DEVICE_CONTROLLER_QueueMqttConnectRecord(mcm->mqtt_instance, mcm->version, mcm->agent_topic);
             DEVICE_CONTROLLER_SetRolesFromMqtt(mcm->mqtt_instance, mcm->role);
             DM_EXEC_EnableNotifications();
+
+            // Free all arguments passed in this message
+            USP_SAFE_FREE(mcm->agent_topic);
         }
             break;
 #endif
@@ -1311,19 +1331,22 @@ void DM_EXEC_HandleScheduledExit(void)
 **
 ** ProcessBinaryUspRecord
 **
-** Process a USP record, potentially sending back a 'usp-err-id' STOMP frame if failed to parse the USP record
+** Process a USP record, potentially sending back a USP disconnect record if failed to parse the USP record
+** NOTE: Ownership of all input arguments and members stays with the caller
 **
 ** \param   pbuf - pointer to buffer containing protobuf encoded USP record
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   role - Role allowed for this message
 ** \param   mrt - details of where response to this USP message should be sent
 **
-** \return  None - Errors are handled by either sending back a 'usp-err-id' frame (for STOMP MTP) or by ignoring the USP record (for CoAP MTP)
+** \return  None
 **
 **************************************************************************/
 void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt)
 {
     int err;
+    char *err_msg;
+    char *cont_endpoint_id;
 
     // Exit if handled the USP record successfully
     err = MSG_HANDLER_HandleBinaryRecord(pbuf, pbuf_len, role, mrt);
@@ -1333,93 +1356,20 @@ void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t rol
     }
 
     // If the code gets here, there was a USP parsing error
-    // Handle the error differently, based on each protocol
-    switch(mrt->protocol)
+    // Determine the endpoint_id of the controller, if none determined so far
+    cont_endpoint_id = mrt->cont_endpoint_id;
+    if ((cont_endpoint_id == NULL) || (*cont_endpoint_id == '\0'))
     {
-#ifndef DISABLE_STOMP
-        case kMtpProtocol_STOMP:
+        // Exit if unable to determine which controller sent this USP Record.
+        // We can't address a USP Disconnect record in this case, so just ignore the bad packet
+        cont_endpoint_id = DEVICE_CONTROLLER_FindEndpointByMTP(mrt);
+        if ((cont_endpoint_id == NULL) || (*cont_endpoint_id == '\0'))
         {
-            char *agent_queue;
-            char *buf;
-            int len;
-            char *err_msg;
-            mtp_send_item_t mtp_send_item;
-
-            // Exit if the controller did not send a 'usp-err-id' STOMP header to identify this broken USP record
-            // (We can't send back a response unless they did)
-            if ((mrt->stomp_err_id == NULL) || (mrt->stomp_err_id[0] == '\0'))
-            {
-                break;
-            }
-
-            // Form the payload of the 'usp-err-id' STOMP frame
-            #define MAX_ERR_ID_PAYLOAD_LEN   (USP_ERR_MAXLEN+32)  // Plus 32 to include "err_code:" and "err_msg:" headers and trailing NULL
-            buf = USP_MALLOC(MAX_ERR_ID_PAYLOAD_LEN);
-            err_msg = USP_ERR_GetMessage();
-            len = USP_SNPRINTF(buf, MAX_ERR_ID_PAYLOAD_LEN, "err_code:%d\nerr_msg:%s", err, err_msg);
-
-            MTP_EXEC_MtpSendItem_Init(&mtp_send_item);
-            mtp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;
-            mtp_send_item.pbuf = (unsigned char *)buf;
-            mtp_send_item.pbuf_len = len;
-            mtp_send_item.content_type = kMtpContentType_Text;
-
-            // Send a 'usp-err-id' STOMP frame
-            // NOTE: The trailing NULL in the pbuf contents is not part of the final STOMP frame but is necessary for printing out the pbuf contents in MSG_HANDLER_LogMessageToSend
-            agent_queue = DEVICE_MTP_GetAgentStompQueue(mrt->stomp_instance);
-
-            err = STOMP_QueueBinaryMessage(&mtp_send_item, mrt->stomp_instance, mrt->stomp_dest, agent_queue, mrt->stomp_err_id, END_OF_TIME);
-            if (err != USP_ERR_OK)
-            {
-                USP_FREE(buf);  // Free the payload, if ownership did not pass to STOMP MTP
-            }
+            return;
         }
-            break;
-#endif
+    }
 
-#ifdef ENABLE_COAP
-        case kMtpProtocol_CoAP:
-            // Just ignore the protobuf parsing error. CoAP does not have a way of indicating this back to the Controller.
-            break;
-#endif
-
-#ifdef ENABLE_MQTT
-        case kMtpProtocol_MQTT:
-            // Just ignore the protobuf parsing error. MQTT does not currently indicate this back to the Controller.
-            break;
-#endif
-
-#ifdef ENABLE_WEBSOCKETS
-        case kMtpProtocol_WebSockets:
-        {
-            mtp_send_item_t mtp_send_item;
-
-            // Tell the MTP to close the connection, because there was a protobuf parsing error
-            // or the USP Record was received on the agent's websocket server, but the controller was already connected
-            // via the agent's websocket client (only one connection to a controller is allowed)
-            char *err_msg = USP_STRDUP( USP_ERR_GetMessage());
-
-            MTP_EXEC_MtpSendItem_Init(&mtp_send_item);
-            mtp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;
-            mtp_send_item.pbuf = (unsigned char *)err_msg;
-            mtp_send_item.pbuf_len = strlen(err_msg);
-            mtp_send_item.content_type = kMtpContentType_Text;
-
-            if (mrt->wsserv_conn_id == INVALID)
-            {
-                WSCLIENT_QueueBinaryMessage(&mtp_send_item, mrt->wsclient_cont_instance, mrt->wsclient_mtp_instance, END_OF_TIME);
-            }
-            else
-            {
-                WSSERVER_QueueBinaryMessage(&mtp_send_item, mrt->wsserv_conn_id, END_OF_TIME);
-            }
-        }
-            break;
-#endif
-
-        default:
-            // Just ignore the protobuf parsing error
-            break;
-
-    } // end of switch
+    // Send a USP Disconnect record containing cause of error
+    err_msg = USP_ERR_GetMessage();
+    MSG_HANDLER_QueueUspDisconnectRecord(kMtpContentType_DisconnectRecord, cont_endpoint_id, err, err_msg, mrt, END_OF_TIME);
 }

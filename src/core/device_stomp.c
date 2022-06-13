@@ -306,13 +306,12 @@ int DEVICE_STOMP_StartAllConnections(void)
 ** \param   controller_queue - name of STOMP queue to send this message to
 ** \param   agent_queue - name of agent's STOMP queue configured for this connection in the data model.
 **                        NOTE: This may be NULL, if agent's STOMP queue is set by subscribe_dest: STOMP header
-** \param   err_id_header - pointer to string containing the STOMP usp-err-id header
 ** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DEVICE_STOMP_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *controller_queue, char *agent_queue, char *err_id_header, time_t expiry_time)
+int DEVICE_STOMP_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *controller_queue, char *agent_queue, time_t expiry_time)
 {
     int err = USP_ERR_GENERAL_FAILURE;
     stomp_conn_params_t *sp;
@@ -327,7 +326,7 @@ int DEVICE_STOMP_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *co
     }
 
     // Exit if unable to queue the message
-    err = STOMP_QueueBinaryMessage(msi, instance, controller_queue, agent_queue, err_id_header, expiry_time);
+    err = STOMP_QueueBinaryMessage(msi, instance, controller_queue, agent_queue, expiry_time);
     if (err != USP_ERR_OK)
     {
         return err;
