@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2016-2022  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -532,7 +532,7 @@ int NotifyChange_DualStackPreference(dm_req_t *req, char *value)
     // Set local cached copy of this value
     if (strcmp(value, "IPv6")==0)
     {
-        // Prefer IPv6, if interface or DNS resolution has an IPv4 and IPv4 address
+        // Prefer IPv6, if interface or DNS resolution has an IPv4 and IPv6 address
         dual_stack_prefer_ipv6 = true;
     }
     else

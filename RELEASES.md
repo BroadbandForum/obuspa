@@ -1,5 +1,47 @@
 # Release History
 
+## Release 6.0.0
+  * New Features
+    * USP 1.2 Spec Enhancements
+      * Get request and response (max_depth field)
+      * GetSupportedDM response (value_type, value_change and command_type fields)
+      * USP Connect and Disconnect records
+    * Basic End-to-End session context support (mainly segmentation and reassembly aspects). Disabled by default. To enable, uncomment E2ESESSION_EXPERIMENTAL_USP_V_1_2 in vendor_defs.h
+    * The severity level of log messages now propagates to syslog() invocations. To override the default severity level passed to syslog, modify SYSLOG_SEVERITY_OVERRIDE in vendor_defs.h.
+    * Added extra parameter types: DM_BASE_64, DM_DECIMAL, DM_LONG and DM_HEX_BINARY
+    * MTP credentials username core vendor hook
+
+  * Data Model Enhancements
+    * Device.DeviceInfo.UpTime
+    * Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicDiscovered
+
+  * Bug Fixes
+    * Data model thread locks up on high message throughput
+    * Agent crashes when nested objects are created in an ADD message with allow_partial=false
+    * Password in STOMP header should be escaped
+    * GetSupportedDM Response reports incorrect Add and Delete permissions for objects registered using USP_REGISTER_GroupedObject()
+    * Bulk Data Collection Protocol parameter is validating against old value, not new value
+    * Reference following should allow references to contain key based addressing
+    * 64 bit signed and unsigned integer parameter values are now represented with full precision in JSON encoded data (for Bulk Data Collection reports and Boot! event). To enable the old behavior (which represented them as floating point doubles) comment out the REPRESENT_JSON_NUMBERS_WITH_FULL_PRECISION define in vendor_defs.h
+    * Empty Subscription ID should not be allowed
+    * Subscription ID should be auto-assigned
+    * Compile error if MQTT and STOMP are disabled
+    * getopt_long options structure was wrong for authcert option
+    * Set Request obj_path is not required to contain an instance number
+    * STOMP DISCONNECT frame should be sent before disconnecting if no agent destination configured (USP Compliance Test 6.7)
+    * Compilation fails when WebSockets enabled and CoAP disabled
+    * MQTT does not wait until all responses are sent when disabling MTP (GH Issue 33)
+    * MQTT v5.0 response topic memory leak
+    * Optional input arguments to USP Commands should be ignored
+    * EndpointId should be in quotes in Sec-WebSocket-Extension header
+    * MQTT KeepAlive 0 not working as expected
+
+  * Other
+    * Tidy up MQTT code: Added function header comments and re-ordered some MQTT functions
+    * Removed GET_RESPONSE_SIMPLE_FORMAT from vendor_defs.h. In USP 1.2 it was clarified that only the simple format must be used.
+    * WebSockets example factory reset file
+    * Updated quick start guide with instructions for cloning from github (GH Issue 39)
+
 ## Release 5.0.0
   * New Features
     * WebSockets MTP Support in both client and server modes

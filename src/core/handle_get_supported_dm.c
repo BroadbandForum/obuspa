@@ -436,8 +436,8 @@ AddReqObjResult_SupportedObjResult(Usp__GetSupportedDMResp__RequestedObjectResul
             // Grouped multi Instance object
             if (info->group_writable)
             {
-                is_add_allowed = true;
-                is_del_allowed = true;
+                is_add_allowed = permissions & PERMIT_ADD;
+                is_del_allowed = permissions & PERMIT_DEL;
             }
         }
     }

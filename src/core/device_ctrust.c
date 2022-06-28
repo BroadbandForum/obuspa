@@ -1441,7 +1441,7 @@ int ControllerTrustChallengeResponse(dm_req_t *req, char *command_key, kv_vector
     // if the challenge expired,
     // return 7012 Invalid value according to https://issues.broadband-forum.org/browse/DEV2DM-32
     time_t now = time(NULL);
-    if (cc->expiration > 0 && cc->expire_time < now)
+    if ((cc->expiration > 0) && (now >= cc->expire_time))
     {
         USP_ERR_SetMessage("%s: Invalid value - challenge expired", __FUNCTION__);
         err = USP_ERR_INVALID_VALUE;

@@ -242,7 +242,6 @@ int DEVICE_MQTT_Init(void);
 int DEVICE_MQTT_Start(void);
 void DEVICE_MQTT_Stop(void);
 int DEVICE_MQTT_StartAllClients(void);
-int EnableMQTTClient(mqtt_conn_params_t *mp, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS]);
 void DEVICE_MQTT_ScheduleReconnect(int instance);
 mtp_status_t DEVICE_MQTT_GetMtpStatus(int instance);
 char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance);

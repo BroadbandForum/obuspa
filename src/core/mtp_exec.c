@@ -199,7 +199,7 @@ int MTP_EXEC_Init(void)
 **
 ** MTP_EXEC_StompWakeup
 **
-** Posts a message on each MTP thread's queue, to cause it to wakeup from the select()
+** Posts a message on the STOMP MTP thread's queue, to cause it to wakeup from the select()
 **
 ** \param   None
 **
@@ -227,7 +227,7 @@ void MTP_EXEC_StompWakeup(void)
 **
 ** MTP_EXEC_CoapWakeup
 **
-** Posts a message on each MTP thread's queue, to cause it to wakeup from the select()
+** Posts a message on the CoAP MTP thread's queue, to cause it to wakeup from the select()
 **
 ** \param   None
 **
@@ -255,7 +255,7 @@ void MTP_EXEC_CoapWakeup(void)
 **
 ** MTP_EXEC_MqttWakeup
 **
-** Posts a message on each MTP thread's queue, to cause it to wakeup from the select()
+** Posts a message on the MQTT MTP thread's queue, to cause it to wakeup from the select()
 **
 ** \param   None
 **
@@ -579,7 +579,7 @@ void *MTP_EXEC_CoapMain(void *args)
 ** ProcessMtpWakeupQueueSocketActivity
 **
 ** Processes any activity on the message queue receiving socket
-** NOTE: There are separate sockets for STOMP and CoAP MTP tasks, but both use this function for processing
+** NOTE: There are separate sockets for STOMP and CoAP MTP tasks, but all use this function for processing
 **
 ** \param   set - pointer to socket set structure containing sockets with activity on them
 ** \param   sock - socket on which the wakeup message is received

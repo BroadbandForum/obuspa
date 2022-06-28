@@ -2261,7 +2261,7 @@ void bulkdata_process_profile_http(bulkdata_profile_t *bp)
     USP_LOG_Info("BULK DATA: using compression method=%s", ctrl.compression);
     if (enable_protocol_trace)
     {
-        USP_LOG_String(kLogType_Protocol, json_report);
+        USP_LOG_String(kLogLevel_Info, kLogType_Protocol, json_report);
     }
 
     // Compress the report, if enabled
@@ -2953,6 +2953,3 @@ void Test_ReduceToAltName(void)
     }
 }
 #endif
-
-
-

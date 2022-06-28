@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2016-2022  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  * Copyright (C) 2022, Snom Technology GmbH
  *
@@ -64,6 +64,10 @@
 #define MAX_MQTT_SUBSCRIPTIONS 5
 #define MAX_WEBSOCKET_CLIENTS (MAX_CONTROLLERS)  // Maximum number of WebSocket controllers which an agent sends to, or receives from
 #define MAX_NODE_MAP_BUCKETS  1024  // Maximum number of buckets in the data model node map. This should be set to at least the number of registered parameters and objects in the data model
+
+// Uncomment and change the following define to override the severity level of messages sent to syslog.
+// Refer to the syslog documentation and its priority argument to know the possible values.
+//#define SYSLOG_SEVERITY_OVERRIDE LOG_ERR
 
 // NB: If you change this, you must also change the SSL callback functions within mqtt.c
 // This will compile fail if you do not

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2021, Broadband Forum
+ * Copyright (C) 2021-2022, Broadband Forum
  * Copyright (C) 2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without

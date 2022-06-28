@@ -624,7 +624,6 @@ void TEXT_UTILS_SplitString(char *str, str_vector_t *sv, char *separator)
     USP_STRNCPY(buf, str, sizeof(buf));
 
     // Iterate over all strings delimited by the separator
-    // 2DO RH: This function can be made to ignore separators present in the string within quotes by creating a special version of strstr
     sep_len = strlen(separator);
     start = buf;
     end = TEXT_UTILS_StrStr(start, separator);

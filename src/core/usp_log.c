@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -69,7 +69,7 @@ bool enable_protocol_trace = false;             // Whether protocol tracing shou
 
 //------------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
-void LogMessageToFile(FILE *fd, const char *str);
+void LogMessageToFile(log_level_t log_level, FILE *fd, const char *str);
 void CloseLog(void);
 
 /*********************************************************************//**
@@ -338,12 +338,14 @@ void USP_LOG_ErrorSSL(const char *func_name, const char *failure_string, int ret
 ** Logs the specified string, splitting it on newlines
 ** This function is for printing very long buffers, which would get truncated by the normal logging functionality
 **
+** \param   log_level - severity level of the log
 ** \param   log_type - type of information which the string contains
+** \param   str - pointer to string to log
 **
 ** \return  None
 **
 **************************************************************************/
-void USP_LOG_String(log_type_t log_type, char *str)
+void USP_LOG_String(log_level_t log_level, log_type_t log_type, char *str)
 {
     char *start;
     char *p;
@@ -356,7 +358,7 @@ void USP_LOG_String(log_type_t log_type, char *str)
         if (*p == '\n')
         {
             *p = '\0';          // Temporarily truncate the string
-            USP_LOG_Puts(log_type, start);
+            USP_LOG_Puts(log_level, log_type, start);
             *p = '\n';          // Restore the string
             start = &p[1];      // Next line starts at the next character
         }
@@ -368,7 +370,7 @@ void USP_LOG_String(log_type_t log_type, char *str)
     // Print any remaining characters on the last line
     if (*start != '\0')
     {
-        USP_LOG_Puts(log_type, start);
+        USP_LOG_Puts(log_level, log_type, start);
     }
 }
 
@@ -379,13 +381,14 @@ void USP_LOG_String(log_type_t log_type, char *str)
 ** Logs the specified message
 ** This function deals with the varargs aspects of the message before calling LogMessage()
 **
+** \param   log_level - severity level of the log
 ** \param   log_type - type of information which the message contains
 ** \param   fmt - printf style format
 **
 ** \return  None
 **
 **************************************************************************/
-void USP_LOG_Printf(log_type_t log_type, const char *fmt, ...)
+void USP_LOG_Printf(log_level_t log_level, log_type_t log_type, const char *fmt, ...)
 {
     va_list ap;
     char buf[USP_LOG_MAXLEN];
@@ -403,7 +406,7 @@ void USP_LOG_Printf(log_type_t log_type, const char *fmt, ...)
         memcpy(&buf[sizeof(buf)-sizeof(TRUNCATED_STR)], TRUNCATED_STR, sizeof(TRUNCATED_STR));
     }
 
-    USP_LOG_Puts(log_type, buf);
+    USP_LOG_Puts(log_level, log_type, buf);
 }
 
 /*********************************************************************//**
@@ -412,13 +415,14 @@ void USP_LOG_Printf(log_type_t log_type, const char *fmt, ...)
 **
 ** Logs the specified message to the correct destination, based on its type
 **
+** \param   log_level - severity level of the log
 ** \param   log_type - type of information which the string contains
 ** \param   str - pointer to string to log
 **
 ** \return  None
 **
 **************************************************************************/
-void USP_LOG_Puts(log_type_t log_type, const char *str)
+void USP_LOG_Puts(log_level_t log_level, log_type_t log_type, const char *str)
 {
     switch(log_type)
     {
@@ -430,7 +434,7 @@ void USP_LOG_Puts(log_type_t log_type, const char *str)
             }
             else
             {
-                LogMessageToFile(log_fd, str);
+                LogMessageToFile(log_level, log_fd, str);
             }
             break;
 
@@ -442,17 +446,55 @@ void USP_LOG_Puts(log_type_t log_type, const char *str)
             }
             else
             {
-                LogMessageToFile(log_fd, str);
+                LogMessageToFile(log_level, log_fd, str);
             }
             break;
 
         case kLogType_Protocol:
             if (enable_protocol_trace)
             {
-                LogMessageToFile(log_fd, str);
+                LogMessageToFile(log_level, log_fd, str);
             }
             break;
     }
+}
+
+/*********************************************************************//**
+**
+** LogLevelToSyslogSeverity
+**
+** Returns the matching syslog severity level
+**
+** \param   log_level - severity level of the log
+**
+** \return  matching syslog severity level
+**
+**************************************************************************/
+int LogLevelToSyslogSeverity(log_level_t log_level)
+{
+    int syslog_level = LOG_ERR;
+
+    switch (log_level)
+    {
+        case kLogLevel_Debug:
+            syslog_level = LOG_DEBUG;
+            break;
+
+        case kLogLevel_Info:
+            syslog_level = LOG_INFO;
+            break;
+
+        case kLogLevel_Warning:
+            syslog_level = LOG_WARNING;
+            break;
+
+        default:
+        case kLogLevel_Error:
+            syslog_level = LOG_ERR;
+            break;
+    }
+
+    return syslog_level;
 }
 
 /*********************************************************************//**
@@ -462,20 +504,26 @@ void USP_LOG_Puts(log_type_t log_type, const char *str)
 ** Logs the specified message to the specified file
 ** NOTE: This function automatically inserts a trailing '\n'
 **
+** \param   log_level - severity level of the log
 ** \param   fd - file to log the string to, or NULL if logging to syslog
 ** \param   str - pointer to string to log
 **
 ** \return  None
 **
 **************************************************************************/
-void LogMessageToFile(FILE *fd, const char *str)
+void LogMessageToFile(log_level_t log_level, FILE *fd, const char *str)
 {
     log_message_cb_t log_message_cb;
 
     // Output to log file/stdout or syslog if none specified
     if (fd == NULL)
     {
-        syslog(LOG_ERR, "%s", str);
+#if defined(SYSLOG_SEVERITY_OVERRIDE)
+        const int syslog_level = SYSLOG_SEVERITY_OVERRIDE;
+#else
+        const int syslog_level = LogLevelToSyslogSeverity(log_level);
+#endif
+        syslog(syslog_level, "%s", str);
     }
     else
     {
@@ -551,4 +599,3 @@ int USP_SNPRINTF(char *buf, size_t size, const char *fmt, ...)
     // Return the number of characters actually written to the buffer
     return MIN(len, size);
 }
-

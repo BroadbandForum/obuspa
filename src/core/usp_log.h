@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
+ * Copyright (C) 2019-2022, Broadband Forum
  * Copyright (C) 2016-2021  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -69,9 +69,9 @@ void USP_LOG_Init(void);
 int USP_LOG_SetFile(const char *file);
 void USP_LOG_Callstack(void);
 void USP_LOG_HexBuffer(const char *title, const unsigned char *buf, int len);
-void USP_LOG_String(log_type_t log_type, char *str);
-void USP_LOG_Printf(log_type_t log_type, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
-void USP_LOG_Puts(log_type_t log_type, const char *str);
+void USP_LOG_String(log_level_t log_level, log_type_t log_type, char *str);
+void USP_LOG_Printf(log_level_t log_level, log_type_t log_type, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+void USP_LOG_Puts(log_level_t log_level, log_type_t log_type, const char *str);
 void USP_LOG_ErrorSSL(const char *func_name, const char *failure_string, int ret, int err);
 
 //------------------------------------------------------------------------------------
@@ -80,16 +80,16 @@ extern log_level_t usp_log_level;
 extern bool enable_protocol_trace;
 extern bool enable_callstack_debug;
 
-#define USP_LOG_Error(...)       if (usp_log_level >= kLogLevel_Error)   { USP_LOG_Printf(kLogType_Debug, __VA_ARGS__); if (enable_callstack_debug) { USP_LOG_Callstack(); } }
-#define USP_LOG_Warning(...)     if (usp_log_level >= kLogLevel_Warning) { USP_LOG_Printf(kLogType_Debug, __VA_ARGS__); }
-#define USP_LOG_Info(...)        if (usp_log_level >= kLogLevel_Info)    { USP_LOG_Printf(kLogType_Debug, __VA_ARGS__); }
-#define USP_LOG_Debug(...)       if (usp_log_level >= kLogLevel_Debug)   { USP_LOG_Printf(kLogType_Debug, __VA_ARGS__); }
+#define USP_LOG_Error(...)       if (usp_log_level >= kLogLevel_Error)   { USP_LOG_Printf(kLogLevel_Error, kLogType_Debug, __VA_ARGS__); if (enable_callstack_debug) { USP_LOG_Callstack(); } }
+#define USP_LOG_Warning(...)     if (usp_log_level >= kLogLevel_Warning) { USP_LOG_Printf(kLogLevel_Warning, kLogType_Debug, __VA_ARGS__); }
+#define USP_LOG_Info(...)        if (usp_log_level >= kLogLevel_Info)    { USP_LOG_Printf(kLogLevel_Info, kLogType_Debug, __VA_ARGS__); }
+#define USP_LOG_Debug(...)       if (usp_log_level >= kLogLevel_Debug)   { USP_LOG_Printf(kLogLevel_Debug, kLogType_Debug, __VA_ARGS__); }
 
 // Macro used to dump out the data model/database etc
-#define USP_DUMP(...)       USP_LOG_Printf(kLogType_Dump, __VA_ARGS__)
+#define USP_DUMP(...)       USP_LOG_Printf(kLogLevel_Debug, kLogType_Dump, __VA_ARGS__)
 
 // Macro used to print out STOMP frames
-#define USP_PROTOCOL(...)   USP_LOG_Printf(kLogType_Protocol, __VA_ARGS__)
+#define USP_PROTOCOL(...)   USP_LOG_Printf(kLogLevel_Debug, kLogType_Protocol, __VA_ARGS__)
 
 // Maximum number of characters in a single log statement
 #define USP_LOG_MAXLEN  (10*1024)

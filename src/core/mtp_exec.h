@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2016-2022  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without

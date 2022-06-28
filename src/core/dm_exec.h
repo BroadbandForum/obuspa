@@ -69,7 +69,7 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t ver
 void DM_EXEC_PostMtpThreadExited(unsigned flags);
 int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-int DM_EXEC_PostE2eEvent(e2e_event_t event, int request, int controller);
+int DM_EXEC_PostE2eEvent(e2e_event_t event, int request_instance, int controller_instance);
 #endif
 void DM_EXEC_HandleScheduledExit(void);
 bool DM_EXEC_IsNotificationsEnabled(void);

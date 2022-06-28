@@ -1,8 +1,9 @@
 /*
  *
  * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2016-2022  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
+ * Copyright (C) 2022, Snom Technology GmbH
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -44,6 +45,7 @@
 #include <sys/socket.h>
 #include <errno.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include "common_defs.h"
 #include "mtp_exec.h"
@@ -81,6 +83,14 @@ static int dm_mq_sockets[2] = {-1, -1};
 
 #define mq_rx_socket  dm_mq_sockets[0]
 #define mq_tx_socket  dm_mq_sockets[1]
+
+//------------------------------------------------------------------------------
+// The following macro is used to determine whether the call to send to the data model's message queue blocks
+// Normally it would block, making the calling thread wait if the message queue is full
+// However, if called from the data model thread, the send must not block (as that would cause a deadlock)
+// NOTE: This macro should only be used in functions that are not called by MTP threads
+//       MTP threads must not ever make send() invocations that block (as that causes deadlock if the queue is full)
+#define BLOCK_UNLESS_DM_THREAD (OS_UTILS_IsDataModelThread(NULL, false) ? MSG_DONTWAIT : 0)
 
 //-------------------------------------------------------------------------
 // Type of message on data model's message queue
@@ -338,15 +348,17 @@ int USP_SIGNAL_OperationComplete(int instance, int err_code, char *err_msg, kv_v
     ocm = &msg.params.oper_complete;
     ocm->instance = instance;
     ocm->err_code = err_code;
-    ocm->err_msg = (err_msg==NULL) ? NULL : USP_STRDUP(err_msg);
+    ocm->err_msg = USP_STRDUP(err_msg);
     ocm->output_args = output_args;
 
-    // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    // Send the message - blocks if queue is full, unless calling from the data model thread (in which case discards the message)
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), BLOCK_UNLESS_DM_THREAD);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Unable to send kDmExecMsg_OperComplete (instance=%d, err_code=%d, err_msg=%s)", __FUNCTION__, instance, err_code, err_msg);
+        USP_SAFE_FREE(ocm->err_msg);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -390,12 +402,14 @@ int USP_SIGNAL_DataModelEvent(char *event_name, kv_vector_t *output_args)
     ecm->event_name = USP_STRDUP(event_name);
     ecm->output_args = output_args;
 
-    // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    // Send the message - blocks if queue is full, unless calling from the data model thread (in which case discards the message)
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), BLOCK_UNLESS_DM_THREAD);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Unable to send kDmExecMsg_EventComplete (event_name=%s)", __FUNCTION__, event_name);
+        USP_SAFE_FREE(ecm->event_name);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -445,12 +459,14 @@ int USP_SIGNAL_OperationStatus(int instance, char *status)
     osm->instance = instance;
     osm->status = USP_STRDUP(status);
 
-    // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    // Send the message - blocks if queue is full, unless calling from the data model thread (in which case discards the message)
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), BLOCK_UNLESS_DM_THREAD);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Unable to send kDmExecMsg_OperStatus (instance=%d, status=%s)", __FUNCTION__, instance, status);
+        USP_SAFE_FREE(osm->status);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -495,12 +511,14 @@ int USP_SIGNAL_ObjectAdded(char *path)
     oam = &msg.params.obj_added;
     oam->path = USP_STRDUP(path);
 
-    // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    // Send the message - blocks if queue is full, unless calling from the data model thread (in which case discards the message)
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), BLOCK_UNLESS_DM_THREAD);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Unable to send kDmExecMsg_ObjAdded (path=%s)", __FUNCTION__, path);
+        USP_SAFE_FREE(oam->path);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -545,12 +563,14 @@ int USP_SIGNAL_ObjectDeleted(char *path)
     odm = &msg.params.obj_deleted;
     odm->path = USP_STRDUP(path);
 
-    // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    // Send the message - blocks if queue is full, unless calling from the data model thread (in which case discards the message)
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), BLOCK_UNLESS_DM_THREAD);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Unable to send kDmExecMsg_ObjDeleted (path=%s)", __FUNCTION__, path);
+        USP_SAFE_FREE(odm->path);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -564,7 +584,7 @@ int USP_SIGNAL_ObjectDeleted(char *path)
 ** Posts a USP record to be processed by the data model thread
 **
 ** \param   pbuf - pointer to buffer containing protobuf encoded USP record
-**                 NOTE: This is part of larger buffer (with STOMP), so must be copied before sending to the data model thread)
+**                 NOTE: This is part of a larger buffer (with STOMP), so must be copied before sending to the data model thread
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   role - Controller Trust Role allowed for this message
 ** \param   mrt - details of where response to this USP message should be sent
@@ -609,12 +629,18 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role
     pur->mtp_reply_to.wsclient_mtp_instance = mrt->wsclient_mtp_instance;
     pur->mtp_reply_to.wsserv_conn_id = mrt->wsserv_conn_id;
 
-    // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    // Send the message - does not block if the queue is full, discards the message instead
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Discarding received USP Record", __FUNCTION__);
+        USP_SAFE_FREE(pur->mtp_reply_to.cont_endpoint_id);
+        USP_SAFE_FREE(pur->mtp_reply_to.stomp_dest);
+        USP_SAFE_FREE(pur->mtp_reply_to.coap_host);
+        USP_SAFE_FREE(pur->mtp_reply_to.coap_resource);
+        USP_SAFE_FREE(pur->mtp_reply_to.mqtt_topic);
         return;
     }
 }
@@ -658,12 +684,14 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, c
     scm->agent_queue = USP_STRDUP(agent_queue);
     scm->role = role;
 
-    // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    // Send the message - does not block if the queue is full, discards the message instead
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Failed to send kDmExecMsg_StompHandshakeComplete (stomp_instance=%d, agent_queue=%s)", __FUNCTION__, stomp_instance, agent_queue);
+        USP_SAFE_FREE(scm->agent_queue);
         return;
     }
 }
@@ -708,12 +736,14 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t ver
     mcm->agent_topic = USP_STRDUP(agent_topic);
     mcm->role = role;
 
-    // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    // Send the message - does not block if the queue is full, discards the message instead
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Failed to send kDmExecMsg_MqttHandshakeComplete (mqtt_instance=%d, agent_topic=%s)", __FUNCTION__, mqtt_instance, agent_topic);
+        USP_SAFE_FREE(mcm->agent_topic);
         return;
     }
 }
@@ -750,12 +780,13 @@ void DM_EXEC_PostMtpThreadExited(unsigned flags)
     tem = &msg.params.mtp_thread_exited;
     tem->flags = flags;
 
-    // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    // Send the message - does not block if the queue is full, discards the message instead
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Failed to send kDmExecMsg_MtpThreadExited(flags=0x%04x)", __FUNCTION__, flags);
         return;
     }
 }
@@ -793,12 +824,13 @@ int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transf
     btr->profile_id = profile_id;
     btr->transfer_result = transfer_result;
 
-    // Send the message
+    // Send the message - blocks if the queue is full
     bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Failed to send kDmExecMsg_BdcTransferResult (profile_id=%d, transfer_result=%d)", __FUNCTION__, profile_id, transfer_result);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -823,14 +855,14 @@ int DM_EXEC_NotifyBdcTransferResult(int profile_id, bdc_transfer_result_t transf
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DM_EXEC_PostE2eEvent(e2e_event_t event, int request, int controller)
+int DM_EXEC_PostE2eEvent(e2e_event_t event, int request_instance, int controller_instance)
 {
     dm_exec_msg_t  msg;
     e2e_event_msg_t *erm;
     int bytes_sent;
 
     // Exit if this function has been called with invalid parameters
-    if (controller <= 0)
+    if (controller_instance <= 0)
     {
         USP_LOG_Error("%s: Data Model instance must be valid", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
@@ -848,15 +880,16 @@ int DM_EXEC_PostE2eEvent(e2e_event_t event, int request, int controller)
     msg.type = kDmExecMsg_E2eSessionEvent;
     erm = &msg.params.e2e_event;
     erm->event = event;
-    erm->controller_instance = controller;
-    erm->request_instance = request;
+    erm->controller_instance = controller_instance;
+    erm->request_instance = request_instance;
 
-    // Send the message
-    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), 0);
+    // Send the message - does not block if the queue is full, discards the message instead
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Failed to send kDmExecMsg_E2eSessionEvent (event=%d, request_instance=%d, controller_instance=%d)", __FUNCTION__, event, request_instance, controller_instance);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -1102,7 +1135,6 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         case kDmExecMsg_ProcessUspRecord:
             pur = &msg.params.usp_record;
             mrt = &pur->mtp_reply_to;
-
             ProcessBinaryUspRecord(pur->pbuf, pur->pbuf_len, pur->role, mrt);
 
             // Free all arguments passed in this message

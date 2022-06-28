@@ -1017,6 +1017,130 @@ void DEVICE_CONTROLLER_NotifyStompConnDeleted(int stomp_instance)
 }
 #endif
 
+#ifdef ENABLE_MQTT
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_GetControllerTopic
+**
+** Gets the name of the controller queue to use for this controller on a particular MQTT client connection
+**
+** \param   instance - instance number of MQTT Clients Connection in the Device.MQTT.Client.{i} table
+**
+** \return  pointer to queue name, or NULL if unable to resolve the MQTT connection
+**
+**************************************************************************/
+char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance)
+{
+    int i, j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Iterate over all enabled controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if ((cont->instance != INVALID) && (cont->enable))
+        {
+            // Iterate over all enabled MTP slots for this controller
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->enable))
+                {
+                    // If this controller is connected to the specified MQTT connection, then set its inherited role
+                    if ((mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
+                    {
+                        return mtp->mqtt_controller_topic;
+                    }
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_SetRolesFromMqtt
+**
+** Sets the controller trust role to use for all controllers connected to the specified MQTT Client
+**
+** \param   mqtt_instance - MQTT instance (in Device.MQTT.Client table)
+** \param   role - Role allowed for this message
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role)
+{
+    int i, j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Iterate over all enabled controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if ((cont->instance != INVALID) && (cont->enable))
+        {
+            // Iterate over all enabled MTP slots for this controller
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->enable))
+                {
+                    // If this controller is connected to the specified MQTT connection, then set its inherited role
+                    if ((mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
+                    {
+                        cont->combined_role.inherited = role;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_NotifyMqttConnDeleted
+**
+** Called when a MQTT connection is deleted
+** This code unpicks all references to the MQTT client existing in the Controller MTP table
+**
+** \param   mqtt_instance - instance in Device.MQTT.Client which has been deleted
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance)
+{
+    int i;
+    int j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+    char path[MAX_DM_PATH];
+
+    // Iterate over all controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        // Iterate over all MTP slots for this controller, clearing out all references to the deleted MQTT client
+        cont = &controllers[i];
+        if (cont->instance != INVALID)
+        {
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
+                {
+                    USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.Controller.%d.MTP.%d.MQTT.Reference", cont->instance, mtp->instance);
+                    DATA_MODEL_SetParameterValue(path, "", 0);
+                }
+            }
+        }
+    }
+}
+#endif
+
 /*********************************************************************//**
 **
 ** CalcNotifyDest
@@ -2412,6 +2536,121 @@ int Notify_ControllerMtpCoapEncryption(dm_req_t *req, char *value)
 
     // NOTE: We do not need to explicitly propagate this value to the COAP module here,
     // as each USP message that is queued includes this information
+
+    return USP_ERR_OK;
+}
+#endif
+
+#ifdef ENABLE_MQTT
+/*********************************************************************//**
+**
+** Notify_ControllerMtpMqttReference
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Reference is modified
+** This function updates the value of the mqtt_client_instance stored in the controller array
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpMqttReference(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+    char path[MAX_DM_PATH];
+    bool schedule_reconnect = false;
+    int instance, err;
+
+    // Exit if reference is a blank string
+    if (*value == '\0')
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exif if the controller trust role instance number does not exist
+    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", &instance);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: instance (%d) is not found", __FUNCTION__, instance);
+        return err;
+    }
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    // Set the new value
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.MQTT.Reference", device_cont_root, cont->instance, mtp->instance);
+
+    err = DEVICE_MTP_GetMqttReference(path, &mtp->mqtt_connection_instance);
+    if (err != USP_ERR_OK)
+    {
+        USP_LOG_Error("%s controller instance is invalid\n", __FUNCTION__);
+        return err;
+    }
+
+    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
+        (mtp->mqtt_connection_instance != instance))
+    {
+        if (instance != INVALID)
+        {
+            schedule_reconnect = true;
+        }
+    }
+
+    // Set the new value
+    mtp->mqtt_connection_instance = instance;
+
+    if (schedule_reconnect)
+    {
+        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Notify_ControllerMtpMqttTopic
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Topic is modified
+** This function updates the value of the mqtt_controller_topic stored in the controller array
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpMqttTopic(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+    bool schedule_reconnect = false;
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
+        (strcmp(mtp->mqtt_controller_topic, value) != 0))
+    {
+        if (mtp->mqtt_connection_instance != INVALID)
+        {
+            schedule_reconnect = true;
+        }
+    }
+
+    // Set the new value
+    USP_SAFE_FREE(mtp->mqtt_controller_topic);
+    mtp->mqtt_controller_topic = USP_STRDUP(value);
+
+    if (schedule_reconnect)
+    {
+        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
+    }
 
     return USP_ERR_OK;
 }
@@ -3938,242 +4177,6 @@ void UpdateFirstPeriodicNotificationTime(void)
 }
 
 
-#ifdef ENABLE_MQTT
-/*********************************************************************//**
-**
-** DEVICE_CONTROLLER_GetControllerTopic
-**
-** Gets the name of the controller queue to use for this controller on a particular MQTT client connection
-**
-** \param   instance - instance number of MQTT Clients Connection in the Device.MQTT.Client.{i} table
-**
-** \return  pointer to queue name, or NULL if unable to resolve the MQTT connection
-**
-**************************************************************************/
-char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance)
-{
-    int i, j;
-    controller_t *cont;
-    controller_mtp_t *mtp;
-
-    // Iterate over all enabled controllers
-    for (i=0; i<MAX_CONTROLLERS; i++)
-    {
-        cont = &controllers[i];
-        if ((cont->instance != INVALID) && (cont->enable))
-        {
-            // Iterate over all enabled MTP slots for this controller
-            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
-            {
-                mtp = &cont->mtps[j];
-                if ((mtp->instance != INVALID) && (mtp->enable))
-                {
-                    // If this controller is connected to the specified MQTT connection, then set its inherited role
-                    if ((mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
-                    {
-                        return mtp->mqtt_controller_topic;
-                    }
-                }
-            }
-        }
-    }
-    return NULL;
-}
-
-/*********************************************************************//**
-**
-** DEVICE_CONTROLLER_SetRolesFromMqtt
-**
-** Sets the controller trust role to use for all controllers connected to the specified MQTT Client
-**
-** \param   mqtt_instance - MQTT instance (in Device.MQTT.Client table)
-** \param   role - Role allowed for this message
-**
-** \return  None
-**
-**************************************************************************/
-void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role)
-{
-    int i, j;
-    controller_t *cont;
-    controller_mtp_t *mtp;
-
-    // Iterate over all enabled controllers
-    for (i=0; i<MAX_CONTROLLERS; i++)
-    {
-        cont = &controllers[i];
-        if ((cont->instance != INVALID) && (cont->enable))
-        {
-            // Iterate over all enabled MTP slots for this controller
-            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
-            {
-                mtp = &cont->mtps[j];
-                if ((mtp->instance != INVALID) && (mtp->enable))
-                {
-                    // If this controller is connected to the specified MQTT connection, then set its inherited role
-                    if ((mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
-                    {
-                        cont->combined_role.inherited = role;
-                    }
-                }
-            }
-        }
-    }
-}
-
-/*********************************************************************//**
-**
-** DEVICE_CONTROLLER_NotifyMqttConnDeleted
-**
-** Called when a MQTT connection is deleted
-** This code unpicks all references to the MQTT client existing in the Controller MTP table
-**
-** \param   mqtt_instance - instance in Device.MQTT.Client which has been deleted
-**
-** \return  None
-**
-**************************************************************************/
-void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance)
-{
-    int i;
-    int j;
-    controller_t *cont;
-    controller_mtp_t *mtp;
-    char path[MAX_DM_PATH];
-
-    // Iterate over all controllers
-    for (i=0; i<MAX_CONTROLLERS; i++)
-    {
-        // Iterate over all MTP slots for this controller, clearing out all references to the deleted MQTT client
-        cont = &controllers[i];
-        if (cont->instance != INVALID)
-        {
-            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
-            {
-                mtp = &cont->mtps[j];
-                if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
-                {
-                    USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.Controller.%d.MTP.%d.MQTT.Reference", cont->instance, mtp->instance);
-                    DATA_MODEL_SetParameterValue(path, "", 0);
-                }
-            }
-        }
-    }
-}
-
-/*********************************************************************//**
-**
-** Notify_ControllerMtpMqttReference
-**
-** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Reference is modified
-** This function updates the value of the mqtt_client_instance stored in the controller array
-**
-** \param   req - pointer to structure identifying the path
-** \param   value - new value of this parameter
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int Notify_ControllerMtpMqttReference(dm_req_t *req, char *value)
-{
-    controller_t *cont;
-    controller_mtp_t *mtp;
-    char path[MAX_DM_PATH];
-    bool schedule_reconnect = false;
-    int instance, err;
-
-    // Exit if reference is a blank string
-    if (*value == '\0')
-    {
-        return USP_ERR_OK;
-    }
-
-    // Exif if the controller trust role instance number does not exist
-    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", &instance);
-    if (err != USP_ERR_OK)
-    {
-        USP_ERR_SetMessage("%s: instance (%d) is not found", __FUNCTION__, instance);
-        return err;
-    }
-
-    // Determine MTP to be updated
-    mtp = FindControllerMtpFromReq(req, &cont);
-    USP_ASSERT(mtp != NULL);
-
-    // Set the new value
-    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.MQTT.Reference", device_cont_root, cont->instance, mtp->instance);
-
-    err = DEVICE_MTP_GetMqttReference(path, &mtp->mqtt_connection_instance);
-    if (err != USP_ERR_OK)
-    {
-        USP_LOG_Error("%s controller instance is invalid\n", __FUNCTION__);
-        return err;
-    }
-
-    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
-        (mtp->mqtt_connection_instance != instance))
-    {
-        if (instance != INVALID)
-        {
-            schedule_reconnect = true;
-        }
-    }
-
-    // Set the new value
-    mtp->mqtt_connection_instance = instance;
-
-    if (schedule_reconnect)
-    {
-        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
-    }
-
-    return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
-** Notify_ControllerMtpMqttTopic
-**
-** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Topic is modified
-** This function updates the value of the mqtt_controller_topic stored in the controller array
-**
-** \param   req - pointer to structure identifying the path
-** \param   value - new value of this parameter
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int Notify_ControllerMtpMqttTopic(dm_req_t *req, char *value)
-{
-    controller_t *cont;
-    controller_mtp_t *mtp;
-    bool schedule_reconnect = false;
-
-    // Determine MTP to be updated
-    mtp = FindControllerMtpFromReq(req, &cont);
-    USP_ASSERT(mtp != NULL);
-
-    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
-        (strcmp(mtp->mqtt_controller_topic, value) != 0))
-    {
-        if (mtp->mqtt_connection_instance != INVALID)
-        {
-            schedule_reconnect = true;
-        }
-    }
-
-    // Set the new value
-    USP_SAFE_FREE(mtp->mqtt_controller_topic);
-    mtp->mqtt_controller_topic = USP_STRDUP(value);
-
-    if (schedule_reconnect)
-    {
-        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
-    }
-
-    return USP_ERR_OK;
-}
-#endif
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 /*********************************************************************//**
