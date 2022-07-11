@@ -598,13 +598,9 @@ void AddSupportedObjResult_SupportedParamResult(Usp__GetSupportedDMResp__Support
 
         case kDMNodeType_DBParam_ReadWrite:
         case kDMNodeType_DBParam_ReadWriteAuto:
+        case kDMNodeType_DBParam_Secure:
         case kDMNodeType_VendorParam_ReadWrite:
             is_read_allowed = true;
-            is_write_allowed = true;
-            break;
-
-        case kDMNodeType_DBParam_Secure:
-            is_read_allowed = false;
             is_write_allowed = true;
             break;
 

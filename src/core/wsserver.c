@@ -60,14 +60,16 @@
 // Server context structure
 typedef struct
 {
-    bool is_running;                         // If set, the server and thread are running
-    struct lws_context  *ctx;                // libwebsockets context
+    struct lws_context  *ctx;                // libwebsockets context. Set to NULL if the server is not running
     wsserv_config_t     cur_config;          // Contains current configuration params
-    wsserv_config_t     new_config;          // Contains configuration params to use when restarting the server
+    wsserv_config_t     new_config;          // Contains configuration params to use when restarting the server. NOTE: These params might be the same as cur_config, if the configuration has not changed
 
-    scheduled_action_t  schedule_restart;    // Sets whether a reconnect is scheduled after the send queue has cleared
+    scheduled_action_t  schedule_restart;    // Sets whether a WebSocket server restart (with new config) is scheduled after the send queue has cleared
+                                             // This flag is also used to indicate that a start (with new config) is still pending (e.g. if a WebSocket server start had failed previously, this flag would still be set)
     scheduled_action_t  schedule_stop;       // Sets whether the server should be disabled after the send queue has cleared
+    char wan_addr[NU_IPADDRSTRLEN];          // IP address on which the websocket server is listening. Set to "any" if listening on all device IP addresses
 
+    lws_sorted_usec_list_t wan_poll_timer;   // structure used by libwebsockets for scheduled timer, used for polling the WAN interface for IP address changes
 } wsserv_t;
 
 static wsserv_t wsserv;
@@ -104,6 +106,7 @@ typedef struct
 
     char peer[64];          // Name of peer, either endpoint_id (if available in Sec-WebSocket-Extensions) or an IP address.
     bool is_peer_an_eid;    // Set if the above peer string is an endpoint_id. False if it is an IP address.
+
 } wsconn_t;
 
 //------------------------------------------------------------------------------
@@ -140,10 +143,11 @@ wsconn_t *FindWsConnectionByConnId(int conn_id);
 wsconn_t *FindWsConnectionByEndpointId(char *endpoint_id);
 void RemoveWsservSendItem(wsconn_t *wc, wsserv_send_item_t *si);
 bool AreAllWebsockServerMessagesSent(void);
-int StartWebsockServer(wsserv_config_t *config, bool start_thread);
+int StartWebsockServer(wsserv_config_t *config);
 void StopWebsockServer(void);
 void FreeWebsockServerConnection(wsconn_t *wc);
 void CopyWssConfig(wsserv_config_t *dest, wsserv_config_t *src);
+void DestroyWssConfig(wsserv_config_t *config);
 void LogWsserverDebug(int level, const char *line);
 int AddWsservUspExtension(struct lws *handle, char **ppHeaders, int headers_len);
 void RemoveExpiredWsservMessages(wsconn_t *wc);
@@ -159,6 +163,11 @@ int HandleWssEvent_PongReceived(struct lws *handle);
 int SendWsservPing(wsconn_t *wc);
 int CloseWsservConnection(struct lws *handle, int close_status, char *fmt, ...);
 void QueueUspConnectRecord_Wsserv(wsconn_t *wc);
+bool ServiceActiveWebsockServer(void);
+bool ServiceInactiveWebsockServer(void);
+void HandleWssEvent_WanPollTimer(lws_sorted_usec_list_t *sul);
+void AssertWanPollCallbackNotInUse(lws_sorted_usec_list_t *sul);
+int CalcWsservIpAddr(char *buf, int len);
 
 /*********************************************************************//**
 **
@@ -187,7 +196,6 @@ int WSSERVER_Init(void)
 
     // Initialise the server context
     memset(&wsserv, 0, sizeof(wsserv));
-    wsserv.is_running = false;
     wsserv.schedule_restart = kScheduledAction_Off;
     wsserv.schedule_stop = kScheduledAction_Off;
 
@@ -251,7 +259,7 @@ int WSSERVER_EnableServer(wsserv_config_t *config)
 
     // If the only change is to the keep alive interval whilst the server is running, then
     // cause the websock ping frame to be sent immediately (so that the new interval is respected immediately)
-    if ((wsserv.is_running) &&
+    if ((wsserv.ctx != NULL) &&
         (wsserv.cur_config.port == config->port) &&
         (strcmp(wsserv.cur_config.path, config->path)==0) &&
         (wsserv.cur_config.enable_encryption == config->enable_encryption) &&
@@ -272,24 +280,9 @@ int WSSERVER_EnableServer(wsserv_config_t *config)
         goto exit;
     }
 
-    // Otherwise, we need to start or re-start the websocket server
-    if (wsserv.is_running)
-    {
-        // If the server is currently running, then we need to wait for all responses to be sent before restarting it
-        wsserv.schedule_restart = kScheduledAction_Signalled;
-
-        // Save the new config
-        CopyWssConfig(&wsserv.new_config, config);
-    }
-    else
-    {
-        // If currently stopped, then we can start the server and it's thread immediately
-        err = StartWebsockServer(config, true);
-        if (err != USP_ERR_OK)
-        {
-            goto exit;
-        }
-    }
+    // Otherwise, save the new config and schedule a restart
+    CopyWssConfig(&wsserv.new_config, config);
+    wsserv.schedule_restart = kScheduledAction_Signalled;
 
 exit:
     OS_UTILS_UnlockMutex(&wss_access_mutex);
@@ -318,7 +311,7 @@ int WSSERVER_DisableServer(void)
 
     OS_UTILS_LockMutex(&wss_access_mutex);
 
-    if (wsserv.is_running)
+    if (wsserv.ctx != NULL)
     {
         // If currently running, then we need to wait for all messages to be sent before stopping
         wsserv.schedule_stop = kScheduledAction_Signalled;
@@ -346,7 +339,6 @@ int WSSERVER_DisableServer(void)
 void WSSERVER_ActivateScheduledActions(void)
 {
     bool wake_thread = false;
-    static bool tested_for_shutdown = false;
 
     // Exit if websocket server MTP has shutdown
     if (is_wsserv_mtp_shutdown)
@@ -356,27 +348,9 @@ void WSSERVER_ActivateScheduledActions(void)
 
     OS_UTILS_LockMutex(&wss_access_mutex);
 
-    // The first time we notice that this MTP should be shutdown, determine whether
-    // we need to wait for the thread to shutdown gracefully, or whether it is possible to shutdown
-    // immediately here (because there is no thread to wait for).
-    if ((mtp_exit_scheduled == kScheduledAction_Activated) && (tested_for_shutdown==false))
+    if (mtp_exit_scheduled == kScheduledAction_Activated)
     {
-        // NOTE: We only perform this code block once, further calls to this function
-        // will assume that we have to wait for the Websock server thread to exit gracefully
-        tested_for_shutdown = true;
-
-        if (wsserv.is_running == false)
-        {
-            // Shutdown immediately, if we don't have to wait for the Websock server thread
-            is_wsserv_mtp_shutdown = true;
-            DM_EXEC_PostMtpThreadExited(WSSERVER_EXITED);
-            goto exit;
-        }
-        else
-        {
-            // Otherwise, wake the Websock server thread, so that it is handle shutting down gracefully
-            wake_thread = true;
-        }
+        wake_thread = true;
     }
 
     if (wsserv.schedule_restart == kScheduledAction_Signalled)
@@ -397,7 +371,6 @@ void WSSERVER_ActivateScheduledActions(void)
         lws_cancel_service(wsserv.ctx);
     }
 
-exit:
     OS_UTILS_UnlockMutex(&wss_access_mutex);
 }
 
@@ -482,7 +455,7 @@ mtp_status_t WSSERVER_GetMtpStatus(void)
     mtp_status_t status;
 
     OS_UTILS_LockMutex(&wss_access_mutex);
-    status = (wsserv.is_running) ? kMtpStatus_Up : kMtpStatus_Down;
+    status = (wsserv.ctx != NULL) ? kMtpStatus_Up : kMtpStatus_Down;
     OS_UTILS_UnlockMutex(&wss_access_mutex);
 
     return status;
@@ -578,84 +551,31 @@ exit:
 **************************************************************************/
 void *WSSERVER_Main(void *args)
 {
-    int err;
-    int i;
-    wsconn_t *wc;
     bool run_thread = true;
-    bool wanting_to_stop;
 
     while (run_thread)
     {
-        // Allow libwebsockets to wait for socket activity
-        // NOTE: If there is any activity, HandleAllWssEvents() will be called to process it
-        err = lws_service(wsserv.ctx, 0);
-        if (err != 0)
+        if (wsserv.ctx == NULL)
         {
-            // NOTE: The code should never get here, but if it does, handle it by logging the error and sleeping for a while (to prevent the thread hogging the processor)
-            #define MILLISECONDS 1000  // number of micro seconds (us) in a millisecond
-            USP_LOG_Warning("%s: lws_service() returned %d", __FUNCTION__, err);
-            usleep(100*MILLISECONDS);
+            // WebSocket server is not currently running, so see if it should be started
+            run_thread = ServiceInactiveWebsockServer();
         }
-
-        OS_UTILS_LockMutex(&wss_access_mutex);
-
-        // Deal with stopping or restarting the server
-        wanting_to_stop = WantingToStopWsServer();
-        if (wanting_to_stop)
+        else
         {
-            // Wait for all responses to be sent before performing the scheduled action
-            if (AreAllWebsockServerMessagesSent())
-            {
-                // Wait for all clients to have been gracefully disconnected (a close frame must be sent to them)
-                if (CountWsConnections() == 0)
-                {
-                    StopWebsockServer();
-
-                    // Restart the server with new config, if this is the scheduled action
-                    if (wsserv.schedule_restart == kScheduledAction_Activated)
-                    {
-                        StartWebsockServer(&wsserv.new_config, false);  // Intentionally ignoring the error - there's nothing we can do
-                        wsserv.schedule_restart = kScheduledAction_Off;
-                    }
-
-                    // Exit this while loop and the thread, if this is the scheduled action
-                    if ((wsserv.schedule_stop == kScheduledAction_Activated) || (mtp_exit_scheduled == kScheduledAction_Activated))
-                    {
-                        run_thread = false;
-                        wsserv.schedule_stop = kScheduledAction_Off;
-                    }
-                }
-            }
+            // WebSocket server is currently running
+            run_thread = ServiceActiveWebsockServer();
         }
-
-        // Iterate over all active connections, asking libwebsockets for permission to send
-        // NOTE: If we are shutting down gracefully, then this code ensures that each client is sent a close frame
-        for (i=0; i<NUM_ELEM(ws_connections); i++)
-        {
-            wc = &ws_connections[i];
-            if (wc->ws_handle != NULL)
-            {
-                if ((wc->usp_record_send_queue.head != NULL) || (wanting_to_stop) || (wc->disconnect_sent))
-                {
-                    err = lws_callback_on_writable(wc->ws_handle);
-                    if (err != 1)
-                    {
-                        // If an error occurred, then close the TCP connection immediately
-                        USP_LOG_Error("%s: lws_callback_on_writable() returned %d", __FUNCTION__, err);
-                        lws_set_timeout(wc->ws_handle, PENDING_TIMEOUT_USER_OK, LWS_TO_KILL_ASYNC);
-                    }
-                }
-            }
-        }
-
-        OS_UTILS_UnlockMutex(&wss_access_mutex);
-
     }
 
     // Deal with the case of exiting this thread because we are shutting down (due to Reboot() or FactoryReset() USP commands)
     OS_UTILS_LockMutex(&wss_access_mutex);
     if (mtp_exit_scheduled == kScheduledAction_Activated)
     {
+        // Free configurations
+        USP_ASSERT(wsserv.ctx == NULL);     // Websocket server context should already have been freed by call to StopWebsock
+        DestroyWssConfig(&wsserv.cur_config);
+        DestroyWssConfig(&wsserv.new_config);
+
         // Prevent the data model from making any other changes to the MTP thread
         is_wsserv_mtp_shutdown = true;
 
@@ -667,6 +587,165 @@ void *WSSERVER_Main(void *args)
     return NULL;
 }
 
+/*********************************************************************//**
+**
+** ServiceActiveWebsockServer
+**
+** Services a running WebSocket server
+**
+** \param   None
+**
+** \return  false if WebSocketServer thread should shut down (due to Reboot() or FactoryReset() USP commands)
+**          true if WebSocketServer thread should continue running
+**
+**************************************************************************/
+bool ServiceActiveWebsockServer(void)
+{
+    int err;
+    int i;
+    wsconn_t *wc;
+    bool run_thread = true;
+    bool wanting_to_stop;
+
+    // Allow libwebsockets to wait for socket activity
+    // NOTE: If there is any activity, HandleAllWssEvents() will be called to process it
+    err = lws_service(wsserv.ctx, 0);
+    if (err != 0)
+    {
+        // NOTE: The code should never get here, but if it does, handle it by logging the error and sleeping for a while (to prevent the thread hogging the processor)
+        #define MILLISECONDS 1000  // number of micro seconds (us) in a millisecond
+        USP_LOG_Warning("%s: lws_service() returned %d", __FUNCTION__, err);
+        usleep(100*MILLISECONDS);
+    }
+
+    OS_UTILS_LockMutex(&wss_access_mutex);
+
+    // Deal with stopping or restarting the server
+    wanting_to_stop = WantingToStopWsServer();
+    if (wanting_to_stop)
+    {
+        // Wait for all responses to be sent before performing the scheduled action
+        if (AreAllWebsockServerMessagesSent())
+        {
+            // Wait for all clients to have been gracefully disconnected (a close frame must have been sent to them, to cause them to disconnect)
+            if (CountWsConnections() == 0)
+            {
+                // Stop the current websocket server
+                StopWebsockServer();
+
+                // Cause the WebSocket server thread to exit, if this is the scheduled action
+                if ((wsserv.schedule_stop == kScheduledAction_Activated) || (mtp_exit_scheduled == kScheduledAction_Activated))
+                {
+                    run_thread = false;
+                    wsserv.schedule_stop = kScheduledAction_Off;
+                    goto exit;
+                }
+
+                // Restart the server with new config, if this is the scheduled action
+                if (wsserv.schedule_restart == kScheduledAction_Activated)
+                {
+                    // Exit if unable to start the server with the new config
+                    // Since the current server has been stopped, ServiceInactiveWsserver() will periodically retry starting the server
+                    err = StartWebsockServer(&wsserv.new_config);
+                    if (err != USP_ERR_OK)
+                    {
+                        goto exit;
+                    }
+
+                    // Server was started successfully, so clear the schedule_restart_flag
+                    wsserv.schedule_restart = kScheduledAction_Off;
+                    goto exit;
+                }
+            }
+        }
+    }
+
+    // Iterate over all active connections, asking libwebsockets for permission to send
+    // NOTE: If we are shutting down gracefully, then this code ensures that each client is sent a close frame
+    for (i=0; i<NUM_ELEM(ws_connections); i++)
+    {
+        wc = &ws_connections[i];
+        if (wc->ws_handle != NULL)
+        {
+            if ((wc->usp_record_send_queue.head != NULL) || (wanting_to_stop) || (wc->disconnect_sent))
+            {
+                err = lws_callback_on_writable(wc->ws_handle);
+                if (err != 1)
+                {
+                    // If an error occurred, then close the TCP connection immediately
+                    USP_LOG_Error("%s: lws_callback_on_writable() returned %d", __FUNCTION__, err);
+                    lws_set_timeout(wc->ws_handle, PENDING_TIMEOUT_USER_OK, LWS_TO_KILL_ASYNC);
+                }
+            }
+        }
+    }
+
+exit:
+    OS_UTILS_UnlockMutex(&wss_access_mutex);
+
+    return run_thread;
+}
+
+/*********************************************************************//**
+**
+** ServiceInactiveWebsockServer
+**
+** Services the condition of no WebSocket server currently running
+** - Checks whether we are shutting down or whether to attempt to start the websocket server
+**
+** \param   None
+**
+** \return  false if WebSocketServer thread should shut down (due to Reboot() or FactoryReset() USP commands)
+**          true if WebSocketServer thread should continue running
+**
+**************************************************************************/
+bool ServiceInactiveWebsockServer(void)
+{
+    bool run_thread = true;
+    int delay = 0;
+    int err;
+
+    OS_UTILS_LockMutex(&wss_access_mutex);
+
+    // Cause thread to exit, if we are shutting down (due to Reboot() or FactoryReset() USP commands)
+    if ((wsserv.schedule_stop == kScheduledAction_Activated) || (mtp_exit_scheduled == kScheduledAction_Activated))
+    {
+        run_thread = false;
+        goto exit;
+    }
+
+    // Exit if a restart of the server is not scheduled. In this case, we just wait a second before seeing again if we should start the server or shut down the thread
+    if (wsserv.schedule_restart != kScheduledAction_Activated)
+    {
+        delay = 1;
+        goto exit;
+    }
+
+    // Attempt to start the server
+    err = StartWebsockServer(&wsserv.new_config);
+    if (err != USP_ERR_OK)
+    {
+        #define WS_SERVER_RETRY_TIME 5
+        USP_LOG_Warning("%s: Failed to restart WebSocket server. Retrying in %d seconds", __FUNCTION__, WS_SERVER_RETRY_TIME);
+        delay = WS_SERVER_RETRY_TIME;
+        goto exit;
+    }
+
+    // Since server has been started successfully, clear the schedule_restart flag
+    wsserv.schedule_restart = kScheduledAction_Off;
+
+exit:
+    OS_UTILS_UnlockMutex(&wss_access_mutex);
+
+    // Ensure that the websocket server thread does not keep CPU busy all the time
+    // NOTE: The sleep is performed outside of the mutex, so that WSSERVER_XXX API functions do not block
+    if (delay > 0)
+    {
+        sleep(delay);
+    }
+
+    return run_thread;
+}
 
 /*********************************************************************//**
 **
@@ -675,19 +754,15 @@ void *WSSERVER_Main(void *args)
 ** Starts the agent's websocket server
 **
 ** \param   config - pointer to structure containing configuration parameters
-** \param   start_thread - set if the websocket server thread should be started, false, if it is already running
-**                         NOTE: This function may be called from the websocket server thread if start_thread=false
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int StartWebsockServer(wsserv_config_t *config, bool start_thread)
+int StartWebsockServer(wsserv_config_t *config)
 {
     int err;
     struct lws_protocols *p;
     struct lws_context_creation_info info;
-    char *interface = "any";
-    char wan_addr[NU_IPADDRSTRLEN];     // scope of wan_addr[] needs to exist until call to lws_create_context()
 
     // Setup USP subprotocol to use
     #define WEBSOCKET_PROTOCOL_STR "v1.usp"
@@ -720,62 +795,33 @@ int StartWebsockServer(wsserv_config_t *config, bool start_thread)
         info.options |= LWS_SERVER_OPTION_REQUIRE_VALID_OPENSSL_CLIENT_CERT;
     }
 
-#ifdef CONNECT_ONLY_OVER_WAN_INTERFACE
-    interface = (usp_interface != NULL) ? usp_interface : WEBSOCKET_LISTEN_INTERFACE;
-    if ((*interface == '\0') || (strcmp(interface, "all")==0))
+    // Exit if unable to determine IP address of interface to listen on
+    err = CalcWsservIpAddr(wsserv.wan_addr, sizeof(wsserv.wan_addr));
+    if (err != USP_ERR_OK)
     {
-        info.iface = NULL;
+        return err;
     }
-    else
-    {
-        int err;
-        bool prefer_ipv6;
-
-        // Get preference for IPv4 or IPv6 address (in case of Dual Stack CPE)
-        prefer_ipv6 = DEVICE_LOCAL_AGENT_GetDualStackPreference();
-
-        // Exit if unable to get current IP address for listening on
-        err = tw_ulib_get_dev_ipaddr(interface, wan_addr, sizeof(wan_addr), prefer_ipv6);
-        if (err != USP_ERR_OK)
-        {
-            USP_LOG_Error("%s: Unable to get IP address of WAN interface (%s). Retrying later", __FUNCTION__, interface);
-            return USP_ERR_INTERNAL_ERROR;
-        }
-
-        // NOTE: Even though libwebsockets documentation states that you can use an interface name here,
-        // this does not work when libwebsockets is compiled with IPv6 support. It needs the IP address of the interface instead.
-        info.iface = wan_addr;
-    }
-#else
-    (void)wan_addr;
-#endif
 
     // Create the websocket context
     // NOTE: libwebsockets calls HandleAllWssEvents() from within lws_create_context() to load the
     // trust store and client certs into libwebsockets SSL context
+    info.iface = (strcmp(wsserv.wan_addr, "any")==0) ? NULL : wsserv.wan_addr;
     wsserv.ctx = lws_create_context(&info);
     if (wsserv.ctx == NULL)
     {
         USP_LOG_Error("%s: lws_create_context() failed", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
-    USP_LOG_Info("%s: Started Websocket server listening on interface=%s", __FUNCTION__, interface);
-
-    // Start the websocket server thread, if required
-    if (start_thread)
-    {
-        err = OS_UTILS_CreateThread("MTP_WSServer", WSSERVER_Main, NULL);
-        if (err != USP_ERR_OK)
-        {
-            return err;
-        }
-    }
+    USP_LOG_Info("%s: Started Websocket server listening on interface=%s", __FUNCTION__, wsserv.wan_addr);
 
     // Indicate that the server is now started, and initialise rest of fields
-    wsserv.is_running = true;
     CopyWssConfig(&wsserv.cur_config, config);
     wsserv.schedule_restart = kScheduledAction_Off;
     wsserv.schedule_stop = kScheduledAction_Off;
+
+    // Schedule the WAN poll callback
+    #define WAN_IP_ADDR_POLL_PERIOD 5
+    lws_sul_schedule(wsserv.ctx, 0, &wsserv.wan_poll_timer, HandleWssEvent_WanPollTimer, WAN_IP_ADDR_POLL_PERIOD*LWS_US_PER_SEC);
 
     return USP_ERR_OK;
 }
@@ -796,6 +842,10 @@ void StopWebsockServer(void)
     int i;
     wsconn_t *wc;
 
+    // First cancel our libwebsockets timer, we need to do this otherwise our structure contains references
+    // to memory which is freed when the libwebsocket context is destroyed
+    lws_sul_cancel(&wsserv.wan_poll_timer);
+
     // Destroy the libwebsocket context
     // NOTE: This also frees libwebsockets' SSL context and associated certs
     lws_context_destroy(wsserv.ctx);
@@ -811,12 +861,10 @@ void StopWebsockServer(void)
         }
     }
 
-    // NOTE: Do not free wsserv.new_config.path, as we will need it if restarting the server with a different config
+    // Free cur_config
     USP_SAFE_FREE(wsserv.cur_config.path);
 
-    // Indicate that the server is now stopped
-    wsserv.is_running = false;
-
+    // NOTE: Do not free new_config, as we will need it if restarting the server with a different config
     // NOTE: Do not modify schedule_restart or schedule_stop. We want their state to persist so that we can decide whether to restart or not
 }
 
@@ -1605,6 +1653,116 @@ int HandleWssEvent_PongReceived(struct lws *handle)
 
 /*********************************************************************//**
 **
+** HandleWssEvent_WanPollTimer
+**
+** Called directly from libwebsockets as part of scheduled timer
+** when it is time to poll the WAN interface for IP address changes
+**
+** \param   sul - pointer to stucture containing the scheduled timer
+**
+** \return  None
+**
+**************************************************************************/
+void HandleWssEvent_WanPollTimer(lws_sorted_usec_list_t *sul)
+{
+    int err;
+    char new_wan_addr[NU_IPADDRSTRLEN];
+
+    OS_UTILS_LockMutex(&wss_access_mutex);
+
+    // Check that structure is not part of a linked list owned by libwebsockets anymore
+    AssertWanPollCallbackNotInUse(sul);
+
+    // Exit if unable to determine IP address of WAN interface
+    // In this case, we keep the current websocket server running, as it's just that the interface is down
+    new_wan_addr[0] = '\0';
+    err = CalcWsservIpAddr(new_wan_addr, sizeof(new_wan_addr));
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if IP address hasn't changed
+    USP_ASSERT(new_wan_addr[0] != '\0');    // Above code should have ensured that the WAN address is not an empty string
+    if (strcmp(new_wan_addr, wsserv.wan_addr)==0)
+    {
+        goto exit;
+    }
+
+    // If the code gets here, then the IP address on the WAN interface has changed, so schedule a restart of the server
+    USP_LOG_Info("%s: Restarting WebSocket server as IP address has changed to %s (from %s)", __FUNCTION__, new_wan_addr, wsserv.wan_addr);
+    wsserv.schedule_restart = kScheduledAction_Activated;
+
+exit:
+    // Rearm timer to poll the address again
+    lws_sul_schedule(wsserv.ctx, 0, &wsserv.wan_poll_timer, HandleWssEvent_WanPollTimer, WAN_IP_ADDR_POLL_PERIOD*LWS_US_PER_SEC);
+
+    OS_UTILS_UnlockMutex(&wss_access_mutex);
+}
+
+/*********************************************************************//**
+**
+** AssertWanPollCallbackNotInUse
+**
+** Checks that the wan poll callback is present in any linked lists in use by libwebsockets
+**
+** \param   sul - pointer to structure associated with libwebsocket scheduled callbacks
+**
+** \return  None
+**
+**************************************************************************/
+void AssertWanPollCallbackNotInUse(lws_sorted_usec_list_t *sul)
+{
+    // Check that structure is not part of a linked list owned by libwebsockets anymore
+    USP_ASSERT(sul->list.prev == NULL);
+    USP_ASSERT(sul->list.next == NULL);
+    USP_ASSERT(sul->list.owner == NULL);
+}
+
+/*********************************************************************//**
+**
+** CalcWsservIpAddr
+**
+** Calculates the IP address of the interface that the websocket server listens
+** NOTE: "any" is returned if all IP addresses should be used
+** NOTE: empty string is returned if no IP address found for the specified interface
+**
+** \param   buf - buffer in which to write the address in string form
+** \param   len - length of buffer
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int CalcWsservIpAddr(char *buf, int len)
+{
+    int err;
+    char *interface;
+    bool prefer_ipv6;
+
+    // Exit if websocket server should listen on all interfaces
+    interface = (usp_interface != NULL) ? usp_interface : WEBSOCKET_LISTEN_INTERFACE;
+    if ((*interface == '\0') || (strcmp(interface, "any")==0))
+    {
+        USP_STRNCPY(buf, "any", len);
+        return USP_ERR_OK;
+    }
+
+    // Get preference for IPv4 or IPv6 address (in case of Dual Stack CPE)
+    prefer_ipv6 = DEVICE_LOCAL_AGENT_GetDualStackPreference();
+
+    // Exit if unable to get current IP address for listening on
+    err = tw_ulib_get_dev_ipaddr(interface, buf, len, prefer_ipv6);
+    if (err != USP_ERR_OK)
+    {
+        USP_LOG_Error("%s: Unable to get IP address of WAN interface (%s). Retrying later", __FUNCTION__, interface);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** SendWsservPing
 **
 ** Called to send a websocket ping frame from the agent's websocket server
@@ -1978,7 +2136,8 @@ void RemoveWsservSendItem(wsconn_t *wc, wsserv_send_item_t *si)
 **
 ** Copies the websocket server configuration
 **
-** \param   config - pointer to structure containing configuration parameters to save
+** \param   dest - pointer to structure in which to deep copy the configuration parameters
+** \param   src - pointer to structure containing configuration parameters to deep copy
 **
 ** \return  None
 **
@@ -1990,6 +2149,23 @@ void CopyWssConfig(wsserv_config_t *dest, wsserv_config_t *src)
     USP_SAFE_FREE(dest->path);
     dest->path = USP_STRDUP(src->path);
     dest->keep_alive = src->keep_alive;
+}
+
+/*********************************************************************//**
+**
+** DestroyWssConfig
+**
+** Frees the websocket server configuration
+**
+** \param   config - pointer to structure containing configuration parameters to free
+**
+** \return  None
+**
+**************************************************************************/
+void DestroyWssConfig(wsserv_config_t *config)
+{
+    USP_SAFE_FREE(config->path);
+    memset(config, 0, sizeof(wsserv_config_t));
 }
 
 /*********************************************************************//**

@@ -334,6 +334,17 @@ void WSCLIENT_Destroy(void)
     int i;
     wsclient_t *wc;
 
+    // First cancel all retry timers, to prevent our structure containing references to memory which is freed when the libwebsocket context is destroyed
+    // NOTE: This is not strictly necessary for WSCLIENT, as this function is only called when shutting down anyway
+    for (i=0; i<NUM_ELEM(wsclients); i++)
+    {
+        wc = &wsclients[i];
+        if (wc->state == kWebsockState_Retrying)
+        {
+            lws_sul_cancel(&wc->retry_timer);
+        }
+    }
+
     // Destroy the libwebsocket context
     // NOTE: This also frees libwebsockets' SSL context and associated certs
     lws_context_destroy(wsc_ctx);
@@ -2497,7 +2508,7 @@ void DestroyWsclient(wsclient_t *wc, bool is_libwebsockets_destroyed)
         // Check that retry timer is not part of a linked list owned by libwebsockets anymore
         AssertRetryCallbackNotInUse(&wc->retry_timer);
 
-        // Disable the ping timer idf one setup (there might not be any ws_handle, if currently retrying)
+        // Disable the ping timer if one setup (there might not be any ws_handle, if currently retrying)
         if (wc->ws_handle != 0)
         {
             lws_set_timer_usecs(wc->ws_handle, -1);

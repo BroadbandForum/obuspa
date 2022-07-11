@@ -318,6 +318,12 @@ int main(int argc, char *argv[])
     {
         goto exit;
     }
+
+    err = OS_UTILS_CreateThread("MTP_WSServer", WSSERVER_Main, NULL);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
 #endif
 
     // Exit if unable to spawn off a thread to perform bulk data collection posts

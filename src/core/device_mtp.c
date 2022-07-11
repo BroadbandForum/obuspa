@@ -1860,6 +1860,8 @@ int ProcessAgentMtpAdded(int instance)
             goto exit;
         }
     }
+
+    WSSERVER_ActivateScheduledActions();
 #endif
 
     // If the code gets here, then we successfully retrieved all data about the MTP
