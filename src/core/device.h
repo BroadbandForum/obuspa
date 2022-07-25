@@ -157,6 +157,7 @@ int DEVICE_CONTROLLER_Start(void);
 void DEVICE_CONTROLLER_Stop(void);
 int DEVICE_CONTROLLER_FindInstanceByEndpointId(char *endpoint_id);
 int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mtp_reply_to, time_t expiry_time);
+bool DEVICE_CONTROLLER_IsMTPConfigured(char *endpoint_id, mtp_protocol_t protocol);
 char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance);
 char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_reply_to_t *mrt);
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)

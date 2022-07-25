@@ -849,7 +849,7 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id
     }
 
     // Find the configured MTP in the Controller.MTP table to send the USP Record to
-    // NOTE: This may be NULL if no MTP is configured for the controller
+    // NOTE: This may be NULL if no enabled MTP is configured for the controller
     mtp = FindFirstEnabledMtp(cont, mrt->protocol);
 
     // If 'reply-to' was not specified, then use the configured MTP to fill in where the response should be sent
@@ -877,7 +877,103 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id
         return err;
     }
 
+    // NOTE: member variables in dest must NOT be freed as they are owned elsewhere
+    // They are either owned by the caller (in mrt) or owned by the data model (in controllers[].mtps[])
+
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_IsMTPConfigured
+**
+** Determines whether an MTP has been configured to send messages to the specified controller
+** This function is used by ValidateUspRecord() to determine whether to process a received USP message
+**
+** \param   endpoint_id - Endpoint ID of controller that send a USP message
+** \param   protocol - protocol on which the USP message was received
+**
+** \return  true if a 'reply-to' MTP is specified, false otherwise
+**
+**************************************************************************/
+bool DEVICE_CONTROLLER_IsMTPConfigured(char *endpoint_id, mtp_protocol_t protocol)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Exit if unable to find the specified controller
+    cont = FindEnabledControllerByEndpointId(endpoint_id);
+    if (cont == NULL)
+    {
+        return false;
+    }
+
+    // Exit if unable to find a configured MTP for this controller
+    mtp = FindFirstEnabledMtp(cont, protocol);
+    if (mtp == NULL)
+    {
+#ifdef ENABLE_WEBSOCKETS
+{
+        // Exit if the controller is connected to the agent's websocket server
+        int err;
+        err = WSSERVER_GetMTPForEndpointId(endpoint_id, NULL);
+        if (err == USP_ERR_OK)
+        {
+            return true;
+        }
+}
+#endif
+
+        // If the code gets here, then there was no MTP configured for this controller,
+        // and the controller is not connected via the agent's websocket server
+        return false;
+    }
+
+    // Check that all MTP parameters are configured for the specified protocol
+    switch(protocol)
+    {
+#ifndef DISABLE_STOMP
+        case kMtpProtocol_STOMP:
+            if ((mtp->stomp_connection_instance == INVALID) || (mtp->stomp_controller_queue[0] == '\0'))
+            {
+                return false;
+            }
+            break;
+#endif
+
+#ifdef ENABLE_COAP
+        case kMtpProtocol_CoAP:
+            if ((mtp->coap_controller_host[0] == '\0') || (mtp->coap.resource[0] == '\0'))
+            {
+                return false;
+            }
+            break;
+#endif
+
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+            if ((mtp->mqtt_connection_instance == INVALID) || (mtp->mqtt_controller_topic[0] == '\0'))
+            {
+                return false;
+            }
+            break;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kMtpProtocol_WebSockets:
+            if ((cont->instance == INVALID) || (mtp->instance == INVALID))
+            {
+                return false;
+            }
+            break;
+#endif
+        default:
+            TERMINATE_BAD_CASE(mtp->protocol);
+            break;
+    }
+
+    // If the code gets here, then a valid MTP has been found for the specified controller
+    return true;
 }
 
 #ifdef ENABLE_MQTT
@@ -1163,29 +1259,28 @@ int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp,
     if (mtp == NULL)
     {
 #ifdef ENABLE_WEBSOCKETS
-        // See if the controller is connected to our websocket server
+        // Exit if the controller is connected to the agent's websocket server
         int err;
         err = WSSERVER_GetMTPForEndpointId(endpoint_id, mrt);
         if (err == USP_ERR_OK)
         {
             return err;
         }
-        else
 #endif
-        {
-            // If the code gets here, no MTP was found to send this message on
-            USP_ERR_SetMessage("%s: Unable to find a valid controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
-            return USP_ERR_INTERNAL_ERROR;
-        }
+
+        // If the code gets here, no MTP was found to send this message on
+        USP_ERR_SetMessage("%s: Unable to find a valid controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
+        return USP_ERR_INTERNAL_ERROR;
     }
 
     switch(mtp->protocol)
     {
 #ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
-            if (mtp->stomp_connection_instance == INVALID)
+            USP_ASSERT(mtp->stomp_controller_queue != NULL);
+            if ((mtp->stomp_connection_instance == INVALID) || (mtp->stomp_controller_queue[0] == '\0'))
             {
-                USP_ERR_SetMessage("%s: No Stomp connection in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
+                USP_ERR_SetMessage("%s: No Stomp connection or destination in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
                 return USP_ERR_INTERNAL_ERROR;
             }
 
@@ -1197,6 +1292,12 @@ int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp,
 
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
+            if ((mtp->coap_controller_host[0] == '\0') || (mtp->coap.resource[0] == '\0'))
+            {
+                USP_ERR_SetMessage("%s: No CoAP host or resource in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
+                return USP_ERR_INTERNAL_ERROR;
+            }
+
             mrt->protocol = kMtpProtocol_CoAP;
             mrt->coap_host = mtp->coap_controller_host;
             mrt->coap_port = mtp->coap.port;
@@ -1208,9 +1309,10 @@ int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp,
 
 #ifdef ENABLE_MQTT
         case kMtpProtocol_MQTT:
-            if (mtp->mqtt_connection_instance == INVALID)
+            USP_ASSERT(mtp->mqtt_controller_topic != NULL);
+            if ((mtp->mqtt_connection_instance == INVALID) || (mtp->mqtt_controller_topic[0] == '\0'))
             {
-                USP_ERR_SetMessage("%s: No MQTT client in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
+                USP_ERR_SetMessage("%s: No MQTT client or topic in controller MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
                 return USP_ERR_INTERNAL_ERROR;
             }
 

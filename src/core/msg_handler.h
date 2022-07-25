@@ -99,7 +99,7 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_rep
 void MSG_HANDLER_HandleGetSupportedProtocol(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
 void MSG_HANDLER_HandleGetInstances(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
 void MSG_HANDLER_HandleGetSupportedDM(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
-void MSG_HANDLER_HandleUnknownMsgType(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
+void MSG_HANDLER_QueueErrorMessage(int err, char *controller_endpoint, mtp_reply_to_t *mrt, char *msg_id);
 char *MSG_HANDLER_UspMsgTypeToString(int msg_type);
 
 // Error response

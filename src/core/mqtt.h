@@ -139,7 +139,7 @@ void MQTT_Destroy(void);
 int MQTT_Start(void);
 void MQTT_Stop(void);
 int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS]);
-int MQTT_DisableClient(int instance, bool is_reconnect);
+int MQTT_DisableClient(int instance);
 int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *topic);
 void MQTT_ScheduleReconnect(mqtt_conn_params_t *mqtt_params);
 void MQTT_ActivateScheduledActions(void);

@@ -910,7 +910,7 @@ int NotifyChange_MQTTEnable(dm_req_t *req, char *value)
     // However, as it is unlikely to be the case that a controller would ever do this, I have not added extra code to support this
     if ((old_value == true) && (val_bool == false))
     {
-        MQTT_DisableClient(mqttclient->conn_params.instance, false);
+        MQTT_DisableClient(mqttclient->conn_params.instance);
     }
 
     // Set the new value, we do this inbetween stopping and starting the connection because both must have the enable set to true
@@ -1914,7 +1914,7 @@ void DestroyMQTTClient(client_t *client)
     mqtt_conn_params_t* mp = &client->conn_params;
 
     // Disable the lower level connection
-    MQTT_DisableClient(mp->instance, false);
+    MQTT_DisableClient(mp->instance);
 
     // Free and DeInitialise the slot
     MQTT_DestroyConnParams(mp);

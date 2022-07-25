@@ -249,7 +249,6 @@ static bool is_notifications_enabled = false;
 void UpdateSockSet(socket_set_t *set);
 void ProcessSocketActivity(socket_set_t *set);
 void ProcessMessageQueueSocketActivity(socket_set_t *set);
-void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt);
 
 /*********************************************************************//**
 **
@@ -1135,7 +1134,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         case kDmExecMsg_ProcessUspRecord:
             pur = &msg.params.usp_record;
             mrt = &pur->mtp_reply_to;
-            ProcessBinaryUspRecord(pur->pbuf, pur->pbuf_len, pur->role, mrt);
+            MSG_HANDLER_HandleBinaryRecord(pur->pbuf, pur->pbuf_len, pur->role, mrt); // NOTE: Intentionally ignoring the error. Errors are handled in the function
 
             // Free all arguments passed in this message
             USP_FREE(pur->pbuf);
@@ -1357,51 +1356,4 @@ void DM_EXEC_HandleScheduledExit(void)
     // If nothing else has exited yet, then exit
     usleep(100000); // Sleep for 100us, just to allow all other threads to exit (that sent the kDmExecMsg_MtpThreadExited message)
     exit(0);
-}
-
-/*********************************************************************//**
-**
-** ProcessBinaryUspRecord
-**
-** Process a USP record, potentially sending back a USP disconnect record if failed to parse the USP record
-** NOTE: Ownership of all input arguments and members stays with the caller
-**
-** \param   pbuf - pointer to buffer containing protobuf encoded USP record
-** \param   pbuf_len - length of protobuf encoded message
-** \param   role - Role allowed for this message
-** \param   mrt - details of where response to this USP message should be sent
-**
-** \return  None
-**
-**************************************************************************/
-void ProcessBinaryUspRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt)
-{
-    int err;
-    char *err_msg;
-    char *cont_endpoint_id;
-
-    // Exit if handled the USP record successfully
-    err = MSG_HANDLER_HandleBinaryRecord(pbuf, pbuf_len, role, mrt);
-    if (err == USP_ERR_OK)
-    {
-        return;
-    }
-
-    // If the code gets here, there was a USP parsing error
-    // Determine the endpoint_id of the controller, if none determined so far
-    cont_endpoint_id = mrt->cont_endpoint_id;
-    if ((cont_endpoint_id == NULL) || (*cont_endpoint_id == '\0'))
-    {
-        // Exit if unable to determine which controller sent this USP Record.
-        // We can't address a USP Disconnect record in this case, so just ignore the bad packet
-        cont_endpoint_id = DEVICE_CONTROLLER_FindEndpointByMTP(mrt);
-        if ((cont_endpoint_id == NULL) || (*cont_endpoint_id == '\0'))
-        {
-            return;
-        }
-    }
-
-    // Send a USP Disconnect record containing cause of error
-    err_msg = USP_ERR_GetMessage();
-    MSG_HANDLER_QueueUspDisconnectRecord(kMtpContentType_DisconnectRecord, cont_endpoint_id, err, err_msg, mrt, END_OF_TIME);
 }

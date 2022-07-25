@@ -118,7 +118,7 @@ static enum_entry_t mtp_content_types[] = {
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt);
-int ValidateUspRecord(UspRecord__Record *rec);
+int ValidateUspRecord(UspRecord__Record *rec, mtp_reply_to_t *mrt);
 char *MtpSendItemToString(mtp_send_item_t *msi);
 void CacheControllerRoleForCurMsg(char *endpoint_id, ctrust_role_t role, mtp_protocol_t protocol);
 int QueueUspNoSessionRecord(usp_send_item_t *usi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time);
@@ -128,26 +128,40 @@ int QueueUspNoSessionRecord(usp_send_item_t *usi, char *endpoint_id, char *usp_m
 ** MSG_HANDLER_HandleBinaryRecord
 **
 ** Main entry point to handling an incoming USP Record (which encapsulates a USP Message)
+** NOTE: Parsing errors are handled locally by this function
 **
 ** \param   pbuf - pointer to buffer containing protobuf encoded USP record
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   role - Role allowed for this message
-** \param   mrt - details of where response to this USP message should be sent
+** \param   mrt - MTP details of where response to this USP message should be sent
 **
-** \return  USP_ERR_OK if successful, USP_ERR_MESSAGE_NOT_UNDERSTOOD if unable to unpack the USP Record
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
 int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, mtp_reply_to_t *mrt)
 {
     int err = USP_ERR_OK;
     UspRecord__Record *rec = NULL;
+    char *cont_endpoint_id;
+    char *err_msg;
 
-    // Exit if unable to unpack the USP record
+    // Determine the endpoint_id of the controller based on the MTP on which it was received
+    // NOTE: cont_endpoint_id will be set to NULL, if unable to determine a controller
+    cont_endpoint_id = mrt->cont_endpoint_id;
+    if ((cont_endpoint_id == NULL) || (*cont_endpoint_id == '\0'))
+    {
+        cont_endpoint_id = DEVICE_CONTROLLER_FindEndpointByMTP(mrt);
+    }
+
+    // Exit if unable to unpack the USP record, sending a USP Disconnect record as required by R-E2E.27
     rec = usp_record__record__unpack(pbuf_allocator, pbuf_len, pbuf);
     if (rec == NULL)
     {
-        USP_ERR_SetMessage("%s: usp_record__record__unpack failed. Ignoring USP Record", __FUNCTION__);
-        return USP_ERR_RECORD_NOT_PARSED;
+        USP_ERR_SetMessage("%s: usp_record__record__unpack failed. Sending USP Disconnect record.", __FUNCTION__);
+        err = USP_ERR_REQUEST_DENIED;
+        err_msg = USP_ERR_GetMessage();
+        MSG_HANDLER_QueueUspDisconnectRecord(kMtpContentType_DisconnectRecord, cont_endpoint_id, err, err_msg, mrt, END_OF_TIME);
+        return err;
     }
 
     // Save off the controller sending this message into the mtp_reply_to_t structure, if not already
@@ -172,7 +186,7 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_rol
 #endif
 
     // Exit if USP record failed validation
-    err = ValidateUspRecord(rec);
+    err = ValidateUspRecord(rec, mrt);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -203,6 +217,7 @@ exit:
 ** MSG_HANDLER_HandleBinaryMessage
 **
 ** Main entry point to handling a USP message
+** NOTE: Parsing errors are handled locally by this function
 **
 ** \param   pbuf - pointer to buffer containing protobuf encoded USP message
 ** \param   pbuf_len - length of protobuf encoded message
@@ -218,11 +233,11 @@ int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_ro
     int err;
     Usp__Msg *usp;
 
-    // Exit if unable to unpack the USP message
+    // Exit if unable to unpack the USP message. The failure is ignored according to R-MTP.5, because we cannot determine if this is a USP Request
     usp = usp__msg__unpack(pbuf_allocator, pbuf_len, pbuf);
     if (usp == NULL)
     {
-        USP_ERR_SetMessage("%s: usp__msg__unpack failed", __FUNCTION__);
+        USP_ERR_SetMessage("%s: usp__msg__unpack failed. Ignoring USP Message", __FUNCTION__);
         return USP_ERR_MESSAGE_NOT_UNDERSTOOD;
     }
 
@@ -329,23 +344,23 @@ void MSG_HANDLER_LogMessageToSend(mtp_send_item_t *msi,
 
 /*********************************************************************//**
 **
-** MSG_HANDLER_HandleUnknownMsgType
+** MSG_HANDLER_QueueErrorMessage
 **
-** Sends back an error response for messages which have a message type which is not supported (or is unknown)
+** Sends back an error message
+** NOTE: The textual error message should have previously been set by the caller using USP_ERR_SetMessage()
 **
-** \param   usp - pointer to parsed USP message structure. This is always freed by the caller (not this function)
+** \param   err - USP error code to send back to controller to indicate cause of error
 ** \param   controller_endpoint - endpoint which sent this message
 ** \param   mrt - details of where response to this USP message should be sent
+** \param   msg_id - String containing the message ID of the USP message which caused this error
 **
 ** \return  None - This code must handle any errors by sending back error messages
 **
 **************************************************************************/
-void MSG_HANDLER_HandleUnknownMsgType(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt)
+void MSG_HANDLER_QueueErrorMessage(int err, char *controller_endpoint, mtp_reply_to_t *mrt, char *msg_id)
 {
-    Usp__Msg *resp = NULL;
-
-    USP_ERR_SetMessage("%s: Cannot handle USP message type %d", __FUNCTION__, usp->header->msg_type);
-    resp = ERROR_RESP_CreateSingle(usp->header->msg_id, USP_ERR_MESSAGE_NOT_UNDERSTOOD, resp, NULL);
+    Usp__Msg *resp;
+    resp = ERROR_RESP_CreateSingle(msg_id, err, NULL, NULL);
     MSG_HANDLER_QueueMessage(controller_endpoint, resp, mrt);
     usp__msg__free_unpacked(resp, pbuf_allocator);
 }
@@ -626,12 +641,13 @@ void MSG_HANDLER_UspSendItem_Init(usp_send_item_t *usi)
 ** HandleUspMessage
 **
 ** Main entry point to handling a message
+** NOTE: Parsing errors are handled locally by this function
 **
 ** \param   usp - pointer to parsed USP message structure. This is always freed by the caller (not this function)
 ** \param   controller_endpoint - endpoint which sent this message
 ** \param   mrt - details of where response to this USP message should be sent
 **
-** \return  USP_ERR_OK if successful, anything else causes the caller to terminate the connection to the controller, and retry
+** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
 int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt)
@@ -639,16 +655,7 @@ int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *m
     int err = USP_ERR_OK;
     char buf[MAX_ISO8601_LEN];
 
-    // Ignore the message if it came from a controller which we do not recognise
-    cur_msg_controller_instance = DEVICE_CONTROLLER_FindInstanceByEndpointId(controller_endpoint);
-    if (cur_msg_controller_instance == INVALID)
-    {
-        USP_ERR_SetMessage("%s: Ignoring message from endpoint_id=%s (unknown controller)", __FUNCTION__, controller_endpoint);
-        err = USP_ERR_REQUEST_DENIED;
-        goto exit;
-    }
-
-    // Ignore the message if it was ill-formed (and notify the controller)
+    // Exit if the message was ill-formed
     if (usp->header == NULL)
     {
         USP_ERR_SetMessage("%s: Ignoring malformed USP message", __FUNCTION__);
@@ -700,8 +707,25 @@ int HandleUspMessage(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *m
             MSG_HANDLER_HandleGetSupportedDM(usp, controller_endpoint, mrt);
             break;
 
+        case USP__HEADER__MSG_TYPE__NOTIFY:
+            // Since Controllers shouldn't send Notify messages, according to R-MTP.5, a USP Error message should be sent in response
+            USP_ERR_SetMessage("%s: Cannot handle USP message type %d. Sending back Error response", __FUNCTION__, usp->header->msg_type);
+            MSG_HANDLER_QueueErrorMessage(USP_ERR_REQUEST_DENIED, controller_endpoint, mrt, usp->header->msg_id);
+            break;
+
         default:
-            MSG_HANDLER_HandleUnknownMsgType(usp, controller_endpoint, mrt);
+        case USP__HEADER__MSG_TYPE__ERROR:
+        case USP__HEADER__MSG_TYPE__GET_RESP:
+        case USP__HEADER__MSG_TYPE__SET_RESP:
+        case USP__HEADER__MSG_TYPE__OPERATE_RESP:
+        case USP__HEADER__MSG_TYPE__ADD_RESP:
+        case USP__HEADER__MSG_TYPE__DELETE_RESP:
+        case USP__HEADER__MSG_TYPE__GET_SUPPORTED_DM_RESP:
+        case USP__HEADER__MSG_TYPE__GET_INSTANCES_RESP:
+        case USP__HEADER__MSG_TYPE__GET_SUPPORTED_PROTO_RESP:
+            // According to R-MTP.5, all received USP Error and USP Response messages should be ignored
+            USP_ERR_SetMessage("%s: Cannot handle USP message type %d. Ignoring", __FUNCTION__, usp->header->msg_type);
+            err = USP_ERR_REQUEST_DENIED;
             break;
     }
 
@@ -719,15 +743,21 @@ exit:
 ** ValidateUspRecord
 **
 ** Validates whether a received USP record can be accepted by USP Agent for processing
+** NOTE: Parsing errors are handled locally by this function
 **
 ** \param   rec - pointer to protobuf structure describing the received USP record
+** \param   mrt - MTP details of where response to this USP message should be sent
 **
 ** \return  USP_ERR_OK if record is valid
 **
 **************************************************************************/
-int ValidateUspRecord(UspRecord__Record *rec)
+int ValidateUspRecord(UspRecord__Record *rec, mtp_reply_to_t *mrt)
 {
+    int err;
+    char *err_msg;
     char *endpoint_id;
+    bool has_mtp;
+    UspRecord__NoSessionContextRecord *ctx;
 
     // Exit if this record is not supposed to be processed by us
     endpoint_id = DEVICE_LOCAL_AGENT_GetEndpointID();
@@ -737,26 +767,55 @@ int ValidateUspRecord(UspRecord__Record *rec)
         return USP_ERR_REQUEST_DENIED;
     }
 
-    // Exit if no USP destination to send the message back to
-    if (rec->from_id == NULL)
+    // Exit if no controller endpoint_id to send the message back to
+    if ((rec->from_id == NULL) || (rec->from_id[0] == '\0'))
     {
         USP_ERR_SetMessage("%s: Ignoring USP record as from_id is blank", __FUNCTION__);
         return USP_ERR_RECORD_FIELD_INVALID;
+    }
+
+    // Exit if the controller is unknown
+    cur_msg_controller_instance = DEVICE_CONTROLLER_FindInstanceByEndpointId(rec->from_id);
+    if (cur_msg_controller_instance == INVALID)
+    {
+        USP_ERR_SetMessage("%s: Ignoring message from endpoint_id=%s (unknown controller)", __FUNCTION__, rec->from_id);
+        return USP_ERR_REQUEST_DENIED;
+    }
+
+    // Exit if we don't know where to send the response, ignoring the USP message
+    // (because none was provided to the MTP when the message was received, and none is configured in the data model)
+    if (mrt->is_reply_to_specified == false)
+    {
+        // Since no 'reply-to' was provided along with the received message, see if one is configured in the data model
+        has_mtp = DEVICE_CONTROLLER_IsMTPConfigured(rec->from_id, mrt->protocol);
+        if (has_mtp == false)
+        {
+            // Exit if there is none provided in the data model
+            USP_ERR_SetMessage("%s: Ignoring message from endpoint_id=%s (No MTP and no reply-to)", __FUNCTION__, rec->from_id);
+            return USP_ERR_REQUEST_DENIED;
+        }
+    }
+
+    // Exit if this USP Record contains the invalid combination of encrypted payload carried in non-Session context
+    // NOTE: This more specific check must come before the more general test for encrypted payload, otherwise we wouldn't detect it
+    if ((rec->payload_security != USP_RECORD__RECORD__PAYLOAD_SECURITY__PLAINTEXT) &&
+        (rec->record_type_case != USP_RECORD__RECORD__RECORD_TYPE_SESSION_CONTEXT))
+    {
+        USP_ERR_SetMessage("%s: Received USP record contains an encrypted payload without Session Context", __FUNCTION__);
+        err = USP_ERR_RECORD_FIELD_INVALID;
+        err_msg = USP_ERR_GetMessage();
+        MSG_HANDLER_QueueUspDisconnectRecord(kMtpContentType_DisconnectRecord, rec->from_id, err, err_msg, mrt, END_OF_TIME);
+        return err;
     }
 
     // Exit if this record contains an encrypted payload (which we don't yet support).
     if (rec->payload_security != USP_RECORD__RECORD__PAYLOAD_SECURITY__PLAINTEXT)
     {
         USP_ERR_SetMessage("%s: Ignoring E2E USP record containing an encrypted payload", __FUNCTION__);
-        return USP_ERR_SECURE_SESS_NOT_SUPPORTED;
-    }
-
-    // Exit if this USP Record contains an encrypted payload and is not Session Context record type.
-    if ((rec->payload_security != USP_RECORD__RECORD__PAYLOAD_SECURITY__PLAINTEXT) &&
-        (rec->record_type_case != USP_RECORD__RECORD__RECORD_TYPE_SESSION_CONTEXT))
-    {
-        USP_ERR_SetMessage("%s: Ignoring USP record as it contains an encrypted payload without Session Context", __FUNCTION__);
-        return USP_ERR_RECORD_FIELD_INVALID;
+        err = USP_ERR_SECURE_SESS_NOT_SUPPORTED;
+        err_msg = USP_ERR_GetMessage();
+        MSG_HANDLER_QueueUspDisconnectRecord(kMtpContentType_DisconnectRecord, rec->from_id, err, err_msg, mrt, END_OF_TIME);
+        return err;
     }
 
     // Print a warning if ignoring integrity check (which we don't yet support).
@@ -771,39 +830,52 @@ int ValidateUspRecord(UspRecord__Record *rec)
         USP_LOG_Warning("%s: Skipping sender certificate verification", __FUNCTION__);
     }
 
-    // Validation for USP Record of NoSessionContext type
-    if (rec->record_type_case == USP_RECORD__RECORD__RECORD_TYPE_NO_SESSION_CONTEXT)
+    // Validate fields based on record type
+    switch (rec->record_type_case)
     {
-        // Exit if this record does not contain a payload
-        UspRecord__NoSessionContextRecord *ctx = rec->no_session_context;
-        if ((ctx == NULL) || (ctx->payload.data == NULL) || (ctx->payload.len == 0))
-        {
-            USP_ERR_SetMessage("%s: Ignoring USP record as it does not contain a payload", __FUNCTION__);
-            return USP_ERR_RECORD_FIELD_INVALID;
-        }
-    }
-    // Validation for USP Record of SessionContext type
-    else if (rec->record_type_case == USP_RECORD__RECORD__RECORD_TYPE_SESSION_CONTEXT)
-    {
+        case USP_RECORD__RECORD__RECORD_TYPE_NO_SESSION_CONTEXT:
+            // Exit if this record does not contain a payload
+            ctx = rec->no_session_context;
+            if ((ctx == NULL) || (ctx->payload.data == NULL) || (ctx->payload.len == 0))
+            {
+                USP_ERR_SetMessage("%s: Ignoring USP record as it does not contain a payload", __FUNCTION__);
+                return USP_ERR_RECORD_FIELD_INVALID;
+            }
+            break;
+
+        case USP_RECORD__RECORD__RECORD_TYPE_SESSION_CONTEXT:
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-        int err = E2E_CONTEXT_ValidateSessionContextRecord(rec->session_context);
-        if (err != USP_ERR_OK)
-        {
-            // USP_ERR_SetMessage() was called by E2E_CONTEXT_ValidateSessionContextRecord
-            return err;
-        }
+            err = E2E_CONTEXT_ValidateSessionContextRecord(rec->session_context);
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
 #else
-        USP_ERR_SetMessage("%s: Session Context record type not supported. Ignoring USP Record.", __FUNCTION__);
-        return USP_ERR_SESS_CONTEXT_NOT_ALLOWED;
+            USP_ERR_SetMessage("%s: Session Context record type not supported", __FUNCTION__);
+            err = USP_ERR_SESS_CONTEXT_NOT_ALLOWED;
+            err_msg = USP_ERR_GetMessage();
+            MSG_HANDLER_QueueUspDisconnectRecord(kMtpContentType_DisconnectRecord, rec->from_id, err, err_msg, mrt, END_OF_TIME);
+            return err;
 #endif
-    }
-    // Exit if unsupported USP Record type OR unexpected record type for USP Agent
-    // Note: When adding a new USP Record type, the MSG_HANDLER_HandleBinaryRecord() must
-    //       handle it too.
-    else
-    {
-        USP_ERR_SetMessage("%s: Ignoring USP record with unsupported record type: %d", __FUNCTION__, rec->record_type_case);
-        return USP_ERR_REQUEST_DENIED;
+            break;
+
+        case USP_RECORD__RECORD__RECORD_TYPE_DISCONNECT:
+            // If we received a disconnect record, then initiate a disconnect
+            USP_ERR_SetMessage("%s: USP Disconnect record received. Disconnecting.", __FUNCTION__);
+            err = USP_ERR_SESS_CONTEXT_TERMINATED;
+            err_msg = USP_ERR_GetMessage();
+            MSG_HANDLER_QueueUspDisconnectRecord(kMtpContentType_DisconnectRecord, rec->from_id, err, err_msg, mrt, END_OF_TIME);
+            return err;
+            break;
+
+        default:
+        case USP_RECORD__RECORD__RECORD_TYPE__NOT_SET:
+        case USP_RECORD__RECORD__RECORD_TYPE_WEBSOCKET_CONNECT:
+        case USP_RECORD__RECORD__RECORD_TYPE_MQTT_CONNECT:
+        case USP_RECORD__RECORD__RECORD_TYPE_STOMP_CONNECT:
+            // Exit if unsupported USP Record type OR unexpected record type for USP Agent
+            USP_ERR_SetMessage("%s: Ignoring USP record with unsupported record type: %d", __FUNCTION__, rec->record_type_case);
+            return USP_ERR_REQUEST_DENIED;
     }
 
     // If the code gets here, then the USP record passed validation, and the encapsulated USP message may be processed

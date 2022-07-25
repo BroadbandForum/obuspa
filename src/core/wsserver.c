@@ -504,9 +504,11 @@ exit:
 ** Determines if the specified endpoint is connected to the agent's websocket server
 ** and if so returns the parameters specifying the MTP to use
 **
-** \param   args - a
+** \param   endpoint_id - Endpoint ID of controller that maybe connected to agent's webserver
+** \param   mrt - structure to fill in with MTP details, if the specified controller is connected to the agent's websocket server
+**                or NULL if the caller is just trying to determine whether the controller is connected to the agent's websocket server
 **
-** \return  USP_ERR_OK if specified endpoint was found
+** \return  USP_ERR_OK if specified endpoint is connected to the agent's websocket server
 **
 **************************************************************************/
 int WSSERVER_GetMTPForEndpointId(char *endpoint_id, mtp_reply_to_t *mrt)
@@ -525,12 +527,15 @@ int WSSERVER_GetMTPForEndpointId(char *endpoint_id, mtp_reply_to_t *mrt)
     }
 
     // Fill in the MTP to use, in order to send to this endpoint via the agent's websocket server
-    memset(mrt, 0, sizeof(mtp_reply_to_t));
-    mrt->is_reply_to_specified = true;
-    mrt->protocol = kMtpProtocol_WebSockets;
-    mrt->wsclient_cont_instance = INVALID;
-    mrt->wsclient_mtp_instance = INVALID;
-    mrt->wsserv_conn_id = wc->conn_id;
+    if (mrt != NULL)
+    {
+        memset(mrt, 0, sizeof(mtp_reply_to_t));
+        mrt->is_reply_to_specified = true;
+        mrt->protocol = kMtpProtocol_WebSockets;
+        mrt->wsclient_cont_instance = INVALID;
+        mrt->wsclient_mtp_instance = INVALID;
+        mrt->wsserv_conn_id = wc->conn_id;
+    }
     err = USP_ERR_OK;
 
 exit:

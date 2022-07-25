@@ -543,25 +543,28 @@ exit:
 **************************************************************************/
 int E2E_CONTEXT_ValidateSessionContextRecord(UspRecord__SessionContextRecord *ctx)
 {
-    // Exit if invalid protobuf structure
+    // Exit if invalid protobuf structure, restarting the session content (R-E2E.23)
     if (ctx == NULL)
     {
         USP_ERR_SetMessage("%s: Ignoring E2E USP record without Session Context", __FUNCTION__);
+        E2E_CONTEXT_E2eSessionEvent(kE2EEvent_Restart, INVALID, MSG_HANDLER_GetMsgControllerInstance());
         return USP_ERR_RECORD_NOT_PARSED;
     }
 
-    // Exit if the SAR state fields are not sync'ed (which we don't yet support).
+    // Exit if the SAR state fields are not sync'ed, restarting the session content (R-E2E.23)
     if (ctx->payloadrec_sar_state != ctx->payload_sar_state)
     {
         USP_ERR_SetMessage("%s: Ignoring E2E USP record with unsupported SAR states combination", __FUNCTION__);
+        E2E_CONTEXT_E2eSessionEvent(kE2EEvent_Restart, INVALID, MSG_HANDLER_GetMsgControllerInstance());
         return USP_ERR_SECURE_SESS_NOT_SUPPORTED;
     }
 
-    // Exit if this record does not contain exactly one payload.
+    // Exit if this record does not contain exactly one payload, restarting the session content (R-E2E.23)
     if (ctx->n_payload != 1 || ctx->payload == NULL)
     {
         USP_ERR_SetMessage("%s: Ignoring E2E USP record without exactly one payload (n: %zu, p: %p)",
                            __FUNCTION__, ctx->n_payload, ctx->payload);
+        E2E_CONTEXT_E2eSessionEvent(kE2EEvent_Restart, INVALID, MSG_HANDLER_GetMsgControllerInstance());
         return USP_ERR_RECORD_FIELD_INVALID;
     }
 
