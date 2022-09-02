@@ -73,12 +73,12 @@ typedef enum
 
 typedef enum
 {
-    kMqttSubState_Unsubscribed = 0,
-    kMqttSubState_Subscribing,
-    kMqttSubState_Subscribed,
-    kMqttSubState_Unsubscribing,
-    kMqttSubState_Resubscribing,
-    kMqttSubState_Error,
+    kMqttSubState_Unsubscribed = 0, // Not currently subscribed
+    kMqttSubState_Subscribing,      // MQTT SUBSCRIBE message is being sent, waiting for SUBACK
+    kMqttSubState_Subscribed,       // Subscribed (MQTT SUBACK has been received)
+    kMqttSubState_Unsubscribing,    // MQTT UNSUBSCRIBE is being sent. When UNSUBACK is received, the subscription will move to the unsubscribed state
+    kMqttSubState_Resubscribing,    // MQTT UNSUBSCRIBE is being sent. When UNSUBACK is received, a subscribe will be sent for the new topic.
+                                    // Subscription stays in this state until SUBACK is received
 } mqtt_substate_t;
 
 typedef enum
@@ -94,7 +94,7 @@ typedef struct
     mqtt_qos_t qos;
     char* topic;
     bool enabled;
-    int mid; // Last mid for subscribe message - to identify the SUBACK
+    int mid; // Last mid for subscribe or unsubscribe message - to identify the SUBACK/UNSUBACK
     mqtt_substate_t state;
 } mqtt_subscription_t;
 
@@ -108,13 +108,13 @@ typedef struct
     int instance;                 // Client instance (Device.MQTT.Client.{i})
     bool enable;
 
-    mqtt_protocolver_t version;      // MQTT protocol version to use
+    mqtt_protocolver_t version;   // MQTT protocol version to use
 
-    char* topic; // Topic to publish to - controller should sub to this
+    char* topic;                  // Controller's topic: Topic which Agent publishes to, and Controller subscribes to
+                                  // NOTE: If not configured in Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Topic, then this variable may be set to NULL
 
-    // Response topic, may be used - or not. Agent should sub to this.
-    // Depends on the configuration in the broker (in v5.0)
-    char* response_topic;
+    char* response_topic;         // Agent's topic: Topic which agent subscribes to, and Controller publishes to
+                                  // NOTE: If not configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured, then this variable may be set to NULL
     mqtt_qos_t publish_qos;
 
     // V5 Params
@@ -150,7 +150,7 @@ bool MQTT_AreAllResponsesSent(void);
 void MQTT_ProcessAllActivity(void);
 int MQTT_AddSubscription(int instance, mqtt_subscription_t* subscription);
 int MQTT_DeleteSubscription(int instance, int subinstance);
-int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *subscription);
+int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *new_sub);
 void MQTT_UpdateAllSockSet(socket_set_t *set);
 void MQTT_ProcessAllSocketActivity(socket_set_t* set);
 void MQTT_InitConnParams(mqtt_conn_params_t* params);

@@ -122,10 +122,12 @@ int Get_MqttClientStatus(dm_req_t *req, char *buf, int len);
 int ValidateAdd_MqttClientSubscriptions(dm_req_t *req);
 int Notify_MqttClientSubcriptionsAdded(dm_req_t *req);
 int Notify_MqttClientSubscriptionsDeleted(dm_req_t *req);
+int Validate_MQTTSubscriptionEnable(dm_req_t *req, char *value);
 int NotifyChange_MQTTSubscriptionEnable(dm_req_t *req, char *value);
 int NotifyChange_MQTTSubscriptionTopic(dm_req_t *req, char *value);
 int Validate_MQTTSubscriptionQoS(dm_req_t *req, char *value);
 int NotifyChange_MQTTSubscriptionQoS(dm_req_t *req, char *value);
+int Validate_MQTTSubscriptionTopic(dm_req_t *req, char *value);
 
 mqtt_conn_params_t *FindMqttParamsByInstance(int instance);
 mqtt_conn_params_t *FindUnusedMqttParams(void);
@@ -192,7 +194,7 @@ int DEVICE_MQTT_Init(void)
                                Notify_MQTTClientAdded, NULL, NULL, Notify_MqttClientDeleted);
     if (err != USP_ERR_OK)
     {
-        USP_LOG_Error("MQTT object registration failed\n");
+        USP_LOG_Error("MQTT object registration failed");
         return err;
     }
 
@@ -224,8 +226,8 @@ int DEVICE_MQTT_Init(void)
                                                               NULL, NULL, Notify_MqttClientSubscriptionsDeleted);
     err |= USP_REGISTER_Param_NumEntries(DEVICE_MQTT_CLIENT ".{i}.SubscriptionNumberOfEntries", DEVICE_MQTT_CLIENT".{i}.Subscription.{i}");
     err |= USP_REGISTER_DBParam_Alias(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.Alias", NULL);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.Enable", "false", NULL, NotifyChange_MQTTSubscriptionEnable, DM_BOOL);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.Topic", NULL, NULL, NotifyChange_MQTTSubscriptionTopic, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.Enable", "false", Validate_MQTTSubscriptionEnable, NotifyChange_MQTTSubscriptionEnable, DM_BOOL);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.Topic", NULL, Validate_MQTTSubscriptionTopic, NotifyChange_MQTTSubscriptionTopic, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.QoS", NULL, Validate_MQTTSubscriptionQoS, NotifyChange_MQTTSubscriptionQoS, DM_UINT);
 
     // Exit if any errors occurred
@@ -792,6 +794,7 @@ int EnableMQTTClient(mqtt_conn_params_t *mp, mqtt_subscription_t subscriptions[M
 {
     int err;
 
+    // Update controller and agent topics. Note: Both could possibly be set to NULL
     USP_SAFE_FREE(mp->topic);
     USP_SAFE_FREE(mp->response_topic);
     mp->topic = USP_STRDUP(DEVICE_CONTROLLER_GetControllerTopic(mp->instance));
@@ -846,7 +849,6 @@ int ProcessMqttSubscriptionAdded(int instance, int sub_instance, mqtt_subscripti
         USP_LOG_Error("%s: Failed to find empty subscription.", __FUNCTION__);
         return USP_ERR_RESOURCES_EXCEEDED;
     }
-    sub->instance = sub_instance;
 
     // Exit if unable to retrieve the Enable parameter for this MQTT subscription
     USP_SNPRINTF(path, sizeof(path), "%s.%d.Subscription.%d.Enable", device_mqtt_client_root, instance, sub_instance);
@@ -865,6 +867,15 @@ int ProcessMqttSubscriptionAdded(int instance, int sub_instance, mqtt_subscripti
         return err;
     }
 
+    // Exit if the subscription is enabled, but the topic is empty
+    USP_ASSERT(sub->topic != NULL);
+    if ((sub->enabled) && (sub->topic[0] == '\0'))
+    {
+        USP_LOG_Error("%s: Device.MQTT.Client.%d.Subscription.%d is enabled, but topic is empty", __FUNCTION__, instance, sub_instance);
+        USP_SAFE_FREE(sub->topic);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
     // Exit if unable to retrieve the QoS parameter for this MQTT subscription
     USP_SNPRINTF(path, sizeof(path), "%s.%d.Subscription.%d.QoS", device_mqtt_client_root, instance, sub_instance);
     err = DM_ACCESS_GetUnsigned(path, &sub->qos);
@@ -873,7 +884,8 @@ int ProcessMqttSubscriptionAdded(int instance, int sub_instance, mqtt_subscripti
         return err;
     }
 
-    // Since the subscription was retrieved successfully, return the subscription entry
+    // Since the subscription was retrieved successfully, mark the subscription as 'in-use' and return the subscription entry
+    sub->instance = sub_instance;
     if (mqtt_sub != NULL)
     {
         *mqtt_sub = sub;
@@ -1722,9 +1734,9 @@ void ScheduleMqttReconnect(mqtt_conn_params_t *mp)
 **************************************************************************/
 void ScheduleMQTTResubscribe(client_t *mqttclient, mqtt_subscription_t *sub)
 {
+    // Update controller and agent topics. Note: Both could possibly be set to NULL
     USP_SAFE_FREE(mqttclient->conn_params.response_topic);
     USP_SAFE_FREE(mqttclient->conn_params.topic);
-
     mqttclient->conn_params.response_topic = USP_STRDUP(DEVICE_MTP_GetAgentMqttResponseTopic(mqttclient->conn_params.instance));
     mqttclient->conn_params.topic = USP_STRDUP(DEVICE_CONTROLLER_GetControllerTopic(mqttclient->conn_params.instance));
 
@@ -1759,7 +1771,7 @@ int ValidateAdd_Mqttclients(dm_req_t *req)
     mp = FindUnusedMqttParams();
     if (mp == NULL)
     {
-        USP_LOG_Error("Resources exceeded error\n");
+        USP_LOG_Error("Resources exceeded error");
         return USP_ERR_RESOURCES_EXCEEDED;
     }
     return USP_ERR_OK;
@@ -2064,7 +2076,7 @@ int ValidateAdd_MqttClientSubscriptions(dm_req_t *req)
     mqttclient = FindDevMqttClientByInstance(inst1);
     if (mqttclient == NULL)
     {
-        USP_LOG_Error("No matching MQTT client for instance: %d\n", inst1);
+        USP_LOG_Error("No matching MQTT client for instance: %d", inst1);
         return USP_ERR_RESOURCES_EXCEEDED;
     }
 
@@ -2082,7 +2094,7 @@ int ValidateAdd_MqttClientSubscriptions(dm_req_t *req)
 ** Notify_MqttClientSubcriptionsAdded
 **
 ** Function called when a Mqtt client subs has been added to
-** Device.MQTT.Client.{i}.Subscritptions.{i}
+** Device.MQTT.Client.{i}.Subscription.{i}
 **
 ** \param   req - pointer to structure identifying the MQTT client
 **
@@ -2102,7 +2114,7 @@ int Notify_MqttClientSubcriptionsAdded(dm_req_t *req)
     err = ProcessMqttSubscriptionAdded(inst1, inst2, &sub);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage(" %s: Process MQTT client added failed\n", __FUNCTION__);
+        USP_ERR_SetMessage(" %s: Process MQTT client added failed", __FUNCTION__);
         return err;
     }
 
@@ -2110,7 +2122,7 @@ int Notify_MqttClientSubcriptionsAdded(dm_req_t *req)
     err = MQTT_AddSubscription(inst1, sub);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: client subscribe failed\n", __FUNCTION__);
+        USP_ERR_SetMessage("%s: client subscribe failed", __FUNCTION__);
         return err;
     }
 
@@ -2144,7 +2156,7 @@ int Notify_MqttClientSubscriptionsDeleted(dm_req_t *req)
     mqtt_subscription_t* sub = FindSubscriptionInMqttClient(mqttclient, inst2);
     if (sub == NULL)
     {
-        USP_ERR_SetMessage("%s: Delete subscription failed\n", __FUNCTION__);
+        USP_ERR_SetMessage("%s: Delete subscription failed", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -2155,8 +2167,51 @@ int Notify_MqttClientSubscriptionsDeleted(dm_req_t *req)
     err = MQTT_DeleteSubscription(inst1, inst2);
     if (err != USP_ERR_OK)
     {
-        USP_ERR_SetMessage("%s: Delete subscription failed\n", __FUNCTION__);
+        USP_ERR_SetMessage("%s: Delete subscription failed", __FUNCTION__);
         return err;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Validate_MQTTSubscriptionEnable
+**
+** Validates Device.MQTT.Client.{i}.Subscription.{i}.Enable
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_MQTTSubscriptionEnable(dm_req_t *req, char *value)
+{
+    client_t *mqttclient;
+    mqtt_subscription_t *sub;
+
+    // Exit if the MQTT client or subscription does not exist yet in our local data structure
+    // NOTE: this could occur if this validate is being called as part of a USP Add, before the notify vendor hook.
+    //       In this case, the validate for the topic will prevent an empty topic, so we don't need to prevent an enable of a pre-existing empty topic
+    mqttclient = FindDevMqttClientByInstance(inst1);
+    if (mqttclient == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    sub = FindSubscriptionInMqttClient(mqttclient, inst2);
+    if (sub == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if trying to enable a subscription which has an empty topic. This is not allowed.
+    if ((val_bool == true) &&
+        ((sub->topic == NULL) || (sub->topic[0] == '\0')) )
+    {
+        USP_ERR_SetMessage("%s: Cannot enable subscription with empty topic", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
     }
 
     return USP_ERR_OK;
@@ -2188,7 +2243,7 @@ int NotifyChange_MQTTSubscriptionEnable(dm_req_t *req, char *value)
     sub = FindSubscriptionInMqttClient(mqttclient, inst2);
     if (sub == NULL)
     {
-        USP_ERR_SetMessage("%s: Subscription enable change failed\n", __FUNCTION__);
+        USP_ERR_SetMessage("%s: Subscription enable change failed", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -2237,7 +2292,7 @@ int NotifyChange_MQTTSubscriptionTopic(dm_req_t *req, char *value)
     sub = FindSubscriptionInMqttClient(mqttclient, inst2);
     if (sub == NULL)
     {
-        USP_ERR_SetMessage("%s: Subscription topic change failed\n", __FUNCTION__);
+        USP_ERR_SetMessage("%s: Subscription topic change failed", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -2305,7 +2360,7 @@ int NotifyChange_MQTTSubscriptionQoS(dm_req_t *req, char *value)
     sub = FindSubscriptionInMqttClient(mqttclient, inst2);
     if (sub == NULL)
     {
-        USP_ERR_SetMessage("%s: Subscription QoS change failed\n", __FUNCTION__);
+        USP_ERR_SetMessage("%s: Subscription QoS change failed", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -2325,4 +2380,57 @@ int NotifyChange_MQTTSubscriptionQoS(dm_req_t *req, char *value)
     }
     return USP_ERR_OK;
 }
+
+/*********************************************************************//**
+**
+** Validate_MQTTSubscriptionTopic
+**
+** Validates that a new Device.MQTT.Client.{i}.Subscriptions.{i}.Topic is unique in the table
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_MQTTSubscriptionTopic(dm_req_t *req, char *value)
+{
+    int i;
+    client_t *client;
+    mqtt_subscription_t *sub;
+
+    // Exit if no value set for Topic (i.e. set to an empty string)
+    if (*value == '\0')
+    {
+        USP_ERR_SetMessage("%s: Topic must be set to a non-empty string", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if the MQTT client does not exist yet in our local data structure
+    // NOTE: this could occur if this validate is being called as part of a USP Add of both client and subs, before the notify vendor hook.
+    //       In this rare case (adding MQTT client and multiple child subscriptions using a single USP Add messsage), the code does not prevent duplicate topics.
+    //       To fix this, the code in this function needs to get the values of the other topics from the USP DB, rather than using our local data structure
+    client = FindDevMqttClientByInstance(inst1);
+    if (client == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Iterate over all subscriptions for this MQTT client
+    for (i=0; i<MAX_MQTT_SUBSCRIPTIONS; i++)
+    {
+        // Exit if the topic already exists in another subscription
+        sub = &client->subscriptions[i];
+        if ((sub->instance != INVALID) && (sub->instance != inst2) &&
+            (sub->topic != NULL) && (strcmp(sub->topic, value)==0))
+        {
+            USP_ERR_SetMessage("%s: Topic (%s) is already in use by Subscription.%d", __FUNCTION__, value, sub->instance);
+            return USP_ERR_UNIQUE_KEY_CONFLICT;
+        }
+    }
+
+    // If the code gets here, then the new topic ID value is unique for this MQTT client
+    return USP_ERR_OK;
+}
+
 #endif

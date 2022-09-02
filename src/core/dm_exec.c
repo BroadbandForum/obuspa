@@ -707,7 +707,7 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, c
 **
 ** \param   mqtt_instance - instance number of connection in Device.MQTT.Client.{i}
 ** \param   version - MQTT version in use on the connection
-** \param   agent_topic - MQTT topic that the agent actually subscribed to
+** \param   agent_topic - MQTT topic that the agent actually subscribed to. This is used by dm_exec to address a USP Connect record.
 ** \param   role - Role to use for controllers connected to the specified STOMP connection
 **
 ** \return  None
@@ -725,6 +725,8 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t ver
         USP_LOG_Error("%s is being called before data model has been initialised", __FUNCTION__);
         return;
     }
+
+    USP_ASSERT(agent_topic != NULL);
 
     // Form message
     memset(&msg, 0, sizeof(msg));

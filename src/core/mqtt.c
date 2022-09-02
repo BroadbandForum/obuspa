@@ -73,6 +73,9 @@
 #define RESPONSE_INFORMATION 26
 #define USER_PROPERTY 38
 
+//------------------------------------------------------------------------------
+// Maximum length of a topic in characters (including NULL terminator)
+#define MAX_TOPIC_LEN 128
 
 //------------------------------------------------------------------------------
 // Cause of failure of an MQTT Client Connection
@@ -111,8 +114,8 @@ typedef struct
     double_linked_list_t usp_record_send_queue;
 
     // From the broker
-    mqtt_subscription_t response_subscription; // NOTE: The topic in here may be an empty string if not set by either Device.LocalAgent.MTP.{i}.ResponseTopicConfigured or present in the CONNACK
-
+    mqtt_subscription_t response_subscription; // Contains subscription for agent's topic
+                                               // NOTE: The topic in here may be NULL if not set by either Device.LocalAgent.MTP.{i}.ResponseTopicConfigured or present in the CONNACK
     int retry_count;
     time_t retry_time;
     time_t last_status_change;
@@ -190,7 +193,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
 void SaveAgentTopicFromConnack(mqtt_client_t *client, char *agent_topic);
 void DisconnectClient(mqtt_client_t *client);
 void DisconnectCallback(struct mosquitto *mosq, void *userdata, int rc);
-int Subscribe(mqtt_client_t *client, mqtt_subscription_t *sub);
+int Subscribe(mqtt_client_t *client, mqtt_subscription_t *sub, bool is_agent_topic);
 int SubscribeV5(mqtt_client_t *client, mqtt_subscription_t *sub);
 void SubscribeToAll(mqtt_client_t *client);
 void SubscribeCallback(struct mosquitto *mosq, void *userdata, int mid, int qos_count, const int* granted_qos);
@@ -206,8 +209,7 @@ void PublishV5Callback(struct mosquitto *mosq, void *userdata, int mid, int reas
 void MessageCallback(struct mosquitto *mosq, void *userdata, const struct mosquitto_message *message);
 void MessageV5Callback(struct mosquitto *mosq, void *userdata, const struct mosquitto_message *message, const mosquitto_property *props);
 void ReceiveMqttMessage(mqtt_client_t *client, const struct mosquitto_message *message, char *response_topic);
-bool FindReplyToTopic(char* topic, char* reply_to_topic);
-void ReplaceTopicSlash(char* topic);
+char *FindReplyToTopic(char *publish_topic, char *buf, int len);
 void LogCallback(struct mosquitto *mosq, void *userdata, int level, const char *str);
 void HandleMqttError(mqtt_client_t *client, mqtt_failure_t failure_code, const char* message);
 void MoveState_Private(mqtt_state_t *state, mqtt_state_t to, const char *event, const char* func);
@@ -215,8 +217,8 @@ void ParamReplace(mqtt_conn_params_t *dest, mqtt_conn_params_t *src);
 bool IsUspRecordInMqttQueue(mqtt_client_t *client, unsigned char *pbuf, int pbuf_len);
 mqtt_client_t *FindUnusedMqttClient_Local();
 mqtt_client_t *FindMqttClientByInstance(int instance);
-mqtt_subscription_t *FindMqttSubscriptionByInstance(int clientinstance, int subinstance);
-mqtt_subscription_t *FindSubscriptionByMid(mqtt_client_t *client, int mid);
+mqtt_subscription_t *FindMqttSubscriptionByInstance(mqtt_client_t *client, int subinstance);
+mqtt_subscription_t *FindSubscriptionByMid(mqtt_client_t *client, int mid, bool *is_agent_topic);
 mqtt_client_t *FindMqttClientByMosquitto(struct mosquitto *mosq);
 int AddUserProperties(mosquitto_property **props);
 int AddConnectProperties(mosquitto_property **props);
@@ -379,6 +381,20 @@ int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subsc
     int i;
     int err = USP_ERR_OK;
     mqtt_client_t *client = NULL;
+    mqtt_subscription_t *sub;
+
+    // Exit if any of the subscriptions have an empty topic, but are enabled
+    for (i=0; i<MAX_MQTT_SUBSCRIPTIONS; i++)
+    {
+        sub = &subscriptions[i];
+        if ((sub->instance != INVALID) && (sub->enabled==true) &&
+            ((sub->topic==NULL) || (sub->topic[0] == '\0')) )
+        {
+            USP_LOG_Error("%s: Cannot enable client (instance=%d) as an enabled subscription's topic (instance=%d) is empty", __FUNCTION__, mqtt_params->instance, sub->instance);
+            err = USP_ERR_INTERNAL_ERROR;
+            goto exit;
+        }
+    }
 
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
@@ -486,7 +502,7 @@ exit:
 ** \param   msi - Information about the content to send. The ownership of
 **              the payload buffer is passed to this function, unless an error is returned.
 ** \param   instance - instance number for the client in Device.MQTT.Client.{i}
-** \param   topic - name of the agent's MQTT topic configured for this connection in the data model
+** \param   topic - controller's topic to publish the message on
 **
 ** \return  USP_ERR_OK on success, USP_ERR_XXX otherwise
 **
@@ -538,12 +554,14 @@ int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char* topic)
     send_item = USP_MALLOC(sizeof(mqtt_send_item_t));
     send_item->item = *msi;  // NOTE: Ownership of the payload buffer passes to the MQTT client
 
+    // Determine Controller topic to publish to
     if (topic != NULL)
     {
         send_item->topic = USP_STRDUP(topic);
     }
     else
     {
+        // NOTE: If Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Topic is not configured, then send_item->topic will be set to NULL here
         send_item->topic = USP_STRDUP(client->conn_params.topic);
     }
 
@@ -691,11 +709,14 @@ mtp_status_t MQTT_GetMtpStatus(int instance)
     mtp_status_t status;
     mqtt_client_t *client;
 
+    OS_UTILS_LockMutex(&mqtt_access_mutex);
+
     // Exit if not matching client found for this instance number
     client = FindMqttClientByInstance(instance);
     if (client==NULL)
     {
-        return kMtpStatus_Error;
+        status = kMtpStatus_Error;
+        goto exit;
     }
 
     switch(client->state)
@@ -717,6 +738,8 @@ mtp_status_t MQTT_GetMtpStatus(int instance)
             break;
     }
 
+exit:
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
     return status;
 }
 
@@ -837,7 +860,7 @@ bool MQTT_AreAllResponsesSent(void)
 **
 ** MQTT_AddSubscription
 **
-** Adds the specified subscription
+** Called when a new subscription instance has been added into Device.MQTT.Client.{i}.Subscription.{i}
 **
 ** \param   instance - Device.MQTT.Client.{i} number for connection
 ** \param   subscription - pointer to subscription to add
@@ -851,45 +874,54 @@ int MQTT_AddSubscription(int instance, mqtt_subscription_t* subscription)
     mqtt_client_t *client = NULL;
     mqtt_subscription_t *sub_dest = NULL;
 
+    // Exit if subscription is enabled and topic is empty string. NOTE: This should have been prevented by the caller.
+    USP_ASSERT(subscription->topic != NULL);
+    if ((subscription->enabled) && (subscription->topic[0] == '\0'))
+    {
+        USP_LOG_Error("%s: Cannot subscribe to a topic of empty string", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    OS_UTILS_LockMutex(&mqtt_access_mutex);
+
     client = FindMqttClientByInstance(instance);
     if (client == NULL)
     {
         USP_LOG_Error("%s: No internal MQTT client matching Device.MQTT.Client.%d", __FUNCTION__, instance);
         err = USP_ERR_INTERNAL_ERROR;
-        return err;
+        goto exit;
     }
 
-    sub_dest = FindMqttSubscriptionByInstance(instance, subscription->instance);
-    if (sub_dest == NULL)
-    {
-        // Find an invalid subscription, if can't find the current instance.
-        USP_LOG_Debug("%s: Using an empty subscription", __FUNCTION__);
-        sub_dest = FindMqttSubscriptionByInstance(instance, INVALID);
-    }
+    USP_ASSERT(subscription->instance != INVALID);
+    USP_ASSERT(FindMqttSubscriptionByInstance(client, subscription->instance)==NULL); // This instance shouldn't exist, since we're adding it
 
+    // Exit if unable to find a free subscription entry
+    sub_dest = FindMqttSubscriptionByInstance(client, INVALID);
     if (sub_dest == NULL)
     {
         USP_LOG_Error("%s: No internal MQTT client subscription remaining for %d", __FUNCTION__, subscription->instance);
         err = USP_ERR_INTERNAL_ERROR;
-        return err;
+        goto exit;
     }
 
-    // Replace the subsription destination with the new subscription
+    // Copy the subscription member variables into the new subscription entry
     MQTT_SubscriptionReplace(sub_dest, subscription);
 
-    if (sub_dest->enabled == true && sub_dest->instance != INVALID)
+    // Subscribe to the subscription only if currently connected (and subscription is enabled)
+    if ((sub_dest->enabled == true) && (client->state == kMqttState_Running))
     {
-        if (sub_dest->topic == NULL)
+        err = Subscribe(client, sub_dest, false);
+        if (err != USP_ERR_OK)
         {
-            USP_LOG_Error("%s: Topic is invalid", __FUNCTION__);
-            return err;
-        }
-        if (Subscribe(client, sub_dest) != USP_ERR_OK)
-        {
-            err = USP_ERR_INTERNAL_ERROR;
+            goto exit;
         }
     }
 
+    // If the code gets here, adding the subscription was successful
+    err = USP_ERR_OK;
+
+exit:
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
     return err;
 }
 
@@ -911,37 +943,61 @@ int MQTT_DeleteSubscription(int instance, int subinstance)
     mqtt_client_t *client = NULL;
     mqtt_subscription_t *sub = NULL;
 
-    client = FindMqttClientByInstance(instance);
+    OS_UTILS_LockMutex(&mqtt_access_mutex);
 
+    client = FindMqttClientByInstance(instance);
     if (client == NULL)
     {
         USP_LOG_Error("%s: No internal MQTT client matching Device.MQTT.Client.%d", __FUNCTION__, instance);
         err = USP_ERR_INTERNAL_ERROR;
-        return err;
+        goto exit;
     }
 
-    sub = FindMqttSubscriptionByInstance(instance, subinstance);
-
+    sub = FindMqttSubscriptionByInstance(client, subinstance);
     if (sub == NULL)
     {
         USP_LOG_Error("%s: No internal MQTT subscription matching Device.MQTT.Client.%d.Subscription.%d",
                       __FUNCTION__, instance, subinstance);
         err = USP_ERR_INTERNAL_ERROR;
-        return err;
+        goto exit;
     }
 
-    if (sub->instance != INVALID)
+    USP_ASSERT(sub->instance != INVALID);
+
+    if ((sub->enabled) && (client->state == kMqttState_Running))
     {
-        if (sub->enabled)
+        switch(sub->state)
         {
-            if (Unsubscribe(client, sub) != USP_ERR_OK)
-            {
-                err = USP_ERR_INTERNAL_ERROR;
-            }
+            case kMqttSubState_Resubscribing:
+                // In the resubscribing state, we can't be sure whether we are waiting for the UNSUBACK of the old subscription
+                // or the SUBACK of the new subscription. In the former case, the subscription is already unsubscribed or will be.
+                // But in the latter case the new subscription is subscribed or will be. To err on the side of caution, assume
+                // that we are in the latter case, and unsubscribe.
+                // Intentional fall through
+
+            case kMqttSubState_Subscribed:
+                // Unsubscribe, ignoring any errors, since we are going to mark the subscription as not in use anyway
+                Unsubscribe(client, sub);
+                break;
+
+            default:
+            case kMqttSubState_Unsubscribed:
+            case kMqttSubState_Subscribing:
+            case kMqttSubState_Unsubscribing:
+                // Nothing to do, the subscription is already unsubscribed, or will be
+                break;
         }
-        sub->instance = INVALID;
     }
 
+    // Mark the subscription as not in use.
+    // Note: doing this, if just initiated an unsubscribe will lead to an error being logged in the unsubscribe callback (the error can be ignored)
+    sub->instance = INVALID;
+
+    // If the code gets here, deleting the subscription was successful
+    err = USP_ERR_OK;
+
+exit:
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
     return err;
 }
 
@@ -952,63 +1008,70 @@ int MQTT_DeleteSubscription(int instance, int subinstance)
 ** Unsubscribes the specified subscription, then resubscribes to it with a different topic and QoS
 **
 ** \param   instance - Client instance in Device.MQTT.Client.{i}
-** \param   sub - pointer to new subscription parameters. Also contains subscription instance number, identifying the subscription to change
+** \param   new_sub - pointer to new subscription parameters. Also contains subscription instance number, identifying the subscription to change
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *subscription)
+int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *new_sub)
 {
     int err = USP_ERR_INTERNAL_ERROR;
     mqtt_client_t *client = NULL;
     mqtt_subscription_t *sub = NULL;
+    bool is_unsubscribing;
 
+    // Exit if subscription is enabled and topic is empty string. NOTE: This should have been prevented by the caller.
+    USP_ASSERT(new_sub->topic != NULL);
+    if ((new_sub->enabled) && (new_sub->topic[0] == '\0'))
+    {
+        USP_LOG_Error("%s: Cannot subscribe to a topic of empty string", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    OS_UTILS_LockMutex(&mqtt_access_mutex);
+
+    USP_ASSERT(instance != INVALID);
+    USP_ASSERT(new_sub->instance != INVALID);
+    USP_ASSERT(new_sub->topic != NULL);   // Ensured by caller, as topic is retrieved from Device.MQTT.Client.Subscription.{i}.Topic
+
+    // Exit if unable to find MQTT client matching the specified instance number
     client = FindMqttClientByInstance(instance);
     if (client == NULL)
     {
         USP_LOG_Error("%s: No internal MQTT client matching Device.MQTT.Connection.%d", __FUNCTION__, instance);
         err = USP_ERR_INTERNAL_ERROR;
-        return err;
+        goto exit;
     }
 
-    sub = FindMqttSubscriptionByInstance(instance, subscription->instance);
+    // Exit if unable to find the subscription matching the specified instance number for the client
+    sub = FindMqttSubscriptionByInstance(client, new_sub->instance);
     if (sub == NULL)
     {
-        USP_LOG_Error("%s: No internal MQTT client subscription matching %d", __FUNCTION__, subscription->instance);
+        USP_LOG_Error("%s: No internal MQTT client subscription matching %d", __FUNCTION__, new_sub->instance);
         err = USP_ERR_INTERNAL_ERROR;
-        return err;
+        goto exit;
     }
 
-    MQTT_SubscriptionReplace(sub, subscription);
-
-    //unsubscribe & subscribe the  topic
-    if (sub->instance != INVALID)
+    // Exit if not currently connected and subscribed - the resubscription will occur after receiving the connect callback
+    if (client->state != kMqttState_Running)
     {
-        if (sub->topic == NULL)
-        {
-            USP_LOG_Error("%s: Topic is invalid", __FUNCTION__);
-            return err;
-        }
+        MQTT_SubscriptionReplace(sub, new_sub);
+        err = USP_ERR_OK;
+        goto exit;
+    }
 
-        int version = client->conn_params.version;
-
-        if (sub->enabled)
-        {
-            //set state to resubscribe. This will subscribe on unsubscribe callback.
-            sub->state = kMqttSubState_Resubscribing;
-        }
-        else
-        {
-            // Disabled, so do not subscribe again in unsubscribe callback.
-            sub->state = kMqttSubState_Unsubscribing;
-        }
-
-        USP_LOG_Debug("%s: Sending unsub before sub to %s %d %d %d", __FUNCTION__,
-                sub->topic, sub->mid, sub->qos, sub->state);
-
-        if (version == kMqttProtocol_5_0)
+    // First unsubscribe the existing subscription (if necessary)
+    is_unsubscribing = (sub->enabled) && (sub->state != kMqttSubState_Unsubscribed) && (sub->state != kMqttSubState_Unsubscribing);
+    if (is_unsubscribing)
+    {
+        USP_LOG_Debug("%s: Unsubscribe from topic=%s", __FUNCTION__, sub->topic);
+        if (client->conn_params.version == kMqttProtocol_5_0)
         {
             err = UnsubscribeV5(client, sub);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
         }
         else
         {
@@ -1016,10 +1079,59 @@ int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *subscription)
             {
                 USP_LOG_Error("%s: Failed to unsubscribe from %s", __FUNCTION__, sub->topic);
                 err = USP_ERR_INTERNAL_ERROR;
+                goto exit;
             }
         }
     }
 
+    // Change to new subscription
+    // NOTE: Do not overwrite mid member, as we might need it to identify the UNSUBACK message if when we receive it (if unsubscribing)
+    sub->qos = new_sub->qos;
+    USP_SAFE_FREE(sub->topic);
+    sub->topic = USP_STRDUP(new_sub->topic);
+    sub->enabled = new_sub->enabled;
+
+    // Update state
+    if (is_unsubscribing)
+    {
+        if (sub->enabled)
+        {
+            // Set state to resubscribe to new topic on reception of UNSUBACK (initiated by the unsubscribe, above)
+            sub->state = kMqttSubState_Resubscribing;
+        }
+        else
+        {
+            // Since new subscription is disabled, do not resubscribe on reception of UNSUBACK
+            sub->state = kMqttSubState_Unsubscribing;
+        }
+    }
+    else
+    {
+        if (sub->enabled)
+        {
+            if (client->state == kMqttState_Running)
+            {
+                // Since new subscription is enabled, and we don't have to wait for old subscription to unsubscribe first,
+                // subscribe to new subscription here
+                err = Subscribe(client, sub, false);
+                if (err != USP_ERR_OK)
+                {
+                    goto exit;
+                }
+            }
+        }
+        else
+        {
+            // NOTE: Nothing to do, if not unsubscribing, and new subscription is disabled
+            sub->state = kMqttSubState_Unsubscribed;
+        }
+    }
+
+    // If the code gets here, the resubscription was successful
+    err = USP_ERR_OK;
+
+exit:
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
     return err;
 }
 
@@ -1028,6 +1140,7 @@ int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *subscription)
 ** MQTT_SubscriptionReplace
 **
 ** Replaces the specified subscription with a different subscription
+** NOTE: This function does not need to be an API function, as it is only called from this file
 **
 ** \param   dest - pointer to MQTT subscription to replace
 ** \param   src  - pointer to MQTT subscription to copy
@@ -1717,6 +1830,8 @@ void InitSubscription(mqtt_subscription_t *sub)
 **************************************************************************/
 int EnableMqttClient(mqtt_client_t* client)
 {
+    mqtt_subscription_t *resp_sub;
+
     // Clear state variables that get reset each connection attempt
     // Note: Do not clear state variables that need to persist through retry
     USP_ASSERT(client != NULL);
@@ -1727,17 +1842,14 @@ int EnableMqttClient(mqtt_client_t* client)
     USP_SAFE_FREE(client->agent_topic_from_connack);
     client->retry_time = 0;
 
-    // Add response topic as a new "subscription"
-    mqtt_subscription_t resp_sub = { 0 };
-    resp_sub.qos = kMqttQos_Best;
-    resp_sub.enabled = true;
-
-    resp_sub.topic = USP_STRDUP(client->conn_params.response_topic);
-
-    MQTT_SubscriptionReplace(&client->response_subscription, &resp_sub);
-
-    // No longer need anything from the resp_sub
-    MQTT_SubscriptionDestroy(&resp_sub);
+    // Initialise the agent's response topic
+    // NOTE: The agent's response topic stored in response_subscription may be NULL, if not configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured
+    resp_sub = &client->response_subscription;
+    MQTT_SubscriptionDestroy(resp_sub);
+    memset(resp_sub, 0, sizeof(mqtt_subscription_t));
+    resp_sub->qos = kMqttQos_Best;
+    resp_sub->enabled = true;
+    resp_sub->topic = USP_STRDUP(client->conn_params.response_topic);
 
     int err = EnableMosquitto(client);
     if (err != USP_ERR_OK)
@@ -2568,11 +2680,12 @@ void HandleMqttReconnectAfterDisconnect(mqtt_client_t *client)
 **
 ** \param   client - pointer to MQTT client
 ** \param   sub - subscription to subscribe to
+** \param   is_agent_topic - Set if the subscription is the agent's response topic
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int Subscribe(mqtt_client_t *client, mqtt_subscription_t *sub)
+int Subscribe(mqtt_client_t *client, mqtt_subscription_t *sub, bool is_agent_topic)
 {
     USP_ASSERT(client != NULL);
     USP_ASSERT(sub != NULL);
@@ -2586,14 +2699,26 @@ int Subscribe(mqtt_client_t *client, mqtt_subscription_t *sub)
     int version = client->conn_params.version;
 
     sub->state = kMqttSubState_Subscribing;
-    USP_LOG_Debug("%s: Sending subscribe to %s %d %d", __FUNCTION__, sub->topic, sub->mid, sub->qos);
     if (version == kMqttProtocol_5_0)
     {
+        USP_LOG_Debug("%s: Sending subscribe to %s %d %d", __FUNCTION__, sub->topic, sub->mid, sub->qos);
         err = SubscribeV5(client, sub);
     }
     else
     {
-        if (mosquitto_subscribe(client->mosq, &sub->mid, sub->topic, sub->qos) != MOSQ_ERR_SUCCESS)
+        char wildcarded_topic[MAX_TOPIC_LEN+2];  // Plus 2 to include the wildcard
+        char *topic = sub->topic;
+
+        // If this subscription is the agent's response topic, then for MQTTv3.x, we must subscribe to the wildcarded version
+        // because the controller publishes to topics of the form 'agent-topic/reply-to=controller-topic' as per R-MQTT.24
+        if (is_agent_topic)
+        {
+            USP_SNPRINTF(wildcarded_topic, sizeof(wildcarded_topic), "%s/#", sub->topic);
+            topic = wildcarded_topic;
+        }
+
+        USP_LOG_Debug("%s: Sending subscribe to %s %d %d", __FUNCTION__, topic, sub->mid, sub->qos);
+        if (mosquitto_subscribe(client->mosq, &sub->mid, topic, sub->qos) != MOSQ_ERR_SUCCESS)
         {
             USP_LOG_Error("%s: Failed to subscribe to %s", __FUNCTION__, sub->topic);
             err = USP_ERR_INTERNAL_ERROR;
@@ -2659,7 +2784,6 @@ void SubscribeToAll(mqtt_client_t *client)
 {
     int i;
     char buf[128];
-    char *agent_topic;
 
     // Exit if no agent response topic configured (or set by the CONNACK)
     if ((client->response_subscription.topic==NULL) || (client->response_subscription.topic[0] == '\0'))
@@ -2668,10 +2792,6 @@ void SubscribeToAll(mqtt_client_t *client)
         HandleMqttError(client, kMqttFailure_Misconfigured, buf);
         return;
     }
-
-    // Let the DM know we're ready for sending messages
-    agent_topic = (client->agent_topic_from_connack != NULL) ? client->agent_topic_from_connack : client->conn_params.response_topic;
-    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->conn_params.version, agent_topic, client->role);
 
     // Now we have the proplist, send the subscribe
     for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
@@ -2685,7 +2805,7 @@ void SubscribeToAll(mqtt_client_t *client)
                 continue;
             }
 
-            if (Subscribe(client, sub) != USP_ERR_OK)
+            if (Subscribe(client, sub, false) != USP_ERR_OK)
             {
                 USP_SNPRINTF(buf, sizeof(buf), "%s: mosquitto_subscribe() failed for topic=%s", __FUNCTION__, sub->topic);
                 HandleMqttError(client, kMqttFailure_OtherError, buf);
@@ -2694,11 +2814,16 @@ void SubscribeToAll(mqtt_client_t *client)
     }
 
     // Subscribe to response topic too
-    if (Subscribe(client, &client->response_subscription) != USP_ERR_OK)
+    if (Subscribe(client, &client->response_subscription, true) != USP_ERR_OK)
     {
         USP_SNPRINTF(buf, sizeof(buf), "%s: mosquitto_subscribe() failed for agent's response topic=%s", __FUNCTION__, client->response_subscription.topic);
         HandleMqttError(client, kMqttFailure_OtherError, buf);
     }
+
+    // Let the DM know we're ready for sending messages and instruct it to send a USP Connect record
+    // NOTE: client->response_subscription.topic will contain either the value configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured
+    //       or the value received in the CONNACK (for MQTTv5)
+    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->conn_params.version, client->response_subscription.topic, client->role);
 }
 
 /*********************************************************************//**
@@ -2731,7 +2856,7 @@ void SubscribeCallback(struct mosquitto *mosq, void *userdata, int mid, int qos_
     }
 
     // Find the subscriber mid
-    mqtt_subscription_t *sub = FindSubscriptionByMid(client, mid);
+    mqtt_subscription_t *sub = FindSubscriptionByMid(client, mid, NULL);
 
     if (sub == NULL)
     {
@@ -2872,6 +2997,8 @@ error:
 **************************************************************************/
 void UnsubscribeCallback(struct mosquitto *mosq, void *userdata, int mid )
 {
+    bool is_agent_topic;
+
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
     mqtt_client_t *client = NULL;
@@ -2885,7 +3012,7 @@ void UnsubscribeCallback(struct mosquitto *mosq, void *userdata, int mid )
     }
 
     // Find the subscriber mid
-    mqtt_subscription_t *sub = FindSubscriptionByMid(client, mid);
+    mqtt_subscription_t *sub = FindSubscriptionByMid(client, mid, &is_agent_topic);
 
     if (sub == NULL)
     {
@@ -2899,7 +3026,7 @@ void UnsubscribeCallback(struct mosquitto *mosq, void *userdata, int mid )
     }
     else if(sub->state == kMqttSubState_Resubscribing)
     {
-        if (Subscribe(client, sub) != USP_ERR_OK)
+        if (Subscribe(client, sub, is_agent_topic) != USP_ERR_OK)
         {
             USP_LOG_Error("%s: Re-Subscribe topic failed", __FUNCTION__);
         }
@@ -2968,7 +3095,13 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
     }
     else
     {
-        if (mosquitto_publish(client->mosq, &msg->mid, msg->topic, msg->item.pbuf_len, msg->item.pbuf, msg->qos, false /*retain*/) != MOSQ_ERR_SUCCESS)
+        char escaped_agent_topic[MAX_TOPIC_LEN];
+        char topic[2*MAX_TOPIC_LEN+10];             // Plus 10 to allow for '/reply-to='
+        USP_ASSERT((client->response_subscription.topic!= NULL) && (client->response_subscription.topic[0] != '\0')); // SubscribeToAll() should have prevented the code getting here
+        TEXT_UTILS_ReplaceCharInString(client->response_subscription.topic, '/', "%2F", escaped_agent_topic, sizeof(escaped_agent_topic));
+        USP_SNPRINTF(topic, sizeof(topic), "%s/reply-to=%s", msg->topic, escaped_agent_topic);
+
+        if (mosquitto_publish(client->mosq, &msg->mid, topic, msg->item.pbuf_len, msg->item.pbuf, msg->qos, false /*retain*/) != MOSQ_ERR_SUCCESS)
         {
             USP_LOG_Error("%s: Failed to publish to v3.1.1. Params:\n MID:%d\n topic:%s\n msg->qos:%d\n", __FUNCTION__, msg->mid, msg->topic, msg->qos);
             err = USP_ERR_INTERNAL_ERROR;
@@ -3116,11 +3249,14 @@ void PublishV5Callback(struct mosquitto *mosq, void *userdata, int mid, int reas
 **************************************************************************/
 void MessageCallback(struct mosquitto *mosq, void *userdata, const struct mosquitto_message *message)
 {
+    int instance;
+    mqtt_client_t *client;
+    char buf[MAX_TOPIC_LEN];
+    char *reply_to_topic;
+
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
-    mqtt_client_t *client = NULL;
-    int instance = *(int*) userdata;
-
+    instance = *(int*) userdata;
     client = FindMqttClientByInstance(instance);
     if (client == NULL)
     {
@@ -3143,18 +3279,9 @@ void MessageCallback(struct mosquitto *mosq, void *userdata, const struct mosqui
 
         if (client->state == kMqttState_Running)
         {
-            // Determine if the topic contains "/reply-to="
-            char reply_to_topic[strlen(message->topic)];
-            memset(reply_to_topic, 0, strlen(message->topic));
-
-            if (FindReplyToTopic(message->topic, reply_to_topic))
-            {
-                ReceiveMqttMessage(client, message, reply_to_topic);
-            }
-            else
-            {
-                ReceiveMqttMessage(client, message, NULL);
-            }
+            // NOTE: If no reply-to topic is found, then reply_to_topic will be returned as NULL
+            reply_to_topic = FindReplyToTopic(message->topic, buf, sizeof(buf));
+            ReceiveMqttMessage(client, message, reply_to_topic);
         }
         else
         {
@@ -3244,7 +3371,8 @@ exit:
 **
 ** \param   client - pointer to MQTT client
 ** \param   message - libmosquitto message object, whose payload is the USP record
-** \param   response_topic - The topic to send the USP response to this message
+** \param   response_topic - The topic to send the USP response to this message.
+**                           NOTE: This may be NULL if none could be determined.
 **
 ** \return  None
 **
@@ -3269,96 +3397,41 @@ void ReceiveMqttMessage(mqtt_client_t *client, const struct mosquitto_message *m
 ** FindReplyToTopic
 **
 ** Parses the specified string, determining the topic to use when sending a reply
-** Will return a non-NULL reply_to_topic if reply-to is found within topic
-** Returns bool at the same time if reply_to_topic is non-null
 **
-** \param   topic - string containing where to send the USP reply to
-** \param   reply_to_topic - pointer to buffer in which to return the parsed reply-to topic
+** \param   publish_topic - topic that the message was published to
+** \param   buf - pointer to buffer in which to return the reply-to topic
+** \param   len - length of buffer in which to return the reply-to topic
 **
-** \return  true if successfully found a reply-to topic, otherwise false
-**
-**************************************************************************/
-bool FindReplyToTopic(char* topic, char* reply_to_topic)
-{
-    USP_ASSERT(reply_to_topic != NULL);
-
-    const char* reply_to_string = "/reply-to=";
-    char* reply_to = strstr(topic, reply_to_string);
-
-    if (reply_to != NULL)
-    {
-        reply_to += strlen(reply_to_string);
-
-        strcpy(reply_to_topic, reply_to);
-        ReplaceTopicSlash(reply_to_topic);
-        return true;
-    }
-    else
-    {
-        return false;
-    }
-
-}
-
-/*********************************************************************//**
-**
-** ReplaceTopicSlash
-**
-** Modifies the specified buffer to turn it into a valid topic name
-**
-** \param   topic - pointer to buffer containing string to modify
-**
-** \return  None
+** \return  pointer to buffer containing reply-to topic or NULL if no reply-to topic
+**          was parsed or the parsed reply-to topic was an empty string
 **
 **************************************************************************/
-void ReplaceTopicSlash(char* topic)
+char *FindReplyToTopic(char *publish_topic, char *buf, int len)
 {
-    int i;
-    char* sep = "%2F";
-    int sep_len = strlen(sep);
-    int topic_len = strlen(topic);
-    char new_topic[topic_len];
-    memset(new_topic, 0, topic_len);
-    char* ptr = new_topic;
+    char *p;
 
-    USP_ASSERT(topic != NULL);
-
-    // Split the string
-    str_vector_t sv;
-    TEXT_UTILS_SplitString(topic, &sv, sep);
-
-    // Check start for a sep
-    if (strncmp(topic, sep, sep_len) == 0)
+    // Exit if the publish topic did not contain a reply-to topic
+    #define REPLY_TO_QUALIFIER  "/reply-to="
+    p = strstr(publish_topic, REPLY_TO_QUALIFIER);
+    if (p == NULL)
     {
-        *ptr = '/';
-        ptr++;
+        return NULL;
     }
 
-    // Now do the middle, adding all the string together with / in between
-    for (i = 0; i < sv.num_entries; i++)
-    {
-        strcpy(ptr, sv.vector[i]);
-        ptr += strlen(sv.vector[i]);
+    // Skip the 'reply-to' qualifier
+    p += sizeof(REPLY_TO_QUALIFIER) - 1;        // Minus 1 to exclude trailing NULL
 
-        if (i+1 < sv.num_entries)
-        {
-            *ptr = '/';
-            ptr++;
-        }
+    // Copy the reply-to topic into the return buffer, unescaping any topic slashes
+    USP_STRNCPY(buf, p, len);
+    TEXT_UTILS_PercentDecodeString(buf);
+
+    // Exit if the reply-to topic is empty
+    if (*buf == '\0')
+    {
+        return NULL;
     }
 
-
-    // Now check the end, and add a / if it was there
-    if (strncmp(&topic[topic_len-sep_len], sep, sep_len) == 0)
-    {
-        *ptr = '/';
-        ptr++;
-    }
-
-    // That's the end. Just to make sure...
-    *ptr = '\0';
-
-    strcpy(topic, new_topic);
+    return buf;
 }
 
 /*********************************************************************//**
@@ -3600,25 +3673,21 @@ mqtt_client_t *FindMqttClientByInstance(int instance)
 **
 ** Finds the specified MQTT subscription, given the client and subscription instance numbers
 **
-** \param   instance - Client instance in Device.MQTT.Client.{i}
+** \param   client - pointer to MQTT client
 ** \param   subinstance - Subscription instance in Device.MQTT.Client.{i}.Subscription.{i}
+**                        or INVALID if we are trying to find an unused entry
 **
 ** \return  pointer to MQTT subscription or NULL if no matching subscription found
 **
 **************************************************************************/
-mqtt_subscription_t *FindMqttSubscriptionByInstance(int clientinstance, int subinstance)
+mqtt_subscription_t *FindMqttSubscriptionByInstance(mqtt_client_t *client, int subinstance)
 {
     int i;
-    mqtt_client_t *client;
     mqtt_subscription_t *subs;
-
-    client = FindMqttClientByInstance(clientinstance);
-    USP_ASSERT(client != NULL);
 
     for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         subs = &client->subscriptions[i];
-
         if (subs->instance == subinstance)
         {
             return subs;
@@ -3636,11 +3705,13 @@ mqtt_subscription_t *FindMqttSubscriptionByInstance(int clientinstance, int subi
 **
 ** \param   client - pointer to MQTT client
 ** \param   topic - topic to match
+** \param   is_agent_topic - pointer to variable in which to return whether the returned subscription is the agent response topic subscription
+**                           or NULL if the caller does not require this information
 **
 ** \return  pointer to MQTT subscription or NULL if no matching subscription found
 **
 **************************************************************************/
-mqtt_subscription_t *FindSubscriptionByMid(mqtt_client_t *client, int mid)
+mqtt_subscription_t *FindSubscriptionByMid(mqtt_client_t *client, int mid, bool *is_agent_topic)
 {
     int i;
 
@@ -3653,12 +3724,20 @@ mqtt_subscription_t *FindSubscriptionByMid(mqtt_client_t *client, int mid)
     {
         if (client->subscriptions[i].mid == mid)
         {
+            if (is_agent_topic != NULL)
+            {
+                *is_agent_topic = false;
+            }
             return &client->subscriptions[i];
         }
     }
 
     if (client->response_subscription.mid == mid)
     {
+        if (is_agent_topic != NULL)
+        {
+            *is_agent_topic = true;
+        }
         return &client->response_subscription;
     }
 
@@ -3708,6 +3787,7 @@ mqtt_client_t *FindMqttClientByMosquitto(struct mosquitto *mosq)
 int AddUserProperties(mosquitto_property **props)
 {
     char* endpoint = DEVICE_LOCAL_AGENT_GetEndpointID();
+
     if (mosquitto_property_add_string_pair(props, USER_PROPERTY, "usp-endpoint-id",
                 endpoint) != MOSQ_ERR_SUCCESS)
     {
@@ -3722,7 +3802,6 @@ int AddUserProperties(mosquitto_property **props)
 **
 ** AddConnectProperties
 **
-** Creates a libmosquitto property object containing
 ** Adds all libmosquitto properties used in the CONNECT packet
 **
 ** \param   props - pointer to variable in which to return a pointer to the created libmosquitto property object
