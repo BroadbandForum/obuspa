@@ -54,12 +54,10 @@ typedef struct
 
 typedef enum
 {
-    kMqttQos_Worst = 0,
     kMqttQos_MostOnce = 0,       // TCP Fire and forget, the worst QOS
     kMqttQos_AtLeastOnce = 1,    // Acknowledged Message, can be sent more than once
     kMqttQos_ExactlyOnce = 2,    // Fully ackd message, always received once
-    kMqttQos_Best = 2,
-    kMqttQos_Default = kMqttQos_Best,
+    kMqttQos_Default = MQTT_FALLBACK_QOS,
 } mqtt_qos_t;
 
 typedef enum
@@ -91,7 +89,7 @@ typedef enum
 typedef struct
 {
     int instance;
-    mqtt_qos_t qos;
+    mqtt_qos_t qos;  // From Device.MQTT.Client.{i}.Subscription.{i}.QoS, used along MQTT SUBSCRIBE messages
     char* topic;
     bool enabled;
     int mid; // Last mid for subscribe or unsubscribe message - to identify the SUBACK/UNSUBACK
@@ -115,7 +113,8 @@ typedef struct
 
     char* response_topic;         // Agent's topic: Topic which agent subscribes to, and Controller publishes to
                                   // NOTE: If not configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured, then this variable may be set to NULL
-    mqtt_qos_t publish_qos;
+    mqtt_qos_t publish_qos;       // Agent's PublishQos: used to set mqtt_send_item_t.qos variable, when building a msg to send.
+                                  // NOTE: If not configured in Device.LocalAgent.MTP.{i}.MQTT.PublishQoS, then its value is kMqttQos_Default
 
     // V5 Params
     char* client_id;

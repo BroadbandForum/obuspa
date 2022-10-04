@@ -334,11 +334,24 @@ Usp__GetResp__ResolvedPathResult *FindResolvedPath(Usp__GetResp__RequestedPathRe
 {
     int i;
     int num_entries;
+    int index;
     Usp__GetResp__ResolvedPathResult *resolved_path_result;
 
-    // Iterate over all resolved path results, trying to find the one which matches the specified object path
+    // Determine limits of backwards search for matching object path
+    // NOTE: The limit is fairly arbitrary. It is a balance between minimizing the USP response message size
+    //       (trying to prevent any ResolvedPathResults with duplicate ResolvedPaths) and spending too much time
+    //       searching the USP response to avoid duplicates. Should the limit not be sufficient, it is acceptable
+    //       for USP Responses to contain ResolvedPathResults with duplicate ResolvedPaths.
+    #define RESOLVED_PATH_SEARCH_LIMIT 10
     num_entries = req_path_result->n_resolved_path_results;
-    for (i=0; i<num_entries; i++)
+    index = num_entries - RESOLVED_PATH_SEARCH_LIMIT;
+    if (index < 0)
+    {
+        index = 0;
+    }
+
+    // Search backwards, trying to find the one which matches the specified object path
+    for (i=num_entries-1; i>=index; i--)
     {
         resolved_path_result = req_path_result->resolved_path_results[i];
         if (strcmp(resolved_path_result->resolved_path, obj_path)==0)

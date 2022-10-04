@@ -246,6 +246,7 @@ int DEVICE_MQTT_StartAllClients(void);
 void DEVICE_MQTT_ScheduleReconnect(int instance);
 mtp_status_t DEVICE_MQTT_GetMtpStatus(int instance);
 char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance);
+mqtt_qos_t DEVICE_MTP_GetAgentMqttPublishQos(int instance);
 int DEVICE_MQTT_CountEnabledConnections(void);
 int DEVICE_MTP_GetMqttReference(char *path, int *mqtt_connection_instance);
 void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance);

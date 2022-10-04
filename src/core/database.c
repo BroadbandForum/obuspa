@@ -1130,6 +1130,8 @@ int ResetFactoryParametersFromFile(char *file)
     char *value;
     int line_number = 1;
 
+    USP_LOG_Info("%s: Setting factory reset parameters", __FUNCTION__);
+
     // Exit if unable to open the file containing factory reset parameters
     fp = fopen(file, "r");
     if (fp == NULL)

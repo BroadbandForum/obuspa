@@ -41,10 +41,7 @@
  *
  */
 
-
 #include <string.h>
-#include <inttypes.h>  // For PRIu64
-
 
 #include "common_defs.h"
 #include "data_model.h"
@@ -59,6 +56,7 @@
 #include "usp_record.h"
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+#include <inttypes.h>  // For PRIu64
 #include "e2e_context.h"
 #endif
 
@@ -142,26 +140,13 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, ctrust_rol
 {
     int err = USP_ERR_OK;
     UspRecord__Record *rec = NULL;
-    char *cont_endpoint_id;
-    char *err_msg;
 
-    // Determine the endpoint_id of the controller based on the MTP on which it was received
-    // NOTE: cont_endpoint_id will be set to NULL, if unable to determine a controller
-    cont_endpoint_id = mrt->cont_endpoint_id;
-    if ((cont_endpoint_id == NULL) || (*cont_endpoint_id == '\0'))
-    {
-        cont_endpoint_id = DEVICE_CONTROLLER_FindEndpointByMTP(mrt);
-    }
-
-    // Exit if unable to unpack the USP record, sending a USP Disconnect record as required by R-E2E.27
+    // Exit if unable to unpack the USP record, ignoring it as required by R-MTP.5
     rec = usp_record__record__unpack(pbuf_allocator, pbuf_len, pbuf);
     if (rec == NULL)
     {
-        USP_ERR_SetMessage("%s: usp_record__record__unpack failed. Sending USP Disconnect record.", __FUNCTION__);
-        err = USP_ERR_REQUEST_DENIED;
-        err_msg = USP_ERR_GetMessage();
-        MSG_HANDLER_QueueUspDisconnectRecord(kMtpContentType_DisconnectRecord, cont_endpoint_id, err, err_msg, mrt, END_OF_TIME);
-        return err;
+        USP_ERR_SetMessage("%s: usp_record__record__unpack failed. Ignoring USP Record", __FUNCTION__);
+        return USP_ERR_RECORD_NOT_PARSED;
     }
 
     // Save off the controller sending this message into the mtp_reply_to_t structure, if not already

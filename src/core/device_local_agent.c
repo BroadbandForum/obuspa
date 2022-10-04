@@ -172,7 +172,7 @@ int DEVICE_LOCAL_AGENT_Init(void)
     err |= USP_REGISTER_SyncOperation("Device.FactoryReset()", ScheduleFactoryReset);
 
     // Register parameters associated with tracking the cause of a reboot
-    err |= USP_REGISTER_DBParam_ReadWrite(reboot_cause_path, local_reboot_cause_str, NULL, NULL, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(reboot_cause_path, "FactoryReset", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(reboot_command_key_path, "", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(reboot_request_instance_path, "-1", NULL, NULL, DM_INT);
     err |= USP_REGISTER_DBParam_ReadWrite(last_software_version_path, "", NULL, NULL, DM_STRING);

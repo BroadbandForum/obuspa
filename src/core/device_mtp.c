@@ -89,7 +89,7 @@ typedef struct
 #ifdef ENABLE_MQTT
     int mqtt_connection_instance; // Instance number of the MQTT connection which this MTP refers to (ie Device.MQTT.Client.{i})
     char *mqtt_agent_topic;    // name of the queue on the above MQTT connection, on which this agent listens
-    mqtt_qos_t mqtt_publish_qos;
+    mqtt_qos_t mqtt_publish_qos;  // From Device.LocalAgent.MTP.{i}.MQTT.PublishQoS TR-369 parameter
 #endif
 
 #ifdef ENABLE_WEBSOCKETS
@@ -234,7 +234,7 @@ int DEVICE_MTP_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.Reference", "", DEVICE_MTP_ValidateMqttReference, NotifyChange_AgentMtpMqttReference, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.ResponseTopicConfigured", "", NULL, NotifyChange_AgentMtpMqtt_ResponseTopicConfigured, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.ResponseTopicDiscovered", Get_MqttResponseTopicDiscovered, DM_STRING);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.PublishQoS", "2", Validate_AgentMtpMQTTPublishQoS, NotifyChange_AgentMtpMQTTPublishQoS, DM_UINT);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.MQTT.PublishQoS", TO_STR(MQTT_FALLBACK_QOS), Validate_AgentMtpMQTTPublishQoS, NotifyChange_AgentMtpMQTTPublishQoS, DM_UINT);
 #endif
 
 #ifdef ENABLE_WEBSOCKETS
@@ -1523,7 +1523,7 @@ int Get_WebsockInterfaces(dm_req_t *req, char *buf, int len)
 
     // Exit if our Websocket server is listening on all network interfaces
     buf[0] = '\0';
-    if ((interfaces[0] == '\0') || (strcmp(interfaces, "all")==0))
+    if ((interfaces[0] == '\0') || (strcmp(interfaces, "any")==0))
     {
         return USP_ERR_OK;
     }
@@ -2049,6 +2049,34 @@ char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance)
     return NULL;
 }
 
+/******************************************************************//**
+**
+** DEVICE_MTP_GetAgentMqttPublishQos
+**
+** Gets the QoS for the MQTT PUBLISH message for this agent on a particular agent's MTP
+**
+** \param   instance - instance number of agent's MTP in the Device.LocalAgent.MTP.{i} table
+**
+** \return  configured QoS value, or kMqttQos_Default if unable to resolve the MTP
+**
+**************************************************************************/
+mqtt_qos_t DEVICE_MTP_GetAgentMqttPublishQos(int instance)
+{
+    // Iterate over all agent MTPs, finding the first one that matches the specified MQTT client
+    for (int i = 0; i < MAX_AGENT_MTPS; i++)
+    {
+        agent_mtp_t *mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->enable == true) &&
+            (mtp->mqtt_connection_instance == instance) && (mtp->protocol == kMtpProtocol_MQTT))
+        {
+            return mtp->mqtt_publish_qos;
+        }
+    }
+
+    // If the code gets here, then no match has been found
+    return kMqttQos_Default;
+}
+
 /*********************************************************************//**
 **
 ** DEVICE_MTP_ValidateMqttReference
@@ -2271,7 +2299,7 @@ int NotifyChange_AgentMtpMqtt_ResponseTopicConfigured(dm_req_t *req, char *value
 **************************************************************************/
 int Validate_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value)
 {
-    return DM_ACCESS_ValidateRange_Unsigned(req, 0, 2);
+    return DM_ACCESS_ValidateRange_Unsigned(req, kMqttQos_MostOnce, kMqttQos_ExactlyOnce);
 }
 
 /*********************************************************************//**
@@ -2288,23 +2316,24 @@ int Validate_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value)
 int NotifyChange_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value)
 {
     agent_mtp_t *mtp;
-    int last_publish_qos;
-    int new_publish_qos;
+    bool schedule_reconnect = false;
 
     // Determine MTP to be updated
     mtp = FindAgentMtpByInstance(inst1);
     USP_ASSERT(mtp != NULL);
 
-    // Exit if unable to extract the new value
-    new_publish_qos = val_uint;
+    if (mtp->enable &&
+        (mtp->protocol == kMtpProtocol_MQTT) &&
+        (mtp->mqtt_publish_qos != val_uint))
+    {
+        schedule_reconnect = true;
+    }
 
     // Set the new value. This is done before scheduling a reconnect so that the reconnect uses these parameters
-    last_publish_qos = mtp->mqtt_publish_qos;
-    mtp->mqtt_publish_qos = new_publish_qos;
+    mtp->mqtt_publish_qos = val_uint;
 
-    // Schedule a reconnect after the present response has been sent, if the value has changed
-    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
-        (last_publish_qos != new_publish_qos))
+    // Schedule a reconnect after the present response has been sent, if the QoS has changed
+    if (schedule_reconnect)
     {
         DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
     }

@@ -1,5 +1,22 @@
 # OB-USP-AGENT Changelog since Release 6.0.0
 
+## 2022-10-03 v6.0.4
+### Fixed
+- GH#30: MQTT publish QoS cannot be configured (stuck at 0)
+- GH#64: Crash if PeriodicNotifInterval is set to 0
+- GH#55: Ubuntu 22 (latest) contains earlier version of libwebsockets than Ubuntu 20
+- Requirement for libwebsockets version >= 4.1.0 made explicit in configure.ac
+- GetResponse optimized for large numbers of object instances
+- USP Record should be ignored if the protobuf cannot be unpacked
+- Default value for RebootCause would be better as "FactoryReset"
+- MQTT exponential backoff reconnect time was 1 second too long
+- Alias should be registered as a unique key for LocalAgent.Certificate
+
+### Modified
+- MQTT Content Type property changed to usp.msg (changed R-MQTT.27)
+- A USP Set referencing zero instances returns an empty success (changed TP-469 conformance test 1.23)
+
+
 ## 2022-09-02 v6.0.3
 
 ### Fixed

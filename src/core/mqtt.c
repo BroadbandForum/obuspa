@@ -164,7 +164,7 @@ typedef struct
     double_link_t link;     // Doubly linked list pointers. These must always be first in this structure
     mtp_send_item_t item;   // Information about the content to send
     char *topic;            // Name of the MQTT Topic to send to
-    mqtt_qos_t qos;         // QOS to request when sending message
+    mqtt_qos_t qos;         // QOS to request when building PUBLISH message (obtained from mqtt_conn_params_t.publish_qos)
     int mid;                // MQTT message ID. This is filled in by libmosquitto, when we tell libmosquitto to send this message
 } mqtt_send_item_t;
 
@@ -638,8 +638,6 @@ exit:
     {
         return MTP_EXEC_MqttWakeup();
     }
-
-    return;
 }
 
 /*********************************************************************//**
@@ -1405,6 +1403,7 @@ void MQTT_InitConnParams(mqtt_conn_params_t *params)
 
     params->instance = INVALID;
     params->version = kMqttProtocol_Default;
+    params->publish_qos = kMqttQos_Default;
 
     InitRetry(&params->retry);
 }
@@ -1847,7 +1846,7 @@ int EnableMqttClient(mqtt_client_t* client)
     resp_sub = &client->response_subscription;
     MQTT_SubscriptionDestroy(resp_sub);
     memset(resp_sub, 0, sizeof(mqtt_subscription_t));
-    resp_sub->qos = kMqttQos_Best;
+    resp_sub->qos = kMqttQos_Default;
     resp_sub->enabled = true;
     resp_sub->topic = USP_STRDUP(client->conn_params.response_topic);
 
@@ -3129,7 +3128,7 @@ int PublishV5(mqtt_client_t *client, mqtt_send_item_t *msg)
     mosquitto_property *proplist = NULL;
 
     // Setup proplist flags for v5
-    if (mosquitto_property_add_string(&proplist, CONTENT_TYPE, "application/vnd.bbf.usp.msg") != MOSQ_ERR_SUCCESS)
+    if (mosquitto_property_add_string(&proplist, CONTENT_TYPE, "usp.msg") != MOSQ_ERR_SUCCESS)
     {
         USP_LOG_Error("%s: Failed to add content type string", __FUNCTION__);
         err = USP_ERR_INTERNAL_ERROR;
@@ -3530,7 +3529,9 @@ void HandleMqttError(mqtt_client_t *client, mqtt_failure_t failure_code, const c
     }
 
     // Set retry time as time + wait_time
-    client->retry_time = cur_time + wait_time;
+    client->retry_time = cur_time + wait_time - 1;  // Minus 1 because the code adds an extra 1 second delay to the retry time,
+                                                    // between setting the state to kMqttState_SendingConnect (in MQTT_UpdateAllSocketSet)
+                                                    // and performing the connect (in MQTT_ProcessAllSocketActivity). Minus 1 pre-compensates for this.
 }
 
 /*********************************************************************//**

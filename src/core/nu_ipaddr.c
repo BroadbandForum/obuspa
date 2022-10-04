@@ -1409,7 +1409,8 @@ int tw_ulib_get_dev_ipaddr(const char *dev, char *addr, size_t asiz, bool prefer
         USP_ERR_SetMessage("%s: No IP address found for interface %s", __FUNCTION__, dev);
         err = USP_ERR_INTERNAL_ERROR;
     }
-    else {
+    else
+    {
         err = USP_ERR_OK;
     }
 

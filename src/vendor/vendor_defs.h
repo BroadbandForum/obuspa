@@ -177,6 +177,8 @@
 // This may be overridden using the '-i' option
 #define WEBSOCKET_LISTEN_INTERFACE "eth0"  /*"lo"*/
 
+// Fallback QoS value for MQTT messages when not configured by TR-369 parameters.
+#define MQTT_FALLBACK_QOS 0 /* 0, 1, 2 */
 
 //-----------------------------------------------------------------------------------------
 // Defines for Bulk Data Collection

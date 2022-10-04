@@ -165,6 +165,7 @@ int Validate_ControllerRetryMinimumWaitInterval(dm_req_t *req, char *value);
 int Validate_ControllerRetryIntervalMultiplier(dm_req_t *req, char *value);
 int Validate_SessionRetryInterval(dm_req_t *req, char *value);
 int Validate_SessionRetryMultiplier(dm_req_t *req, char *value);
+int Validate_PeriodicNotifInterval(dm_req_t *req, char *value);
 int Notify_ControllerEnable(dm_req_t *req, char *value);
 int Notify_ControllerEndpointID(dm_req_t *req, char *value);
 int Notify_ControllerMtpEnable(dm_req_t *req, char *value);
@@ -289,7 +290,7 @@ int DEVICE_CONTROLLER_Init(void)
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CONT_ROOT ".{i}.InheritedRole", Get_ControllerInheritedRole, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.AssignedRole", "", Validate_ControllerAssignedRole, Notify_ControllerAssignedRole, DM_STRING);
 
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.PeriodicNotifInterval", "86400", NULL, Notify_PeriodicNotifInterval, DM_UINT);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.PeriodicNotifInterval", "86400", Validate_PeriodicNotifInterval, Notify_PeriodicNotifInterval, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.PeriodicNotifTime", UNKNOWN_TIME_STR, NULL, Notify_PeriodicNotifTime, DM_DATETIME);
     err |= USP_REGISTER_Event("Device.LocalAgent.Periodic!");
 
@@ -2145,6 +2146,24 @@ int Validate_ControllerAssignedRole(dm_req_t *req, char *value)
 int Validate_ControllerMtpWebsockKeepAlive(dm_req_t *req, char *value)
 {
     // NOTE: Disallow 0 for keep alive period (0 is NOT a special case for off)
+    return DM_ACCESS_ValidateRange_Unsigned(req, 1, UINT_MAX);
+}
+
+
+/*********************************************************************//**
+**
+** Validate_PeriodicNotifInterval
+**
+** Validates Device.LocalAgent.Controller.{i}.PeriodicNotifInterval
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_PeriodicNotifInterval(dm_req_t *req, char *value)
+{
     return DM_ACCESS_ValidateRange_Unsigned(req, 1, UINT_MAX);
 }
 

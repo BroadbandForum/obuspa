@@ -245,9 +245,6 @@ void ExpandSetPathExpression(Usp__Set__UpdateObject *up, set_expr_info_t *si, gr
     // Exit if the path expression resolves to no objects
     if (si->resolved_objs.num_entries == 0)
     {
-        USP_ERR_SetMessage("%s: Expression does not reference any objects", __FUNCTION__);
-        si->err_code = USP_ERR_OBJECT_DOES_NOT_EXIST;
-        si->err_msg = USP_STRDUP( USP_ERR_GetMessage() );
         return;
     }
 

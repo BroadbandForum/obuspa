@@ -121,7 +121,7 @@ typedef struct
 typedef struct
 {
     char *path;         // Pointer to full path of the specific parameter or object
-    char *schema_path;  // Pointer to schema path of the parameter of object
+    char *schema_path;  // Pointer to schema path of the parameter or object
     dm_req_instances_t *inst;   // Pointer to instances information for the parameter or object
     dm_val_union_t val_union;   // When performing a Set Parameter Value, stores the new value converted to it's native type
 } dm_req_t;

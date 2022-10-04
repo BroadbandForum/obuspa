@@ -45,7 +45,7 @@
 #include "common_defs.h"
 #include "proto_trace.h"
 
-// Number of spaces to use for each indentation block when printing messages in JSON format
+// Number of spaces to use for each indentation block when printing messages in protobuf format
 #define INDENTATION 2
 
 //------------------------------------------------------------------------------------

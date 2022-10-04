@@ -39,12 +39,11 @@
  *
  */
 
-#include <inttypes.h>  // For PRIu64
-#include <math.h>
-
 #include "vendor_defs.h"  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
+#include <inttypes.h>  // For PRIu64
+#include <math.h>
 
 #include "mtp_exec.h"
 #include "msg_handler.h"

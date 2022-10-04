@@ -228,7 +228,7 @@ int DEVICE_MQTT_Init(void)
     err |= USP_REGISTER_DBParam_Alias(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.Alias", NULL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.Enable", "false", Validate_MQTTSubscriptionEnable, NotifyChange_MQTTSubscriptionEnable, DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.Topic", NULL, Validate_MQTTSubscriptionTopic, NotifyChange_MQTTSubscriptionTopic, DM_STRING);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.QoS", NULL, Validate_MQTTSubscriptionQoS, NotifyChange_MQTTSubscriptionQoS, DM_UINT);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.Subscription.{i}.QoS", TO_STR(MQTT_FALLBACK_QOS), Validate_MQTTSubscriptionQoS, NotifyChange_MQTTSubscriptionQoS, DM_UINT);
 
     // Exit if any errors occurred
     if (err != USP_ERR_OK)
@@ -337,12 +337,11 @@ void DEVICE_MQTT_Stop(void)
 **************************************************************************/
 int DEVICE_MQTT_StartAllClients(void)
 {
-    int i;
     client_t *mqttclient;
     int err;
 
     // Iterate over all MQTT clients, starting the ones that are enabled
-    for (i=0; i<ClientNumberOfEntries(); i++)
+    for (int i = 0; i<ClientNumberOfEntries(); i++)
     {
         mqttclient = &mqtt_client_params[i];
 
@@ -799,6 +798,7 @@ int EnableMQTTClient(mqtt_conn_params_t *mp, mqtt_subscription_t subscriptions[M
     USP_SAFE_FREE(mp->response_topic);
     mp->topic = USP_STRDUP(DEVICE_CONTROLLER_GetControllerTopic(mp->instance));
     mp->response_topic = USP_STRDUP(DEVICE_MTP_GetAgentMqttResponseTopic(mp->instance));
+    mp->publish_qos = DEVICE_MTP_GetAgentMqttPublishQos(mp->instance);
 
     // Check the error condition
     err = MQTT_EnableClient(mp, subscriptions);
@@ -1715,6 +1715,7 @@ void ScheduleMqttReconnect(mqtt_conn_params_t *mp)
     USP_SAFE_FREE(mp->topic);
     mp->response_topic = USP_STRDUP(DEVICE_MTP_GetAgentMqttResponseTopic(mp->instance));
     mp->topic = USP_STRDUP(DEVICE_CONTROLLER_GetControllerTopic(mp->instance));
+    mp->publish_qos = DEVICE_MTP_GetAgentMqttPublishQos(mp->instance);
 
     // NOTE: If the agent or controller topics are NULL, this is handled by the MTP layer
 
@@ -1739,10 +1740,11 @@ void ScheduleMQTTResubscribe(client_t *mqttclient, mqtt_subscription_t *sub)
     USP_SAFE_FREE(mqttclient->conn_params.topic);
     mqttclient->conn_params.response_topic = USP_STRDUP(DEVICE_MTP_GetAgentMqttResponseTopic(mqttclient->conn_params.instance));
     mqttclient->conn_params.topic = USP_STRDUP(DEVICE_CONTROLLER_GetControllerTopic(mqttclient->conn_params.instance));
+    mqttclient->conn_params.publish_qos = DEVICE_MTP_GetAgentMqttPublishQos(mqttclient->conn_params.instance);
 
     if ((mqttclient->conn_params.response_topic == NULL) || (mqttclient->conn_params.topic == NULL))
     {
-        USP_LOG_Error("%s repsonse topic or topic not found", __FUNCTION__);
+        USP_LOG_Error("%s response topic or topic not found", __FUNCTION__);
         return;
     }
     if ((mqttclient->conn_params.instance != INVALID) && (sub->instance != INVALID))
@@ -2296,7 +2298,7 @@ int NotifyChange_MQTTSubscriptionTopic(dm_req_t *req, char *value)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    if((strcmp(sub->topic, value)) && (sub->enabled))
+    if((strcmp(sub->topic, value) != 0) && (sub->enabled))
     {
         schedule_reconnect = true;
     }
@@ -2328,7 +2330,7 @@ int NotifyChange_MQTTSubscriptionTopic(dm_req_t *req, char *value)
 **************************************************************************/
 int Validate_MQTTSubscriptionQoS(dm_req_t *req, char *value)
 {
-    return DM_ACCESS_ValidateRange_Unsigned(req, 0, 2);
+    return DM_ACCESS_ValidateRange_Unsigned(req, kMqttQos_MostOnce, kMqttQos_ExactlyOnce);
 }
 /*************************************************************************
 **
@@ -2347,11 +2349,9 @@ int NotifyChange_MQTTSubscriptionQoS(dm_req_t *req, char *value)
 {
     client_t *mqttclient;
     mqtt_subscription_t *sub;
-    mqtt_qos_t old_qos;
     bool schedule_reconnect = false;
 
     // Initialise to defaults
-    //mqttclient = FindDevMqttClientSubscriptionByInstance(inst1, inst2);
     mqttclient = FindDevMqttClientByInstance(inst1);
     USP_ASSERT(mqttclient != NULL);
 
@@ -2364,9 +2364,7 @@ int NotifyChange_MQTTSubscriptionQoS(dm_req_t *req, char *value)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    old_qos = sub->qos;
-
-    if(old_qos != val_uint && (sub->enabled))
+    if (sub->enabled && (sub->qos != val_uint))
     {
         schedule_reconnect = true;
     }

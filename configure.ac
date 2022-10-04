@@ -41,7 +41,7 @@ AS_IF([test "x$enable_mqtt" = xyes], [
 ])
 
 AS_IF([test "x$enable_websockets" = xyes], [
-    PKG_CHECK_MODULES([libwebsockets], [libwebsockets >= 3.2.0])
+    PKG_CHECK_MODULES([libwebsockets], [libwebsockets >= 4.1.0])
 	AC_DEFINE(ENABLE_WEBSOCKETS)
 ])
 

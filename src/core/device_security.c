@@ -280,8 +280,10 @@ int DEVICE_SECURITY_Init(void)
 
     // Register unique keys for tables
     char *unique_keys[] = { "SerialNumber", "Issuer" };
+    char *alias_unique_key[] = { "Alias" };
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_CERT_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_LA_CERT_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
+    err |= USP_REGISTER_Object_UniqueKey(DEVICE_LA_CERT_ROOT ".{i}", alias_unique_key, NUM_ELEM(alias_unique_key));
 
     // Exit if any errors occurred
     if (err != USP_ERR_OK)
@@ -1034,7 +1036,7 @@ void LoadCerts_FromPath(char *path, cert_usage_t cert_usage, ctrust_role_t role)
 **
 ** LoadCerts_FromFile
 **
-** Called to load all certificates contained in the specified directory (in PEM format) into the Device.Security.Certificate table
+** Called to load all certificates contained in the specified file (in PEM format) into the Device.Security.Certificate table
 **
 ** \param   file_path - file containing certs
 ** \param   cert_usage - type of certificates to add
@@ -2798,7 +2800,7 @@ int CalcCertHash(X509 *cert, cert_hash_t *p_hash)
 **
 ** LoadTrustStore
 **
-** Called to load the trusted root certificate store
+** Called to load the trusted root certs provided by the get_trust_store vendor hook
 **
 ** \param   None
 **

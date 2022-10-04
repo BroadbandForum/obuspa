@@ -42,7 +42,6 @@
 #include "sar_vector.h"
 
 #include <string.h>
-#include <inttypes.h>  // For PRIu64
 
 /*********************************************************************//**
 **
