@@ -1,5 +1,10 @@
 # OB-USP-AGENT Changelog since Release 6.0.0
 
+## 2022-10-28 v6.0.5
+### Fixed
+- OnBoardRequest notification should be retried, if corresponding NotifyResponse not received
+- Adding a Controller MTP object fails, if Protocol is not specified and CoAP is disabled ('configure --disable-coap')
+
 ## 2022-10-03 v6.0.4
 ### Fixed
 - GH#30: MQTT publish QoS cannot be configured (stuck at 0)

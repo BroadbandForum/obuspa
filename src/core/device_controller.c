@@ -58,6 +58,7 @@
 #include "iso8601.h"
 #include "retry_wait.h"
 #include "usp_record.h"
+#include "subs_retry.h"
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_defs.h"
@@ -119,6 +120,21 @@ typedef struct
 #endif
 
 } controller_mtp_t;
+
+//------------------------------------------------------------------------------
+// Define for default value of Device.LocalAgent.Controller.{i}.MTP.{i}.Protocol
+// We attempt to use WebSockets if present (TR181-2-15-1), falling back to an enabled MTP
+#if defined(ENABLE_WEBSOCKETS)
+    #define DEFAULT_CONTROLLER_MTP "WebSocket"
+#elif !defined(DISABLE_STOMP)
+    #define DEFAULT_CONTROLLER_MTP "STOMP"
+#elif defined(ENABLE_MQTT)
+    #define DEFAULT_CONTROLLER_MTP "MQTT"
+#elif defined(ENABLE_COAP)
+    #define DEFAULT_CONTROLLER_MTP "CoAP"
+#else
+    #define DEFAULT_CONTROLLER_MTP ""
+#endif
 
 //------------------------------------------------------------------------------
 // Structure representing entries in the Device.LocalAgent.Controller.{i} table
@@ -303,7 +319,7 @@ int DEVICE_CONTROLLER_Init(void)
 
     err |= USP_REGISTER_Param_NumEntries(DEVICE_CONT_ROOT ".{i}.MTPNumberOfEntries", "Device.LocalAgent.Controller.{i}.MTP.{i}");
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.Enable", "false", Validate_ControllerMtpEnable, Notify_ControllerMtpEnable, DM_BOOL);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.Protocol", "CoAP", Validate_ControllerMtpProtocol, Notify_ControllerMtpProtocol, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.Protocol", DEFAULT_CONTROLLER_MTP, Validate_ControllerMtpProtocol, Notify_ControllerMtpProtocol, DM_STRING);
 
 #ifndef DISABLE_STOMP
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.STOMP.Reference", "", DEVICE_MTP_ValidateStompReference, Notify_ControllerMtpStompReference, DM_STRING);
@@ -1587,7 +1603,7 @@ int ExecuteSendOnBoardRequest(controller_t* controller)
         }
 
         // Create the notify message
-        req = MSG_HANDLER_CreateNotifyReq_OnBoard(oui, product_class, serial_number, false);
+        req = MSG_HANDLER_CreateNotifyReq_OnBoard(oui, product_class, serial_number, true);
 
         // Send the Notify Request
         SendOnBoardRequestNotify(req, controller);
@@ -1618,6 +1634,7 @@ void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
     char *dest_endpoint;
     mtp_reply_to_t mtp_reply_to = {0};  // Ensures mtp_reply_to.is_reply_to_specified=false
     usp_send_item_t usp_send_item;
+    char *msg_id;
 
     // Exit if unable to determine the endpoint of the controller
     // This could occur if the controller had been deleted
@@ -1650,10 +1667,12 @@ void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
 
     // Send the message
     // NOTE: Intentionally ignoring error here.
-    MSG_HANDLER_QueueUspRecord(&usp_send_item, dest_endpoint, req->header->msg_id, &mtp_reply_to, retry_expiry_time);
+    msg_id = req->header->msg_id;
+    MSG_HANDLER_QueueUspRecord(&usp_send_item, dest_endpoint, msg_id, &mtp_reply_to, retry_expiry_time);
 
-    // Free the serialized USP Message because it is now encapsulated in USP Record messages.
-    USP_FREE(pbuf);
+    // Ensure the message is retried until a NotifyResponse is received
+    // NOTE: Ownership of the serialized USP message passes to the subs retry module
+    SUBS_RETRY_Add(ON_BOARD_REQUEST_SUBS_INSTANCE, msg_id, "", dest_endpoint, "", pbuf, pbuf_len, END_OF_TIME);
 }
 
 /*********************************************************************//**

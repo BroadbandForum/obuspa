@@ -43,6 +43,10 @@
 
 #include "usp-msg.pb-c.h"
 
+// OnBoardRequests do not have an associated entry in the subscription table
+// Reserve this special case instance number for use with SUBS_RETRY_Add()
+#define ON_BOARD_REQUEST_SUBS_INSTANCE 0
+
 void SUBS_RETRY_Init(void);
 void SUBS_RETRY_Stop(void);
 void SUBS_RETRY_Add(int instance, char *msg_id, char *subscription_id, char *dest_endpoint, char *differentiator,
