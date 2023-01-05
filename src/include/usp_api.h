@@ -263,6 +263,10 @@ typedef int (*dm_vendor_reboot_cb_t)(void);
 typedef int (*dm_vendor_factory_reset_cb_t)(void);
 
 // Vendor hooks associated with vendor database transactions
+// NOTE: The start transaction vendor hook must only return when the start transaction has completed successfully.
+//       It must never return an error. This is necessary because there are some cases where the agent cannot sensibly
+//       handle success followed by failure as it would lead to data model inconsistencies.
+//       e.g. when the result of one USP Set request cascades to other parts of the data model
 typedef int (*dm_vendor_start_trans_cb_t)(void);
 typedef int (*dm_vendor_commit_trans_cb_t)(void);
 typedef int (*dm_vendor_abort_trans_cb_t)(void);

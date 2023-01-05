@@ -1,12 +1,8 @@
-FROM ubuntu:focal
+ # Ubuntu 22.10 (Kinetic Kudu) includes libmosquitto 2.0.11 and libwebsockets 4.1.6
+FROM ubuntu:kinetic
 
 ENV MAKE_JOBS=8
 ENV OBUSPA_ARGS="-v4"
-
-# Add mosquitto latest ppa
-RUN apt-get update && \
-    apt-get install -y software-properties-common && \
-    add-apt-repository ppa:mosquitto-dev/mosquitto-ppa
 
 # Install dependencies
 RUN apt-get update &&\

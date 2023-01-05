@@ -761,7 +761,7 @@ int ExecuteCli_Set(char *arg1, char *arg2, char *usage)
 {
     int i;
     int err;
-    char path[USP_ERR_MAXLEN];
+    char path[MAX_DM_PATH];
     dm_trans_vector_t trans;
     str_vector_t objects;
     char param_name[MAX_DM_PATH];
@@ -847,7 +847,7 @@ int ExecuteCli_Add(char *arg1, char *arg2, char *usage)
 {
     int i;
     int err;
-    char path[USP_ERR_MAXLEN];
+    char path[MAX_DM_PATH];
     dm_trans_vector_t trans;
     str_vector_t objects;
     char *instance_str;
@@ -1790,7 +1790,9 @@ int SplitSetExpression(char *expr, char *search_path, int search_path_len, char 
 **
 ** SendCliResponse
 **
-** Sends the printf-style formatted message back to the CLI client
+** Sends the printf-style formatted message back to the CLI client. In the
+** event that the buffer is too small, truncate the response, and make it
+** clear that it has been truncated
 **
 ** \param   fmt - printf style format
 **
@@ -1799,14 +1801,23 @@ int SplitSetExpression(char *expr, char *search_path, int search_path_len, char 
 **************************************************************************/
 void SendCliResponse(char *fmt, ...)
 {
+    #define MAX_CLI_RSP_LEN 4096
     va_list ap;
-    char buf[USP_ERR_MAXLEN];
+    char buf[MAX_CLI_RSP_LEN];
+    int chars_written;
 
-    // Write the USP error message into the local store
+    // Write the message into the local store
     va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
+    chars_written = vsnprintf(buf, sizeof(buf), fmt, ap);
     buf[sizeof(buf)-1] = '\0';
     va_end(ap);
+
+    // Ensure that if the message has been truncated, that it is reported
+    if (chars_written >= sizeof(buf)-1)
+    {
+        #define TRUNCATED_STR "...[truncated]...\n"
+        memcpy(&buf[sizeof(buf)-sizeof(TRUNCATED_STR)], TRUNCATED_STR, sizeof(TRUNCATED_STR));
+    }
 
     CLI_SERVER_SendResponse(buf);
 }
