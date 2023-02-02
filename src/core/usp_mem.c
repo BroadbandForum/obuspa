@@ -270,12 +270,6 @@ void USP_MEM_Free(const char *func, int line, void *ptr)
 {
     minfo_t *mi;
 
-    // Free the memory
-    free(ptr);
-
-#ifndef __clang_analyzer__
-    // Clang static analyser goes wrong here because the ptr in meminfo is just an address used as a key; ptr is not owned by meminfo
-
     // Collect memory info, if enabled
     if (collect_memory_info)
     {
@@ -292,7 +286,9 @@ void USP_MEM_Free(const char *func, int line, void *ptr)
         }
         OS_UTILS_UnlockMutex(&mem_access_mutex);
     }
-#endif
+
+    // Free the memory
+    free(ptr);
 }
 
 /*********************************************************************//**
@@ -311,8 +307,21 @@ void USP_MEM_Free(const char *func, int line, void *ptr)
 **************************************************************************/
 void *USP_MEM_Realloc(const char *func, int line, void *ptr, int size)
 {
-    minfo_t *mi;
+    minfo_t *mi = NULL;;
     void *new_ptr;
+
+    // Terminate if unable to find memory info (if enabled)
+    if (collect_memory_info)
+    {
+        OS_UTILS_LockMutex(&mem_access_mutex);
+        tr_mem("%s(%d): realloc(%p, %d) = %p", func, line, ptr, size, new_ptr);
+
+        mi = FindMemInfoByPtr(ptr);
+        if (mi == NULL)
+        {
+            USP_ERR_Terminate("Trying to reallocate memory that was not allocated");
+        }
+    }
 
     // Terminate if out of memory
     new_ptr = realloc(ptr, size);
@@ -321,31 +330,17 @@ void *USP_MEM_Realloc(const char *func, int line, void *ptr, int size)
         USP_ERR_Terminate("%s (%d): realloc(%d bytes) failed", func, line, size);
     }
 
-#ifndef __clang_analyzer__
-    // Clang static analyser goes wrong here because the ptr in meminfo is just an address used as a key; ptr is not owned by meminfo
-
-    // Collect memory info, if enabled
-    if (collect_memory_info)
+    // Update memory info, if enabled
+    if ((collect_memory_info) && (mi != NULL))
     {
-        OS_UTILS_LockMutex(&mem_access_mutex);
-        tr_mem("%s(%d): realloc(%p, %d) = %p", func, line, ptr, size, new_ptr);
-        mi = FindMemInfoByPtr(ptr);
-        if (mi != NULL)
-        {
-            mi->ptr = new_ptr;
-            mi->func = func;
-            mi->line = line;
-            mi->size = size;
-            mi->flags |= MI_MODIFIED;
-            GetCallers(mi->callers, NUM_ELEM(mi->callers));
-        }
-        else
-        {
-            USP_ERR_Terminate("Trying to reallocate memory that was not allocated");
-        }
+        mi->ptr = new_ptr;
+        mi->func = func;
+        mi->line = line;
+        mi->size = size;
+        mi->flags |= MI_MODIFIED;
+        GetCallers(mi->callers, NUM_ELEM(mi->callers));
         OS_UTILS_UnlockMutex(&mem_access_mutex);
     }
-#endif
 
     return new_ptr;
 }

@@ -45,14 +45,12 @@
 #include <string.h>
 #include <getopt.h>
 #include <limits.h>
-#include <protobuf-c/protobuf-c.h>
 #include <curl/curl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <syslog.h>
 #include <unistd.h>
 
-#include "usp-msg.pb-c.h"
 #include "common_defs.h"
 #include "mtp_exec.h"
 #include "dm_exec.h"
