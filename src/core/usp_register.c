@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2022  CommScope, Inc
+ * Copyright (C) 2019-2023, Broadband Forum
+ * Copyright (C) 2016-2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -1234,6 +1234,54 @@ int USP_REGISTER_AsyncOperation(char *path, dm_async_oper_cb_t async_oper_cb, dm
     memset(info, 0, sizeof(dm_oper_info_t));
     info->async_oper_cb = async_oper_cb;
     info->restart_cb = restart_cb;
+    info->max_concurrency = INT_MAX;  // By default allow multiple concurrent invocations
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** USP_REGISTER_AsyncOperation_MaxConcurrency
+**
+** Registers the maximum number of concurrently running operations of this type
+**
+** \param   path - full data model path for the operation
+** \param   max_concurrency - Maximum number of concurrent callback called to start this operation on an object
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INTERNAL_ERROR if any other error occurred
+**
+**************************************************************************/
+int USP_REGISTER_AsyncOperation_MaxConcurrency(char *path, int max_concurrency)
+{
+    dm_node_t *node;
+    dm_oper_info_t *info;
+
+    // Exit if this function is not being called from within VENDOR_Init()
+    if (is_executing_within_dm_init == false)
+    {
+        USP_ERR_SetMessage(usp_err_bad_scope_str, __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if input parameters are not defined
+    if (path == NULL)
+    {
+        USP_ERR_SetMessage(usp_err_invalid_param_str, __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if this async command has not been registered yet
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL);
+    if (node == NULL)
+    {
+        USP_ERR_SetMessage("%s: Async command %s must first be registered using USP_REGISTER_AsyncOperation()", __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Copy the max_concurrency argument into the data model
+    info = &node->registered.oper_info;
+    info->max_concurrency = max_concurrency;
 
     return USP_ERR_OK;
 }

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2023, Broadband Forum
+ * Copyright (C) 2016-2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -61,12 +61,23 @@ static dm_node_t *refresh_instances_top_node = NULL;
 static dm_instances_vector_t refreshed_instances_vector = { 0 };
 
 //--------------------------------------------------------------------
+// Counter that is incremented for each USP request (or item of internal work, such as BulkDataCollection or Value Change subscriptions)
+// Its purpose is to ensure that during the processing of a USP request, the cached set of instances for a table do not expire
+// (which may cause an instance number mismatch whilst performing teh USP request, resulting in an internal error)
+static unsigned int cur_lock_period = 1;      // Starts at 1, which is more than the starting value for lock_period in each object (0). This ensures that at startup the instance refresh is called in DM_INST_VECTOR_RefreshBaselineInstances().
+
+//--------------------------------------------------------------------
+// Boolean set after baseline instances have been retrieved. After being set, instance addition/deletion can cause notifications
+static bool notify_subscriptions_allowed = false;
+
+//--------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void AddObjectInstanceIfPermitted(dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role);
-int RefreshInstVector(dm_node_t *node, bool notify_subscriptions);
+int RefreshInstVector(dm_node_t *node);
 int RefreshInstVectorEntry(char *path);
 bool IsExistInInstVector(dm_instances_t *match, dm_instances_vector_t *div);
 void AddToInstVector(dm_instances_t *inst, dm_instances_vector_t *div);
+void RefreshBaselineInstances(dm_node_t *parent);
 
 /*********************************************************************//**
 **
@@ -258,7 +269,7 @@ int DM_INST_VECTOR_IsExist(dm_instances_t *match, bool *exists)
     div = &top_node->registered.object_info.inst_vector;
 
     // Exit if unable to refresh the cache of instances for this object (if necessary)
-    err = RefreshInstVector(top_node, true);
+    err = RefreshInstVector(top_node);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -360,7 +371,7 @@ int DM_INST_VECTOR_GetNumInstances(dm_node_t *node, dm_instances_t *inst, int *n
     div = &top_node->registered.object_info.inst_vector;
 
     // Exit if unable to refresh the cache of instances for this object (if necessary)
-    err = RefreshInstVector(top_node, true);
+    err = RefreshInstVector(top_node);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -422,7 +433,7 @@ int DM_INST_VECTOR_GetInstances(dm_node_t *node, dm_instances_t *inst, int_vecto
     div = &top_node->registered.object_info.inst_vector;
 
     // Exit if unable to refresh the cache of instances for this object (if necessary)
-    err = RefreshInstVector(top_node, true);
+    err = RefreshInstVector(top_node);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -460,7 +471,6 @@ exit:
 **
 ** Called at startup to determine all refreshed object instances, so that
 ** object creation and deletion after bootup can generate notification events if necessary
-** NOTE: This function is called recursively over the whole data model
 **
 ** \param   parent - node to get instances of (if it is a top level multi-instance object)
 **
@@ -469,37 +479,10 @@ exit:
 **************************************************************************/
 void DM_INST_VECTOR_RefreshBaselineInstances(dm_node_t *parent)
 {
-    dm_node_t *child;
+    RefreshBaselineInstances(parent);
 
-    // Stop recursing at all top level multi-instance object nodes of the data model tree
-    if (parent->type == kDMNodeType_Object_MultiInstance)
-    {
-        dm_object_info_t *info;                   // Objects
-
-        // Refresh the instances of this object (and all of its children) if required
-        info = &parent->registered.object_info;
-        if (info->refresh_instances_cb != NULL)
-        {
-            (void) RefreshInstVector(parent, false);
-        }
-
-        USP_ASSERT(parent->order == 1);
-        return;
-    }
-
-    // Iterate over list of children
-    child = (dm_node_t *) parent->child_nodes.head;
-    while (child != NULL)
-    {
-        // Recurse through all objects to find first top level multi-instance object from here
-        if (IsObject(child))
-        {
-            (void) DM_INST_VECTOR_RefreshBaselineInstances(child);
-        }
-
-        // Move to next sibling in the data model tree
-        child = (dm_node_t *) child->link.next;
-    }
+    // Allow notifications to be sent, after this point
+    notify_subscriptions_allowed = true;
 }
 
 /*********************************************************************//**
@@ -568,7 +551,7 @@ int DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instances
     div = &top_node->registered.object_info.inst_vector;
 
     // Exit if unable to refresh the cache of instances for this object (if necessary)
-    err = RefreshInstVector(top_node, true);
+    err = RefreshInstVector(top_node);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -630,7 +613,7 @@ int DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vecto
     div = &top_node->registered.object_info.inst_vector;
 
     // Exit if unable to refresh the cache of instances for this object (if necessary)
-    err = RefreshInstVector(top_node, true);
+    err = RefreshInstVector(top_node);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -649,6 +632,25 @@ int DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vecto
     }
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DM_INST_VECTOR_NextLockPeriod
+**
+** Signals that the current USP request has finished.
+** This increments the count of USP requests, so that any cached instances which were previously prevented from
+** expiring may now expire if they have reached their expiry time.
+** Effectively this unlocks any previously locked cached instances in the inst vector
+**
+** \param   None
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+void DM_INST_VECTOR_NextLockPeriod(void)
+{
+    cur_lock_period++;
 }
 
 /*********************************************************************//**
@@ -746,7 +748,7 @@ int DM_INST_VECTOR_RefreshInstance(char *path)
 **************************************************************************/
 int DM_INST_VECTOR_RefreshTopLevelObjectInstances(dm_node_t *node)
 {
-    return RefreshInstVector(node, true);
+    return RefreshInstVector(node);
 }
 
 /*********************************************************************//**
@@ -791,6 +793,54 @@ void AddObjectInstanceIfPermitted(dm_instances_t *inst, str_vector_t *sv, combin
 
 /*********************************************************************//**
 **
+** RefreshBaselineInstances
+**
+** Called at startup to determine all refreshed object instances, so that
+** object creation and deletion after bootup can generate notification events if necessary
+** NOTE: This function is called recursively over the whole data model
+**
+** \param   parent - node to get instances of (if it is a top level multi-instance object)
+**
+** \return  None - If instances could not be refreshed, then we will try again at the time of generating a USP message that needs them
+**
+**************************************************************************/
+void RefreshBaselineInstances(dm_node_t *parent)
+{
+    dm_node_t *child;
+
+    // Stop recursing at all top level multi-instance object nodes of the data model tree
+    if (parent->type == kDMNodeType_Object_MultiInstance)
+    {
+        dm_object_info_t *info;                   // Objects
+
+        // Refresh the instances of this object (and all of its children) if required
+        info = &parent->registered.object_info;
+        if (info->refresh_instances_cb != NULL)
+        {
+            (void) RefreshInstVector(parent);
+        }
+
+        USP_ASSERT(parent->order == 1);
+        return;
+    }
+
+    // Iterate over list of children
+    child = (dm_node_t *) parent->child_nodes.head;
+    while (child != NULL)
+    {
+        // Recurse through all objects to find first top level multi-instance object from here
+        if (IsObject(child))
+        {
+            (void) RefreshBaselineInstances(child);
+        }
+
+        // Move to next sibling in the data model tree
+        child = (dm_node_t *) child->link.next;
+    }
+}
+
+/*********************************************************************//**
+**
 ** RefreshInstVector
 **
 ** Called before querying the instances vector, to ensure that it is up to date
@@ -798,12 +848,11 @@ void AddObjectInstanceIfPermitted(dm_instances_t *inst, str_vector_t *sv, combin
 ** In this case, this function may call the refresh_instances_cb to obtain the instance numbers if the current ones in the cache have expired
 **
 ** \param   top_node - pointer to top-level multi-instance object
-** \param   notify_subscriptions - set if subscriptions should be notified of instances added/deleted.
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int RefreshInstVector(dm_node_t *top_node, bool notify_subscriptions)
+int RefreshInstVector(dm_node_t *top_node)
 {
     dm_instances_vector_t *old_instances;
     dm_instances_vector_t *new_instances;
@@ -833,10 +882,19 @@ int RefreshInstVector(dm_node_t *top_node, bool notify_subscriptions)
         return USP_ERR_OK;
     }
 
+    // Exit if the instances have already been locked for this USP request
+    // This prevents instance numbers from changing mid-processing of an USP request and causing an error (if the instance numbers change)
+    if (info->lock_period == cur_lock_period)
+    {
+        return USP_ERR_OK;
+    }
+
     // Exit if it's not yet time to refresh the instance vector
     cur_time = time(NULL);
     if (cur_time <= info->refresh_instances_expiry_time)
     {
+        // Since we've determined that the instances have not expired, lock the cached instances for the rest of this USP request
+        info->lock_period = cur_lock_period;
         return USP_ERR_OK;
     }
 
@@ -862,13 +920,14 @@ int RefreshInstVector(dm_node_t *top_node, bool notify_subscriptions)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Update the expiry time
+    // Update the expiry time and lock the instances for at least this USP request
     cur_time = time(NULL);
     info->refresh_instances_expiry_time = cur_time + expiry_period;
+    info->lock_period = cur_lock_period;
 
     // Skip determining add added/deleted instances, if we don't need to notify subscriptions because
-    // we're getting the baseline set of object instances at bootup
-    if (notify_subscriptions == false)
+    // we haven't got the baseline set of object instances at bootup yet
+    if (notify_subscriptions_allowed == false)
     {
         goto exit;
     }

@@ -1155,7 +1155,12 @@ void emit_string(SB *out, const char *str)
 	const char *s = str;
 	char *b;
 	
+#if 0
+    // Copyright (C) 2023, Broadband Forum
+    // Copyright (C) 2023  CommScope, Inc
+    // Allow non UTF-8 characters to be represented by the Unicode replacement character (U+FFFD)
 	assert(utf8_validate(str));
+#endif
 	
 	/*
 	 * 14 bytes is enough space to write up to two
@@ -1213,7 +1218,12 @@ void emit_string(SB *out, const char *str)
 					 * This should never happen when assertions are enabled
 					 * due to the assertion at the beginning of this function.
 					 */
+#if 0
+    // Copyright (C) 2023, Broadband Forum
+    // Copyright (C) 2023  CommScope, Inc
+    // Allow non UTF-8 characters to be represented by the Unicode replacement character (U+FFFD)
 					assert(false);
+#endif
 					if (escape_unicode) {
 						strcpy(b, "\\uFFFD");
 						b += 6;

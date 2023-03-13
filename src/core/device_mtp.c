@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2022  CommScope, Inc
+ * Copyright (C) 2019-2023, Broadband Forum
+ * Copyright (C) 2016-2023  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -2062,8 +2062,10 @@ char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance)
 **************************************************************************/
 mqtt_qos_t DEVICE_MTP_GetAgentMqttPublishQos(int instance)
 {
+    int i;
+
     // Iterate over all agent MTPs, finding the first one that matches the specified MQTT client
-    for (int i = 0; i < MAX_AGENT_MTPS; i++)
+    for (i = 0; i < MAX_AGENT_MTPS; i++)
     {
         agent_mtp_t *mtp = &agent_mtps[i];
         if ((mtp->instance != INVALID) && (mtp->enable == true) &&

@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2023, Broadband Forum
+ * Copyright (C) 2016-2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -59,5 +59,6 @@ void DM_INST_VECTOR_RefreshBaselineInstances(dm_node_t *parent);
 void DM_INST_VECTOR_Dump(dm_instances_vector_t *div);
 int DM_INST_VECTOR_RefreshInstance(char *path);
 int DM_INST_VECTOR_RefreshTopLevelObjectInstances(dm_node_t *node);
+void DM_INST_VECTOR_NextLockPeriod(void);
 
 #endif

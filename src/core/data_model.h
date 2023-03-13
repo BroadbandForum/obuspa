@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2022  CommScope, Inc
+ * Copyright (C) 2019-2023, Broadband Forum
+ * Copyright (C) 2016-2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -150,7 +150,8 @@ typedef struct
     dm_instances_vector_t inst_vector;          // vector of instances for this multi-instance object and all its children
     dm_refresh_instances_cb_t refresh_instances_cb; // (optional) callback to get the instances of this object and its children
     time_t refresh_instances_expiry_time;       // Absolute time at which the instances in the inst_vector are valid until. NOTE: Only used if refresh_instances_cb is non-NULL.
-                                                // After this time, if the USP Agent needs to access the top-level multi-instance object or any of its children, then the callback will be invoked again.
+                                                // After this time, if the USP Agent needs to access the top-level multi-instance object or any of its children, then the callback will be invoked again. Unless locked (see usp_req_lock_count)
+    unsigned int lock_period;       // Specifies the USP request during which the instances in the inst_vector are locked. This is used to prevent expiry during the processing of a USP request - which causes instance mismatch and errors
 } dm_object_info_t;
 
 // Information registered in the data model for operations
@@ -159,7 +160,7 @@ typedef struct
     dm_sync_oper_cb_t sync_oper_cb;
     dm_async_oper_cb_t async_oper_cb;
     dm_async_restart_cb_t restart_cb;   // Called only for async operations, to determine whether to restart them after a power-cycle
-    unsigned flags;
+    int max_concurrency;                // Maximum number of concurrent invocations of this command
     str_vector_t input_args;            // String vector containing the names of all valid input arguments (in schema form)
     str_vector_t output_args;           // String vector containing the names of all valid output arguments (in schema form)
 } dm_oper_info_t;

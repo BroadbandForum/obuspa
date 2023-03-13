@@ -103,6 +103,7 @@ int DEVICE_SELF_TEST_Init(void)
 
     // Register self test diagnostics
     err |= USP_REGISTER_AsyncOperation("Device.SelfTestDiagnostics()", DEVICE_SELF_TEST_Operate, NULL);
+    err |= USP_REGISTER_AsyncOperation_MaxConcurrency("Device.SelfTestDiagnostics()", 1);
     err |= USP_REGISTER_OperationArguments("Device.SelfTestDiagnostics()", selftest_input_args, NUM_ELEM(selftest_input_args),
                                                                            selftest_output_args, NUM_ELEM(selftest_output_args));
 

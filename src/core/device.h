@@ -231,6 +231,7 @@ void DEVICE_REQUEST_OperationComplete(int instance, int err_code, char *err_msg,
 void DEVICE_REQUEST_UpdateOperationStatus(int instance, char *status);
 int DEVICE_REQUEST_RestartAsyncOperations(void);
 int DEVICE_REQUEST_PersistOperationArgs(int instance, kv_vector_t *args, char *prefix);
+int DEVICE_REQUEST_CountMatchingRequests(char *command_path);
 int DEVICE_BULKDATA_Init(void);
 int DEVICE_BULKDATA_Start(void);
 void DEVICE_BULKDATA_Stop(void);

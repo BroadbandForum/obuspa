@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2022  CommScope, Inc
+ * Copyright (C) 2019-2023, Broadband Forum
+ * Copyright (C) 2016-2023  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -338,6 +338,9 @@ int DATA_MODEL_Start(void)
     // Refresh all objects which use the refresh instances vendor hook
     // This provides the baseline after which object/additions deletions are notified (if relevant subscriptions exist)
     DM_INST_VECTOR_RefreshBaselineInstances(root_device_node);
+
+    // Ensure that if the Boot! event is generated a long time after startup, that it refreshes the instance numbers if they have expired
+    DM_INST_VECTOR_NextLockPeriod();
 
 exit:
     // Commit all database changes
@@ -1438,6 +1441,23 @@ int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_
             break;
 
         case kDMNodeType_AsyncOperation:
+            // Exit if we've reached the limit of concurrent operations for this command
+            if (info->max_concurrency < INT_MAX)
+            {
+                int count = DEVICE_REQUEST_CountMatchingRequests(node->path);
+                if (count == INVALID)
+                {
+                    err = USP_ERR_INTERNAL_ERROR;
+                }
+
+                if (count >= info->max_concurrency)
+                {
+                    USP_ERR_ReplaceEmptyMessage("%s: Limit of %d %s in progress reached", __FUNCTION__, info->max_concurrency, node->name);
+                    err = USP_ERR_RESOURCES_EXCEEDED;
+                    goto exit;
+                }
+            }
+
             // Create an entry in the Request Table
             err = DEVICE_REQUEST_Add(path, command_key, instance);
             if (err != USP_ERR_OK)
@@ -3177,7 +3197,7 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
             // Check that it's type (from the path) matches that expected
             if ((check_node_type) && (child->type != seg->type))
             {
-                USP_ERR_SetMessage("%s: Path segment '%s' expected type %s in path %s", __FUNCTION__, child->name, dm_node_type_to_str[seg->type], path);
+                USP_ERR_SetMessage("%s: Path segment '%s' expected type %s in path %s", __FUNCTION__, child->name, dm_node_type_to_str[child->type], path);
                 return NULL;
             }
 

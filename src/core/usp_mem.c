@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2023, Broadband Forum
+ * Copyright (C) 2016-2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -425,8 +425,8 @@ void USP_MEM_StartCollection(void)
     #define MAX_MINFO_ENTRIES 10000     // NOTE: Performing a get on 'Device.' can use a lot of entries
     #define MINFO_SIZE (MAX_MINFO_ENTRIES*sizeof(minfo_t))
     minfo = malloc(MINFO_SIZE);
-    memset(minfo, 0, MINFO_SIZE);
     USP_ASSERT(minfo != NULL);
+    memset(minfo, 0, MINFO_SIZE);
 
     // From now on, all current allocations will be logged in the minfo array
     collect_memory_info = true;

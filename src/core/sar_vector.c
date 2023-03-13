@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2022, Broadband Forum
+ * Copyright (C) 2023, Broadband Forum
  * Copyright (C) 2022, Snom Technology GmbH
  *
  * Redistribution and use in source and binary forms, with or without
@@ -159,6 +159,8 @@ bool SAR_VECTOR_Append(sar_vector_t *sarv, uint64_t sess_id, uint64_t seq_id, ui
 **************************************************************************/
 void SAR_VECTOR_Destroy(sar_vector_t *sarv)
 {
+    int i;
+
     // Exit if vector is already empty
     if (sarv->vector == NULL)
     {
@@ -166,7 +168,7 @@ void SAR_VECTOR_Destroy(sar_vector_t *sarv)
     }
 
     // Free all dynamically allocated memory associated with each payload
-    for (int i=0; i < sarv->num_entries; i++)
+    for (i=0; i < sarv->num_entries; i++)
     {
         sar_payload_t *payload = &sarv->vector[i];
         USP_SAFE_FREE(payload->data);
@@ -220,12 +222,13 @@ uint8_t* SAR_VECTOR_Serialize(sar_vector_t *sarv, int *len)
 {
     uint8_t *data = NULL;
     *len = 0;
+    unsigned u;
 
     if (sarv->sum_length <= 0) return NULL;
 
     // Concatenates all payloads in the destination buffer
     data = USP_MALLOC(sarv->sum_length);
-    for (unsigned u = 0; u < sarv->num_entries; u++)
+    for (u = 0; u < sarv->num_entries; u++)
     {
         sar_payload_t *sp = &sarv->vector[u];
         memcpy(&data[*len], sp->data, sp->len);

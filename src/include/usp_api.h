@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2022  CommScope, Inc
+ * Copyright (C) 2019-2023, Broadband Forum
+ * Copyright (C) 2016-2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -359,6 +359,7 @@ int USP_REGISTER_Object(char *path, dm_validate_add_cb_t validate_add_cb, dm_add
 int USP_REGISTER_Object_UniqueKey(char *path, char **params, int num_params);
 int USP_REGISTER_SyncOperation(char *path, dm_sync_oper_cb_t sync_oper_cb);
 int USP_REGISTER_AsyncOperation(char *path, dm_async_oper_cb_t async_oper_cb, dm_async_restart_cb_t restart_cb);
+int USP_REGISTER_AsyncOperation_MaxConcurrency(char *path, int max_concurrency);
 int USP_REGISTER_OperationArguments(char *path, char **input_arg_names, int num_input_arg_names, char **output_arg_names, int num_output_arg_names);
 int USP_REGISTER_Event(char *path);
 int USP_REGISTER_EventArguments(char *path, char **event_arg_names, int num_event_arg_names);

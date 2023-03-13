@@ -1,8 +1,8 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2019-2023, Broadband Forum
  * Copyright (C) 2020-2021, BT PLC
- * Copyright (C) 2021-2022  CommScope, Inc
+ * Copyright (C) 2021-2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -339,9 +339,10 @@ int DEVICE_MQTT_StartAllClients(void)
 {
     client_t *mqttclient;
     int err;
+    int i;
 
     // Iterate over all MQTT clients, starting the ones that are enabled
-    for (int i = 0; i<ClientNumberOfEntries(); i++)
+    for (i = 0; i<ClientNumberOfEntries(); i++)
     {
         mqttclient = &mqtt_client_params[i];
 

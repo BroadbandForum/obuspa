@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2017-2022  CommScope, Inc
+ * Copyright (C) 2019-2023, Broadband Forum
+ * Copyright (C) 2017-2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,6 +49,7 @@
 #include "usp_api.h"
 #include "dm_access.h"
 #include "dm_trans.h"
+#include "dm_inst_vector.h"
 #include "msg_handler.h"
 
 
@@ -373,12 +374,9 @@ int DEVICE_REQUEST_RestartAsyncOperations(void)
 
         if (is_restart)
         {
-            // Exit if unable to restart the operation
-            err = RestartAsyncOperation(op_path, instance);
-            if (err != USP_ERR_OK)
-            {
-                goto exit;
-            }
+            // Attempt to restart the operation, sending an operation complete and removing the entry
+            // from the Request table if this fails
+            RestartAsyncOperation(op_path, instance);
         }
         else
         {
@@ -459,6 +457,85 @@ int DEVICE_REQUEST_PersistOperationArgs(int instance, kv_vector_t *args, char *p
     }
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_REQUEST_CountMatchingRequests
+**
+** Determines the number of times that the specified command is present in the Request table
+** and hence already in progress
+**
+** \param   command_path - Schema path of the command in the data model which we want to count the number of occurrences of
+**
+** \return  Number of occurrences of the specified command in the request table, or INVALID if an error occurred
+**
+**************************************************************************/
+int DEVICE_REQUEST_CountMatchingRequests(char *command_path)
+{
+    int_vector_t iv;
+    dm_instances_t inst;
+    bool is_qualified_instance;
+    dm_node_t *command_node;
+    dm_node_t *node;
+    int err;
+    int i;
+    int instance;
+    char path[MAX_DM_PATH];
+    char buf[MAX_DM_VALUE_LEN];
+    int count = 0;
+
+    INT_VECTOR_Init(&iv);
+
+    // Find node representing the specified command to find
+    command_node = DM_PRIV_GetNodeFromPath(command_path, NULL, NULL);
+    USP_ASSERT(command_node != NULL);
+
+    // Find node representing the request table
+    node = DM_PRIV_GetNodeFromPath(DEVICE_REQ_ROOT ".{i}", &inst, &is_qualified_instance);
+    USP_ASSERT(node != NULL);
+
+    // Get an array of instances for in the request table
+    err = DM_INST_VECTOR_GetInstances(node, &inst, &iv);
+    if (err != USP_ERR_OK)
+    {
+        count = INVALID;
+        goto exit;
+    }
+
+    // Iterate over all instances in the request table
+    for (i=0; i < iv.num_entries; i++)
+    {
+        // Form the param path containing the command for this instance in the table
+        instance = iv.vector[i];
+        USP_SNPRINTF(path, sizeof(path), "%s.%d.Command", DEVICE_REQ_ROOT, instance);
+
+        // Exit if unable to get the command parameter for this instance
+        err = DATA_MODEL_GetParameterValue(path, buf, sizeof(buf), 0);
+        if (err != USP_ERR_OK)
+        {
+            count = INVALID;
+            goto exit;
+        }
+
+        // Exit if unable to get the data model node associated with the command in this entry of the request table
+        // NOTE: This should never happen. It could only happen if commands have been removed from the data model schema
+        node = DM_PRIV_GetNodeFromPath(buf, NULL, NULL);
+        if (node == NULL)
+        {
+            goto exit;
+        }
+
+        // Increase the count if the command in this instance of the table, matched the specified command
+        if (node == command_node)
+        {
+            count++;
+        }
+    }
+
+exit:
+    INT_VECTOR_Destroy(&iv);
+    return count;
 }
 
 /*********************************************************************//**
