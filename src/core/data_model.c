@@ -135,6 +135,7 @@ int GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vect
 void DumpDataModelNodeMap(void);
 int GetVendorParam(dm_node_t *node, char *path, dm_instances_t *inst, char *buf, int len, dm_req_t *req);
 int SetVendorParam(dm_node_t *node, char *path, dm_instances_t *inst, char *value, dm_req_t *req);
+double_link_t *FindLinkToFirstObject(double_linked_list_t *list);
 
 /*********************************************************************//**
 **
@@ -3150,8 +3151,26 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
                 return NULL;
             }
 
-            // Add the node to it's parent
-            DLLIST_LinkToTail(&parent->child_nodes, child);
+            // Add the node to it's parent, ensuring that all child parameters are placed before all child objects
+            // This prevents the parameters being separated in different resolved_path results (of a GetResponse), if RESOLVED_PATH_SEARCH_LIMIT is exceeded
+            // This code also ensures that the order of registering the nodes is respected for each type in the child list
+            if (IsObject(child))
+            {
+                DLLIST_LinkToTail(&parent->child_nodes, child);
+            }
+            else
+            {
+                double_link_t *insert_point;
+                insert_point = FindLinkToFirstObject(&parent->child_nodes);
+                if (insert_point != NULL)
+                {
+                    DLLIST_InsertLinkBefore(insert_point, &parent->child_nodes, child);
+                }
+                else
+                {
+                    DLLIST_LinkToTail(&parent->child_nodes, child);
+                }
+            }
 
             // Add this node to the instance node array, if it is a multi-instance object
             if (seg->type == kDMNodeType_Object_MultiInstance)
@@ -4636,6 +4655,39 @@ dm_node_t *FindNodeFromHash(dm_hash_t hash)
     }
 
     return node;
+}
+
+/*********************************************************************//**
+**
+** FindLinkToFirstObject
+**
+** Finds the first object in the list of child nodes
+**
+** \param   list - pointer to the list containing child nodes
+**
+** \return  pointer to first object found in the list of child nodes or NULL if no objects are found
+**
+**************************************************************************/
+double_link_t *FindLinkToFirstObject(double_linked_list_t *list)
+{
+    double_link_t *item;
+    dm_node_t *child;
+
+    item = list->head;
+    while (item != NULL)
+    {
+        child = (dm_node_t *) item;
+        if (IsObject(child))
+        {
+            return item;
+        }
+
+        // move to next item in linked list
+        item = item->next;
+    }
+
+    // Got to end of list and no objects found
+    return NULL;
 }
 
 /*********************************************************************//**

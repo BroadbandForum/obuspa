@@ -1,5 +1,10 @@
 # OB-USP-AGENT Changelog since Release 7.0.0
 
+## 2023-05-09 v7.0.3
+### Fixed
+- Prevent a parent object's parameters being spread across more than one resolved_path_result in the GetResponse, if it has many child object instances
+- Example mqtt factory reset database should not contain wildcard in ResponseTopicConfigured (GH#78)
+
 ## 2023-03-13 v7.0.2
 ### Fixed
 - USP Agent should attempt to restart all async operations, even if one restart fails
