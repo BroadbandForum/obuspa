@@ -285,11 +285,11 @@ typedef int (*get_agent_cert_cb_t)(agent_cert_info_t *info);
 
 // Miscellaneous vendor hooks
 typedef int (*get_hardware_version_cb_t)(char *buf, int len);
-typedef unsigned long long (*stats_collection_enable_cb_t)(bool enable, char *interface_name);
 typedef int (*dm_vendor_get_mtp_username_cb_t)(int instance, char *buf, int len);
 typedef int (*dm_vendor_get_mtp_password_cb_t)(int instance, char *buf, int len);
 typedef int (*load_agent_cert_cb_t)(SSL_CTX *ctx);
 typedef void (*log_message_cb_t)(const char *buf);
+typedef void (*modify_firmware_updated_cb_t)(bool *is_firmware_updated);
 
 //-------------------------------------------------------------------------
 // Typedef for structure containing core vendor hook callbacks
@@ -322,6 +322,7 @@ typedef struct
     dm_vendor_get_mtp_password_cb_t         get_mtp_password_cb;
     load_agent_cert_cb_t                    load_agent_cert_cb;
     log_message_cb_t                        log_message_cb;
+    modify_firmware_updated_cb_t            modify_firmware_updated_cb;
 
 } vendor_hook_cb_t;
 
@@ -392,6 +393,12 @@ int USP_SIGNAL_DataModelEvent(char *event_name, kv_vector_t *output_args);
 int USP_SIGNAL_OperationStatus(int instance, char *status);
 int USP_SIGNAL_ObjectAdded(char *path);
 int USP_SIGNAL_ObjectDeleted(char *path);
+
+//------------------------------------------------------------------------------
+// Function to perform work in the data model thread via a callback
+// The callback may call any of the USP_DM_XXX set of functions
+typedef void (*do_work_cb_t)(void *arg1, void *arg2);
+int USP_PROCESS_DoWork(do_work_cb_t do_work_cb, void *arg1, void *arg2);
 
 //------------------------------------------------------------------------------
 // Functions for argument list data structure

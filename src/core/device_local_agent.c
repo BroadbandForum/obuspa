@@ -820,6 +820,7 @@ int PopulateRebootInfo(void)
     char last_value[MAX_DM_SHORT_VALUE_LEN];
     char cur_value[MAX_DM_SHORT_VALUE_LEN];
     char *last_version;
+    modify_firmware_updated_cb_t  modify_firmware_updated_cb;
 
     // Set the default to indicate that the firmware image was not updated
     reboot_info.is_firmware_updated = false;
@@ -921,6 +922,13 @@ int PopulateRebootInfo(void)
     if ((strcmp(last_value, cur_value) != 0) && (last_value[0] != '\0'))
     {
         reboot_info.is_firmware_updated = true;
+    }
+
+    // Modify the firmware updated flag using a core vendor hook (if registered)
+    modify_firmware_updated_cb = vendor_hook_callbacks.modify_firmware_updated_cb;
+    if (modify_firmware_updated_cb != NULL)
+    {
+        modify_firmware_updated_cb( &reboot_info.is_firmware_updated );
     }
 
     return USP_ERR_OK;

@@ -1,5 +1,15 @@
 # OB-USP-AGENT Changelog since Release 7.0.0
 
+## 2023-09-08 v7.0.4
+### Added
+- A new core vendor hook has been added (modify_firmware_updated_cb_t), which allows the FirmwareUpdated argument of the Boot! event to be modified from the default determined by OBUSPA.
+- New function: USP_PROCESS_DoWork() performs work (via a callback) in the context of the data model thread (GH#93). Example usage: Initiating the setting of parameters from a non-data model thread.
+
+### Fixed
+- E2E session context SessionId fields are printed incorrectly in logs on 32-bit devices
+
+
+
 ## 2023-05-09 v7.0.3
 ### Fixed
 - Prevent a parent object's parameters being spread across more than one resolved_path_result in the GetResponse, if it has many child object instances

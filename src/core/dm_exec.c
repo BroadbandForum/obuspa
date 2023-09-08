@@ -107,6 +107,7 @@ typedef enum
     kDmExecMsg_MtpThreadExited,    // Sent to signal that the MTP thread has exited as requested by a scheduled exit
     kDmExecMsg_BdcTransferResult,  // Sent to signal that the BDC thread has sent (or failed to send) a report
     kDmExecMsg_MqttHandshakeComplete, // Sent from the MTP thread to notify the controller trust role to use for all controllers connected to the specified mqtt client
+    kDmExecMsg_DoWork,             // Sent from a thread to cause the data model thread to call the provided callback
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
     kDmExecMsg_E2eSessionEvent,    // Sent from a thread to signal an event related to the E2E Session Context has occurred.
 #endif
@@ -176,6 +177,14 @@ typedef struct
     char *path;
 } obj_deleted_msg_t;
 
+// Call the provided callback from the data model thread
+typedef struct
+{
+    do_work_cb_t do_work_cb;
+    void *arg1;
+    void *arg2;
+} do_work_msg_t;
+
 // Management IP address changed parameters in data model message
 typedef struct
 {
@@ -217,6 +226,7 @@ typedef struct
         oper_status_msg_t oper_status;
         obj_added_msg_t obj_added;
         obj_deleted_msg_t obj_deleted;
+        do_work_msg_t do_work;
         process_usp_record_msg_t usp_record;
         stomp_complete_msg_t stomp_complete;
         mqtt_complete_msg_t mqtt_complete;
@@ -571,6 +581,63 @@ int USP_SIGNAL_ObjectDeleted(char *path)
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         USP_LOG_Error("%s: Unable to send kDmExecMsg_ObjDeleted (path=%s)", __FUNCTION__, path);
         USP_SAFE_FREE(odm->path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+ **
+** USP_PROCESS_DoWork
+**
+** This function allows the caller to perform arbitrary work in the data model thread
+** It posts a message on the data model's queue, which when handled calls the specified callback
+** The callback may call any of the USP_DM_XXX functions to perform whatever work it needs to do
+** NOTE: Ownership of the memory pointed to by the arguments stays with the caller (vendor layer)
+**
+** \param   do_work_cb - function that will be called back from the data model thread
+** \param   arg1 - first argument passed to the do work callback
+** \param   arg2 - second argument passed to the do work callback
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int USP_PROCESS_DoWork(do_work_cb_t do_work_cb, void *arg1, void *arg2)
+{
+    dm_exec_msg_t  msg;
+    do_work_msg_t *dwm;
+    int bytes_sent;
+
+    // Exit if this function has been called with invalid parameters
+    if (do_work_cb == NULL)
+    {
+        USP_LOG_Error("%s: callback must not be NULL", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if message queue is not setup yet
+    if (mq_tx_socket == -1)
+    {
+        USP_LOG_Error("%s is being called before data model has been initialised", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Form message
+    memset(&msg, 0, sizeof(msg));
+    msg.type = kDmExecMsg_DoWork;
+    dwm = &msg.params.do_work;
+    dwm->do_work_cb = do_work_cb;
+    dwm->arg1 = arg1;
+    dwm->arg2 = arg2;
+
+    // Send the message - blocks if queue is full, unless calling from the data model thread (in which case discards the message)
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), BLOCK_UNLESS_DM_THREAD);
+    if (bytes_sent != sizeof(msg))
+    {
+        char buf[USP_ERR_MAXLEN];
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Unable to send kDmExecMsg_DoWork", __FUNCTION__);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -1119,6 +1186,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
     oper_status_msg_t *osm;
     obj_added_msg_t *oam;
     obj_deleted_msg_t *odm;
+    do_work_msg_t *dwm;
     process_usp_record_msg_t *pur;
     mtp_thread_exited_msg_t *tem;
     unsigned all_mtp_exited = 0;
@@ -1247,6 +1315,11 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
 
             // Free all arguments passed in this message
             USP_FREE(odm->path);
+            break;
+
+        case kDmExecMsg_DoWork:
+            dwm = &msg.params.do_work;
+            dwm->do_work_cb(dwm->arg1, dwm->arg2);
             break;
 
         case kDmExecMsg_MtpThreadExited:
