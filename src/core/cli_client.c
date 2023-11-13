@@ -169,13 +169,14 @@ int HandleCliCommandRemotely(char *cmd_buf)
     // Fill in sockaddr structure
     memset(&sa, 0, sizeof(sa));
     sa.sun_family = AF_UNIX;
-    USP_STRNCPY(sa.sun_path, CLI_UNIX_DOMAIN_FILE, sizeof(sa.sun_path));
+    USP_STRNCPY(sa.sun_path, cli_uds_file, sizeof(sa.sun_path));
 
     // Exit if unable to bind the socket to the unix domain file
     err = connect(sock, (struct sockaddr *) &sa, sizeof(struct sockaddr_un));
     if (err == -1)
     {
         USP_ERR_ERRNO("connect", errno);
+        USP_LOG_Error("%s: Unable to connect to Unix domain socket file %s", __FUNCTION__, cli_uds_file);
         close(sock);
         return USP_ERR_INTERNAL_ERROR;
     }

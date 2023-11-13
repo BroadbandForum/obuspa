@@ -571,8 +571,8 @@ int USP_ARG_GetDateTime(kv_vector_t *kvv, char *key, char *default_value, time_t
 **
 ** USP_ARG_Destroy
 **
-** Deallocates all memory associated with the key-value pair vector
-** This is the opposite of USP_ARG_Create()
+** Deallocates all memory associated with the key-value pair vector, apart from the kv_vector_t structure itself
+** This is the opposite of USP_ARG_Init()
 **
 ** \param   kvv - pointer to structure to destroy all dynmically allocated memory it contains
 **
@@ -582,6 +582,24 @@ int USP_ARG_GetDateTime(kv_vector_t *kvv, char *key, char *default_value, time_t
 void USP_ARG_Destroy(kv_vector_t *kvv)
 {
     KV_VECTOR_Destroy(kvv);
+}
+
+/*********************************************************************//**
+**
+** USP_ARG_Delete
+**
+** Deallocates all memory associated with the key-value pair vector, including the kv_vector_t structure itself
+** This is the opposite of USP_ARG_Create()
+**
+** \param   kvv - pointer to structure to destroy all dynmically allocated memory it contains
+**
+** \return  None
+**
+**************************************************************************/
+void USP_ARG_Delete(kv_vector_t *kvv)
+{
+    KV_VECTOR_Destroy(kvv);
+    USP_FREE(kvv);
 }
 
 /*********************************************************************//**
@@ -669,7 +687,7 @@ int USP_DM_AddControllerTrustPermission(ctrust_role_t role, char *path, unsigned
     }
 
     // Exit if path is not a data model path
-    node =  DM_PRIV_GetNodeFromPath(path, NULL, NULL);
+    node =  DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
     if (node == NULL)
     {
         return USP_ERR_INTERNAL_ERROR;

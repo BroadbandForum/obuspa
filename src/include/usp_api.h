@@ -48,6 +48,10 @@
 #include "vendor_defs.h"  // For MAX_DM_INSTANCE_ORDER
 
 //-----------------------------------------------------------------------------------------
+// Magic values used to denote invalid
+#define INVALID (-1)
+
+//-----------------------------------------------------------------------------------------
 // Key-value pair type
 typedef struct
 {
@@ -124,6 +128,7 @@ typedef struct
     char *schema_path;  // Pointer to schema path of the parameter or object
     dm_req_instances_t *inst;   // Pointer to instances information for the parameter or object
     dm_val_union_t val_union;   // When performing a Set Parameter Value, stores the new value converted to it's native type
+    int group_id;       // group_id of the data model provider component implementing the data model path (or NON_GROUPED if implemented internally)
 } dm_req_t;
 
 //------------------------------------------------------------------------------
@@ -216,7 +221,33 @@ typedef struct
 
 
 //-------------------------------------------------------------------------
-// Typedefs for data model callback functions
+// Enumeration of types of subscriptions
+typedef enum
+{
+    kSubNotifyType_Invalid = INVALID,   // Used to mark a subscription for garbage collection and also as a return value if we failed to convert the textual representation of this enum
+    kSubNotifyType_None = 0,            // This is the default value for the notification type parameter - indicates none setup yet
+    kSubNotifyType_ValueChange = 1,
+    kSubNotifyType_ObjectCreation,
+    kSubNotifyType_ObjectDeletion,
+    kSubNotifyType_OperationComplete,
+    kSubNotifyType_Event,
+
+    kSubNotifyType_Max                  // This should always be the last value in this enumeration. It is used to statically size arrays based on one entry for each active enumeration
+} subs_notify_t;
+
+//-------------------------------------------------------------------------
+// Structure representing each parameter to set in the create object vendor hook
+typedef struct
+{
+    char *param_name;   // IN: Name of parameter to set in the object. Set by caller of create object vendor hook
+    char *value;        // IN: Value of parameter to set in the object. Set by caller of create object vendor hook
+    bool is_required;   // IN: True if the parameter must be set in the object successfully. False if the USP request message doesn't care if the parameter is set successfully or not. Set by caller of create object vendor hook
+    int err_code;       // OUT: Error code, if this parameter failed to set in the new object. Set by create object vendor hook
+    char *err_msg;      // OUT: Error message, if this parameter failed to set in the new object. Set by create object vendor hook
+} group_add_param_t;
+
+//-------------------------------------------------------------------------
+// Typedefs for data model callback functions (vendor hooks)
 typedef int (*dm_get_value_cb_t)(dm_req_t *req, char *buf, int len);
 typedef int (*dm_set_value_cb_t)(dm_req_t *req, char *buf);
 typedef int (*dm_add_cb_t)(dm_req_t *req);
@@ -239,8 +270,11 @@ typedef int (*dm_get_group_cb_t)(int group_id, kv_vector_t *params);
 typedef int (*dm_set_group_cb_t)(int group_id, kv_vector_t *params, unsigned *types, int *failure_index);
 typedef int (*dm_add_group_cb_t)(int group_id, char *path, int *instance);
 typedef int (*dm_del_group_cb_t)(int group_id, char *path);
+typedef int (*dm_create_obj_cb_t)(int group_id, char *path, group_add_param_t *params, int num_params, int *instance, kv_vector_t *unique_keys);
+typedef int (*dm_multi_del_cb_t)(int group_id, bool allow_partial, char **paths, int num_paths, int *failure_index);
 typedef int (*dm_refresh_instances_cb_t)(int group_id, char *path, int *expiry_period);
-
+typedef int (*dm_subscribe_cb_t)(int instance, int group_id, subs_notify_t notify_type, char *path);
+typedef int (*dm_unsubscribe_cb_t)(int instance, int group_id, subs_notify_t notify_type, char *path);
 
 //-------------------------------------------------------------------------
 // Typedefs for core vendor hook callbacks
@@ -366,11 +400,15 @@ int USP_REGISTER_Event(char *path);
 int USP_REGISTER_EventArguments(char *path, char **event_arg_names, int num_event_arg_names);
 int USP_REGISTER_CoreVendorHooks(vendor_hook_cb_t *callbacks);
 
+int USP_REGISTER_GroupId(char* path, int group_id);
 int USP_REGISTER_GroupedObject(int group_id, char *path, bool is_writable);
 int USP_REGISTER_GroupedVendorParam_ReadOnly(int group_id, char *path, unsigned type_flags);
 int USP_REGISTER_GroupedVendorParam_ReadWrite(int group_id, char *path, unsigned type_flags);
 int USP_REGISTER_GroupVendorHooks(int group_id, dm_get_group_cb_t get_group_cb, dm_set_group_cb_t set_group_cb,
                                                 dm_add_group_cb_t add_group_cb, dm_del_group_cb_t del_group_cb);
+int USP_REGISTER_SubscriptionVendorHooks(int group_id, dm_subscribe_cb_t subscribe_cb, dm_unsubscribe_cb_t unsubscribe_cb);
+int USP_REGISTER_MultiDeleteVendorHook(int group_id, dm_multi_del_cb_t multi_del_cb);
+int USP_REGISTER_CreateObjectVendorHook(int group_id, dm_create_obj_cb_t create_obj_cb);
 int USP_REGISTER_Object_RefreshInstances(char *path, dm_refresh_instances_cb_t refresh_instances_cb);
 
 //------------------------------------------------------------------------------
@@ -387,12 +425,13 @@ int USP_DM_AddControllerTrustPermission(ctrust_role_t role, char *path, unsigned
 int USP_DM_InformDataModelEvent(char *event_name, kv_vector_t *output_args);
 
 //------------------------------------------------------------------------------
-// Functions that may be called from a thread implementing an asynchronous operation
+// Functions that may be called from a thread other than the data model thread to signal that some event occurred
 int USP_SIGNAL_OperationComplete(int instance, int err_code, char *err_msg, kv_vector_t *output_args);
 int USP_SIGNAL_DataModelEvent(char *event_name, kv_vector_t *output_args);
 int USP_SIGNAL_OperationStatus(int instance, char *status);
 int USP_SIGNAL_ObjectAdded(char *path);
 int USP_SIGNAL_ObjectDeleted(char *path);
+int USP_SIGNAL_ValueChanged(char *path, char *value);
 
 //------------------------------------------------------------------------------
 // Function to perform work in the data model thread via a callback
@@ -419,6 +458,7 @@ int USP_ARG_GetIntWithinRange(kv_vector_t *kvv, char *key, int default_value, in
 int USP_ARG_GetBool(kv_vector_t *kvv, char *key, bool default_value, bool *value);
 int USP_ARG_GetDateTime(kv_vector_t *kvv, char *key, char *default_value, time_t *value);
 void USP_ARG_Destroy(kv_vector_t *kvv);
+void USP_ARG_Delete(kv_vector_t *kvv);
 
 //------------------------------------------------------------------------------
 // Functions converting data types

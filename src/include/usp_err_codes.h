@@ -82,6 +82,11 @@
 #define USP_ERR_INVALID_PATH              7026       // Path is not present in the data model schema
 #define USP_ERR_INVALID_COMMAND_ARGS      7027       // Command failed due to invalid arguments
 
+#define USP_ERR_REGISTER_FAILURE          7028       // General failure to register a path
+#define USP_ERR_PATH_ALREADY_REGISTERED   7029       // Failure to register a path because it's already registered
+#define USP_ERR_DEREGISTER_FAILURE        7030       // General failure to deregister a path
+#define USP_ERR_NOT_PATH_OWNER            7031       // Failure to deregister a path because it was owned by another USP Service
+
 // Brokered USP Record Errors
 #define USP_ERR_RECORD_NOT_PARSED         7100       // Record could not be parsed
 #define USP_ERR_SECURE_SESS_REQUIRED      7101       // A secure session must be started before passing any records

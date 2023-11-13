@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2023, Broadband Forum
+ * Copyright (C) 2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,38 +33,21 @@
  */
 
 /**
- * \file str_vector.h
+ * \file usp_service.h
  *
- * Implements a vector of strings
+ * Header file for functions implementing USP Service functionality
  *
  */
 
-#ifndef STR_VECTOR_H
-#define STR_VECTOR_H
+#ifndef USP_SERVICE_H
+#define USP_SERVICE_H
 
-//-----------------------------------------------------------------------------------------
-// String vector type
-typedef struct
-{
-    char **vector;
-    int num_entries;
-} str_vector_t;
+//------------------------------------------------------------------------------
+// API
+void USP_SERVICE_QueueRegisterRequest(char *endpoint_id, char *objects);
+void USP_SERVICE_HandleRegisterResp(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
+void USP_SERVICE_QueueDeregisterRequest(char *endpoint_id, char *objects);
+void USP_SERVICE_HandleDeRegisterResp(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
 
-//-----------------------------------------------------------------------------------------
-#include "kv_vector.h"
-
-//-----------------------------------------------------------------------------------------
-// String Vector API
-void STR_VECTOR_Init(str_vector_t *sv);
-void STR_VECTOR_Clone(str_vector_t *sv, char **src_vector, int src_num_entries);
-void STR_VECTOR_Add(str_vector_t *sv, char *str);
-void STR_VECTOR_Add_IfNotExist(str_vector_t *sv, char *str);
-int STR_VECTOR_Find(str_vector_t *sv, char *str);
-void STR_VECTOR_RemoveByIndex(str_vector_t *sv, int index);
-void STR_VECTOR_Destroy(str_vector_t *sv);
-void STR_VECTOR_Dump(str_vector_t *sv);
-void STR_VECTOR_ConvertToKeyValueVector(str_vector_t *sv, kv_vector_t *kvv);
-bool STR_VECTOR_Compare(str_vector_t *sv1, str_vector_t *sv2);
-void STR_VECTOR_Sort(str_vector_t *sv);
 
 #endif

@@ -62,6 +62,10 @@ int CLI_SERVER_ExecuteCliCommand(char *command);
 int CLI_CLIENT_ExecCommand(int argc, char *argv[], char *db_file);
 
 //------------------------------------------------------------------------------------
+// Filename path to the Unix domain socket used by CLI commands
+extern char *cli_uds_file;
+
+//------------------------------------------------------------------------------------
 extern bool dump_to_cli;   // If set, dump logging messages are sent back to the CLI client rather than their normal destination
 extern bool is_running_cli_local_command; // Set if this executable is running a local CLI command (eg dbset)
 

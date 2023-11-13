@@ -505,13 +505,13 @@ exit:
 ** and if so returns the parameters specifying the MTP to use
 **
 ** \param   endpoint_id - Endpoint ID of controller that maybe connected to agent's webserver
-** \param   mrt - structure to fill in with MTP details, if the specified controller is connected to the agent's websocket server
+** \param   mtpc - structure to fill in with MTP details, if the specified controller is connected to the agent's websocket server
 **                or NULL if the caller is just trying to determine whether the controller is connected to the agent's websocket server
 **
 ** \return  USP_ERR_OK if specified endpoint is connected to the agent's websocket server
 **
 **************************************************************************/
-int WSSERVER_GetMTPForEndpointId(char *endpoint_id, mtp_reply_to_t *mrt)
+int WSSERVER_GetMTPForEndpointId(char *endpoint_id, mtp_conn_t *mtpc)
 {
     int err;
     wsconn_t *wc;
@@ -527,14 +527,14 @@ int WSSERVER_GetMTPForEndpointId(char *endpoint_id, mtp_reply_to_t *mrt)
     }
 
     // Fill in the MTP to use, in order to send to this endpoint via the agent's websocket server
-    if (mrt != NULL)
+    if (mtpc != NULL)
     {
-        memset(mrt, 0, sizeof(mtp_reply_to_t));
-        mrt->is_reply_to_specified = true;
-        mrt->protocol = kMtpProtocol_WebSockets;
-        mrt->wsclient_cont_instance = INVALID;
-        mrt->wsclient_mtp_instance = INVALID;
-        mrt->wsserv_conn_id = wc->conn_id;
+        memset(mtpc, 0, sizeof(mtp_conn_t));
+        mtpc->is_reply_to_specified = true;
+        mtpc->protocol = kMtpProtocol_WebSockets;
+        mtpc->ws.client_cont_instance = INVALID;
+        mtpc->ws.client_mtp_instance = INVALID;
+        mtpc->ws.serv_conn_id = wc->conn_id;
     }
     err = USP_ERR_OK;
 
@@ -1401,8 +1401,9 @@ int HandleWssEvent_Established(struct lws *handle)
 **************************************************************************/
 int HandleWssEvent_Receive(struct lws *handle, unsigned char *chunk, int chunk_len)
 {
-    mtp_reply_to_t mtp_reply_to;
+    mtp_conn_t mtp_conn;
     char buf[MAX_ISO8601_LEN];
+    char *cont_endpoint_id;
     wsconn_t *wc;
     int new_len;
 
@@ -1452,14 +1453,14 @@ int HandleWssEvent_Receive(struct lws *handle, unsigned char *chunk, int chunk_l
 
     // Send the USP Record to the data model thread for processing
     // NOTE: Ownership of receive buffer stays with this thread
-    memset(&mtp_reply_to, 0, sizeof(mtp_reply_to));
-    mtp_reply_to.is_reply_to_specified = true;
-    mtp_reply_to.protocol = kMtpProtocol_WebSockets;
-    mtp_reply_to.wsclient_cont_instance = INVALID;
-    mtp_reply_to.wsclient_mtp_instance = INVALID;
-    mtp_reply_to.wsserv_conn_id = wc->conn_id;
-    mtp_reply_to.cont_endpoint_id = (wc->is_peer_an_eid) ? wc->peer : NULL;
-    DM_EXEC_PostUspRecord(wc->rx_buf, wc->rx_buf_len, wc->role, &mtp_reply_to);
+    memset(&mtp_conn, 0, sizeof(mtp_conn));
+    mtp_conn.is_reply_to_specified = true;
+    mtp_conn.protocol = kMtpProtocol_WebSockets;
+    mtp_conn.ws.client_cont_instance = INVALID;
+    mtp_conn.ws.client_mtp_instance = INVALID;
+    mtp_conn.ws.serv_conn_id = wc->conn_id;
+    cont_endpoint_id = (wc->is_peer_an_eid) ? wc->peer : UNKNOWN_ENDPOINT_ID;
+    DM_EXEC_PostUspRecord(wc->rx_buf, wc->rx_buf_len, cont_endpoint_id, wc->role, &mtp_conn);
 
     // Free receive buffer
     USP_FREE(wc->rx_buf);

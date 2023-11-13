@@ -586,7 +586,7 @@ int DM_ACCESS_ValidateReference(char *reference, char *table, int *instance)
     }
 
     // Determine the expected number of instance numbers in the specified table
-    node = DM_PRIV_GetNodeFromPath(table, NULL, NULL);
+    node = DM_PRIV_GetNodeFromPath(table, NULL, NULL, 0);
     USP_ASSERT(node != NULL);       // These asserts check that the caller provided a multi-instance table that exists in the supported data model
     USP_ASSERT(node->order > 0);
 

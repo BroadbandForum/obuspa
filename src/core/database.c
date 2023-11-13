@@ -1263,7 +1263,7 @@ int CalcPathMigrationHashes(void)
 
         // Exit if unable to obtain the hash of the legacy parameter
         // NOTE: The legacy parameter does not have to be present in the data model
-        err = DM_PRIV_CalcHashFromPath(pm->old_path, NULL, &old_hash);
+        err = DM_PRIV_CalcHashFromPath(pm->old_path, NULL, &old_hash, 0);
         if (err != USP_ERR_OK)
         {
             USP_LOG_Error("%s: Legacy schema path '%s' incorrect in paths_to_migrate[%d] (%s)", __FUNCTION__, pm->old_path, i, USP_ERR_GetMessage());
@@ -1273,7 +1273,7 @@ int CalcPathMigrationHashes(void)
 
         // Exit if unable to obtain the hash of the new parameter
         // NOTE: This also checks that the new parameter is present in the data model
-        node = DM_PRIV_GetNodeFromPath(pm->new_path, NULL, NULL);
+        node = DM_PRIV_GetNodeFromPath(pm->new_path, NULL, NULL, 0);
         if (node == NULL)
         {
             USP_LOG_Error("%s: new schema path '%s' in paths_to_migrate[%d] is not present in the data model", __FUNCTION__, pm->new_path, i);

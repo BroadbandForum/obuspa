@@ -39,11 +39,13 @@
  *
  */
 
+#ifndef REMOVE_DEVICE_BULKDATA
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
 #include <zlib.h>
+#include <curl/curl.h>
 
 #include "common_defs.h"
 #include "data_model.h"
@@ -2953,3 +2955,5 @@ void Test_ReduceToAltName(void)
     }
 }
 #endif
+
+#endif // REMOVE_DEVICE_BULKDATA

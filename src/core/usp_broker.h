@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2022, Broadband Forum
- * Copyright (C) 2022, Snom Technology GmbH
+ * Copyright (C) 2023, Broadband Forum
+ * Copyright (C) 2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,23 +33,37 @@
  */
 
 /**
- * \file usp_record.h
+ * \file usp_broker.h
  *
- * Header file for USP Record definitions and helpers
+ * Header file for functions implementing USP Broker functionality
  *
  */
-#ifndef USP_RECORD_H
-#define USP_RECORD_H
 
-#include "mqtt.h"
-#include "mtp_exec.h"
+#ifndef USP_BROKER_H
+#define USP_BROKER_H
+
+#include "uds.h"
+#include "usp-record.pb-c.h"
+
+
+//------------------------------------------------------------------------------
+// Defines for flags argument of USP_BROKER_GetUspServiceInstance()
+#define ONLY_CONTROLLER_CONNECTIONS 0x00000001      // Only return instance number if USP Service is connected as a Controller to the USP Broker's agent socket
 
 //------------------------------------------------------------------------------
 // API
-void USPREC_WebSocketConnect_Create(char *cont_endpoint_id, mtp_send_item_t *msi);
-void USPREC_MqttConnect_Create(char *cont_endpoint_id, mqtt_protocolver_t mqtt_version, char *agent_topic, mtp_send_item_t *msi);
-void USPREC_StompConnect_Create(char *cont_endpoint_id, char *destination, mtp_send_item_t *msi);
-void USPREC_UdsConnect_Create(char *cont_endpoint_id, mtp_send_item_t *msi);
-void USPREC_Disconnect_Create(mtp_content_type_t content_type, char *cont_endpoint_id, uint32_t reason_code, char *reason_str, mtp_send_item_t *msi);
+int USP_BROKER_Init(void);
+int USP_BROKER_Start(void);
+void USP_BROKER_Stop(void);
+int USP_BROKER_AddUspService(char *endpoint_id, mtp_conn_t *mtpc);
+void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
+void USP_BROKER_HandleDeRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
+void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
+void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
+int USP_BROKER_IsPathVendorSubscribable(subs_notify_t notify_type, char *path, bool *is_present);
+int USP_BROKER_GetUspServiceInstance(char *endpoint_id, unsigned flags);
+mtp_conn_t *USP_BROKER_GetNotifyDestForEndpoint(char *endpoint_id, Usp__Header__MsgType usp_msg_type);
+bool USP_BROKER_AttemptPassthru(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc, combined_role_t *combined_role, UspRecord__Record *rec);
+void USP_BROKER_HandleUspServiceDisconnect(char *endpoint_id, uds_path_t path_type);
 
 #endif

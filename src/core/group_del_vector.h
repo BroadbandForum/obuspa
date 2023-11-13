@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2022, Broadband Forum
- * Copyright (C) 2022, Snom Technology GmbH
+ * Copyright (C) 2023, Broadband Forum
+ * Copyright (C) 2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,23 +33,45 @@
  */
 
 /**
- * \file usp_record.h
+ * \file group_del_vector.h
  *
- * Header file for USP Record definitions and helpers
+ * Header file for an intermediate data structure which helps with handling an Delete Request
  *
  */
-#ifndef USP_RECORD_H
-#define USP_RECORD_H
 
-#include "mqtt.h"
-#include "mtp_exec.h"
+#ifndef GROUP_DEL_VECTOR_H
+#define GROUP_DEL_VECTOR_H
+
+#include "device.h"
+#include "str_vector.h"
+#include "int_vector.h"
+
+//------------------------------------------------------------------------------
+// Structure containing info for resolved object to delete
+typedef struct
+{
+    char *path;         // The resolved object to delete
+    int group_id;       // Group which the object belongs to
+
+    int err_code;       // Indicates whether this object was deleted successfully or not
+    char *err_msg;      // Error message, if failed to delete this object. Only set if err_code indicates an error
+} group_del_entry_t;
+
+//------------------------------------------------------------------------------
+// Vector of all objects to delete (for all groups)
+typedef struct
+{
+    group_del_entry_t *vector;
+    int num_entries;
+} group_del_vector_t;
 
 //------------------------------------------------------------------------------
 // API
-void USPREC_WebSocketConnect_Create(char *cont_endpoint_id, mtp_send_item_t *msi);
-void USPREC_MqttConnect_Create(char *cont_endpoint_id, mqtt_protocolver_t mqtt_version, char *agent_topic, mtp_send_item_t *msi);
-void USPREC_StompConnect_Create(char *cont_endpoint_id, char *destination, mtp_send_item_t *msi);
-void USPREC_UdsConnect_Create(char *cont_endpoint_id, mtp_send_item_t *msi);
-void USPREC_Disconnect_Create(mtp_content_type_t content_type, char *cont_endpoint_id, uint32_t reason_code, char *reason_str, mtp_send_item_t *msi);
+void GROUP_DEL_VECTOR_Init(group_del_vector_t *gdv);
+void GROUP_DEL_VECTOR_Destroy(group_del_vector_t *gdv);
+void GROUP_DEL_VECTOR_AddObjectsToDelete(group_del_vector_t *gdv, str_vector_t *obj_paths, int_vector_t *group_ids);
+void GROUP_DEL_VECTOR_AddObjectNotDeleted(group_del_vector_t *gdv, char *obj_path, int err_code, char *err_msg);
+bool GROUP_DEL_VECTOR_AreAllPathsTheSameGroupId(group_del_vector_t *gdv, int *group_id);
+group_del_entry_t *GROUP_DEL_VECTOR_FindFirstFailureIfAllFailed(group_del_vector_t *gdv, int start_index, int end_index);
 
 #endif

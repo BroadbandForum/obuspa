@@ -91,7 +91,11 @@ add_library(core
     wsserver.c
     usp_record.c
     sar_vector.c
-    e2e_context.c)
+    e2e_context.c
+    device_uds.c
+    uds.c
+    usp_broker.c
+    usp_service.c)
 
 target_include_directories(core
   PUBLIC
@@ -116,6 +120,7 @@ target_compile_definitions(core
     $<$<BOOL:${ENABLE_MQTT}>:ENABLE_MQTT>
     $<$<BOOL:${ENABLE_COAP}>:ENABLE_COAP>
     $<$<BOOL:${ENABLE_WEBSOCKETS}>:ENABLE_WEBSOCKETS>
+    $<$<BOOL:${ENABLE_UDS}>:ENABLE_UDS>
     _GNU_SOURCE=1)
 
 target_link_libraries(core

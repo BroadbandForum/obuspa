@@ -43,7 +43,7 @@
 
 #include "common_defs.h"
 #include "usp-msg.pb-c.h"
-#include "device.h"             // for mtp_reply_to_t
+#include "device.h"             // for mtp_conn_t
 #include "mtp_exec.h"           // for mtp_status_t
 
 
@@ -68,7 +68,7 @@ int WSSERVER_DisableServer(void);
 void WSSERVER_ActivateScheduledActions(void);
 mtp_status_t WSSERVER_GetMtpStatus();
 void WSSERVER_DisconnectEndpoint(char *endpoint_id);
-int WSSERVER_GetMTPForEndpointId(char *endpoint_id, mtp_reply_to_t *mrt);
+int WSSERVER_GetMTPForEndpointId(char *endpoint_id, mtp_conn_t *mtpc);
 
 #endif
 

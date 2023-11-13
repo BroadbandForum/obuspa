@@ -43,7 +43,6 @@
 #define DEVICE_H
 
 #include <openssl/ssl.h>
-#include <curl/curl.h>
 
 #include "vendor_defs.h"  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
 #include "kv_vector.h"
@@ -95,42 +94,100 @@ typedef struct
 } reboot_info_t;
 
 //------------------------------------------------------------------------------
+// Enumeration to specify whether the Unix domain socket path is used for communication to/from the Broker's Controller or Agent
+typedef enum
+{
+    kUdsPathType_Invalid = INVALID,
+    kUdsPathType_BrokersAgent,
+    kUdsPathType_BrokersController,
+} uds_path_t;
+
+//------------------------------------------------------------------------------
+// Structure specifying the STOMP destination that a response to a USP message must be sent
+#ifndef DISABLE_STOMP
+typedef struct
+{
+    int instance;       // Instance number in Device.STOMP.Connection.{i}
+    char *dest;         // STOMP destination to send the response back to (only set if reply_to was specified in the received STOMP frame)
+} from_stomp_t;
+#endif
+//------------------------------------------------------------------------------
+// Structure specifying the CoAP destination that a response to a USP message must be sent
+#ifdef ENABLE_COAP
+typedef struct
+{
+    char *host;                    // Percent encoded hostname
+    int port;
+    char *resource;                // Percent encoded resource name
+    bool encryption;
+    bool reset_session_hint;       // Set if an existing DTLS session with this host should be reset.
+                                   // If we know that the USP request came in on a new DTLS session, then it is likely
+                                   // that the USP response must be sent back on a new DTLS session also. Without this,
+                                   // the CoAP retry mechanism will cause the DTLS session to restart, but it is a while
+                                   // before the retry is triggered, so this hint speeds up communications
+} from_coap_t;
+#endif
+
+//------------------------------------------------------------------------------
+// Structure specifying the MQTT destination that a response to a USP message must be sent
+#ifdef ENABLE_MQTT
+typedef struct
+{
+    int instance;
+    char *topic;           // only set if reply_to was specified in the received MQTT packet
+} from_mqtt_t;
+#endif
+
+//------------------------------------------------------------------------------
+// Structure specifying the Websocket destination that a response to a USP message must be sent
+#ifdef ENABLE_WEBSOCKETS
+typedef struct
+{
+    int client_cont_instance;         // Controller instance number in Device.LocalAgent.Controller.{i}
+    int client_mtp_instance;          // MTP instance number in Device.LocalAgent.Controller.{i}.MTP.{i}
+    int serv_conn_id;                 // If USP record was received by agent's websockets server, then this uniquely identifies the connection.
+                                      // It is set to INVALID for USP Records received by the agent's websocket client.
+} from_ws_t;
+#endif
+
+//------------------------------------------------------------------------------
+// Structure specifying the Unix Domain Socket (UDS) destination that a response to a USP message must be sent
+#ifdef ENABLE_UDS
+typedef struct
+{
+    unsigned conn_id;               // uniquely identifies the UDS connection on which this record was received
+    uds_path_t path_type;           // identifies whether the UDS connection on which this record was received was the Broker's controller socket or the Broker's Agent socket
+} from_uds_t;
+#endif
+
+//------------------------------------------------------------------------------
 // Structure specifying the destination that a response to a USP message must be sent
 typedef struct
 {
     bool is_reply_to_specified; // Set if reply_to was specified in the received MTP frame
+                                // If set to false, this is used by STOMP and MQTT MTPs to indicate that the destination topic was not provided in the MTP frame, and so should be determined from the data model
+                                // Also if set to false (with no MTP protocol set) it is used with notifications to indicate that the datamodel should be used to determine the MTP destination
     mtp_protocol_t protocol;    // Protocol on which the USP message was received
-    char *cont_endpoint_id;     // endpoint_id of the controller which sent this USP message
-                                // NOTE: For websockets, this field is filled in by the MTP from the received Sec-WebSocket-Extensions header
-                                // For all other MTPs, the message handler fills in this field. All other fields in this structure are filled in by the MTP
 
-    // Following member variables only set if USP message was received over STOMP
-    int stomp_instance;
-    char *stomp_dest;           // only set if reply_to was specified in the received STOMP frame
-
-    // Following member variables only set if USP message was received over MQTT
-    int mqtt_instance;
-    char *mqtt_topic;           // only set if reply_to was specified in the received MQTT packet
-
-
-    // Following member variables only set if USP message was received over CoAP
-    char *coap_host;                    // Percent encoded hostname
-    int coap_port;
-    char *coap_resource;                // Percent encoded resource name
-    bool coap_encryption;
-    bool coap_reset_session_hint;       // Set if an existing DTLS session with this host should be reset.
-                                        // If we know that the USP request came in on a new DTLS session, then it is likely
-                                        // that the USP response must be sent back on a new DTLS session also. Without this,
-                                        // the CoAP retry mechanism will cause the DTLS session to restart, but it is a while
-                                        // before the retry is triggered, so this hint speeds up communications
-
-    // Following member variables only set if USP message was received over Websockets
-    int wsclient_cont_instance;         // Controller instance number in Device.LocalAgent.Controller.{i}
-    int wsclient_mtp_instance;          // MTP instance number in Device.LocalAgent.Controller.{i}.MTP.{i}
-    int wsserv_conn_id;                 // If USP record was received by agent's websockets server, then this uniquely identifies the connection.
-                                        // It is set to INVALID for USP Records received by the agent's websocket client.
-
-} mtp_reply_to_t;
+    union
+    {
+#ifndef DISABLE_STOMP
+        from_stomp_t stomp;
+#endif
+#ifdef ENABLE_COAP
+        from_coap_t coap;
+#endif
+#ifdef ENABLE_MQTT
+        from_mqtt_t mqtt;
+#endif
+#ifdef ENABLE_WEBSOCKETS
+        from_ws_t ws;
+#endif
+#ifdef ENABLE_UDS
+        from_uds_t uds;
+#endif
+    };
+} mtp_conn_t;
 
 //------------------------------------------------------------------------------
 // Typedef for SSL verify callback
@@ -156,16 +213,16 @@ int DEVICE_CONTROLLER_Init(void);
 int DEVICE_CONTROLLER_Start(void);
 void DEVICE_CONTROLLER_Stop(void);
 int DEVICE_CONTROLLER_FindInstanceByEndpointId(char *endpoint_id);
-int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mtp_reply_to, time_t expiry_time);
+int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_conn_t *mtp_conn, time_t expiry_time);
 bool DEVICE_CONTROLLER_IsMTPConfigured(char *endpoint_id, mtp_protocol_t protocol);
 char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance);
-char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_reply_to_t *mrt);
+char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_conn_t *mtpc);
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByInstance(int instance);
 e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByEndpointId(char *endpoint_id);
 #endif
 int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_role);
-int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_role_t *combined_role);
+void DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, ctrust_role_t role, mtp_protocol_t protocol, combined_role_t *combined_role);
 void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role);
 int DEVICE_CONTROLLER_GetSubsRetryParams(char *endpoint_id, unsigned *min_wait_interval, unsigned *interval_multiplier);
 void DEVICE_CONTROLLER_QueueMqttConnectRecord(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic);
@@ -191,13 +248,18 @@ void DEVICE_STOMP_GetDestinationFromServer(int instance, char *buf, int len);
 int DEVICE_WEBSOCK_Init(void);
 int DEVICE_WEBSOCK_Start(void);
 void DEVICE_WEBSOCK_Stop(void);
+int DEVICE_UDS_Init(void);
+int DEVICE_UDS_Start(void);
+void DEVICE_UDS_Stop(void);
 int DEVICE_SUBSCRIPTION_Init(void);
 int DEVICE_SUBSCRIPTION_Start(void);
 void DEVICE_SUBSCRIPTION_Stop(void);
 void DEVICE_SUBSCRIPTION_Update(int id);
 void DEVICE_SUBSCRIPTION_ProcessAllOperationCompleteSubscriptions(char *command, char *command_key, int err_code, char *err_msg, kv_vector_t *output_args);
+void DEVICE_SUBSCRIPTION_ResolveObjectCreationPaths(void);
 void DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths(void);
 void DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(char *obj_path, subs_notify_t notify_type);
+void DEVICE_SUBSCRIPTION_NotifyValueChanged(char *path, char *value);
 void DEVICE_SUBSCRIPTION_ProcessAllObjectLifeEventSubscriptions(void);
 void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, kv_vector_t *output_args);
 void DEVICE_SUBSCRIPTION_SendPeriodicEvent(int cont_instance);
@@ -232,6 +294,7 @@ void DEVICE_REQUEST_UpdateOperationStatus(int instance, char *status);
 int DEVICE_REQUEST_RestartAsyncOperations(void);
 int DEVICE_REQUEST_PersistOperationArgs(int instance, kv_vector_t *args, char *prefix);
 int DEVICE_REQUEST_CountMatchingRequests(char *command_path);
+void DEVICE_REQUEST_DeleteInstance(int instance);
 int DEVICE_BULKDATA_Init(void);
 int DEVICE_BULKDATA_Start(void);
 void DEVICE_BULKDATA_Stop(void);
@@ -239,7 +302,6 @@ void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bdc_transfer_result_t 
 #ifndef REMOVE_SELF_TEST_DIAG_EXAMPLE
 int DEVICE_SELF_TEST_Init(void);
 #endif
-
 int DEVICE_MQTT_Init(void);
 int DEVICE_MQTT_Start(void);
 void DEVICE_MQTT_Stop(void);
@@ -250,12 +312,26 @@ char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance);
 mqtt_qos_t DEVICE_MTP_GetAgentMqttPublishQos(int instance);
 int DEVICE_MQTT_CountEnabledConnections(void);
 int DEVICE_MTP_GetMqttReference(char *path, int *mqtt_connection_instance);
+int DEVICE_MTP_GetUdsReference(char *path, int *uds_connection_instance);
 void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance);
 void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance);
 int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value);
 void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role);
 char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance);
 
+#ifndef REMOVE_USP_BROKER
+int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance);
+int DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(subs_notify_t notify_type, char *path, int group_id);
+void DEVICE_SUBSCRIPTION_StartAllVendorLayerSubsForGroup(int group_id);
+void DEVICE_SUBSCRIPTION_FreeAllVendorLayerSubsForGroup(int group_id);
+int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance, int service_instance, char *path);
+#endif
+#if defined(ENABLE_UDS) && !(defined(REMOVE_USP_BROKER) && defined(REMOVE_USP_SERVICE))
+void DEVICE_CONTROLLER_AddController_UDS(char *endpoint_id, int uds_instance);
+#endif
+#ifndef REMOVE_USP_SERVICE
+char *DEVICE_CONTROLLER_FindFirstControllerEndpoint(void);
+#endif
 //------------------------------------------------------------------------------
 // Tables used to convert to/from an enumeration to/from a string
 extern const enum_entry_t mtp_protocols[kMtpProtocol_Max];

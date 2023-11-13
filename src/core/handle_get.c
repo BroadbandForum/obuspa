@@ -84,12 +84,12 @@ AddResolvedPathRes_ParamsEntry(Usp__GetResp__ResolvedPathResult *resolved_path_r
 **
 ** \param   usp - pointer to parsed USP message structure. This is always freed by the caller (not this function)
 ** \param   controller_endpoint - endpoint which sent this message
-** \param   mrt - details of where response to this USP message should be sent
+** \param   mtpc - details of where response to this USP message should be sent
 **
 ** \return  None - This code must handle any errors by sending back error messages
 **
 **************************************************************************/
-void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_reply_to_t *mrt)
+void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_conn_t *mtpc)
 {
     int i;              // Used to iterate over path expressions in the USP get request message
     char **path_exprs;
@@ -108,7 +108,7 @@ void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_reply_t
         (usp->body->request->get == NULL) )
     {
         USP_ERR_SetMessage("%s: Incoming message is invalid or inconsistent", __FUNCTION__);
-        resp = ERROR_RESP_CreateSingle(usp->header->msg_id, USP_ERR_MESSAGE_NOT_UNDERSTOOD, resp, NULL);
+        resp = ERROR_RESP_CreateSingle(usp->header->msg_id, USP_ERR_MESSAGE_NOT_UNDERSTOOD, resp);
         goto exit;
     }
 
@@ -161,7 +161,7 @@ void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_reply_t
     USP_FREE(get_expr_info);
 
 exit:
-    MSG_HANDLER_QueueMessage(controller_endpoint, resp, mrt);
+    MSG_HANDLER_QueueMessage(controller_endpoint, resp, mtpc);
     usp__msg__free_unpacked(resp, pbuf_allocator);
 }
 
@@ -380,42 +380,20 @@ Usp__GetResp__ResolvedPathResult *FindResolvedPath(Usp__GetResp__RequestedPathRe
 **************************************************************************/
 Usp__Msg *CreateGetResp(char *msg_id)
 {
-    Usp__Msg *resp;
-    Usp__Header *header;
-    Usp__Body *body;
-    Usp__Response *response;
+    Usp__Msg *msg;
     Usp__GetResp *get_resp;
 
-    // Allocate memory to store the USP message
-    resp = USP_MALLOC(sizeof(Usp__Msg));
-    usp__msg__init(resp);
-
-    header = USP_MALLOC(sizeof(Usp__Header));
-    usp__header__init(header);
-
-    body = USP_MALLOC(sizeof(Usp__Body));
-    usp__body__init(body);
-
-    response = USP_MALLOC(sizeof(Usp__Response));
-    usp__response__init(response);
-
+    // Create Get Response
+    msg = MSG_HANDLER_CreateResponseMsg(msg_id, USP__HEADER__MSG_TYPE__GET_RESP, USP__RESPONSE__RESP_TYPE_GET_RESP);
     get_resp = USP_MALLOC(sizeof(Usp__GetResp));
     usp__get_resp__init(get_resp);
+    msg->body->response->get_resp = get_resp;
 
-    // Connect the structures together
-    resp->header = header;
-    header->msg_id = USP_STRDUP(msg_id);
-    header->msg_type = USP__HEADER__MSG_TYPE__GET_RESP;
-
-    resp->body = body;
-    body->msg_body_case = USP__BODY__MSG_BODY_RESPONSE;
-    body->response = response;
-    response->resp_type_case = USP__RESPONSE__RESP_TYPE_GET_RESP;
-    response->get_resp = get_resp;
-    get_resp->n_req_path_results = 0;    // Start from an empty response list
+    // Start from an empty response list
+    get_resp->n_req_path_results = 0;
     get_resp->req_path_results = NULL;
 
-    return resp;
+    return msg;
 }
 
 /*********************************************************************//**
@@ -505,7 +483,7 @@ Usp__GetResp__ResolvedPathResult *AddReqPathRes_ResolvedPathResult(Usp__GetResp_
 **
 ** Dynamically adds a result_params entry to a resolved_path_result object
 **
-** \param   resolved_path_res - pointer to resolved_oath_result to add this entry to
+** \param   resolved_path_res - pointer to resolved_path_result to add this entry to
 ** \param   param_name - name of the parameter (not including object path) of the parameter to add to the map
 ** \param   value - value of the parameter
 **

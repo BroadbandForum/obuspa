@@ -34,6 +34,8 @@ SOURCES = src/core/main.c \
                     src/core/handle_get_supported_dm.c \
                     src/core/group_get_vector.c \
                     src/core/group_set_vector.c \
+                    src/core/group_add_vector.c \
+                    src/core/group_del_vector.c \
                     src/core/proto_trace.c \
                     src/core/data_model.c \
                     src/core/error_resp.c \
@@ -90,7 +92,12 @@ SOURCES = src/core/main.c \
                     src/core/wsserver.c \
                     src/core/usp_record.c \
                     src/core/sar_vector.c \
-                    src/core/e2e_context.c
+                    src/core/e2e_context.c \
+                    src/core/device_uds.c \
+                    src/core/uds.c \
+                    src/core/usp_service.c \
+                    src/core/usp_broker.c
+
 
 obuspa_SOURCES = $(SOURCES)
 obuspa_CPPFLAGS = $(openssl_CFLAGS) $(sqlite3_CFLAGS) $(libcurl_CFLAGS) $(zlib_CFLAGS) $(libmosquitto_CFLAGS) $(libwebsockets_CFLAGS)

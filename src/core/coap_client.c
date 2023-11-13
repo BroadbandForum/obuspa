@@ -499,13 +499,13 @@ void COAP_CLIENT_ProcessAllSocketActivity(socket_set_t *set)
 **                the payload buffer is passed to this function.
 ** \param   cont_instance -  Instance number of the controller in Device.LocalAgent.Controller.{i}
 ** \param   mtp_instance -   Instance number of this MTP in Device.LocalAgent.Controller.{i}.MTP.{i}
-** \param   mrt - pointer to structure containing CoAP parameters describing CoAP destination to send to
+** \param   mtpc - pointer to structure containing CoAP parameters describing CoAP destination to send to
 ** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int COAP_CLIENT_QueueBinaryMessage(mtp_send_item_t *msi, int cont_instance, int mtp_instance, mtp_reply_to_t *mrt, time_t expiry_time)
+int COAP_CLIENT_QueueBinaryMessage(mtp_send_item_t *msi, int cont_instance, int mtp_instance, mtp_conn_t *mtpc, time_t expiry_time)
 {
     coap_client_t *cc;
     coap_send_item_t *csi;
@@ -549,11 +549,11 @@ int COAP_CLIENT_QueueBinaryMessage(mtp_send_item_t *msi, int cont_instance, int 
     // Add the item to the queue
     csi = USP_MALLOC(sizeof(coap_send_item_t));
     csi->item = *msi;  // NOTE: Ownership of the payload buffer passes to the CoAP client
-    csi->host = USP_STRDUP(mrt->coap_host);
-    csi->config.port = mrt->coap_port;
-    csi->config.resource = USP_STRDUP(mrt->coap_resource);
-    csi->config.enable_encryption = mrt->coap_encryption;
-    csi->coap_reset_session_hint = mrt->coap_reset_session_hint;
+    csi->host = USP_STRDUP(mtpc->coap.host);
+    csi->config.port = mtpc->coap.port;
+    csi->config.resource = USP_STRDUP(mtpc->coap.resource);
+    csi->config.enable_encryption = mtpc->coap.encryption;
+    csi->coap_reset_session_hint = mtpc->coap.reset_session_hint;
     csi->expiry_time = expiry_time;
 
     DLLIST_LinkToTail(&cc->send_queue, csi);
@@ -649,7 +649,7 @@ void HandleCoapAck(coap_client_t *cc)
     // Exit if an error occurred whilst parsing the PDU
     memset(&pp, 0, sizeof(pp));
     pp.message_id = INVALID;
-    pp.mtp_reply_to.protocol = kMtpProtocol_CoAP;
+    pp.mtp_conn.protocol = kMtpProtocol_CoAP;
     action_flags = COAP_ParsePdu(buf, len, &pp);
     if (action_flags != COAP_NO_ERROR)
     {

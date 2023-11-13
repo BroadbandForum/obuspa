@@ -63,6 +63,31 @@ void INT_VECTOR_Init(int_vector_t *iv)
 
 /*********************************************************************//**
 **
+** INT_VECTOR_Create
+**
+** Creates an integer vector with the specified number of elements, all set to the specified value
+**
+** \param   iv - pointer to structure to initialise
+** \param   num_entries - number of entries to create the vector with
+** \param   initial_value - value to initialise all entries with
+**
+** \return  None
+**
+**************************************************************************/
+void INT_VECTOR_Create(int_vector_t *iv, int num_entries, int initial_value)
+{
+    int i;
+
+    iv->num_entries = num_entries;
+    iv->vector = USP_MALLOC(num_entries*sizeof(int));
+    for (i=0; i<num_entries; i++)
+    {
+        iv->vector[i] = initial_value;
+    }
+}
+
+/*********************************************************************//**
+**
 ** INT_VECTOR_Add
 **
 ** Adds the integer into the vector of integers

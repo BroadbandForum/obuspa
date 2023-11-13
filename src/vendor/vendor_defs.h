@@ -51,12 +51,17 @@
 #define MAX_DM_PATH (256)           // Maximum number of characters in a data model path
 #define MAX_DM_VALUE_LEN (4096)     // Maximum number of characters in a data model parameter value
 #define MAX_DM_SHORT_VALUE_LEN (MAX_DM_PATH) // Maximum number of characters in an (expected to be) short data model parameter value
+#define MAX_ENDPOINT_ID_LEN (256)   // Maximum number of characters in an Endpoint ID
+#define MAX_MSG_ID_LEN (256)        // MAximum number of characters in a USP message ID allocated by this Agent
 #define MAX_PATH_SEGMENTS (32)      // Maximum number of segments (eg "Device, "LocalAgent") in a path. Does not include instance numbers.
 #define MAX_COMPOUND_KEY_PARAMS 4   // Maximum number of parameters in a compound unique key
 #define MAX_CONTROLLERS 5           // Maximum number of controllers which may be present in the DB (Device.LocalAgent.Controller.{i})
 #define MAX_CONTROLLER_MTPS 3       // Maximum number of MTPs that a controller may have in the DB (Device.LocalAgent.Controller.{i}.MTP.{i})
 #define MAX_AGENT_MTPS (MAX_CONTROLLERS)  // Maximum number of MTPs that an agent may have in the DB (Device.LocalAgent.MTP.{i})
 #define MAX_STOMP_CONNECTIONS (MAX_CONTROLLERS)  // Maximum number of STOMP connections that an agent may have in the DB (Device.STOMP.Connection.{i})
+#define MAX_USP_SERVICES 5          // Maximum number of USP services which can connect, when acting as a broker
+#define MAX_UDS_SOCKETS 2           // Maximum number of UDS sockets that an agent may have in the DB (Device.UnixDomainSockets.UnixDomainSocket.{i})
+
 #define MAX_COAP_CONNECTIONS (MAX_CONTROLLERS)  // Maximum number of CoAP connections that an agent may have in the DB (Device.LocalAgent.Controller.{i}.MTP.{i}.CoAP)
 #define MAX_COAP_SERVERS 5          // Maximum number of interfaces which an agent listens for CoAP messages on
 #define MAX_COAP_CLIENTS (MAX_CONTROLLERS)  // Maximum number of CoAP controllers which an agent sends to
@@ -95,7 +100,7 @@
 //-----------------------------------------------------------------------------------------
 // Definitions associated with grouped parameter get/set
 // Each group represents a software component that can set/get a list of data model parameters in a single operation via RPC/messaging
-#define MAX_VENDOR_PARAM_GROUPS  10 // Maximum number of software components that implement the data model
+#define MAX_VENDOR_PARAM_GROUPS  MAX_USP_SERVICES+10 // Maximum number of software components that implement the data model
 
 // Uncomment the following define to perform each parameter set individually, rather than in a group
 // This must be uncommented if the underlying data model implementation does not support commit/abort transactional semantics
@@ -118,6 +123,8 @@
 // Uncomment the following to remove code and features from the standard build
 //#define REMOVE_DEVICE_INFO               // Removes DeviceInfo from the core data model. It must instead be provided by the vendor.
 //#define REMOVE_DEVICE_TIME               // Removes Device.Time from the core data model. It must instead be provided by the vendor.
+//#define REMOVE_USP_BROKER                // Removes all USP Broker functionality, including Device.USPServices
+//#define REMOVE_USP_SERVICE               // Removes all USP Service functionality
 //#define REMOVE_SELF_TEST_DIAG_EXAMPLE    // Removes Self Test diagnostics example code
 
 //#define DONT_SORT_GET_INSTANCES          // Disables the sorting of data model paths returned in a GetInstancesResponse. Useful for slow devices supporting large data models.

@@ -63,6 +63,10 @@
 #include "wsserver.h"
 #endif
 
+#ifdef ENABLE_UDS
+#include "uds.h"
+#endif
+
 //------------------------------------------------------------------------------
 // Location of the local agent MTP table within the data model
 #define DEVICE_AGENT_MTP_ROOT "Device.LocalAgent.MTP"
@@ -95,6 +99,11 @@ typedef struct
 #ifdef ENABLE_WEBSOCKETS
     wsserv_config_t websock;
 #endif
+
+#ifdef ENABLE_UDS
+   int               uds_connection_instance;
+#endif
+
 } agent_mtp_t;
 
 // Array of agent MTPs
@@ -116,6 +125,9 @@ const enum_entry_t mtp_protocols[kMtpProtocol_Max] =
 #endif
 #ifdef ENABLE_WEBSOCKETS
     { kMtpProtocol_WebSockets, "WebSocket" },
+#endif
+#ifdef ENABLE_UDS
+    { kMtpProtocol_UDS, "UDS" },
 #endif
 };
 
@@ -184,6 +196,10 @@ int NotifyChange_AgentMtpWebsockKeepAlive(dm_req_t *req, char *value);
 int Get_WebsockInterfaces(dm_req_t *req, char *buf, int len);
 #endif
 
+#ifdef ENABLE_UDS
+int NotifyChange_AgentMtpUdsReference(dm_req_t *req, char *value);
+#endif
+
 /*********************************************************************//**
 **
 ** DEVICE_MTP_Init
@@ -243,6 +259,10 @@ int DEVICE_MTP_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.WebSocket.EnableEncryption", "true", DM_ACCESS_ValidateBool, NotifyChange_AgentMtpWebsockEncryption, DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.WebSocket.KeepAliveInterval", "30", Validate_AgentMtpWebsockKeepAlive, NotifyChange_AgentMtpWebsockKeepAlive, DM_UINT);
 
+#endif
+
+#ifdef ENABLE_UDS
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.UDS.UnixDomainSocketRef", "", NULL, NotifyChange_AgentMtpUdsReference, DM_STRING);
 #endif
 
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_AGENT_MTP_ROOT ".{i}.Status", Get_MtpStatus, DM_STRING);
@@ -318,7 +338,7 @@ int DEVICE_MTP_Start(void)
     // Display a warning of no agent MTPs are enabled
     if (count==0)
     {
-        USP_LOG_Warning("WARNING: No enabled MTPs in %s. USP Agent may only be usable via the CLI", device_agent_mtp_root);
+        USP_LOG_Warning("%s: WARNING: No enabled MTPs in %s. USP Agent may only be usable via the CLI", __FUNCTION__, device_agent_mtp_root);
     }
 
     err = USP_ERR_OK;
@@ -488,6 +508,55 @@ int DEVICE_MTP_GetStompReference(char *path, int *stomp_connection_instance)
 
     return USP_ERR_OK;
 }
+
+#ifdef ENABLE_UDS
+/*********************************************************************//**
+**
+** DEVICE_MTP_GetUdsReference
+**
+** Gets the instance number in the STOMP connection table by dereferencing the specified path
+** NOTE: If the path is invalid, or the instance does not exist, then INVALID is
+**       returned for the instance number, along with an error
+**
+** \param   path - path of parameter which contains the reference
+** \param   uds_connection_instance - pointer to variable in which to return the instance number in the UDS connection table
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DEVICE_MTP_GetUdsReference(char *path, int *uds_connection_instance)
+{
+    int err;
+    char value[MAX_DM_PATH];
+
+    // Set default return value
+    *uds_connection_instance = INVALID;
+
+    // Exit if unable to get the reference to the entry in the UDS connection table
+    // NOTE: This will return the default of an empty string if not present in the DB
+    err = DATA_MODEL_GetParameterValue(path, value, sizeof(value), 0);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if the reference has not been setup yet
+    if (*value == '\0')
+    {
+        *uds_connection_instance = INVALID;
+        return USP_ERR_OK;
+    }
+
+    // Exit if unable to determine UDS connection table reference
+    err = DM_ACCESS_ValidateReference(value, "Device.UnixDomainSockets.UnixDomainSocket.{i}", uds_connection_instance);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    return USP_ERR_OK;
+}
+#endif
 
 
 /*********************************************************************//**
@@ -1498,6 +1567,7 @@ int NotifyChange_AgentMtpWebsockKeepAlive(dm_req_t *req, char *value)
     return USP_ERR_OK;
 }
 
+
 /*********************************************************************//**
 **
 ** Get_WebsockInterfaces
@@ -1566,6 +1636,47 @@ int Get_WebsockInterfaces(dm_req_t *req, char *buf, int len)
 exit:
     INT_VECTOR_Destroy(&iv);
     return err;
+}
+#endif
+
+#ifdef ENABLE_UDS
+/*********************************************************************//**
+**
+** NotifyChange_AgentMtpUdsReference
+**
+** Function called when Device.LocalAgent.MTP.UDS.Reference is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_AgentMtpUdsReference(dm_req_t *req, char *value)
+{
+    agent_mtp_t *mtp;
+    int uds_instance;
+    int err;
+
+    // Determine MTP to be updated
+    mtp = FindAgentMtpByInstance(inst1);
+    USP_ASSERT(mtp != NULL);
+
+    // Determine the instance number in the UDS table that the reference points to
+    err = DEVICE_MTP_GetUdsReference(req->path, &uds_instance);
+    USP_ASSERT(err == USP_ERR_OK)
+
+    // Exit if the value hasn't changed
+    if (mtp->uds_connection_instance == uds_instance)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set the new value
+    mtp->uds_connection_instance = uds_instance;
+
+    // NOTE: No need to start a UDS Client/Server based on this reference - they are started based on being present in the UnixDomainSockets table
+    return USP_ERR_OK;
 }
 #endif
 
@@ -1862,6 +1973,19 @@ int ProcessAgentMtpAdded(int instance)
     }
 
     WSSERVER_ActivateScheduledActions();
+#endif
+
+#ifdef ENABLE_UDS
+    if ((mtp->enable) && (mtp->protocol == kMtpProtocol_UDS))
+    {
+        // Exit if there was an error in the reference to the entry in the UDS connection table
+        USP_SNPRINTF(path, sizeof(path), "%s.%d.UDS.UnixDomainSocketRef", device_agent_mtp_root, instance);
+        err = DEVICE_MTP_GetUdsReference(path, &mtp->uds_connection_instance);
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
+    }
 #endif
 
     // If the code gets here, then we successfully retrieved all data about the MTP

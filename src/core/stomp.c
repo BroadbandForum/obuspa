@@ -334,6 +334,8 @@ void STOMP_Destroy(void)
     int i;
     stomp_connection_t *sc;
 
+    OS_UTILS_LockMutex(&stomp_access_mutex);  // Ensure that the data model is held off accessing this module's data structures until after we have destroyed them
+
     for (i=0; i<MAX_STOMP_CONNECTIONS; i++)
     {
         sc = &stomp_connections[i];
@@ -348,6 +350,11 @@ void STOMP_Destroy(void)
     {
         SSL_CTX_free(stomp_ssl_ctx);
     }
+
+    // Prevent the data model from making any subsequent changes to the MTP thread
+    is_stomp_mtp_thread_exited = true;
+
+    OS_UTILS_UnlockMutex(&stomp_access_mutex);
 }
 
 /*********************************************************************//**
@@ -1813,7 +1820,7 @@ void UpdateStompConnectionSockSet(stomp_connection_t *sc, socket_set_t *set)
             else
             {
                 // Wait until it's time to retry
-                SOCKET_SET_UpdateTimeout(timeout*SECONDS, set);   // Retry in 5 seconds time
+                SOCKET_SET_UpdateTimeout(timeout*SECONDS, set);
             }
             break;
 
@@ -2844,7 +2851,7 @@ void HandleRxMsg_RunningState(stomp_connection_t *sc, int msg_size)
     char content_type[64];
     bool is_present;
     char time_buf[MAX_ISO8601_LEN];
-    mtp_reply_to_t mtp_reply_to = {0};
+    mtp_conn_t mtp_conn = {0};
 
     // Exit if this is not the expected MESSAGE frame
     if (IsFrame("MESSAGE", sc->rxframe, msg_size) == false)
@@ -2862,14 +2869,14 @@ void HandleRxMsg_RunningState(stomp_connection_t *sc, int msg_size)
         return;
     }
 
-    // Fill In the mtp_reply_to_t structure, based on whether we have a 'reply-to' field or not
-    mtp_reply_to.protocol = kMtpProtocol_STOMP;
-    mtp_reply_to.stomp_instance = sc->instance;
+    // Fill In the mtp_conn_t structure, based on whether we have a 'reply-to' field or not
+    mtp_conn.protocol = kMtpProtocol_STOMP;
+    mtp_conn.stomp.instance = sc->instance;
     is_present = GetStompHeaderValue("reply-to-dest:", sc->rxframe, msg_size, reply_to_dest, sizeof(reply_to_dest));
     if ((is_present) && (reply_to_dest[0] != '\0'))
     {
-        mtp_reply_to.is_reply_to_specified = true;
-        mtp_reply_to.stomp_dest = reply_to_dest;
+        mtp_conn.is_reply_to_specified = true;
+        mtp_conn.stomp.dest = reply_to_dest;
     }
 
     // Check the content-type
@@ -2916,7 +2923,7 @@ void HandleRxMsg_RunningState(stomp_connection_t *sc, int msg_size)
     USP_PROTOCOL("%s", &sc->rxframe[offset]);
 
     // Send the USP Record to the data model thread for processing
-    DM_EXEC_PostUspRecord(pbuf, pbuf_len, sc->role, &mtp_reply_to);
+    DM_EXEC_PostUspRecord(pbuf, pbuf_len, UNKNOWN_ENDPOINT_ID, sc->role, &mtp_conn);
 }
 
 /*********************************************************************//**
@@ -3226,7 +3233,7 @@ int StartSendingFrame_STOMP(stomp_connection_t *sc)
     char heartbeat_args[64];
     char password_args[256];
     char debug_pw_args[256];
-    char escaped_endpoint_id[256];
+    char escaped_endpoint_id[MAX_ENDPOINT_ID_LEN];
     char escaped_username[256];
     char escaped_password[256];
     char *endpoint_id;
@@ -4153,7 +4160,7 @@ void QueueUspConnectRecord_STOMP(stomp_connection_t *sc, mtp_send_item_t *msi, c
     stomp_send_item_t *send_item;
     mtp_content_type_t type;
 
-    // Iterate over USP Records in the queue, removing all stale connect and disconnect records
+    // Iterate over USP Records in the queue, removing all stale connect and disconnect records to the specified controller
     // A connect or disconnect record may still be in the queue if the connection failed before the record was fully sent
     cur_msg = (stomp_send_item_t *) sc->usp_record_send_queue.head;
     while (cur_msg != NULL)
@@ -4161,9 +4168,9 @@ void QueueUspConnectRecord_STOMP(stomp_connection_t *sc, mtp_send_item_t *msi, c
         // Save pointer to next message, as we may remove the current message
         next_msg = (stomp_send_item_t *) cur_msg->link.next;
 
-        // Remove current message if it is a connect or disconnect record
+        // Remove current message if it is a connect or disconnect record for the controller
         type = cur_msg->item.content_type;
-        if (IsUspConnectOrDisconnectRecord(type))
+        if (IsUspConnectOrDisconnectRecord(type) && (strcmp(cur_msg->controller_queue, controller_queue)==0))
         {
             RemoveStompQueueItem(sc, cur_msg);
         }

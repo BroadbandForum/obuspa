@@ -305,6 +305,8 @@ void MQTT_Destroy(void)
 {
     int i;
 
+    OS_UTILS_LockMutex(&mqtt_access_mutex);  // Ensure that the data model is held off accessing this module's data structures until after we have destroyed them
+
     mqtt_client_t* client = NULL;
     for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
@@ -315,6 +317,10 @@ void MQTT_Destroy(void)
     memset(mqtt_clients, 0, sizeof(mqtt_clients));
     mosquitto_lib_cleanup();
 
+    // Prevent the data model from making any other changes to the MTP thread
+    is_mqtt_mtp_thread_exited = true;
+
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
 }
 
 /*********************************************************************//**
@@ -2012,7 +2018,7 @@ void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, cha
     mqtt_send_item_t *send_item;
     mtp_content_type_t type;
 
-    // Iterate over USP Records in the queue, removing all stale connect and USP disconnect records
+    // Iterate over USP Records in the queue, removing all stale connect and disconnect records to the specified controller
     // A USP connect or USP disconnect record may still be in the queue if the connection failed before the record was fully sent
     cur_msg = (mqtt_send_item_t *) client->usp_record_send_queue.head;
     while (cur_msg != NULL)
@@ -2020,9 +2026,9 @@ void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, cha
         // Save pointer to next message, as we may remove the current message
         next_msg = (mqtt_send_item_t *) cur_msg->link.next;
 
-        // Remove current message if it is a USP connect or USP disconnect record
+        // Remove current message if it is a USP connect or USP disconnect record for the controller
         type = cur_msg->item.content_type;
-        if (IsUspConnectOrDisconnectRecord(type))
+        if (IsUspConnectOrDisconnectRecord(type) && (strcmp(cur_msg->topic, controller_topic)==0))
         {
             DLLIST_Unlink(&client->usp_record_send_queue, cur_msg);
             USP_SAFE_FREE(cur_msg->item.pbuf);
@@ -3341,7 +3347,7 @@ void MessageV5Callback(struct mosquitto *mosq, void *userdata, const struct mosq
             if (mosquitto_property_read_string(props, RESPONSE_TOPIC,
                     &response_info_ptr, false) == NULL)
             {
-                USP_LOG_Debug("%s: Failed to read response topic in message info: \"%s\"\n", __FUNCTION__, response_info_ptr);
+                USP_LOG_Warning("%s: No response topic in received MQTT Message", __FUNCTION__);
             }
 
             ReceiveMqttMessage(client, message, response_info_ptr);
@@ -3378,17 +3384,17 @@ exit:
 **************************************************************************/
 void ReceiveMqttMessage(mqtt_client_t *client, const struct mosquitto_message *message, char *response_topic)
 {
-    mtp_reply_to_t mrt = {0};
-    mrt.protocol = kMtpProtocol_MQTT;
-    mrt.mqtt_instance = client->conn_params.instance;
+    mtp_conn_t mtpc = {0};
+    mtpc.protocol = kMtpProtocol_MQTT;
+    mtpc.mqtt.instance = client->conn_params.instance;
     if (response_topic != NULL)
     {
-        mrt.is_reply_to_specified = true;
-        mrt.mqtt_topic = response_topic;
+        mtpc.is_reply_to_specified = true;
+        mtpc.mqtt.topic = response_topic;
     }
 
     // Message may not be valid USP
-    DM_EXEC_PostUspRecord(message->payload, message->payloadlen, client->role, &mrt);
+    DM_EXEC_PostUspRecord(message->payload, message->payloadlen, UNKNOWN_ENDPOINT_ID, client->role, &mtpc);
 }
 
 /*********************************************************************//**

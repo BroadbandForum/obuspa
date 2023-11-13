@@ -59,6 +59,7 @@
 #include "retry_wait.h"
 #include "usp_record.h"
 #include "subs_retry.h"
+#include "usp_broker.h"
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_defs.h"
@@ -81,6 +82,11 @@
 #include "wsclient.h"
 #include "wsserver.h"
 #endif
+
+#ifdef ENABLE_UDS
+#include "uds.h"
+#endif
+
 //------------------------------------------------------------------------------
 // Location of the controller table within the data model
 #define DEVICE_CONT_ROOT "Device.LocalAgent.Controller"
@@ -117,6 +123,10 @@ typedef struct
 
 #ifdef ENABLE_WEBSOCKETS
     wsclient_config_t websock;
+#endif
+
+#ifdef ENABLE_UDS
+    int uds_connection_instance;
 #endif
 
 } controller_mtp_t;
@@ -201,6 +211,7 @@ controller_t *FindControllerByEndpointId(char *endpoint_id);
 controller_t *FindEnabledControllerByEndpointId(char *endpoint_id);
 controller_mtp_t *FindFirstEnabledMtp(controller_t *cont, mtp_protocol_t preferred_protocol);
 controller_mtp_t *FindControllerMtpByInstance(controller_t *cont, int mtp_instance);
+controller_mtp_t *FindControllerMtpByProtocol(controller_t *cont, mtp_protocol_t protocol);
 void DestroyController(controller_t *cont);
 void DestroyControllerMtp(controller_mtp_t *mtp);
 int ValidateEndpointIdUniqueness(char *endpoint_id, int instance);
@@ -211,8 +222,9 @@ int Notify_ControllerAssignedRole(dm_req_t *req, char *value);
 int UpdateAssignedRole(controller_t *cont, char *reference);
 int ValidateMtpUniqueness(mtp_protocol_t protocol, int cont_inst, int mtp_inst);
 int ValidateMtpResourceAvailable(mtp_protocol_t protocol, int cont_inst, int mtp_inst);
-int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp, mtp_reply_to_t *dest);
-int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mrt, controller_t *cont, controller_mtp_t *mtp, time_t expiry_time);
+int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp, mtp_conn_t *dest);
+int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_conn_t *mtpc, time_t expiry_time);
+int CopyNotifyDestForEndpoint(char *endpoint_id, mtp_protocol_t protocol, Usp__Header__MsgType usp_msg_type, mtp_conn_t *dest);
 
 #ifndef DISABLE_STOMP
 int Notify_ControllerMtpStompReference(dm_req_t *req, char *value);
@@ -241,7 +253,12 @@ int Notify_ControllerMtpWebsockEncryption(dm_req_t *req, char *value);
 int Notify_ControllerMtpWebsockKeepAlive(dm_req_t *req, char *value);
 int Notify_ControllerMtpWebsockRetryInterval(dm_req_t *req, char *value);
 int Notify_ControllerMtpWebsockRetryMultiplier(dm_req_t *req, char *value);
-void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt);
+void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_conn_t *mtpc);
+#endif
+
+#ifdef ENABLE_UDS
+int Notify_ControllerMtpUdsReference(dm_req_t *req, char *value);
+int Get_ControllerMtpUspServiceRef(dm_req_t *req, char *buf, int len);
 #endif
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
@@ -356,6 +373,13 @@ int DEVICE_CONTROLLER_Init(void)
     err |= USP_REGISTER_AsyncOperation(DEVICE_CONT_ROOT ".{i}.E2ESession.Reset()", Async_E2ESessionReset, NULL);
 #endif
 
+#ifdef ENABLE_UDS
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_CONT_ROOT ".{i}.MTP.{i}.UDS.UnixDomainSocketRef", "", NULL, Notify_ControllerMtpUdsReference, DM_STRING);
+#ifndef REMOVE_USP_BROKER
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CONT_ROOT ".{i}.MTP.{i}.UDS.USPServiceRef", Get_ControllerMtpUspServiceRef, DM_STRING);
+#endif
+#endif
+
     // Register unique keys for all tables
     char *cont_unique_keys[] = { "EndpointID" };
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_CONT_ROOT ".{i}", cont_unique_keys, NUM_ELEM(cont_unique_keys));
@@ -454,7 +478,7 @@ int DEVICE_CONTROLLER_Start(void)
     // Display a warning of no controller MTPs are enabled
     if (count==0)
     {
-        USP_LOG_Warning("WARNING: No enabled MTPs in %s.{i}.MTP. USP Agent may only be usable via the CLI", device_cont_root);
+        USP_LOG_Warning("%s: WARNING: No enabled MTPs in %s.{i}.MTP. USP Agent may only be usable via the CLI", __FUNCTION__, device_cont_root);
     }
 
     err = USP_ERR_OK;
@@ -556,24 +580,23 @@ char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance)
 **
 ** Finds the endpoint_id of the first controller connected to the MTP on which we received a packet
 **
-** \param   mrt - pointer to structure specifying which protocol (and MTP instance) a packet was received on
+** \param   mtpc - pointer to structure specifying which protocol (and MTP instance) a packet was received on
 **
 ** \return  endpoint_id or NULL if unable to determine one
 **
 **************************************************************************/
-char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_reply_to_t *mrt)
+char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_conn_t *mtpc)
 {
     int i, j;
     controller_t *cont;
     controller_mtp_t *mtp;
 
-    USP_ASSERT(mrt->cont_endpoint_id == NULL);
-    USP_ASSERT(mrt->protocol != kMtpProtocol_None);
+    USP_ASSERT(mtpc->protocol != kMtpProtocol_None);
 
 #ifdef ENABLE_WEBSOCKETS
     // Exit if packet was received on agent's websocket server and endpoint_id was not provided to the MTP in the
     // Sec-WebSocket-Extensions. We can't use the data model configuration to determine the Controller's endpoint_id in this case
-    if ((mrt->protocol == kMtpProtocol_WebSockets) && (mrt->wsserv_conn_id != INVALID))
+    if ((mtpc->protocol == kMtpProtocol_WebSockets) && (mtpc->ws.serv_conn_id != INVALID))
     {
         return NULL;
     }
@@ -581,7 +604,7 @@ char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_reply_to_t *mrt)
 
 #ifdef ENABLE_COAP
     // Exit if packet was received on agent's CoAP server. In this case, it's not possible to determine endpoint_id from the data model configuration
-    if (mrt->protocol == kMtpProtocol_CoAP)
+    if (mtpc->protocol == kMtpProtocol_CoAP)
     {
         return NULL;
     }
@@ -597,14 +620,14 @@ char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_reply_to_t *mrt)
             for (j=0; j<MAX_CONTROLLER_MTPS; j++)
             {
                 mtp = &cont->mtps[j];
-                if ((mtp->instance != INVALID) && (mtp->enable == true) && (mtp->protocol == mrt->protocol))
+                if ((mtp->instance != INVALID) && (mtp->enable == true) && (mtp->protocol == mtpc->protocol))
                 {
                     // Return this controller's endpoint_id, if this MTP matches the MTP that the packet was received on
                     switch(mtp->protocol)
                     {
 #ifndef DISABLE_STOMP
                         case kMtpProtocol_STOMP:
-                            if (mtp->stomp_connection_instance == mrt->stomp_instance)
+                            if (mtp->stomp_connection_instance == mtpc->stomp.instance)
                             {
                                 return cont->endpoint_id;
                             }
@@ -613,7 +636,7 @@ char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_reply_to_t *mrt)
 
 #ifdef ENABLE_MQTT
                         case kMtpProtocol_MQTT:
-                            if (mtp->mqtt_connection_instance == mrt->mqtt_instance)
+                            if (mtp->mqtt_connection_instance == mtpc->mqtt.instance)
                             {
                                 return cont->endpoint_id;
                             }
@@ -623,8 +646,8 @@ char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_reply_to_t *mrt)
 #ifdef ENABLE_WEBSOCKETS
                         case kMtpProtocol_WebSockets:
                             // NOTE: This is Websocket client case. Websocket server case already handled earlier in this function
-                            USP_ASSERT(mrt->wsserv_conn_id == INVALID);
-                            if ((mrt->wsclient_cont_instance == cont->instance) && (mrt->wsclient_mtp_instance == mtp->instance))
+                            USP_ASSERT(mtpc->ws.serv_conn_id == INVALID);
+                            if ((mtpc->ws.client_cont_instance == cont->instance) && (mtpc->ws.client_mtp_instance == mtp->instance))
                             {
                                 return cont->endpoint_id;
                             }
@@ -763,12 +786,15 @@ int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_ro
 ** Gets the combined role to use for the specified controller endpoint_id, when
 ** processing request messages from that controller
 **
-** \param   endpoint_id - endpoint_id of the controller
+** \param   endpoint_id - endpoint_id of the controller that has sent the current message being processed
+** \param   role - Role allowed for this message from the MTP (inherited)
+** \param   protocol - protocol that the message was received on
+** \param   combined_role - pointer to structure to return combined role in
 **
-** \return  USP_ERR_OK if successful
+** \return  None
 **
 **************************************************************************/
-int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_role_t *combined_role)
+void DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, ctrust_role_t role, mtp_protocol_t protocol, combined_role_t *combined_role)
 {
     controller_t *cont;
 
@@ -776,13 +802,63 @@ int DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, combined_ro
     cont = FindEnabledControllerByEndpointId(endpoint_id);
     if (cont == NULL)
     {
-        return USP_ERR_INTERNAL_ERROR;
+        // If this is an unknown controller, then grant it a limited set of permissions
+        combined_role->inherited = kCTrustRole_Untrusted;
+        combined_role->assigned = INVALID_ROLE;
+        return;
     }
 
     // Copy across the combined role values
     *combined_role = cont->combined_role;
 
-    return USP_ERR_OK;
+
+    switch(protocol)
+    {
+#ifndef DISABLE_STOMP
+        case kMtpProtocol_STOMP:
+            // If the message was received over STOMP, then the inherited role will have been saved in DEVICE_CONTROLLER
+            // when the STOMP handshake completed and will already equal the role passed with the USP message
+            USP_ASSERT(combined_role->inherited == role);
+            break;
+#endif
+
+#ifdef ENABLE_COAP
+        case kMtpProtocol_CoAP:
+            // If the message was received over CoAP, then the inherited role won't have been saved in DEVICE_CONTROLLER,
+            // so override with the role that was passed with the USP message
+            USP_ASSERT(combined_role->inherited == ROLE_DEFAULT);
+            combined_role->inherited = role;
+            break;
+#endif
+
+#ifdef ENABLE_MQTT
+        case kMtpProtocol_MQTT:
+            USP_ASSERT(combined_role->inherited == role);
+            break;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kMtpProtocol_WebSockets:
+            // If the message was received over WebSockets, then the inherited role won't have been saved in DEVICE_CONTROLLER,
+            // so override with the role that was passed with the USP message
+            USP_ASSERT(combined_role->inherited == ROLE_DEFAULT);
+            combined_role->inherited = role;
+            break;
+#endif
+
+#ifdef ENABLE_UDS
+        case kMtpProtocol_UDS:
+            // If the message was received over UDS, then the inherited role won't have been saved in DEVICE_CONTROLLER,
+            // so override with the role that was passed with the USP message
+            USP_ASSERT(combined_role->inherited == ROLE_DEFAULT);
+            combined_role->inherited = role;
+            break;
+#endif
+
+        default:
+            TERMINATE_BAD_CASE(protocol);
+            break;
+    }
 }
 
 #ifndef DISABLE_STOMP
@@ -839,63 +915,43 @@ void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role)
 **                the payload buffer is passed to this function, unless an error is returned.
 ** \param   endpoint_id - controller to send the message to
 ** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
-** \param   mrt - details of where this USP response message should be sent. NOTE: This may not be specified if the message is a notification
+** \param   mtpc - details of where this USP response message should be sent. NOTE: This may not be specified if the message is a notification
 ** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mrt, time_t expiry_time)
+int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_conn_t *mtpc, time_t expiry_time)
 {
     int err = USP_ERR_GENERAL_FAILURE;
-    controller_t *cont;
-    controller_mtp_t *mtp;
-    mtp_reply_to_t dest;
+    mtp_conn_t dest;
     USP_ASSERT(msi != NULL);
 
     // Take a copy of the MTP destination parameters we've been given
     // because we may modify it (and we don't want the caller to free anything we put in it, as they are owned by the data model)
-    memcpy(&dest, mrt, sizeof(dest));
-
-    // Exit if unable to find the specified controller
-    cont = FindEnabledControllerByEndpointId(endpoint_id);
-    if (cont == NULL)
-    {
-        USP_ERR_SetMessage("%s: Unable to find an enabled controller to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Find the configured MTP in the Controller.MTP table to send the USP Record to
-    // NOTE: This may be NULL if no enabled MTP is configured for the controller
-    mtp = FindFirstEnabledMtp(cont, mrt->protocol);
+    memcpy(&dest, mtpc, sizeof(dest));
 
     // If 'reply-to' was not specified, then use the configured MTP to fill in where the response should be sent
     // This is always the case for notifications, since they are not a response to any incoming USP message
-    if (mrt->is_reply_to_specified == false)
+    if (mtpc->is_reply_to_specified == false)
     {
-        err = CalcNotifyDest(endpoint_id, cont, mtp, &dest);
+        err = CopyNotifyDestForEndpoint(endpoint_id, mtpc->protocol, msi->usp_msg_type, &dest);
         if (err != USP_ERR_OK)
         {
             return err;
         }
-
-#ifdef ENABLE_WEBSOCKETS
-        // Switch the MTP destination, if the endpoint is not currently connected via
-        // the configured connection, but is connected via the agent's websocket server
-        SwitchMtpDestIfNotConnected(endpoint_id, &dest);
-#endif
     }
 
     // Send the response
     // NOTE: Ownership of msi->pbuf passes to the MTP, if successful
-    err = QueueBinaryMessageOnMtp(msi, endpoint_id, usp_msg_id, &dest, cont, mtp, expiry_time);
+    err = QueueBinaryMessageOnMtp(msi, endpoint_id, usp_msg_id, &dest, expiry_time);
     if (err != USP_ERR_OK)
     {
         return err;
     }
 
     // NOTE: member variables in dest must NOT be freed as they are owned elsewhere
-    // They are either owned by the caller (in mrt) or owned by the data model (in controllers[].mtps[])
+    // They are either owned by the caller (in mtpc) or owned by the data model (in controllers[].mtps[])
 
     return USP_ERR_OK;
 }
@@ -984,6 +1040,16 @@ bool DEVICE_CONTROLLER_IsMTPConfigured(char *endpoint_id, mtp_protocol_t protoco
             }
             break;
 #endif
+
+#ifdef ENABLE_UDS
+        case kMtpProtocol_UDS:
+            if ((cont->instance == INVALID) || (mtp->instance == INVALID))
+            {
+                return false;
+            }
+            break;
+#endif
+
         default:
             TERMINATE_BAD_CASE(mtp->protocol);
             break;
@@ -1020,7 +1086,7 @@ void DEVICE_CONTROLLER_QueueMqttConnectRecord(int mqtt_instance, mqtt_protocolve
     // Iterate over all controllers
     for (i=0; i<MAX_CONTROLLERS; i++)
     {
-        // Iterate over all MTP slots for this controller, clearing out all references to the deleted MQTT connection
+        // Iterate over all MTP slots for this controller, sending a USP connect record on each one
         cont = &controllers[i];
         if (cont->instance != INVALID)
         {
@@ -1029,11 +1095,17 @@ void DEVICE_CONTROLLER_QueueMqttConnectRecord(int mqtt_instance, mqtt_protocolve
                 mtp = &cont->mtps[j];
                 if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
                 {
-                    mtp_send_item_t msi;
-
-                    USPREC_MqttConnect_Create(cont->endpoint_id, version, agent_topic, &msi);
-                    MQTT_QueueBinaryMessage(&msi, mqtt_instance, mtp->mqtt_controller_topic);
-                    // NOTE: No need to free any members of the msi structure, since ownership of the payload buffer has passed to MQTT MTP layer
+                    if (mtp->mqtt_controller_topic[0] != '\0')
+                    {
+                        mtp_send_item_t msi;
+                        USPREC_MqttConnect_Create(cont->endpoint_id, version, agent_topic, &msi);
+                        MQTT_QueueBinaryMessage(&msi, mqtt_instance, mtp->mqtt_controller_topic);
+                        // NOTE: No need to free any members of the msi structure, since ownership of the payload buffer has passed to MQTT MTP layer
+                    }
+                    else
+                    {
+                        USP_LOG_Error("%s: Unable to send USP Connect record to %s because it has no MQTT topic", __FUNCTION__, cont->endpoint_id);
+                    }
                 }
             }
         }
@@ -1068,7 +1140,7 @@ void DEVICE_CONTROLLER_QueueStompConnectRecord(int stomp_instance, char *agent_q
     // Iterate over all controllers
     for (i=0; i<MAX_CONTROLLERS; i++)
     {
-        // Iterate over all MTP slots for this controller, clearing out all references to the deleted STOMP connection
+        // Iterate over all MTP slots for this controller, sending a USP connect record on each one
         cont = &controllers[i];
         if (cont->instance != INVALID)
         {
@@ -1077,11 +1149,17 @@ void DEVICE_CONTROLLER_QueueStompConnectRecord(int stomp_instance, char *agent_q
                 mtp = &cont->mtps[j];
                 if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_STOMP) && (mtp->stomp_connection_instance == stomp_instance))
                 {
-                    mtp_send_item_t msi;
-
-                    USPREC_StompConnect_Create(cont->endpoint_id, agent_queue, &msi);
-                    DEVICE_STOMP_QueueBinaryMessage(&msi, stomp_instance, mtp->stomp_controller_queue, agent_queue, END_OF_TIME);
-                    // NOTE: No need to free any members of the msi structure, since ownership of the payload buffer has passed to STOMP MTP layer
+                    if (mtp->stomp_controller_queue[0] != '\0')
+                    {
+                        mtp_send_item_t msi;
+                        USPREC_StompConnect_Create(cont->endpoint_id, agent_queue, &msi);
+                        DEVICE_STOMP_QueueBinaryMessage(&msi, stomp_instance, mtp->stomp_controller_queue, agent_queue, END_OF_TIME);
+                        // NOTE: No need to free any members of the msi structure, since ownership of the payload buffer has passed to STOMP MTP layer
+                    }
+                    else
+                    {
+                        USP_LOG_Error("%s: Unable to send USP Connect record to %s because it has no STOMP destination queue", __FUNCTION__, cont->endpoint_id);
+                    }
                 }
             }
         }
@@ -1254,6 +1332,280 @@ void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance)
 }
 #endif
 
+#if defined(ENABLE_UDS) && !(defined(REMOVE_USP_BROKER) && defined(REMOVE_USP_SERVICE))
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_AddController_UDS
+**
+** Adds the specified endpoint as a controller into the Controller table of this device, connected to the specified UDS instance
+** Called in a USP Broker, after a USP Service has connected to the Broker's agent Unix domain socket
+** Also called in a USP Service, after connecting to a USP Broker on the Broker's controller Unix domain socket
+**
+** \param   endpoint_id - Endpoint_id of the USP Service connecting as a controller to this broker
+** \param   uds_instance - instance number in Device.UnixDomainSockets.UnixDomainSocket.{i} which the USP Service is connected to
+**                         (and which is the Broker's agent socket)
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_CONTROLLER_AddController_UDS(char *endpoint_id, int uds_instance)
+{
+    controller_t *cont = NULL;
+    controller_mtp_t *mtp = NULL;
+    int err;
+    int cont_instance;
+    int mtp_instance;
+    dm_trans_vector_t trans;
+    char path[MAX_DM_PATH];
+    char value[MAX_DM_PATH];
+
+    // Determine whether the external endpoint exists in the Controller table already
+    cont = FindControllerByEndpointId(endpoint_id);
+    if (cont == NULL)
+    {
+        goto update;
+    }
+    else
+    {
+        cont_instance = cont->instance;
+    }
+
+    // Determine whether the external endpoint has a UDS entry in the Controller MTP table already
+    mtp = FindControllerMtpByProtocol(cont, kMtpProtocol_UDS);
+    if (mtp == NULL)
+    {
+        goto update;
+    }
+    else
+    {
+        mtp_instance = mtp->instance;
+    }
+
+    // Exit if the external endpoint is already connected to the specified UDS instance (and enabled)
+    if ((cont->enable==true) && (mtp->enable==true) && (mtp->uds_connection_instance == uds_instance))
+    {
+        return;
+    }
+
+update:
+    // If the code gets here, then either the external endpoint needs adding to the controller table
+    // or a UDS MTP needs adding, or the entries need enabling or the UDS reference needs updating
+
+    //-------------------------------------------------------
+    // ADD / UPDATE CONTROLLER
+    if ((cont == NULL) || (cont->enable == false))
+    {
+        // Exit if unable to start a transaction for adding/updating the controller
+        err = DM_TRANS_Start(&trans);
+        if (err != USP_ERR_OK)
+        {
+            return;
+        }
+
+        // Add a Controller, if not already present
+        if (cont == NULL)
+        {
+            // Exit if failed to add a new instance to Device.LocalAgent.Controller.{i}
+            err = DATA_MODEL_AddInstance((char *)device_cont_root, &cont_instance, CHECK_CREATABLE);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+
+            // Exit if failed to update Device.LocalAgent.Controller.{i}.EndpointID
+            USP_SNPRINTF(path, sizeof(path), "%s.%d.EndpointID", device_cont_root, cont_instance);
+            err = DATA_MODEL_SetParameterValue(path, endpoint_id, 0);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+        }
+
+        // Exit if failed to update Device.LocalAgent.Controller.{i}.Enable to true
+        USP_SNPRINTF(path, sizeof(path), "%s.%d.Enable", device_cont_root, cont_instance);
+        err = DATA_MODEL_SetParameterValue(path, "true", 0);
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
+
+        // Commit the transaction for adding/updating the controller
+        // NOTE: Ths will chain to updating the controllers[] data structure, and allow the MTP to be added
+        DM_TRANS_Commit();
+    }
+
+    //-------------------------------------------------------
+    // ADD / UPDATE MTP
+    if ((mtp == NULL) || (mtp->enable != true) || (mtp->uds_connection_instance != uds_instance))
+    {
+        // Exit if unable to start a transaction for adding/updating the controller MTP
+        err = DM_TRANS_Start(&trans);
+        if (err != USP_ERR_OK)
+        {
+            return;
+        }
+
+        // Add a Controller MTP, if one has not been added already...
+        if (mtp == NULL)
+        {
+            // Exit if failed to add a new instance to Device.LocalAgent.Controller.{i}.MTP.{i}
+            USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP", device_cont_root, cont_instance);
+            err = DATA_MODEL_AddInstance(path, &mtp_instance, CHECK_CREATABLE);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+
+            // Exit if failed to update Device.LocalAgent.Controller.{i}.MTP.{i}.Protocol to UDS
+            USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.Protocol", device_cont_root, cont_instance, mtp_instance);
+            err = DATA_MODEL_SetParameterValue(path, "UDS", 0);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+        }
+
+        // Exit if failed to update Device.LocalAgent.Controller.{i}.MTP.{i}.UDS.UnixDomainSocketRef to the specified instance number
+        if ((mtp == NULL) || (mtp->uds_connection_instance != uds_instance))
+        {
+            USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.UDS.UnixDomainSocketRef", device_cont_root, cont_instance, mtp_instance);
+            USP_SNPRINTF(value, sizeof(value), "Device.UnixDomainSockets.UnixDomainSocket.%d", uds_instance);
+            err = DATA_MODEL_SetParameterValue(path, value, 0);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+        }
+
+        // Exit if failed to update Device.LocalAgent.Controller.{i}.MTP.{i}.Enable to true
+        if ((mtp == NULL) || (mtp->enable != true))
+        {
+            USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.Enable", device_cont_root, cont_instance, mtp_instance);
+            err = DATA_MODEL_SetParameterValue(path, "true", 0);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+        }
+
+        // Commit the transaction for adding/updating the controller MTP
+        // NOTE: Ths will chain to updating the controllers[] data structure
+        DM_TRANS_Commit();
+    }
+
+    // If the code gets here, everything was successful
+    err = USP_ERR_OK;
+
+
+exit:
+    // Abort the transaction if not successful
+    if (err != USP_ERR_OK)
+    {
+        DM_TRANS_Abort();
+    }
+}
+#endif
+
+#ifndef REMOVE_USP_SERVICE
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_FindFirstControllerEndpoint
+**
+** Returns the endpoint_id of the first controller found (lowest instance number) in Device.LocalAgent.Controller
+**
+** \param   None
+**
+** \return  endpoint_id of the first controller or NULL if no controller setup
+**          NOTE: Ownership of the endpoint_id stays with this file
+**
+**************************************************************************/
+char *DEVICE_CONTROLLER_FindFirstControllerEndpoint(void)
+{
+    int i;
+    controller_t *cont;
+    int instance = INT_MAX;
+    char *endpoint_id = NULL;
+
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if ((cont->instance != INVALID) && (cont->enable))
+        {
+            if (cont->instance < instance)
+            {
+                instance = cont->instance;
+                endpoint_id = cont->endpoint_id;
+            }
+        }
+    }
+
+    return endpoint_id;
+}
+#endif
+
+/*********************************************************************//**
+**
+** CopyNotifyDestForEndpoint
+**
+** Determines a destination MTP to send a USP Record to based on the endpoint to send to
+** This function is usually used to determine the destination MTP for USP notifications
+**
+** \param   endpoint_id - endpoint to send the message to
+** \param   protocol - MTP protocol to use when sending the message
+** \param   usp_msg_type - type of the USP message to send
+** \param   dest - pointer to mtp_conn structure in which to copy the destination info
+**                 NOTE: Ownership of the info copied into dest stays with the source of the copy (shallow copy), so dest does not have to be freed (deep copy)
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int CopyNotifyDestForEndpoint(char *endpoint_id, mtp_protocol_t protocol, Usp__Header__MsgType usp_msg_type, mtp_conn_t *dest)
+{
+    int err;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+#ifndef REMOVE_USP_BROKER
+{
+    // Exit if the destination endpoint is a USP service, copying the destination MTP based on the message type
+    // NOTE: If the destination endpoint is a USP Broker, and this agent is a USP Service, then the USP Broker is a Controller, so its destination MTP is not calculated here
+    // Message type determines whether the message is sent from the Broker's controller or the Broker's Agent socket (if UDS)
+    mtp_conn_t *src;
+    src = USP_BROKER_GetNotifyDestForEndpoint(endpoint_id, usp_msg_type);
+    if (src != NULL)
+    {
+        memcpy(dest, src, sizeof(mtp_conn_t));
+        return USP_ERR_OK;
+    }
+}
+#endif
+
+    // Exit if unable to find the specified controller
+    cont = FindEnabledControllerByEndpointId(endpoint_id);
+    if (cont == NULL)
+    {
+        USP_ERR_SetMessage("%s: Unable to find an enabled controller to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Find the configured MTP in the Controller.MTP table to send the USP Record to
+    // NOTE: This may be NULL if no enabled MTP is configured for the controller
+    mtp = FindFirstEnabledMtp(cont, protocol);
+
+    err = CalcNotifyDest(endpoint_id, cont, mtp, dest);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+#ifdef ENABLE_WEBSOCKETS
+    // Switch the MTP destination, if the endpoint is not currently connected via
+    // the configured connection, but is connected via the agent's websocket server
+    SwitchMtpDestIfNotConnected(endpoint_id, dest);
+#endif
+    return USP_ERR_OK;
+}
+
 /*********************************************************************//**
 **
 ** CalcNotifyDest
@@ -1265,12 +1617,13 @@ void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance)
 ** \param   endpoint_id - USP Controller endpoint to send the notification to
 ** \param   cont - pointer to controller instance to send the message to (only used by CoAP)
 ** \param   mtp - configured MTP to send the notification to, or NULL if no MTP configured for the endpoint
-** \param   mrt - pointer to structure in which to return the calculated MTP destination
+** \param   mtpc - pointer to structure to update with the calculated MTP destination.
+**                NOTE: the mtpc structure should be updated, not initialised.
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp, mtp_reply_to_t *mrt)
+int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp, mtp_conn_t *mtpc)
 {
     // If no MTP was configured to send notifications to this controller
     if (mtp == NULL)
@@ -1278,7 +1631,7 @@ int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp,
 #ifdef ENABLE_WEBSOCKETS
         // Exit if the controller is connected to the agent's websocket server
         int err;
-        err = WSSERVER_GetMTPForEndpointId(endpoint_id, mrt);
+        err = WSSERVER_GetMTPForEndpointId(endpoint_id, mtpc);
         if (err == USP_ERR_OK)
         {
             return err;
@@ -1301,9 +1654,9 @@ int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp,
                 return USP_ERR_INTERNAL_ERROR;
             }
 
-            mrt->protocol = kMtpProtocol_STOMP;
-            mrt->stomp_instance = mtp->stomp_connection_instance;
-            mrt->stomp_dest = mtp->stomp_controller_queue;
+            mtpc->protocol = kMtpProtocol_STOMP;
+            mtpc->stomp.instance = mtp->stomp_connection_instance;
+            mtpc->stomp.dest = mtp->stomp_controller_queue;
             break;
 #endif
 
@@ -1315,12 +1668,12 @@ int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp,
                 return USP_ERR_INTERNAL_ERROR;
             }
 
-            mrt->protocol = kMtpProtocol_CoAP;
-            mrt->coap_host = mtp->coap_controller_host;
-            mrt->coap_port = mtp->coap.port;
-            mrt->coap_resource = mtp->coap.resource;
-            mrt->coap_encryption = mtp->coap.enable_encryption;
-            mrt->coap_reset_session_hint = false;
+            mtpc->protocol = kMtpProtocol_CoAP;
+            mtpc->coap.host = mtp->coap_controller_host;
+            mtpc->coap.port = mtp->coap.port;
+            mtpc->coap.resource = mtp->coap.resource;
+            mtpc->coap.encryption = mtp->coap.enable_encryption;
+            mtpc->coap.reset_session_hint = false;
             break;
 #endif
 
@@ -1333,20 +1686,34 @@ int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp,
                 return USP_ERR_INTERNAL_ERROR;
             }
 
-            mrt->protocol = kMtpProtocol_MQTT;
-            mrt->mqtt_instance = mtp->mqtt_connection_instance;
-            mrt->mqtt_topic = mtp->mqtt_controller_topic;
+            mtpc->protocol = kMtpProtocol_MQTT;
+            mtpc->mqtt.instance = mtp->mqtt_connection_instance;
+            mtpc->mqtt.topic = mtp->mqtt_controller_topic;
             break;
 #endif
 
 #ifdef ENABLE_WEBSOCKETS
         case kMtpProtocol_WebSockets:
-            mrt->protocol = kMtpProtocol_WebSockets;
-            mrt->wsclient_cont_instance = cont->instance;
-            mrt->wsclient_mtp_instance = mtp->instance;
-            mrt->wsserv_conn_id = INVALID;
+            mtpc->protocol = kMtpProtocol_WebSockets;
+            mtpc->ws.client_cont_instance = cont->instance;
+            mtpc->ws.client_mtp_instance = mtp->instance;
+            mtpc->ws.serv_conn_id = INVALID;
             break;
 #endif
+
+#ifdef ENABLE_UDS
+        case kMtpProtocol_UDS:
+{
+            int err;
+            err = UDS_GetMTPForEndpointId(endpoint_id, mtpc);
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
+}
+            break;
+#endif
+
         default:
             TERMINATE_BAD_CASE(mtp->protocol);
             break;
@@ -1365,15 +1732,15 @@ int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp,
 ** the configured connection, but is connected via the agent's websocket server
 **
 ** \param   endpoint_id - USP Controller endpoint to send the notification to
-** \param   mrt - pointer to structure in which to return the calculated MTP destination
+** \param   mtpc - pointer to structure in which to return the calculated MTP destination
 **
 ** \return  None
 **
 **************************************************************************/
-void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
+void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_conn_t *mtpc)
 {
     int err;
-    mtp_reply_to_t wsserv_dest;
+    mtp_conn_t wsserv_dest;
 
     // Exit if controller is not connected to agent's websocket server
     err = WSSERVER_GetMTPForEndpointId(endpoint_id, &wsserv_dest);
@@ -1384,16 +1751,16 @@ void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
 
     // Since controller is connected to agent's websocket server,
     // use the websocket server if the configured MTP is not actually connected
-    switch(mrt->protocol)
+    switch(mtpc->protocol)
     {
 #ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
         {
             char *status;
-            status = STOMP_GetConnectionStatus(mrt->stomp_instance, NULL);
+            status = STOMP_GetConnectionStatus(mtpc->stomp.instance, NULL);
             if (strcmp(status, "Enabled") != 0)
             {
-                memcpy(mrt, &wsserv_dest, sizeof(mtp_reply_to_t));
+                memcpy(mtpc, &wsserv_dest, sizeof(mtp_conn_t));
             }
         }
         break;
@@ -1409,10 +1776,10 @@ void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
         case kMtpProtocol_MQTT:
         {
             char *status;
-            status = (char *) MQTT_GetClientStatus(mrt->mqtt_instance);
+            status = (char *) MQTT_GetClientStatus(mtpc->mqtt.instance);
             if (strcmp(status, "Connected") != 0)
             {
-                memcpy(mrt, &wsserv_dest, sizeof(mtp_reply_to_t));
+                memcpy(mtpc, &wsserv_dest, sizeof(mtp_conn_t));
             }
         }
         break;
@@ -1420,12 +1787,12 @@ void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
 
 #ifdef ENABLE_WEBSOCKETS
         case kMtpProtocol_WebSockets:
-            if (mrt->wsserv_conn_id == INVALID)
+            if (mtpc->ws.serv_conn_id == INVALID)
             {
                 // If configured to connect via the websocket client, then if it isn't connected, then send via agent's websocket server
                 if (WSCLIENT_IsEndpointConnected(endpoint_id) == false)
                 {
-                   memcpy(mrt, &wsserv_dest, sizeof(mtp_reply_to_t));
+                   memcpy(mtpc, &wsserv_dest, sizeof(mtp_conn_t));
                 }
             }
             else
@@ -1436,7 +1803,7 @@ void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
 #endif
 
         default:
-            TERMINATE_BAD_CASE(mrt->protocol);
+            TERMINATE_BAD_CASE(mtpc->protocol);
             break;
     }
 }
@@ -1452,68 +1819,79 @@ void SwitchMtpDestIfNotConnected(char *endpoint_id, mtp_reply_to_t *mrt)
 **                the payload buffer is passed to this function, unless an error is returned.
 ** \param   endpoint_id - controller to send the message to
 ** \param   usp_msg_id - pointer to string containing the msg_id of the serialized USP Message
-** \param   mrt - details of where this USP response message should be sent
-** \param   cont - pointer to controller instance to send the message to (only used by CoAP)
-** \param   mtp - pointer to MTP instance to send the message to (only used by CoAP)
+** \param   mtpc - details of where this USP response message should be sent
 ** \param   expiry_time - time at which the USP message should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_reply_to_t *mrt, controller_t *cont, controller_mtp_t *mtp, time_t expiry_time)
+int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_conn_t *mtpc, time_t expiry_time)
 {
     int err = USP_ERR_OK;
     USP_ASSERT(msi != NULL);
 
-    switch(mrt->protocol)
+    switch(mtpc->protocol)
     {
 #ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
         {
-            char *agent_queue = DEVICE_MTP_GetAgentStompQueue(mrt->stomp_instance);
+            char *agent_queue = DEVICE_MTP_GetAgentStompQueue(mtpc->stomp.instance);
 
-            err = DEVICE_STOMP_QueueBinaryMessage(msi, mrt->stomp_instance, mrt->stomp_dest, agent_queue, expiry_time);
+            err = DEVICE_STOMP_QueueBinaryMessage(msi, mtpc->stomp.instance, mtpc->stomp.dest, agent_queue, expiry_time);
         }
             break;
 #endif
 
 #ifdef ENABLE_COAP
         case kMtpProtocol_CoAP:
+        {
+            controller_t *cont;
+            controller_mtp_t *mtp;
+            cont = FindEnabledControllerByEndpointId(endpoint_id);
+            mtp = FindFirstEnabledMtp(cont, mtpc->protocol);  // NOTE: This may be NULL if no enabled MTP is configured for the controller
             if ((cont == NULL) || (mtp==NULL))
             {
                 USP_ERR_SetMessage("%s: Unable to find an enabled MTP to send to endpoint_id=%s", __FUNCTION__, endpoint_id);
                 return USP_ERR_INTERNAL_ERROR;
             }
 
-            err = COAP_CLIENT_QueueBinaryMessage(msi, cont->instance, mtp->instance, mrt, expiry_time);
+            err = COAP_CLIENT_QueueBinaryMessage(msi, cont->instance, mtp->instance, mtpc, expiry_time);
+        }
             break;
 #endif
 
 #ifdef ENABLE_MQTT
         case kMtpProtocol_MQTT:
         {
-            err = MQTT_QueueBinaryMessage(msi, mrt->mqtt_instance, mrt->mqtt_topic);
+            err = MQTT_QueueBinaryMessage(msi, mtpc->mqtt.instance, mtpc->mqtt.topic);
         }
             break;
 #endif
 
 #ifdef ENABLE_WEBSOCKETS
         case kMtpProtocol_WebSockets:
-            if (mrt->wsserv_conn_id == INVALID)
+            if (mtpc->ws.serv_conn_id == INVALID)
             {
-                WSCLIENT_QueueBinaryMessage(msi, mrt->wsclient_cont_instance, mrt->wsclient_mtp_instance, expiry_time);
+                WSCLIENT_QueueBinaryMessage(msi, mtpc->ws.client_cont_instance, mtpc->ws.client_mtp_instance, expiry_time);
             }
             else
             {
-                WSSERVER_QueueBinaryMessage(msi, mrt->wsserv_conn_id, expiry_time);
+                WSSERVER_QueueBinaryMessage(msi, mtpc->ws.serv_conn_id, expiry_time);
             }
             err = USP_ERR_OK;
             break;
 #endif
 
+#ifdef ENABLE_UDS
+        case kMtpProtocol_UDS:
+            {
+               err = UDS_QueueBinaryMessage(msi, mtpc, expiry_time, kUdsFrameType_UspRecord);
+            }
+            break;
+#endif
 
         default:
-            TERMINATE_BAD_CASE(mrt->protocol);
+            TERMINATE_BAD_CASE(mtpc->protocol);
             break;
     }
 
@@ -1632,7 +2010,7 @@ void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
     int size;
     time_t retry_expiry_time;
     char *dest_endpoint;
-    mtp_reply_to_t mtp_reply_to = {0};  // Ensures mtp_reply_to.is_reply_to_specified=false
+    mtp_conn_t mtp_conn = {0};  // Ensures mtp_conn.is_reply_to_specified=false
     usp_send_item_t usp_send_item;
     char *msg_id;
 
@@ -1668,7 +2046,7 @@ void SendOnBoardRequestNotify(Usp__Msg *req, controller_t* controller)
     // Send the message
     // NOTE: Intentionally ignoring error here.
     msg_id = req->header->msg_id;
-    MSG_HANDLER_QueueUspRecord(&usp_send_item, dest_endpoint, msg_id, &mtp_reply_to, retry_expiry_time);
+    MSG_HANDLER_QueueUspRecord(&usp_send_item, dest_endpoint, msg_id, &mtp_conn, retry_expiry_time);
 
     // Ensure the message is retried until a NotifyResponse is received
     // NOTE: Ownership of the serialized USP message passes to the subs retry module
@@ -3093,6 +3471,86 @@ int Get_WebsockRetryCount(dm_req_t *req, char *buf, int len)
 }
 #endif
 
+#ifdef ENABLE_UDS
+/*********************************************************************//**
+**
+** Notify_ControllerMtpUdsReference
+**
+** Function called when Device.LocalAgent.Controller.{i}.MTP.{i}.UDS.UnixDomainSocketRef is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ControllerMtpUdsReference(dm_req_t *req, char *value)
+{
+    controller_t *cont;
+    controller_mtp_t *mtp;
+    int uds_instance;
+    int err;
+
+    // Determine MTP to be updated
+    mtp = FindControllerMtpFromReq(req, &cont);
+    USP_ASSERT(mtp != NULL);
+
+    // Determine the instance number in the UDS table that the reference points to
+    err = DEVICE_MTP_GetUdsReference(req->path, &uds_instance);
+    USP_ASSERT(err == USP_ERR_OK)
+
+    // Exit if the value hasn't changed
+    if (mtp->uds_connection_instance == uds_instance)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set the new value
+    mtp->uds_connection_instance = uds_instance;
+
+    // NOTE: No need to start a UDS Client/Server based on this reference - they are started based on being present in the UnixDomainSockets table
+
+    return USP_ERR_OK;
+}
+
+#ifndef REMOVE_USP_BROKER
+/*********************************************************************//**
+**
+** Get_ControllerMtpUspServiceRef
+**
+** Gets the value of Device.LocalAgent.Controller.{i}.MTP.{i}.UDS.USPServiceRef
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   buf - pointer to buffer in which to return the value
+** \param   len - length of return buffer
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Get_ControllerMtpUspServiceRef(dm_req_t *req, char *buf, int len)
+{
+    controller_t *cont;
+    int instance;
+
+    // Determine Controller
+    cont = FindControllerByInstance(inst1);
+    USP_ASSERT(cont != NULL);
+
+    // Exit if unable to find the connected USP Service matching this Controller
+    instance = USP_BROKER_GetUspServiceInstance(cont->endpoint_id, ONLY_CONTROLLER_CONNECTIONS);
+    if (instance == INVALID)
+    {
+        *buf = '\0';
+        return USP_ERR_OK;
+    }
+
+    USP_SNPRINTF(buf, len, "Device.USPServices.USPService.%d", instance);
+
+    return USP_ERR_OK;
+}
+#endif
+#endif
+
 /*********************************************************************//**
 **
 ** Notify_PeriodicNotifInterval
@@ -3650,6 +4108,18 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     }
 #endif
 
+#ifdef ENABLE_UDS
+    // Exit if unable to get the UDS reference
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d.UDS.UnixDomainSocketRef", device_cont_root, cont->instance, mtp_instance);
+    err = DEVICE_MTP_GetUdsReference(path, &mtp->uds_connection_instance);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // NOTE: No need to start a UDS Client/Server based on this reference - they are started based on being present in the UnixDomainSockets table
+#endif
+
     err = USP_ERR_OK;
 
 exit:
@@ -3968,6 +4438,38 @@ controller_mtp_t *FindControllerMtpByInstance(controller_t *cont, int mtp_instan
         // Exit if found an MTP that matches the instance number
         mtp = &cont->mtps[i];
         if (mtp->instance == mtp_instance)
+        {
+            return mtp;
+        }
+    }
+
+    // If the code gets here, then no matching MTP was found
+    return NULL;
+}
+
+/*********************************************************************//**
+**
+** FindControllerMtpByProtocol
+**
+** Finds an MTP entry by it's data model instance number, for the specified controller
+**
+** \param   cont - pointer to controller that has this MTP
+** \param   mtp_instance - instance number of the MTP in the data model
+**
+** \return  pointer to controller entry within the controllers array, or NULL if controller was not found
+**
+**************************************************************************/
+controller_mtp_t *FindControllerMtpByProtocol(controller_t *cont, mtp_protocol_t protocol)
+{
+    int i;
+    controller_mtp_t *mtp;
+
+    // Iterate over all MTPs for this controller
+    for (i=0; i<MAX_CONTROLLER_MTPS; i++)
+    {
+        // Exit if found an MTP that matches the instance number
+        mtp = &cont->mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->protocol == protocol))
         {
             return mtp;
         }

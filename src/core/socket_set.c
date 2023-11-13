@@ -45,6 +45,7 @@
 #include <errno.h>
 #include <string.h>
 
+#include "usp_api.h"
 #include "common_defs.h"
 #include "socket_set.h"
 

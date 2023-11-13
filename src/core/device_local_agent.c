@@ -64,7 +64,7 @@
 
 //------------------------------------------------------------------------------
 // Cached version of the endpoint_id, which is populated at boot up by DEVICE_LOCAL_AGENT_SetDefaults()
-static char agent_endpoint_id[MAX_DM_SHORT_VALUE_LEN] = {0};
+static char agent_endpoint_id[MAX_ENDPOINT_ID_LEN] = {0};
 
 //------------------------------------------------------------------------------
 // By default when a stop of USP Agent is scheduled, it just exits rather than rebooting
@@ -415,7 +415,9 @@ int DEVICE_LOCAL_AGENT_ScheduleReboot(exit_action_t exit_action, char *reboot_ca
     }
 
     scheduled_exit_action = exit_action;
+#ifndef REMOVE_DEVICE_BULKDATA
     BDC_EXEC_ScheduleExit();
+#endif
     MTP_EXEC_ScheduleExit();
     return USP_ERR_OK;
 }

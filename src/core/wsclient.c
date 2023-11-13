@@ -1179,6 +1179,7 @@ void AttemptWsclientConnect(wsclient_t *wc)
     wc->rx_buf = NULL;
     wc->rx_buf_len = 0;
     wc->rx_buf_max_len = 0;
+    wc->ping_count = 0;
 
     encrypt_str = (wc->enable_encryption) ? "encrypted" : "unencrypted";
     USP_LOG_Info("Attempting to connect to host=%s (port=%d, %s, path=%s) from interface=%s", wc->host, wc->port, encrypt_str, wc->path, interface);
@@ -1773,7 +1774,7 @@ int HandleWscEvent_Connected(struct lws *handle)
 **************************************************************************/
 int HandleWscEvent_Receive(struct lws *handle, unsigned char *chunk, int chunk_len)
 {
-    mtp_reply_to_t mtp_reply_to;
+    mtp_conn_t mtp_conn;
     char buf[MAX_ISO8601_LEN];
     wsclient_t *wc;
     int new_len;
@@ -1826,14 +1827,13 @@ int HandleWscEvent_Receive(struct lws *handle, unsigned char *chunk, int chunk_l
 
     // Send the USP Record to the data model thread for processing
     // NOTE: Ownership of receive buffer stays with this thread
-    memset(&mtp_reply_to, 0, sizeof(mtp_reply_to));
-    mtp_reply_to.is_reply_to_specified = true;
-    mtp_reply_to.protocol = kMtpProtocol_WebSockets;
-    mtp_reply_to.wsclient_cont_instance = wc->cont_instance;
-    mtp_reply_to.wsclient_mtp_instance = wc->mtp_instance;
-    mtp_reply_to.wsserv_conn_id = INVALID;
-    mtp_reply_to.cont_endpoint_id = wc->cont_endpoint_id;
-    DM_EXEC_PostUspRecord(wc->rx_buf, wc->rx_buf_len, wc->role, &mtp_reply_to);
+    memset(&mtp_conn, 0, sizeof(mtp_conn));
+    mtp_conn.is_reply_to_specified = true;
+    mtp_conn.protocol = kMtpProtocol_WebSockets;
+    mtp_conn.ws.client_cont_instance = wc->cont_instance;
+    mtp_conn.ws.client_mtp_instance = wc->mtp_instance;
+    mtp_conn.ws.serv_conn_id = INVALID;
+    DM_EXEC_PostUspRecord(wc->rx_buf, wc->rx_buf_len, wc->cont_endpoint_id, wc->role, &mtp_conn);
 
     // Free receive buffer
     USP_FREE(wc->rx_buf);

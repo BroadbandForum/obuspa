@@ -56,6 +56,7 @@ bool OS_UTILS_IsDataModelThread(const char *caller, bool print_warning);
 int OS_UTILS_InitMutex(pthread_mutex_t *mutex);
 void OS_UTILS_LockMutex(pthread_mutex_t *mutex);
 void OS_UTILS_UnlockMutex(pthread_mutex_t *mutex);
+int OS_UTILS_CreateDirFromFilename(char *filename);
 
 #endif
 

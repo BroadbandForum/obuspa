@@ -51,7 +51,6 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <string.h>
-#include <curl/curl.h>
 #include <sqlite3.h>
 #include <zlib.h>
 
@@ -78,6 +77,16 @@
 #include "group_get_vector.h"
 #include "bdc_exec.h"
 
+#ifndef REMOVE_USP_SERVICE
+#include "usp_service.h"
+#ifdef ENABLE_UDS
+#include "uds.h"
+#endif
+#endif
+
+#ifndef REMOVE_DEVICE_BULKDATA
+#include <curl/curl.h>
+#endif
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void CloseCliServerSock(void);
@@ -106,6 +115,10 @@ char *SplitOffTrailingNumber(char *s);
 int SplitSetExpression(char *expr, char *search_path, int search_path_len, char *param_name, int param_name_len);
 void SendCliResponse(char *fmt, ...);
 
+#ifndef REMOVE_USP_SERVICE
+int ExecuteCli_Register(char *arg1, char *arg2, char *usage);
+int ExecuteCli_DeRegister(char *arg1, char *arg2, char *usage);
+#endif
 //------------------------------------------------------------------------------
 // Socket listening for CLI connections
 static int cli_listen_sock = INVALID;
@@ -149,14 +162,18 @@ cli_cmd_t cli_commands[] =
     { "operate", 1, RUN_REMOTELY, ExecuteCli_Operate,"operate [operation]"},
     { "event",   1, RUN_REMOTELY, ExecuteCli_Event, "event [event]"},
     { "instances", 1, RUN_REMOTELY, ExecuteCli_GetInstances,   "instances [path-expr]" },
-    { "show",    1, RUN_LOCALLY,  ExecuteCli_Show,  "show ['datamodel' | 'database' ]"},
-    { "dump",    1, RUN_REMOTELY, ExecuteCli_Dump,  "dump ['memory' | 'mdelta' | 'subscriptions' | 'instances' ]"},
+    { "show",    1, RUN_LOCALLY,  ExecuteCli_Show,  "show [ 'database' ]"},
+    { "dump",    1, RUN_REMOTELY, ExecuteCli_Dump,  "dump ['instances' | 'datamodel' | 'memory' | 'mdelta' | 'subscriptions' ]"},
     { "perm",    1, RUN_REMOTELY, ExecuteCli_Perm,  "perm [parameter or object]"},
     { "dbget",   1, RUN_LOCALLY,  ExecuteCli_DbGet, "dbget [parameter]"},
     { "dbset",   2, RUN_LOCALLY,  ExecuteCli_DbSet, "dbset [parameter] [value]"},
     { "dbdel",   1, RUN_LOCALLY,  ExecuteCli_DbDel, "dbdel [parameter]"},
     { "verbose", 1, RUN_REMOTELY, ExecuteCli_Verbose, "verbose [level]"},
     { "prototrace", 1, RUN_REMOTELY, ExecuteCli_ProtoTrace, "prototrace [enable]"},
+#ifndef REMOVE_USP_SERVICE
+    { "register", 1, RUN_REMOTELY, ExecuteCli_Register,  "register [objects]"},
+    { "deregister", 1, RUN_REMOTELY, ExecuteCli_DeRegister,  "deregister [objects]"},
+#endif
     { "stop",    0, RUN_REMOTELY, ExecuteCli_Stop, "stop"},
 };
 
@@ -178,10 +195,11 @@ int CLI_SERVER_Init(void)
     struct sockaddr_un sa;
 
     // Exit if unable to remove the unix domain socket from the filing system
-    err = remove(CLI_UNIX_DOMAIN_FILE);
+    err = remove(cli_uds_file);
     if ((err == -1) && (errno != ENOENT))
     {
         USP_ERR_ERRNO("remove", errno);
+        USP_LOG_Error("%s: Unable to remove the Unix domain socket file %s", __FUNCTION__, cli_uds_file);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -205,23 +223,26 @@ int CLI_SERVER_Init(void)
     // Fill in sockaddr structure
     memset(&sa, 0, sizeof(sa));
     sa.sun_family = AF_UNIX;
-    USP_STRNCPY(sa.sun_path, CLI_UNIX_DOMAIN_FILE, sizeof(sa.sun_path));
+    USP_STRNCPY(sa.sun_path, cli_uds_file, sizeof(sa.sun_path));
 
     // Exit if unable to bind the socket to the unix domain file
     err = bind(sock, (struct sockaddr *) &sa, sizeof(struct sockaddr_un));
     if (err == -1)
     {
         USP_ERR_ERRNO("bind", errno);
+        USP_LOG_Error("%s: Unable to bind to Unix domain socket file %s", __FUNCTION__, cli_uds_file);
         close(sock);
         return USP_ERR_INTERNAL_ERROR;
     }
 
     // Exit if unable to set the socket in listening mode
     #define CLI_SERVER_BACKLOG  1
+    USP_LOG_Info("%s: Starting CLI server on %s", __FUNCTION__, cli_uds_file);
     err = listen(sock, CLI_SERVER_BACKLOG);
     if (err == -1)
     {
         USP_ERR_ERRNO("listen", errno);
+        USP_LOG_Error("%s: Unable to listen to Unix domain socket file %s", __FUNCTION__, cli_uds_file);
         close(sock);
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -666,7 +687,9 @@ int ExecuteCli_Version(char *arg1, char *arg2, char *usage)
     SendCliResponse("Agent Version=%s\n", AGENT_SOFTWARE_VERSION);
     SendCliResponse("OpenSSL Version=%s\n", OPENSSL_VERSION_TEXT);
     SendCliResponse("Sqlite Version=%s\n", SQLITE_VERSION);
+#ifndef REMOVE_DEVICE_BULKDATA
     SendCliResponse("Curl Version=%s\n", curl_version());
+#endif
     SendCliResponse("zlib Version=%s\n", ZLIB_VERSION);
 
 #ifdef ENABLE_MQTT
@@ -1311,15 +1334,6 @@ exit:
 **************************************************************************/
 int ExecuteCli_Show(char *arg1, char *arg2, char *usage)
 {
-    // Show the data model schema if required
-    if (strcmp(arg1, "datamodel")==0)
-    {
-        USP_DUMP("WARNING: This is the data model of this CLI command, rather than the daemon instance of this executable");
-        USP_DUMP("If the data model does not contain 'Device.Test', then you are not running this CLI command with the '-T' option");
-        DATA_MODEL_DumpSchema();
-        return USP_ERR_OK;
-    }
-
     // Show the contents of the database if required
     if (strcmp(arg1, "database")==0)
     {
@@ -1347,6 +1361,13 @@ int ExecuteCli_Show(char *arg1, char *arg2, char *usage)
 **************************************************************************/
 int ExecuteCli_Dump(char *arg1, char *arg2, char *usage)
 {
+    // Show the data model schema if required
+    if (strcmp(arg1, "datamodel")==0)
+    {
+        DATA_MODEL_DumpSchema();
+        return USP_ERR_OK;
+    }
+
     // Show all memory usage
     if (strcmp(arg1, "memory")==0)
     {
@@ -1639,7 +1660,7 @@ int ExecuteCli_ProtoTrace(char *arg1, char *arg2, char *usage)
 
 /*********************************************************************//**
 **
-** ExecuteCli_stop
+** ExecuteCli_Stop
 **
 ** Executes the stop CLI command
 **
@@ -1653,7 +1674,9 @@ int ExecuteCli_ProtoTrace(char *arg1, char *arg2, char *usage)
 int ExecuteCli_Stop(char *arg1, char *arg2, char *usage)
 {
     // Signal that USP Agent should stop, once no queued messages to send
+#ifndef REMOVE_DEVICE_BULKDATA
     BDC_EXEC_ScheduleExit();
+#endif
     MTP_EXEC_ScheduleExit();
     MTP_EXEC_ActivateScheduledActions();
 
@@ -1661,6 +1684,88 @@ int ExecuteCli_Stop(char *arg1, char *arg2, char *usage)
 
     return USP_ERR_OK;
 }
+
+#ifndef REMOVE_USP_SERVICE
+/*********************************************************************//**
+**
+** ExecuteCli_Register
+**
+** Executes the register CLI command, which sends a Register message on the UDS MTP
+**
+** \param   arg1 - pointer to string containing comma separated list of data model objects to register
+** \param   arg2 - unused
+** \param   usage - pointer to string containing usage info for this command
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ExecuteCli_Register(char *arg1, char *arg2, char *usage)
+{
+    int err = USP_ERR_INTERNAL_ERROR;
+    char *endpoint_id;
+
+    // Exit if not running as a USP Service
+    if (RUNNING_AS_USP_SERVICE()==false)
+    {
+        SendCliResponse("Cannot register. Not running as a USP service.\n");
+        goto exit;
+    }
+
+    // Exit if no controller found to send the register to
+    endpoint_id = DEVICE_CONTROLLER_FindFirstControllerEndpoint();
+    if (endpoint_id == NULL)
+    {
+        goto exit;
+    }
+
+    // Queue the register request
+    USP_SERVICE_QueueRegisterRequest(endpoint_id, arg1);
+    err = USP_ERR_OK;
+
+exit:
+    return err;
+}
+
+/*********************************************************************//**
+**
+** ExecuteCli_DeRegister
+**
+** Executes the deregister CLI command, which sends a Deregister message on the UDS MTP
+**
+** \param   arg1 - pointer to string containing comma separated list of data model objects to deregister
+** \param   arg2 - unused
+** \param   usage - pointer to string containing usage info for this command
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ExecuteCli_DeRegister(char *arg1, char *arg2, char *usage)
+{
+    int err = USP_ERR_INTERNAL_ERROR;
+    char *endpoint_id;
+
+    // Exit if not running as a USP Service
+    if (RUNNING_AS_USP_SERVICE()==false)
+    {
+        SendCliResponse("Cannot deregister. Not running as a USP service.\n");
+        goto exit;
+    }
+
+    // Exit if no controller found to send the deregister to
+    endpoint_id = DEVICE_CONTROLLER_FindFirstControllerEndpoint();
+    if (endpoint_id == NULL)
+    {
+        goto exit;
+    }
+
+    // Queue the deregister request
+    USP_SERVICE_QueueDeregisterRequest(endpoint_id, arg1);
+    err = USP_ERR_OK;
+
+exit:
+    return err;
+}
+#endif
 
 /*********************************************************************//**
 **

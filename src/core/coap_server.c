@@ -1179,7 +1179,7 @@ void ReceiveCoapBlock(coap_server_t *cs, coap_server_session_t *css)
     // Exit if an error occurred whilst parsing the PDU
     memset(&pp, 0, sizeof(pp));
     pp.message_id = INVALID;
-    pp.mtp_reply_to.protocol = kMtpProtocol_CoAP;
+    pp.mtp_conn.protocol = kMtpProtocol_CoAP;
 
     action_flags = COAP_ParsePdu(buf, len, &pp);
     if (action_flags != COAP_NO_ERROR)
@@ -1240,16 +1240,16 @@ exit:
         {
             // Create a copy of the reply-to details, modifying coap_host to be the IP literal peer address to send the response back to
             // (This is necessary as the peer's reply-to may be a hostname which has both IPv4 and IPv6 DNS records. We want to reply back using the same IP version we received on)
-            mtp_reply_to_t mtp_reply_to;
-            memcpy(&mtp_reply_to, &pp.mtp_reply_to, sizeof(mtp_reply_to));
-            mtp_reply_to.coap_host = addr_buf;
+            mtp_conn_t mtp_conn;
+            memcpy(&mtp_conn, &pp.mtp_conn, sizeof(mtp_conn));
+            mtp_conn.coap.host = addr_buf;
 
             // The USP response message to this request should be sent back on a new DTLS session, if this USP request was received on a new DTLS session
-            mtp_reply_to.coap_reset_session_hint = css->is_first_usp_msg & cs->enable_encryption;
+            mtp_conn.coap.reset_session_hint = css->is_first_usp_msg & cs->enable_encryption;
             css->is_first_usp_msg = false;
 
             // Post the USP record for processing
-            DM_EXEC_PostUspRecord(css->usp_buf, css->usp_buf_len, css->role, &mtp_reply_to);
+            DM_EXEC_PostUspRecord(css->usp_buf, css->usp_buf_len, UNKNOWN_ENDPOINT_ID, css->role, &mtp_conn);
             FreeReceivedUspRecord(css);
         }
     }
@@ -1628,7 +1628,7 @@ bool IsReplyToValid(coap_server_session_t *css, parsed_pdu_t *pp)
     char host[MAX_COAP_URI_QUERY];
 
     // Percent decode the received host name
-    USP_STRNCPY(host, pp->mtp_reply_to.coap_host, sizeof(host));
+    USP_STRNCPY(host, pp->mtp_conn.coap.host, sizeof(host));
     TEXT_UTILS_PercentDecodeString(host);
 
     // Attempt to interpret the host as an IP literal address (ie no DNS lookup required)

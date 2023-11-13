@@ -188,6 +188,42 @@ int STR_VECTOR_Find(str_vector_t *sv, char *str)
 
 /*********************************************************************//**
 **
+** STR_VECTOR_RemoveByIndex
+**
+** Removes the specified entry from the vector
+**
+** \param   sv - pointer to structure to remove an entry from
+** \param   index - index of the string to remove from within the vector
+**
+** \return  None
+**
+**************************************************************************/
+void STR_VECTOR_RemoveByIndex(str_vector_t *sv, int index)
+{
+    int num_items_after;
+
+    // Remove the string at the specified index
+    USP_SAFE_FREE(sv->vector[index]);
+
+    // Move down all items in the vector after the one we just removed
+    num_items_after = sv->num_entries-1 - index;
+    if (num_items_after > 0)
+    {
+        memmove(&sv->vector[index], &sv->vector[index+1], num_items_after*sizeof(char *));
+    }
+
+    sv->num_entries--;
+
+    // Ensure that the vector is freed, if it now contains no entries
+    if (sv->num_entries == 0)
+    {
+        USP_FREE(sv->vector);
+        sv->vector = NULL;
+    }
+}
+
+/*********************************************************************//**
+**
 ** STR_VECTOR_Destroy
 **
 ** Deallocates all memory associated with the string vector

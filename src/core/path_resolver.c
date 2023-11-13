@@ -211,9 +211,6 @@ int PATH_RESOLVER_ResolvePath(char *path, str_vector_t *sv, int_vector_t *gv, re
     int err;
     resolver_state_t state;
 
-    // Use of the gv argument is only valid for paths that describe parameters
-    USP_ASSERT((gv==NULL) || (op==kResolveOp_Get) || (op==kResolveOp_Set) || (op==kResolveOp_SubsValChange) || (op==kResolveOp_GetBulkData));
-
     // Exit if path contains any path separators with no intervening objects
     if (strstr(path, "..") != NULL)
     {
@@ -403,7 +400,7 @@ void RefreshInstances_LifecycleSubscriptionEndingInPartialPath(char *path)
     dm_instances_t inst;
 
     // Exit if unable to find node representing this object. NOTE: This should never occur, as caller should have ensured path exists in schema
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance, 0);
     if (node == NULL)
     {
         return;
@@ -1460,7 +1457,7 @@ int ResolvePartialPath(char *path, resolver_state_t *state)
     bool is_qualified_instance;
 
     // Exit if unable to find node representing this object
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance);
+    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance, 0);
     if (node == NULL)
     {
         return USP_ERR_INVALID_PATH;
@@ -1644,9 +1641,7 @@ int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *in
 
             if (state->gv != NULL)
             {
-                dm_param_info_t *info;
-                info = &child->registered.param_info;
-                INT_VECTOR_Add(state->gv, info->group_id);
+                INT_VECTOR_Add(state->gv, child->group_id);
             }
         }
 
@@ -1830,7 +1825,7 @@ int AddPathFound(char *path, resolver_state_t *state)
 ** \param   state - pointer to structure containing state variables to use with this resolution
 ** \param   add_to_vector - pointer to variable in which to return if the path should be added to the vector of resolved objects/parameters
 ** \param   path_properties - pointer to variable in which to return the properties of the resolved object/parameter
-** \param   group_id - pointer to variable in which to return the group_id, or NULL if this is not required. NOTE: Only applicable for parameters
+** \param   group_id - pointer to variable in which to return the group_id, or NULL if this is not required
 **
 ** \return  USP_ERR_OK if path resolution should continue
 **
@@ -1844,7 +1839,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
     int err;
     unsigned short permission_bitmask;
 
-    // Assume that the path should be added to the vector
+    // Assume that the path should not be added to the vector
     *add_to_vector = false;
 
     // Exit if the path does not exist in the schema
@@ -1904,7 +1899,6 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
             {
                 USP_ERR_SetMessage("%s: Path (%s) is not an event", __FUNCTION__, path);
                 return USP_ERR_INVALID_PATH;
-                return err;
             }
             break;
 

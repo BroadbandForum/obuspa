@@ -39,6 +39,7 @@
  *
  */
 
+#ifndef REMOVE_DEVICE_BULKDATA
 #include <string.h>
 #include <sys/socket.h>
 #include <errno.h>
@@ -967,3 +968,4 @@ CURLcode LoadBulkDataTrustStore(CURL *curl, void *curl_sslctx, void *parm)
     return CURLE_OK;
 }
 
+#endif // REMOVE_DEVICE_BULKDATA

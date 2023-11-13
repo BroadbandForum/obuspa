@@ -43,7 +43,7 @@
 
 #include "common_defs.h"
 #include "usp-msg.pb-c.h"
-#include "device.h"             // for mtp_reply_to_t
+#include "device.h"             // for mtp_conn_t
 
 
 //------------------------------------------------------------------------------
