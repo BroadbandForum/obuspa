@@ -1179,6 +1179,7 @@ void AttemptWsclientConnect(wsclient_t *wc)
     wc->rx_buf = NULL;
     wc->rx_buf_len = 0;
     wc->rx_buf_max_len = 0;
+    wc->ping_count = 0;
 
     encrypt_str = (wc->enable_encryption) ? "encrypted" : "unencrypted";
     USP_LOG_Info("Attempting to connect to host=%s (port=%d, %s, path=%s) from interface=%s", wc->host, wc->port, encrypt_str, wc->path, interface);

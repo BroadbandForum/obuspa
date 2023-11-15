@@ -1,5 +1,11 @@
 # OB-USP-AGENT Changelog since Release 7.0.0
 
+
+## 2023-11-15 v7.0.5
+### Fixed
+- WebSockets ping failure count is not reset after reconnect (GH#97)
+
+
 ## 2023-09-08 v7.0.4
 ### Added
 - A new core vendor hook has been added (modify_firmware_updated_cb_t), which allows the FirmwareUpdated argument of the Boot! event to be modified from the default determined by OBUSPA.
