@@ -69,6 +69,7 @@
 #define MAX_MQTT_SUBSCRIPTIONS 5
 #define MAX_WEBSOCKET_CLIENTS (MAX_CONTROLLERS)  // Maximum number of WebSocket controllers which an agent sends to, or receives from
 #define MAX_NODE_MAP_BUCKETS  1024  // Maximum number of buckets in the data model node map. This should be set to at least the number of registered parameters and objects in the data model
+#define USP_LOG_MAXLEN  (10*1024)   // Maximum number of characters in a single log statement
 
 // Uncomment and change the following define to override the severity level of messages sent to syslog.
 // Refer to the syslog documentation and its priority argument to know the possible values.
@@ -84,7 +85,7 @@
 #define MAX_USP_MSG_LEN (64*1024)
 
 // Period of time (in seconds) between polling values that have value change notification enabled on them
-#define VALUE_CHANGE_POLL_PERIOD  (30)
+#define VALUE_CHANGE_POLL_PERIOD  (15)
 
 // Location of the database file to use, if none is specified on the command line when invoking this executable
 // NOTE: As the database needs to be stored persistently, this should be changed to a directory which is not cleared on boot up

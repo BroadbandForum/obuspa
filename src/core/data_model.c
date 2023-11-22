@@ -56,6 +56,7 @@
 #include "text_utils.h"
 #include "iso8601.h"
 #include "group_get_vector.h"
+#include "plugin.h"
 
 #ifdef ENABLE_COAP
 #include "usp_coap.h"
@@ -72,6 +73,10 @@
 
 #ifndef REMOVE_USP_BROKER
 #include "usp_broker.h"
+#endif
+
+#ifndef REMOVE_USP_SERVICE
+#include "usp_service.h"
 #endif
 
 //--------------------------------------------------------------------
@@ -237,6 +242,13 @@ int DATA_MODEL_Init(void)
         return err;
     }
 
+    // Register vendor nodes from all plugins in the schema
+    err = PLUGIN_Init();
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
     // Exit if unable to potentially perform a programmatic factory reset of the parameters in the database
     // NOTE: This must be performed before DEVICE_LOCAL_AGENT_SetDefaults(), but after VENDOR_Init()
     err = DATABASE_Start();
@@ -363,6 +375,7 @@ int DATA_MODEL_Start(void)
 
     // Always start the vendor last
     err |= VENDOR_Start();
+    err |= PLUGIN_Start();
 
     // Refresh all objects which use the refresh instances vendor hook
     // This provides the baseline after which object/additions deletions are notified (if relevant subscriptions exist)
@@ -399,6 +412,8 @@ exit:
 void DATA_MODEL_Stop(void)
 {
     VENDOR_Stop();
+    PLUGIN_Stop();
+
     DEVICE_SUBSCRIPTION_Stop();
     DEVICE_CONTROLLER_Stop();
     DEVICE_MTP_Stop();
@@ -420,6 +435,10 @@ void DATA_MODEL_Stop(void)
 
 #ifndef REMOVE_USP_BROKER
     USP_BROKER_Stop();
+#endif
+
+#ifndef REMOVE_USP_SERVICE
+    USP_SERVICE_Stop();
 #endif
 
     // Free the instance vectors here, so that they are not reported as a memory leak

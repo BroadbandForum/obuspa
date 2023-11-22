@@ -813,6 +813,19 @@ int HandleUspMessage(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc)
         goto exit;
     }
 
+#ifndef REMOVE_USP_SERVICE
+{
+    // Check with USP service to see if this is a response to an outgoing contol message
+    bool is_handled;
+    is_handled = USP_SERVICE_AsController_IsExpectedResponse(usp);
+    if (is_handled)
+    {
+        err = USP_ERR_OK;
+        goto exit;
+    }
+}
+#endif
+
     // Exit if the USP message type was not one that we can accept, or was received on the wrong UDS socket
     usp_msg_type = usp->header->msg_type;
     err = ValidateUspMsgType(usp_msg_type, endpoint_id, mtpc, usp->header->msg_id);

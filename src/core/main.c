@@ -66,6 +66,7 @@
 #include "stomp.h"
 #include "retry_wait.h"
 #include "nu_macaddr.h"
+#include "plugin.h"
 
 
 #ifdef ENABLE_WEBSOCKETS
@@ -118,13 +119,14 @@ static struct option long_options[] =
     {"resetfile",  required_argument, NULL, 'r'},    // Specifies the location of a text file containing factory reset parameters
     {"interface",  required_argument, NULL, 'i'},    // Specifies the networking interface to use for communications
     {"cli",        required_argument, NULL, 's'},    // Specifies the Unix domain socket file to use for CLI communications
-    {"register",   required_argument, NULL, 'R'},    // Specifies the top level data model objects to register. Use of this option runs the Agent as a USP Service
+    {"register",   required_argument, NULL, 'R'},    // Specifies the top level data model objects to register. Use of this option runs the Agent as a USP Service,
+    {"plugin",     required_argument, NULL, 'x'},    // Specifies the path to a vendor plugin - can be used multiple times to load multiple plugins
 
     {0, 0, 0, 0}
 };
 
 // In the string argument, the colons (after the option) mean that those options require arguments
-static char short_options[] = "hl:f:v:a:t:r:i:mepcs:R:";
+static char short_options[] = "hl:f:v:a:t:r:i:mepcs:R:x:";
 #endif // OVERRIDE_MAIN
 
 //--------------------------------------------------------------------------------------
@@ -281,6 +283,10 @@ int main(int argc, char *argv[])
                 return err;
                 break;
 
+
+            case 'x':
+                PLUGIN_Load(optarg);
+                break;
 
             default:
                 USP_LOG_Error("ERROR: USP Agent was invoked with the '-%c' option but the code was not compiled in.", c);

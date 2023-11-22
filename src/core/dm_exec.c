@@ -1947,6 +1947,20 @@ void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigne
             USP_SERVICE_QueueRegisterRequest(endpoint_id, usp_service_objects);
         }
     }
+
+    if (path_type == kUdsPathType_BrokersAgent)
+    {
+        // Save the Broker's endpoint_id and MTP connection parameters for use by the USP Service when acting as a controller
+        mtp_conn_t mtp_conn;
+        memset(&mtp_conn, 0, sizeof(mtp_conn_t));
+        mtp_conn.protocol = kMtpProtocol_UDS;
+        mtp_conn.is_reply_to_specified = true;
+        mtp_conn.uds.conn_id = conn_id;
+        mtp_conn.uds.path_type = path_type;
+
+        USP_SERVICE_SetBrokerAgent(endpoint_id, &mtp_conn);
+    }
+
 #endif
 
     DM_EXEC_EnableNotifications();

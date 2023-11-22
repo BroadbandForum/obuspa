@@ -1083,7 +1083,14 @@ int ResetFactoryParameters(void)
     err = VENDOR_GetFactoryResetParams(&params);
     if (err != USP_ERR_OK)
     {
-        return err;
+        goto exit;
+    }
+
+    // Exit if unable to add all plugin factory reset parameters
+    err = PLUGIN_GetFactoryResetParams(&params);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
     }
 
     USP_LOG_Info("%s: Setting factory reset parameters", __FUNCTION__);

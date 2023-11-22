@@ -44,10 +44,18 @@
 
 //------------------------------------------------------------------------------
 // API
+void USP_SERVICE_Stop(void);
+
 void USP_SERVICE_QueueRegisterRequest(char *endpoint_id, char *objects);
 void USP_SERVICE_HandleRegisterResp(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
 void USP_SERVICE_QueueDeregisterRequest(char *endpoint_id, char *objects);
 void USP_SERVICE_HandleDeRegisterResp(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
+bool USP_SERVICE_AsController_IsExpectedResponse(Usp__Msg *usp);
+int USP_SERVICE_SetBrokerAgent(char *endpoint_id, mtp_conn_t *mrt);
+
+// API functions called when acting as a controller
+int USP_SERVICE_Get_AsController(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
+int USP_SERVICE_Set_AsController(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
 
 
 #endif

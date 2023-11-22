@@ -246,6 +246,28 @@ typedef struct
     char *err_msg;      // OUT: Error message, if this parameter failed to set in the new object. Set by create object vendor hook
 } group_add_param_t;
 
+//------------------------------------------------------------------------------------
+// Enumeration for level of information being logged
+typedef enum
+{
+    kLogLevel_Off = 0,
+    kLogLevel_Error = 1,
+    kLogLevel_Warning = 2,
+    kLogLevel_Info = 3,
+    kLogLevel_Debug = 4,
+
+    kLogLevel_Max       // This should always be the last value in the enum
+} log_level_t;
+
+//------------------------------------------------------------------------------------
+// Enumeration for type of information being logged
+typedef enum
+{
+    kLogType_Debug,
+    kLogType_Dump,
+    kLogType_Protocol
+} log_type_t;
+
 //-------------------------------------------------------------------------
 // Typedefs for data model callback functions (vendor hooks)
 typedef int (*dm_get_value_cb_t)(dm_req_t *req, char *buf, int len);
@@ -468,8 +490,25 @@ time_t USP_CONVERT_DateTimeToUnixTime(char *date);
 char *USP_CONVERT_UnixTimeToDateTime(time_t unix_time, char *buf, int len);
 
 //------------------------------------------------------------------------------
-// Functions setting error messages
+// Functions setting error messages in the data model thread
 void USP_ERR_SetMessage(char *fmt, ...)   __attribute__((format(printf, 1, 2)));
+
+//------------------------------------------------------------------------------
+// Functions for debug logging
+void USP_LOG_Printf(log_level_t log_level, log_type_t log_type, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+void USP_LOG_String(log_level_t log_level, log_type_t log_type, char *str);
+void USP_LOG_Puts(log_level_t log_level, log_type_t log_type, const char *str);
+void USP_LOG_HexBuffer(const char *title, const unsigned char *buf, int len);
+void USP_LOG_Callstack(void);
+
+//------------------------------------------------------------------------------------
+// Macros used for normal debug logging
+extern log_level_t usp_log_level;
+
+#define USP_LOG_Error(...)       if (usp_log_level >= kLogLevel_Error)   { USP_LOG_Printf(kLogLevel_Error, kLogType_Debug, __VA_ARGS__); if (enable_callstack_debug) { USP_LOG_Callstack(); } }
+#define USP_LOG_Warning(...)     if (usp_log_level >= kLogLevel_Warning) { USP_LOG_Printf(kLogLevel_Warning, kLogType_Debug, __VA_ARGS__); }
+#define USP_LOG_Info(...)        if (usp_log_level >= kLogLevel_Info)    { USP_LOG_Printf(kLogLevel_Info, kLogType_Debug, __VA_ARGS__); }
+#define USP_LOG_Debug(...)       if (usp_log_level >= kLogLevel_Debug)   { USP_LOG_Printf(kLogLevel_Debug, kLogType_Debug, __VA_ARGS__); }
 
 //-------------------------------------------------------------------------
 // Functions used when registering validate_add and validate_delete vendor hooks, if the multi-instance object is read only

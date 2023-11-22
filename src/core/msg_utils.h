@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2020, Broadband Forum
- * Copyright (C) 2020  CommScope, Inc
+ * Copyright (C) 2023, Broadband Forum
+ * Copyright (C) 2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,46 +32,26 @@
  *
  */
 
+
 /**
- * \file group_get_vector.h
+ * \file msg_utils.h
  *
- * Header file for functions performing getting of a mixed group of parameters
+ * Header file for functions implementing common USP message handling utility functions
+ * (currently only used when running as a USP Service or a USP Broker)
  *
  */
+#ifndef MSG_UTILS_H
+#define MSG_UTILS_H
 
-#ifndef GROUP_GET_VECTOR_H
-#define GROUP_GET_VECTOR_H
-
-#include "str_vector.h"
+#include "common_defs.h"
+#include "usp-record.pb-c.h"
+#include "usp-msg.pb-c.h"
 #include "kv_vector.h"
 
 //------------------------------------------------------------------------------
-// Structure containing info for parameter to get, and its value or error
-typedef struct
-{
-    char *path;
-    int group_id;
-    char *value;
-    int err_code;
-    char *err_msg;
-} group_get_entry_t;
-
-//------------------------------------------------------------------------------
-// Vector of all parameters to get (for all groups)
-typedef struct
-{
-    group_get_entry_t *vector;
-    int num_entries;
-} group_get_vector_t;
-
-//------------------------------------------------------------------------------
 // API
-void GROUP_GET_VECTOR_Init(group_get_vector_t *ggv);
-void GROUP_GET_VECTOR_Destroy(group_get_vector_t *ggv);
-void GROUP_GET_VECTOR_Add(group_get_vector_t *ggv, char *path, int group_id);
-int GROUP_GET_VECTOR_FindParam(group_get_vector_t *ggv, char *path);
-void GROUP_GET_VECTOR_AddParams(group_get_vector_t *ggv, str_vector_t *params, int_vector_t *group_ids);
-void GROUP_GET_VECTOR_ConvertToKeyValueVector(group_get_vector_t *ggv, kv_vector_t *kvv);
-void GROUP_GET_VECTOR_GetValues(group_get_vector_t *ggv);
+int MSG_UTILS_ValidateUspResponse(Usp__Msg *resp, Usp__Response__RespTypeCase response_type, char **param_errs_path);
+int MSG_UTILS_ProcessSetResponse(Usp__Msg *resp, kv_vector_t *params, int *failure_index);
+void MSG_UTILS_AddSetReq_Param(Usp__Set *set, char *path, char *value);
 
 #endif
