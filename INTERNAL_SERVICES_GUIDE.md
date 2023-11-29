@@ -3,76 +3,69 @@ This document describes how to use OBUSPA to provide USP internal services
 ## Overview 
 USP Internal Services are described in detail on the Broadband Forum website here:-
 https://usp.technology/specification/index.html#sec:software-modularization-theory-of-operations
-[![USPservices](https://usp.technology/specification/extensions/device-modularization/use-cases.png)
+![USPservices](https://usp.technology/specification/extensions/device-modularization/use-cases.png)
 
 ## Features
-
 USP Services provide broadly two features:-
 
-- Allow applications running on a device to register part of their data model with the USP Agent. This exposes that part of the data model to any cloud services or other USP Services (with permission) to access and control that Service.  Note that when the USP Agent is running in conjunction with USP Services, it is typically referred to as the USP Broker.  A USP Broker acts as both an Agent in the conventional sense,  but also as a Controller with respect to any USP services registering with it.
+- Allow applications running on a device to register part of their data model with the USP Agent. This exposes that part of the data model to any cloud services or other USP Services (with permission) to access and control that service.  Note that when the USP Agent is running in conjunction with USP Services, it is typically referred to as the USP Broker.  A USP Broker acts as both an Agent in the conventional sense,  but also as a Controller with respect to any USP Services registering with it.
 
 - Allow applications running on a device to control (subject to permission) the Broker and other USP Services.
 
-## Building support for USP services
+## Building support for USP Services
 
 USP Broker support is enabled by default. It can be explicitly disabled by defining "REMOVE_USP_BROKER" in /src/vendor/vendor_defs.h 
 
 ## Running OBUSPA as a Broker
 
-The Broker is enabled by default.  However, some configuration is necessary in order to configure the Unix domain sockets used by internal services.  In addition, if we are running several instances of OBUSPA, it is necessary to change some command line options to ensure a different database and CLI socket path are used for each instance.
+The Broker is enabled by default.  However, some configuration is necessary in order to configure the Unix domain sockets used by USP Services.  In addition, if we are running several instances of OBUSPA, it is necessary to change some command line options to ensure a different database file and CLI socket path are used for each instance.
 
-OBUSPA stores its configuration in a database file, the path of which can be provided as a command line option.  https://github.com/BroadbandForum/obuspa/blob/master/QUICK_START_GUIDE.md contains a detailed description of this database in the section entitled "Running OB-USP-AGENT for the first time".
+OBUSPA stores its configuration in a database file, the path of which can be provided as a command line option. https://github.com/BroadbandForum/OBUSPA/blob/master/QUICK_START_GUIDE.md contains a detailed description of this database in the section entitled "Running OB-USP-AGENT for the first time".
 
-We need to copy and modify the factory_reset_example.txt to broker_reset.txt and add additional data model entries that OBUSPA uses to instantiate the domain sockets used by the UDS backend.  Though different configurations are possible, it is recommended (for interoperability) that the Broker creates two listening sockets.  Each USP Service will connect/disconnect as necessary and register its data model with the Broker.  One of these sockets is used when the USP Service is acting as an Agent to the Broker's Controller.  The other socket is used when the USP Service is acting as a Controller of the Broker's agent.
+We need to copy and modify the factory_reset_example.txt to broker_reset.txt and add additional data model entries that OBUSPA uses to instantiate the domain sockets used by the UDS backend.  Though different configurations are possible, it is recommended (for interoperability) that the Broker creates two listening sockets.  Each USP Service will connect/disconnect as necessary and register its data model with the Broker.  One of these sockets is used when the USP Service is acting as an data model provider to the Broker's Controller.  The other socket is used when the USP Service is acting as a Controller of the Broker's Agent.
 
 ### Configuring the Broker's Controller socket
-The following well known path should be used to configure the Broker's Controller socket.  OBUSPA will use this information to create a listening socket at the specified path that USP Service's Agents can connect to. 
+The following well known path should be used to configure the Broker's Controller socket.  OBUSPA will use this information to create a listening socket at the specified path that a USP Service's Agent can connect to. 
 ```
 Device.UnixDomainSockets.UnixDomainSocket.1.Alias" "cpe-1"
 Device.UnixDomainSockets.UnixDomainSocket.1.Mode" "Listen"
 Device.UnixDomainSockets.UnixDomainSocket.1.Path" "/var/run/usp/broker_controller_path"
 ```
-OBUSPA must be run for the first time to configure the database.  Note that OBUSPA will only use these factory default values if no database already exists.  If you wish to change the default parameters then you must remove the existing database.  In the below command, '-f' selects usp_broker.db as the database (instead of the default usp.db) and '-s' selects broker_cli as the CLI socket (instead of the default usp_cli).
+OBUSPA will create and configure the database the first time it is run.  Note that OBUSPA will only use these factory default values if no database already exists.  If you wish to change the default parameters then you must remove the existing database.  In the below command, '-f' selects usp_broker.db as the database (instead of the default usp.db) and '-s' selects broker_cli as the CLI socket (instead of the default usp_cli).
 
 ```
 obuspa -f /usr/local/var/obuspa/usp_broker.db -s /tmp/broker_cli -p -v 4 -r broker_reset.txt -i enp0s3
 ```
 ### Configuring a USP Service to connect to the Broker
-The USP Service must also be told to connect to the Broker's Controller path. Using factory_reset_example.txt as a starting point, copy and modify to service1_reset.txt and add the following lines:-
+A second instance of OBUSPA can be used as the basis for a USP Service.  It must also be told to connect to the Broker's (listening socket) Controller path. Using factory_reset_example.txt as a starting point, copy and modify to service1_reset.txt and add the following lines:-
 ```
+Device.LocalAgent.EndpointID "proto::service1"
 Device.UnixDomainSockets.UnixDomainSocket.1.Alias "cpe-1"
 Device.UnixDomainSockets.UnixDomainSocket.1.Mode "Connect"
 Device.UnixDomainSockets.UnixDomainSocket.1.Path "/var/run/usp/broker_controller_path"
-Device.LocalAgent.MTP.1.Alias  "cpe-1"
-Device.LocalAgent.MTP.1.Protocol  "UDS"
-Device.LocalAgent.MTP.1.UDS.UnixDomainSocketRef  "Device.UnixDomainSockets.UnixDomainSocket.1"
-Device.LocalAgent.MTP.1.Enable  "true"
-Device.LocalAgent.EndpointID "proto::service1"
 ```
-Note the the Endpoint ID is set differently for the USP Service to "proto::service1".  By default the USP Endpoint ID is derived from the network adapter MAC address.  Each Endpoint ID must be unique which will plainly not be the case if we continue to use the default Endpoint ID.  For USP Services we set an appropriate Endpoint ID in the settings database.
+Note the the Endpoint ID is set differently for the USP Service to "proto::service1".  By default the USP Endpoint ID is derived from the network adapter MAC address.  Each Endpoint ID must be unique which will plainly not be the case if we continue to use the default MAC address besed endpoint ID.  For each USP Service we set an appropriate Endpoint ID in the settings database that identifies that Service.
 ```
-obuspa -f /usr/local/var/obuspa/usp_service1.db -s /tmp/service1_cli -p -v4 -r service1_reset.txt -i enp0s3
+obuspa -f /usr/local/var/obuspa/usp_server1.db -s /tmp/service1_cli -p -v4 -r service1_reset.txt -i enp0s3
 ```
-Running the above command in a second terminal (whilst the Broker is active in the first terminal) should output some debug that indicates the two instances of OBUSPA are communicating over the socket.
-
-The USP Service should attempt to connect to the Broker:-
+Running the above command in a second terminal (whilst the Broker is active in the first terminal) should output some debug that indicates the two instances of OBUSPA are communicating over the socket.  We should see the USP Ssrvice attempt to connect to the Broker over the UDS connection:-
 ```
 Sending UDS HANDSHAKE to endpoint_id=UNKNOWN on Broker's Controller path
 Received UDS HANDSHAKE from endpoint_id=os::012345-080027352E99 on Broker's Controller path
 ```
-And the Broker should accept the connection from the Service:-
+And the Broker should accept the connection from the Service and return the handshake:-
 ```
 Received UDS HANDSHAKE from endpoint_id=proto::service1 on Broker's Controller path
 Sending UDS HANDSHAKE to endpoint_id=proto::service1 on Broker's Controller path
 ```
-## Implementing a USP Service vendor backend
-A developer may choose to use OBUSPA as the basis for developing an application that is configurable via its registered data model.  This section provides a simple example that demonstrates how this might be achieved.  Note that QUICK_START_GUIDE.md contains more detailed examples of how to add to the data model of OBUSPA.  This section focusses on how this is used in conjunction with USP Internal Services.  
+## Implementing a USP Service "Data Model Provider" using a vendor backend
+A developer may choose to use OBUSPA as the basis for developing an application that is remotely configurable by registering it's data model.  This section provides a simple example that demonstrates how this might be achieved.  Note that QUICK_START_GUIDE.md contains more detailed examples of how to add to the data model of OBUSPA.  This section focusses on how this is used in conjunction with USP Internal Services.  
 
-Configuring a network based ACS to manipulate the data model is beyond the scope of this example.  In the short tutorial below we use OBUSPA's built in CLI functionality as a developer tool to connect to the broker and get/set values.  
+Configuring a Controller ACS to manipulate the data model is beyond the scope of this example.  In this short tutorial we use OBUSPA's built-in CLI functionality as a developer tool to connect to the Broker instance to get/set values belonging to the USP Service.
 
-src\vendor\vendor.c contains a skeleton vendor implementation that does nothing initially. We will modify VENDOR_Init() to create a dummy object whose parameters are stored in the database.  We'll add a callback function to log changes to the value of ParamA.  
+Src\vendor\vendor.c by default contains a skeleton vendor implementation that provides stub functions that we can use to add our own data model values. We will modify VENDOR_Init() to create a dummy object whose parameters are stored in the Service's database.  We'll also add a callback function to notify us of any changes made to the value of ParamA.  
 
-We only want to initialise this USP Service object for the Service instance of OBUSPA and not the Broker instance. As both processes will share the same executable binary, it is necessary to use the RUNNING_AS_A_USP_SERVICE() macro to only register the data model parameters in the case where we are running as the Service :-
+We only want to initialise this USP Service object for the Service instance of OBUSPA and not the Broker instance. As both processes will share the same executable binary,  we will use the RUNNING_AS_A_USP_SERVICE() macro to only register the data model parameters in the case where we are running as the Service :-
 
 ```
 #include "common_defs.h"
@@ -95,33 +88,198 @@ int VENDOR_Init(void)
 }
 ```
 
-Finally we need to run the Service and verify that we can query and update our USP Service data model object.  Make sure the Broker is running in one terminal:-
+After recompiling OBUSPA we need to run both the Broker and the Service instances.  The Service will connect to the Broker and register "Device.Test".  Then we will verify that we can query and update our USP Service data model object from the Broker.  First make sure the Broker is running in one terminal:-
 ```
 obuspa -f /usr/local/var/obuspa/usp_broker.db -s /tmp/broker_cli -p -v 4 -i enp0s3
 ```
-Verify that the Device.Test object is NOT visible in the data model
+And confirm that the Device.Test object is NOT visible in the data model.  We haven't started the "service" instance of OBUSPA yet, so there is no Test object instantiated or registered with the Broker.
 ```
 obuspa -s /tmp/broker_cli -c get Device.Test.
 DM_PRIV_GetNodeFromPath: Path is invalid: Device.Test
 ```
-Then run the USP Service in a second terminal, this time adding the -R option and specifying the path to the object to register with the Broker:-
+Then start the USP Service instance of OBUSPA in a second terminal, this time adding the -R option and specifying the path to the object to register with the Broker:-
 ```
-obuspa -f /usr/local/var/obuspa/usp_service1.db -s /tmp/service1_cli -p -v4 -i enp0s3 -R "Device.Test."
+obuspa -f /usr/local/var/obuspa/usp_server1.db -s /tmp/service1_cli -p -v4 -i enp0s3 -R "Device.Test."
 ```
-And query the Broker again to validate that Device.Test is registered and accessible:-
+And query the Broker again to validate that Device.Test to confirm that this time Device.Test is registered and accessible:-
 ```
 obuspa -s /tmp/broker_cli -c get Device.Test.
 Device.Test.ServiceA.ParamA => default_A
 ```
-Use the obuspa CLI to set the value of paramA to something else:-
+We can use the OBUSPA CLI to instruct the Broker to change the value of service1 paramA value:-
 ```
 obuspa -s /tmp/broker_cli -c set Device.Test.ServiceA.ParamA obuspa_is_great
 Device.Test.ServiceA.ParamA => obuspa_is_great
 obuspa -s /tmp/broker_cli -c get Device.Test.
 Device.Test.ServiceA.ParamA => obuspa_is_great
 ```
-Check the log output from service1 instance of obuspa to verify that the parameter was changed:-
+Check the log output from service1 instance of OBUSPA to verify that the parameter was changed:-
 ```
 SET : processing at time 2023-09-07T13:26:41Z
 NotifyChange_ServiceA_ParamA enter : value obuspa_is_great
 ```
+## Implementing a USP service "as a controller" vendor backend
+In the previous example we created a vendor backend that, as an Agent, registered its datamodel with the Broker allowing Controllers to manipulate that Service.  This section describes how a Service can also act as a Controller, thus allowing it to query and manipulate other USP Services via the Broker instance.  We must start by modifying vendor.c to include usp_service.h.  This header contains the API definitions required to issue Controller messages to the Broker.
+```
+#include "usp_service.h"
+```
+We need some way to issue control commands to the Service. We will implement a vendor backend that behaves that provides a CLI interface.  This is similar to how we used the CLI in the datamodel provider example earlier.  The difference is that the control commands are issued from our Service to the Broker over USP protocol (previously the CLI commands were executing on the Broker itself).
+
+Our Vendor backend needs a thread that takes control commands as input from the command line, interprets and executes them, displays the result and then loops back around to wait for more input.   In VENDOOR_Start() we can spawn a thread:-
+```
+int VENDOR_Start(void)
+{
+    int err = USP_ERR_OK;
+    err = OS_UTILS_CreateThread("vendortest", UspVendorThread, (void*)NULL);
+    return err;
+}
+```
+We use the readline library to provide a more functional command line and provide a useful command history.  To link against a dynamic library modify /src/vendor/vendor.am and add the linker argument:-
+```
+eco_envoy_LDFLAGS += -lreadline
+```
+usp_service.h contains the followinig API functions that can be used to perform GET and SET operations on other data model provider Services
+```
+// API functions called when acting as a Controller
+int USP_SERVICE_Get_AsController(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
+int USP_SERVICE_Set_AsController(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
+```
+In both cases "params" is a structure containing a list of key/value pairs.  Both Get and Set can take a list of one or more TR-181 datamodel paths (and in the case of "set" also the corresponding values of the keys to update).   For the purposes of the example we'll wrap these in some primitive string parsing code to extract the keys and values from the string returned from readline.  The full listing for our thread function is shown below (note that in the interest of brevity this source code does not handle error paths. It's intended to serve only as an example of how USP Service API can be used):-
+````
+void *UspVendorThread(void *args)
+{
+   using_history();
+
+   char *s = NULL; 
+
+   while ((s = readline(">>"))) 
+   {
+        if (strcmp (s, "quit") == 0) {
+            free (s);
+            break;
+        }
+
+        if (s && *s)
+           add_history (s);
+
+        str_vector_t sv_params;
+        kv_vector_t kvv_params;
+        char *c = NULL;
+        int index = 0;
+        char errMsg[VENDOR_TEST_ERR_MSG_LEN];
+        int err = USP_ERR_OK;
+
+        errMsg[0] = '\0';
+
+        KV_VECTOR_Init(&kvv_params);
+        STR_VECTOR_Init(&sv_params);
+
+        // 1st value is command followed by arguments
+        // Note using comma as delimiter as value may be a string containing spaces
+        TEXT_UTILS_SplitString(s, &sv_params, ",");
+
+        if (!strcmp(sv_params.vector[0], "GET"))
+        {
+            for (index = 1 ; index < sv_params.num_entries ; index++)
+            {
+                KV_VECTOR_Add(&kvv_params, sv_params.vector[index], "");
+            }
+            err = USP_SERVICE_Get_AsController(&kvv_params, VENDOR_TEST_USP_TIMEOUT, errMsg, VENDOR_TEST_ERR_MSG_LEN);
+        }
+        else if (!strcmp(sv_params.vector[0], "SET"))
+        {
+            for (index = 1 ; index < sv_params.num_entries ; index+=2)
+            {
+                KV_VECTOR_Add(&kvv_params, sv_params.vector[index], sv_params.vector[index+1]);
+            }
+            err = USP_SERVICE_Set_AsController(&kvv_params, VENDOR_TEST_USP_TIMEOUT, errMsg, VENDOR_TEST_ERR_MSG_LEN);
+        }
+        else
+        {
+            USP_LOG_Error("Unrecognised parameter %s", sv_params.vector[0]);
+            goto exit;
+        }
+
+        for (index = 0 ; index < kvv_params.num_entries ; index++)
+        {
+            kv_pair_t *kv = &kvv_params.vector[index];
+            USP_ASSERT(kv->value != NULL);
+            printf("\"%s\" => \"%s\" \n", kv->key, kv->value);
+        }
+
+exit:
+        KV_VECTOR_Destroy(&kvv_params);
+        STR_VECTOR_Destroy(&sv_params);
+
+        free (s);
+    }
+    return NULL;
+}
+````
+In the previous example we ran an instance of OBUSPA as the Broker and a second instance of the OBUSPA as a Service which registered part of its datamodel with the Broker thus making it configurable from Controllers.  With the new vendor backend we can launch a third instance of OBUSPA that will behave as a Controller.
+
+Before we can launch our USP Service acting as a Controller we need to re-configure the Broker to accept connections from Services acting as Controllers.   Modify fac_reset_broker.txt and add the following lines to create a listening Agent socket.  Here the Broker needs to act as the Agent, and so we create a Broker Agent path :-
+````
+Device.UnixDomainSockets.UnixDomainSocket.2.Alias "cpe-2"
+Device.UnixDomainSockets.UnixDomainSocket.2.Mode "Listen"
+Device.UnixDomainSockets.UnixDomainSocket.2.Path "/var/run/usp/broker_agent_path"
+````
+The USP Broker must be running:-
+````
+obuspa -i wan -v 3 -r /fac_reset_broker.txt -f /obuspa_broker.db
+````
+And our USP Service registering the datamodel:-
+````
+obuspa -i wan -v 3 -r /fac_reset_service1.txt -f /obuspa_service1.db -R Device.Test.
+````
+ In order for a USP Service to act as a Controller it must connect to the Broker through the Broker's Agent socket described above.  Modify fac_reset_service2.txt and add the following lines.  Note that a Service can act as a data model provider, a Controller or as both at the same time.  The USP Service must "connect" to the Broker's listening socket.
+````
+Device.UnixDomainSockets.UnixDomainSocket.2.Alias "cpe-2"
+Device.UnixDomainSockets.UnixDomainSocket.2.Mode "Connect"
+Device.UnixDomainSockets.UnixDomainSocket.2.Path "/var/run/usp/broker_agent_path"
+````
+Finally we can launch service2 acting as a Controller:-
+````
+obuspa  -i wan -v 3 -r /fac_reset_service1.txt -f /obuspa_service2.db
+````
+And issue some simple get/set requests to the Broker:-
+````
+>>GET,Device.VendorExample.
+"Device.VendorExample.ParamA" => "false" 
+"Device.VendorExample.ParamB" => "" 
+"Device.VendorExample.ParamC" => "0" 
+"Device.VendorExample.ParamD" => "default_D" 
+>>
+>>SET,Device.VendorExample.ParamA,true
+"Device.VendorExample.ParamA" => "true" 
+>>GET,Device.VendorExample.ParamA
+"Device.VendorExample.ParamA" => "true" 
+````
+
+With debug verbosity set to info, the service1 log will show the USP GET request arrive, be processed and the response returned to the Broker:-
+```
+>>USP Record received at time 2023-11-29T09:35:47Z, from endpoint_id=self::obuspa_broker over UDS (Broker's Controller path)
+GET : processing at time 2023-11-29T09:35:47Z
+GetParamA: Returning ParamA value False
+GetParamB: Returning ParamB value 
+GetParamC: Returning ParamA value 0
+GET_RESP sending at time 2023-11-29T09:35:47Z, to host self::obuspa_broker over UDS
+Sending USP RECORD to endpoint_id=self::obuspa_broker on Broker's Controller path
+````
+Setting the value of service1's ParamD value from service2 triggers service1's notify function.  From service2:-
+````
+>>SET,Device.VendorExample.ParamD,bar
+SET sending at time 2023-11-29T09:38:11Z, to host self::obuspa_broker over UDS
+Sending USP RECORD to endpoint_id=self::obuspa_broker on Broker's Agent path
+USP Record received at time 2023-11-29T09:38:11Z, from endpoint_id=self::obuspa_broker over UDS (Broker's Agent path)
+"Device.VendorExample.ParamD" => "bar" 
+````
+And in service1's log:-
+````
+>>USP Record received at time 2023-11-29T09:38:11Z, from endpoint_id=self::obuspa_broker over UDS (Broker's Controller path)
+SET : processing at time 2023-11-29T09:38:11Z
+NotifyChange_ParamD enter : value bar
+SET_RESP sending at time 2023-11-29T09:38:11Z, to host self::obuspa_broker over UDS
+Sending USP RECORD to endpoint_id=self::obuspa_broker on Broker's Controller path
+````
+
