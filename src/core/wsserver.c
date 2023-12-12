@@ -99,7 +99,7 @@ typedef struct
     int rx_buf_max_len;     // Current allocated size of rx_buf. This will hold the current websocket fragment. If the USP Record is contained in multiple websocket fragments, then the buffer is reallocated to include the new fragment
     int tx_index;           // Counts the number of bytes sent of the current USP Record to tx (i.e. at the head of the usp_record_send_queue)
 
-    ctrust_role_t role;     // role granted by the CA cert in the chain of trust with the websockets client
+    int role_instance;      // role granted by the CA cert in the chain of trust with the websockets client (instance in Device.LocalAgent.ControllerTrust.Role.{i})
 
     bool send_ping;         // Set if the next LWS_CALLBACK_SERVER_WRITEABLE event should send a ping frame (rather than servicing the USP record send queue)
     int ping_count;         // Number of websocket ping frames sent without corresponding pong responses
@@ -1083,10 +1083,9 @@ int HandleWssEvent_NewClient(struct lws *handle)
     wc->rx_buf_len = 0;
     wc->rx_buf_max_len = 0;
     wc->tx_index = 0;
-    wc->role = (wsserv.cur_config.enable_encryption) ? ROLE_NON_SSL : ROLE_DEFAULT;
+    wc->role_instance = (wsserv.cur_config.enable_encryption) ? ROLE_NON_SSL : ROLE_DEFAULT;
     wc->send_ping = false;
     wc->ping_count = 0;
-    wc->role = ROLE_DEFAULT;
     wc->disconnect_sent = false;
 
     // Assign a unique server handle for this connection
@@ -1168,7 +1167,7 @@ int HandleWssEvent_VerifyCerts(struct lws *handle, SSL *ssl, int preverify_ok, X
     if (cert_chain != NULL)
     {
         // NOTE: Ignoring any error returned by DEVICE_SECURITY_GetControllerTrust() - just leave the role to the default setup in HandleWssEvent_NewClient()
-        DEVICE_SECURITY_GetControllerTrust(cert_chain, &wc->role);
+        DEVICE_SECURITY_GetControllerTrust(cert_chain, &wc->role_instance);
 
         // Free the saved cert chain as we don't need it anymore
         sk_X509_pop_free(cert_chain, X509_free);
@@ -1460,7 +1459,7 @@ int HandleWssEvent_Receive(struct lws *handle, unsigned char *chunk, int chunk_l
     mtp_conn.ws.client_mtp_instance = INVALID;
     mtp_conn.ws.serv_conn_id = wc->conn_id;
     cont_endpoint_id = (wc->is_peer_an_eid) ? wc->peer : UNKNOWN_ENDPOINT_ID;
-    DM_EXEC_PostUspRecord(wc->rx_buf, wc->rx_buf_len, cont_endpoint_id, wc->role, &mtp_conn);
+    DM_EXEC_PostUspRecord(wc->rx_buf, wc->rx_buf_len, cont_endpoint_id, wc->role_instance, &mtp_conn);
 
     // Free receive buffer
     USP_FREE(wc->rx_buf);

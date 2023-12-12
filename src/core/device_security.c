@@ -189,9 +189,9 @@ static char *fp_output_args[] =
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
-void LoadCerts_FromPath(char *path, cert_usage_t cert_usage, ctrust_role_t role);
-void LoadCerts_FromFile(char *file_path, cert_usage_t cert_usage, ctrust_role_t role);
-void LoadCerts_FromDir(char *dir_path, cert_usage_t cert_usage, ctrust_role_t role);
+void LoadCerts_FromPath(char *path, cert_usage_t cert_usage, int role_instance);
+void LoadCerts_FromFile(char *file_path, cert_usage_t cert_usage, int role_instance);
+void LoadCerts_FromDir(char *dir_path, cert_usage_t cert_usage, int role_instance);
 int Get_NumCerts(dm_req_t *req, char *buf, int len);
 int Get_NumTrustCerts(dm_req_t *req, char *buf, int len);
 int GetCert_LastModif(dm_req_t *req, char *buf, int len);
@@ -214,7 +214,7 @@ int GetClientCert(X509 **p_cert, EVP_PKEY **p_pkey);
 int GetCertFromFile(char *cert_file, X509 **p_cert, EVP_PKEY **p_pkey);
 int GetClientCertFromMemory(X509 **p_cert, EVP_PKEY **p_pkey);
 int AddClientCert(SSL_CTX *ctx);
-int AddCert(X509 *cert, cert_usage_t cert_usage, ctrust_role_t role);
+int AddCert(X509 *cert, cert_usage_t cert_usage, int role_instance);
 void DestroyCert(cert_t *ct);
 X509 *Cert_FromDER(const unsigned char *cert_data, int cert_len);
 int ParseCert_Subject(X509 *cert, char **p_subject);
@@ -231,8 +231,6 @@ bool IsSystemTimeReliable(void);
 void LogCertChain(STACK_OF(X509) *cert_chain);
 void LogTrustCerts(void);
 void LogCert_DER(X509 *cert);
-const trust_store_t *GetTrustStoreFromFile(int *num_trusted_certs);
-const trust_store_t *Read_TrustStoreFromFile(int *num_trusted_certs);
 int Operate_GetFingerprint(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
 
 /*********************************************************************//**
@@ -339,7 +337,7 @@ int DEVICE_SECURITY_Start(void)
     // NOTE: The string compare test is present in order to allow an invocation of USP Agent to specify no trust store file using -t "null". Useful, if the -t option is always used in all invocations.
     if ((usp_trust_store_file != NULL) && (strcmp(usp_trust_store_file, "null") != 0))
     {
-        LoadCerts_FromPath(usp_trust_store_file, kCertUsage_TrustCert, kCTrustRole_FullAccess);
+        LoadCerts_FromPath(usp_trust_store_file, kCertUsage_TrustCert, ROLE_TRUST_STORE_DEFAULT);
     }
 
     // Exit if unable to create a temporary SSL context.
@@ -391,7 +389,7 @@ exit:
     }
 
     // Load the certificates contained in the system cert directory
-    LoadCerts_FromPath(SYSTEM_CERT_PATH, kCertUsage_SystemCert, INVALID_ROLE);
+    LoadCerts_FromPath(SYSTEM_CERT_PATH, kCertUsage_SystemCert, INVALID);
 
     return err;
 }
@@ -452,13 +450,13 @@ void DEVICE_SECURITY_Stop(void)
 **       which are owned by the DM thread
 **
 ** \param   cert_chain - pointer to verified certificate chain for this connection
-** \param   role - pointer to variable in which to return role permitted by CA cert
+** \param   role_instance - pointer to variable in which to return instance in Device.LocalAgent.ControllerTrust.Role.{i} permitted by CA cert
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
 #define STACK_OF_X509  STACK_OF(X509)  // Define so that ctags works for this function
-int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, ctrust_role_t *role)
+int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, int *role_instance)
 {
     int err;
     unsigned num_certs;
@@ -514,8 +512,8 @@ int DEVICE_SECURITY_GetControllerTrust(STACK_OF_X509 *cert_chain, ctrust_role_t 
     }
 
     // Exit if unable to get a role associated with the certificate
-    *role = DEVICE_CTRUST_GetCertRole(ct->la_instance);
-    if (*role == INVALID_ROLE)
+    *role_instance = DEVICE_CTRUST_GetCertInheritedRole(ct->la_instance);
+    if (*role_instance == INVALID)
     {
         USP_LOG_Error("%s: CA cert in chain of trust (Device.LocalAgent.Certificate.%d) did not have an associated role in Device.LocalAgent.ControllerTrust.Credential.{i}", __FUNCTION__, ct->la_instance);
         LogCertChain(cert_chain);
@@ -989,12 +987,12 @@ int DEVICE_SECURITY_AddCertHostnameValidationCtx(SSL_CTX* ssl_ctx, const char* n
 **
 ** \param   path - file or directory containing system certs
 ** \param   cert_usage - type of certificates to add
-** \param   role - if the certificates are trust certs, then this is the role that the certs permit to a broker cert
+** \param   role_instance - if the certificates are trust certs, then this is the role that the certs permit to a broker cert
 **
 ** \return  None - errors are ignored
 **
 **************************************************************************/
-void LoadCerts_FromPath(char *path, cert_usage_t cert_usage, ctrust_role_t role)
+void LoadCerts_FromPath(char *path, cert_usage_t cert_usage, int role_instance)
 {
     int err;
     struct stat info;
@@ -1020,11 +1018,11 @@ void LoadCerts_FromPath(char *path, cert_usage_t cert_usage, ctrust_role_t role)
     type = info.st_mode & S_IFMT;
     if ((type == S_IFREG) || (type == S_IFLNK))
     {
-        LoadCerts_FromFile(path, cert_usage, role);
+        LoadCerts_FromFile(path, cert_usage, role_instance);
     }
     else if (type == S_IFDIR)
     {
-        LoadCerts_FromDir(path, cert_usage, role);
+        LoadCerts_FromDir(path, cert_usage, role_instance);
     }
     else
     {
@@ -1040,12 +1038,12 @@ void LoadCerts_FromPath(char *path, cert_usage_t cert_usage, ctrust_role_t role)
 **
 ** \param   file_path - file containing certs
 ** \param   cert_usage - type of certificates to add
-** \param   role - if the certificates are trust certs, then this is the role that the certs permit to a broker cert
+** \param   role_instance - if the certificates are trust certs, then this is the role that the certs permit to a broker cert
 **
 ** \return  None - errors are ignored
 **
 **************************************************************************/
-void LoadCerts_FromFile(char *file_path, cert_usage_t cert_usage, ctrust_role_t role)
+void LoadCerts_FromFile(char *file_path, cert_usage_t cert_usage, int role_instance)
 {
     FILE *fp;
     X509 *cert;
@@ -1065,7 +1063,7 @@ void LoadCerts_FromFile(char *file_path, cert_usage_t cert_usage, ctrust_role_t 
     {
         // Skip this file if unable to add the certificate
         // NOTE: Ownership of the X509 cert passes to AddCert(), so no need to free it in this function
-        err = AddCert(cert, cert_usage, role);
+        err = AddCert(cert, cert_usage, role_instance);
         if (err != USP_ERR_OK)
         {
             continue;
@@ -1087,12 +1085,12 @@ void LoadCerts_FromFile(char *file_path, cert_usage_t cert_usage, ctrust_role_t 
 **
 ** \param   dir_path - directory containing certs
 ** \param   cert_usage - type of certificates to add
-** \param   role - if the certificates are trust certs, then this is the role that the certs permit to a broker cert
+** \param   role_instance - if the certificates are trust certs, then this is the role that the certs permit to a broker cert
 **
 ** \return  None - errors are ignored
 **
 **************************************************************************/
-void LoadCerts_FromDir(char *dir_path, cert_usage_t cert_usage, ctrust_role_t role)
+void LoadCerts_FromDir(char *dir_path, cert_usage_t cert_usage, int role_instance)
 {
     DIR *dir;
     struct dirent *entry;
@@ -1153,7 +1151,7 @@ void LoadCerts_FromDir(char *dir_path, cert_usage_t cert_usage, ctrust_role_t ro
 
         // Skip this file if unable to add the certificate
         // NOTE: Ownership of the X509 cert passes to AddCert(), so no need to free it in this function
-        err = AddCert(cert, cert_usage, role);
+        err = AddCert(cert, cert_usage, role_instance);
         if (err != USP_ERR_OK)
         {
             continue;
@@ -1558,7 +1556,7 @@ int AddClientCert(SSL_CTX *ctx)
 
     // Exit if unable to add the client certificate into Device.Security.Certificate
     // NOTE: Ownership of the X509 cert stays with SSL ctx and agent_cert pointer
-    err = AddCert(cert, kCertUsage_ClientCert, INVALID_ROLE);
+    err = AddCert(cert, kCertUsage_ClientCert, INVALID);
     if (err != USP_ERR_OK)
     {
         USP_SAFE_FREE(subject_alt);
@@ -2018,12 +2016,13 @@ cert_t *Find_CertByHash(cert_hash_t hash)
 **                 NOTE: If the certificate is a client cert, then ownership of the cert stays with the caller
 **                 NOTE: If the certificate is a system cert, then it will be freed by this function
 ** \param   cert_usage - type of certificate to add
-** \param   role - if the certificate is a trust cert, then this is the role that this cert permits to a broker cert
+** \param   role_instance - if the certificate is a trust cert, then this is the role that this cert permits to a broker cert,
+**                          if the certificate is a trust cert, then this is set to INVALID
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int AddCert(X509 *cert, cert_usage_t cert_usage, ctrust_role_t role)
+int AddCert(X509 *cert, cert_usage_t cert_usage, int role_instance)
 {
     int new_num_entries;
     cert_hash_t hash;
@@ -2127,7 +2126,7 @@ int AddCert(X509 *cert, cert_usage_t cert_usage, ctrust_role_t role)
         }
 
         // Exit if unable to add the certificate to the Device.LocalAgent.ControllerTrust.Credential table
-        err = DEVICE_CTRUST_AddCertRole(ct->la_instance, role);
+        err = DEVICE_CTRUST_AddCertRole(ct->la_instance, role_instance);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -2817,7 +2816,7 @@ int LoadTrustStore(void)
     get_trust_store_cb_t get_trust_store_cb;
     X509 *cert;
 
-    // Determine vendor hook function to call to get the trust store from in-memmory array
+    // Determine vendor hook function to call to get the trust store from in-memory array
     if (vendor_hook_callbacks.get_trust_store_cb != NULL)
     {
         get_trust_store_cb = vendor_hook_callbacks.get_trust_store_cb;
@@ -2843,7 +2842,7 @@ int LoadTrustStore(void)
         if (cert != NULL)
         {
             // NOTE: Ownership of the X509 cert passes to AddCert(), so no need to free it in this function
-            err = AddCert(cert, kCertUsage_TrustCert, tct->role);
+            err = AddCert(cert, kCertUsage_TrustCert, tct->role_instance);
             if (err != USP_ERR_OK)
             {
                 return err;

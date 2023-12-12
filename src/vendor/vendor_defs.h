@@ -214,20 +214,15 @@
 //#define E2ESESSION_EXPERIMENTAL_USP_V_1_2
 
 //-----------------------------------------------------------------------------------------
-// Static Declaration of all Controller Trust roles
-// The names of all enumerations may be altered, and enumerations added/deleted, but the last entry must always be kCTrustRole_Max
-typedef enum
-{
-    kCTrustRole_Min = 0,
-    kCTrustRole_FullAccess = 0,
-    kCTrustRole_Untrusted,
+// Instance numbers of roles in Device.LocalAgent.Controller.Role.{i}
+#define ROLE_FULL_ACCESS    1   // Instance to use for trust store certs specified using the -t option
+#define ROLE_UNTRUSTED      2   // Instance to use for untrusted controllers
+#define ROLE_NON_SSL        ROLE_FULL_ACCESS  // Inherited role instance to use if SSL is not being used for the MTP
+#define ROLE_DEFAULT        ROLE_FULL_ACCESS  // Inherited role instance to use if the controller cert does not have an associated inherited role
+#define ROLE_UDS            ROLE_FULL_ACCESS  // Inherited role instance to use for USP requests received over UDS
+#define ROLE_TRUST_STORE_DEFAULT ROLE_FULL_ACCESS  // Inherited role instance to use for trust store certificates specified with the -t option
 
-    kCTrustRole_Max         // This must always be the last entry in this enumeration. It is used to statically size arrays
-} ctrust_role_t;
-
-// Definitions of roles used
-#define ROLE_NON_SSL       kCTrustRole_FullAccess  // Role to use, if SSL is not being used
-#define ROLE_DEFAULT       kCTrustRole_FullAccess  // Default Role to use for controllers until determined from MTP certificate
+#define MAX_CTRUST_ROLES    8  // Maximum number of roles that can be present in Device.LocalAgent.ControllerTrust.Role.{i}
 
 
 

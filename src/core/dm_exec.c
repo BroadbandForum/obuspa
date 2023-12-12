@@ -171,7 +171,7 @@ typedef struct
     unsigned char *pbuf;
     int pbuf_len;
     char *originator;               // endpoint_id that sent this USP record
-    ctrust_role_t role;
+    int role_instance;      // Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
     mtp_conn_t mtp_conn;    // destination to send the USP message response to
 } process_usp_record_msg_t;
 
@@ -180,14 +180,15 @@ typedef struct
 {
     int stomp_instance;
     char *agent_queue;
-    ctrust_role_t role;
+    int role_instance;      // Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
 } stomp_complete_msg_t;
 
 // Notify controller trust role for all controllers connected to the specified MQTT client, and send connect records to them
 typedef struct
 {
     int mqtt_instance;
-    ctrust_role_t role;
+    int role_instance;      // Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
+
     mqtt_protocolver_t version;
     char *agent_topic;
 } mqtt_complete_msg_t;
@@ -778,13 +779,13 @@ int USP_PROCESS_DoWork(do_work_cb_t do_work_cb, void *arg1, void *arg2)
 **                 NOTE: This is part of a larger buffer (with STOMP), so must be copied before sending to the data model thread
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   originator - EndpointID that sent this record (if know, or UNKNOWN_ENDPOINT_ID if unknown)
-** \param   role - Controller Trust Role allowed for this message
+** \param   role_instance - Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
 ** \param   mtpc - details of where response to this USP message should be sent
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, char *originator, ctrust_role_t role, mtp_conn_t *mtpc)
+void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, char *originator, int role_instance, mtp_conn_t *mtpc)
 {
     dm_exec_msg_t  msg;
     process_usp_record_msg_t *pur;
@@ -806,7 +807,7 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, char *originator, 
     memcpy(pur->pbuf, pbuf, pbuf_len);
     pur->pbuf_len = pbuf_len;
     pur->originator = USP_STRDUP(originator);
-    pur->role = role;
+    pur->role_instance = role_instance;
     DM_EXEC_CopyMTPConnection(&pur->mtp_conn, mtpc);
 
 #ifndef REMOVE_USP_BROKER
@@ -842,12 +843,12 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, char *originator, 
 ** \param   stomp_instance - instance number of STOMP connection in Device.STOMP.Connection.{i}
 ** \param   agent_queue - STOMP destination which the agent has actually subscribed to
 **                        NOTE: This may have been set by Device.LocalAgent.MTP.{i}.STOMP.Destination, or it may have been set by the subscribe-dest STOMP header in the CONNECTED frame
-** \param   role - Role to use for controllers connected to the specified STOMP connection
+** \param   role_instance - Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, ctrust_role_t role)
+void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, int role_instance)
 {
     dm_exec_msg_t  msg;
     stomp_complete_msg_t *scm;
@@ -866,7 +867,7 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, c
     scm = &msg.params.stomp_complete;
     scm->stomp_instance = stomp_instance;
     scm->agent_queue = USP_STRDUP(agent_queue);
-    scm->role = role;
+    scm->role_instance = role_instance;
 
     // Send the message - does not block if the queue is full, discards the message instead
     bytes_sent = send(main_mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
@@ -893,12 +894,12 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, c
 ** \param   mqtt_instance - instance number of connection in Device.MQTT.Client.{i}
 ** \param   version - MQTT version in use on the connection
 ** \param   agent_topic - MQTT topic that the agent actually subscribed to. This is put inside a USP Connect record to indicate to the Controller the topic on which the agent is listening
-** \param   role - Role to use for controllers connected to the specified STOMP connection
+** \param   role_instance - Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, ctrust_role_t role)
+void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, int role_instance)
 {
     dm_exec_msg_t  msg;
     mqtt_complete_msg_t *mcm;
@@ -920,7 +921,7 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t ver
     mcm->mqtt_instance = mqtt_instance;
     mcm->version = version;
     mcm->agent_topic = USP_STRDUP(agent_topic);
-    mcm->role = role;
+    mcm->role_instance = role_instance;
 
     // Send the message - does not block if the queue is full, discards the message instead
     bytes_sent = send(main_mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
@@ -1736,7 +1737,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         case kDmExecMsg_ProcessUspRecord:
             pur = &msg.params.usp_record;
             mtpc = &pur->mtp_conn;
-            MSG_HANDLER_HandleBinaryRecord(pur->pbuf, pur->pbuf_len, pur->originator, pur->role, mtpc); // NOTE: Intentionally ignoring the error. Errors are handled in the function
+            MSG_HANDLER_HandleBinaryRecord(pur->pbuf, pur->pbuf_len, pur->originator, pur->role_instance, mtpc); // NOTE: Intentionally ignoring the error. Errors are handled in the function
             break;
 
 #ifndef DISABLE_STOMP
@@ -1746,7 +1747,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             scm = &msg.params.stomp_complete;
 
             DEVICE_CONTROLLER_QueueStompConnectRecord(scm->stomp_instance, scm->agent_queue);
-            DEVICE_CONTROLLER_SetRolesFromStomp(scm->stomp_instance, scm->role);
+            DEVICE_CONTROLLER_SetRolesFromStomp(scm->stomp_instance, scm->role_instance);
             DM_EXEC_EnableNotifications();
         }
             break;
@@ -1758,7 +1759,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             mqtt_complete_msg_t *mcm;
             mcm = &msg.params.mqtt_complete;
             DEVICE_CONTROLLER_QueueMqttConnectRecord(mcm->mqtt_instance, mcm->version, mcm->agent_topic);
-            DEVICE_CONTROLLER_SetRolesFromMqtt(mcm->mqtt_instance, mcm->role);
+            DEVICE_CONTROLLER_SetRolesFromMqtt(mcm->mqtt_instance, mcm->role_instance);
             DM_EXEC_EnableNotifications();
         }
             break;
@@ -1917,6 +1918,7 @@ void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigne
         USP_BROKER_AddUspService(endpoint_id, &mtpc);  // Deliberately ignoring the error - there's nothing more we can do than log it
 
         // Add the endpoint into the Controller table if it connected to the Broker's agent socket
+        // NOTE: This also ensures that the controller's inherited role is full access
         if (path_type == kUdsPathType_BrokersAgent)
         {
             int uds_instance;
@@ -1934,6 +1936,7 @@ void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigne
     if ((RUNNING_AS_USP_SERVICE()==true) && (path_type == kUdsPathType_BrokersController))
     {
         // Add the endpoint into the Controller table since connected to the Broker's controller socket
+        // NOTE: This also ensures that the controller's inherited role is full access
         int uds_instance;
         uds_instance = UDS_GetInstanceForConnection(conn_id);
         if (uds_instance != INVALID)
@@ -2243,7 +2246,7 @@ Usp__Msg *IsMatchingMsgId(dm_exec_msg_t *msg, char *msg_id, char *responder, Usp
     }
 
     // Exit if this USP message can be handled by passthru to a USP Service
-    DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(rec->from_id, pur->role, pur->mtp_conn.protocol, &combined_role);
+    DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(rec->from_id, pur->role_instance, pur->mtp_conn.protocol, &combined_role);
     *is_handled = USP_BROKER_AttemptPassthru(usp, rec->from_id, &pur->mtp_conn, &combined_role, rec);
     if (*is_handled==true)
     {

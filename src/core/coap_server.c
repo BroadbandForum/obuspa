@@ -94,7 +94,8 @@ typedef struct
                             // (because the request was received on a new DTLS session, the response will likely need to be too)
 
     STACK_OF(X509) *cert_chain; // Full SSL certificate chain for the CoAP connection, collected in the SSL verify callback
-    ctrust_role_t role;     // role granted by the CA cert in the chain of trust with the CoAP client
+    int role_instance;      // role granted by the CA cert in the chain of trust with the CoAP client (instance in Device.LocalAgent.ControllerTrust.Role.{i})
+
 
     nu_ipaddr_t peer_addr;   // Current peer that sent the first block. Whilst building up a USP Record, only PDUs from this peer are accepted
     uint16_t peer_port;     // Port that peer is using to communicate with us
@@ -771,7 +772,7 @@ void StartCoapSession(coap_server_t *cs)
     USP_PROTOCOL("%s: Accepting %s CoAP session from %s, port %d (using session %d)", __FUNCTION__, IS_ENCRYPTED_STRING(cs->enable_encryption), nu_ipaddr_str(&peer_addr, buf, sizeof(buf)), peer_port, css->index);
     memcpy(&css->peer_addr, &peer_addr, sizeof(peer_addr));
     css->peer_port = peer_port;
-    css->role = ROLE_NON_SSL;       // This role will be overridden if the DTLS handshake is performed
+    css->role_instance = ROLE_NON_SSL;       // This role will be overridden if the DTLS handshake is performed
 
     // Perform DTLS handshake
     if (cs->enable_encryption)
@@ -805,7 +806,7 @@ void InitCoapSession(coap_server_session_t *css)
     css->wbio = NULL;
     css->is_first_usp_msg = true;
     css->cert_chain = NULL;
-    css->role = ROLE_DEFAULT;    // Set default role, if not determined from SSL certs
+    css->role_instance = ROLE_DEFAULT;    // Set default role, if not determined from SSL certs
     memset(&css->peer_addr, 0, sizeof(css->peer_addr));
     css->peer_port = INVALID;
     memset(&css->token, 0, sizeof(css->token));
@@ -1037,7 +1038,7 @@ int PerformSessionDtlsConnect(coap_server_session_t *css)
     if (css->cert_chain != NULL)
     {
         // Exit if unable to determine the role associated with the trusted root cert that signed the peer cert
-        err = DEVICE_SECURITY_GetControllerTrust(css->cert_chain, &css->role);
+        err = DEVICE_SECURITY_GetControllerTrust(css->cert_chain, &css->role_instance);
         if (err != USP_ERR_OK)
         {
             USP_LOG_Error("%s: DEVICE_SECURITY_GetControllerTrust() failed. Resetting CoAP session", __FUNCTION__);
@@ -1249,7 +1250,7 @@ exit:
             css->is_first_usp_msg = false;
 
             // Post the USP record for processing
-            DM_EXEC_PostUspRecord(css->usp_buf, css->usp_buf_len, UNKNOWN_ENDPOINT_ID, css->role, &mtp_conn);
+            DM_EXEC_PostUspRecord(css->usp_buf, css->usp_buf_len, UNKNOWN_ENDPOINT_ID, css->role_instance, &mtp_conn);
             FreeReceivedUspRecord(css);
         }
     }

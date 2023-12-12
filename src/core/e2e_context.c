@@ -78,7 +78,7 @@ const enum_entry_t sar_states[] = {
     { USP_RECORD__SESSION_CONTEXT_RECORD__PAYLOAD_SARSTATE__COMPLETE,  "COMPLETE"},
 };
 
-int HandleSessionContextRecord(UspRecord__Record *rec, ctrust_role_t role, mtp_conn_t *mtpc);
+int HandleSessionContextRecord(UspRecord__Record *rec, int role_instance, mtp_conn_t *mtpc);
 void ClearE2eSessionState(e2e_session_t * e2e);
 int ValidateNoSessionContextHandling(UspRecord__Record *rec);
 int ValidateSessionContextHandling(UspRecord__Record *rec, mtp_conn_t *mtpc);
@@ -273,13 +273,13 @@ int E2E_CONTEXT_QueueUspSessionRecord(usp_send_item_t *usi, char *endpoint_id, c
 ** NoSessionContext USP Record handler.
 **
 ** \param   rec - pointer to unpacked USP Record struct containing chuncked payload
-** \param   role - Role allowed for this message
+** \param   role_instance - Inherited role in Device.LocalAgent.ControllerTrust.Role.{i}
 ** \param   mtpc - details of where response to this USP message should be sent
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int E2E_CONTEXT_HandleUspRecord(UspRecord__Record *rec, ctrust_role_t role, mtp_conn_t *mtpc)
+int E2E_CONTEXT_HandleUspRecord(UspRecord__Record *rec, int role_instance, mtp_conn_t *mtpc)
 {
     int err = USP_ERR_OK;
 
@@ -300,7 +300,7 @@ int E2E_CONTEXT_HandleUspRecord(UspRecord__Record *rec, ctrust_role_t role, mtp_
             // Process the encapsulated USP Message in a NoSessionContext record
             err = MSG_HANDLER_HandleBinaryMessage(rec->no_session_context->payload.data,
                                                   rec->no_session_context->payload.len,
-                                                  role, rec->from_id, mtpc);
+                                                  role_instance, rec->from_id, mtpc);
             break;
         }
 
@@ -313,7 +313,7 @@ int E2E_CONTEXT_HandleUspRecord(UspRecord__Record *rec, ctrust_role_t role, mtp_
             }
 
             // Process the encapsulated USP Message segment in a SessionContext record
-            err = HandleSessionContextRecord(rec, role, mtpc);
+            err = HandleSessionContextRecord(rec, role_instance, mtpc);
             break;
         }
 
@@ -615,13 +615,13 @@ bool E2E_CONTEXT_IsToSendThroughSessionContext(e2e_session_t *e2e)
 ** or to be received.
 **
 ** \param   rec - pointer to unpacked USP Record struct containing chuncked payload
-** \param   role - Role allowed for this message
+** \param   role_instance - Inherited role in Device.LocalAgent.ControllerTrust.Role.{i}
 ** \param   mtpc - details of where response to this USP message should be sent
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int HandleSessionContextRecord(UspRecord__Record *rec, ctrust_role_t role, mtp_conn_t *mtpc)
+int HandleSessionContextRecord(UspRecord__Record *rec, int role_instance, mtp_conn_t *mtpc)
 {
     // TODO: Incomplete implementation.
     // This implementation does not cope with:
@@ -672,7 +672,7 @@ int HandleSessionContextRecord(UspRecord__Record *rec, ctrust_role_t role, mtp_c
     {
         err = MSG_HANDLER_HandleBinaryMessage(recv_payload.data,
                                               recv_payload.len,
-                                              role, rec->from_id, mtpc);
+                                              role_instance, rec->from_id, mtpc);
         return err;
     }
 
@@ -707,7 +707,7 @@ int HandleSessionContextRecord(UspRecord__Record *rec, ctrust_role_t role, mtp_c
         err = USP_ERR_INTERNAL_ERROR;
         if (buf)
         {
-            err = MSG_HANDLER_HandleBinaryMessage(buf, reassembled_size, role, rec->from_id, mtpc);
+            err = MSG_HANDLER_HandleBinaryMessage(buf, reassembled_size, role_instance, rec->from_id, mtpc);
         }
 
         USP_SAFE_FREE(buf);

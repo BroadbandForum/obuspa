@@ -1,5 +1,5 @@
-# OBUSPA Internal USP services
-This document describes how to use OBUSPA to provide USP internal services
+# OBUSPA Internal USP Services
+This document describes how to use OBUSPA to provide USP Internal Services
 ## Overview 
 USP Internal Services are described in detail on the Broadband Forum website here:-
 https://usp.technology/specification/index.html#sec:software-modularization-theory-of-operations

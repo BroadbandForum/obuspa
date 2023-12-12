@@ -69,11 +69,11 @@
 // API functions
 int DM_EXEC_Init(void);
 void DM_EXEC_Destroy(void);
-void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, char *originator, ctrust_role_t role, mtp_conn_t *mtpc);
+void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, char *originator, int role_instance, mtp_conn_t *mtpc);
 void DM_EXEC_CopyMTPConnection(mtp_conn_t *dst, mtp_conn_t *src);
 void DM_EXEC_FreeMTPConnection(mtp_conn_t *mtpc);
-void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, ctrust_role_t role);
-void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, ctrust_role_t role);
+void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, int role_instance);
+void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, int role_instance);
 #ifdef ENABLE_UDS
 void DM_EXEC_PostUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigned conn_id);
 void DM_EXEC_PostUdsDisconnected(char *endpoint_id, uds_path_t path_type);

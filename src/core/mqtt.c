@@ -121,7 +121,7 @@ typedef struct
     time_t last_status_change;
     mqtt_failure_t failure_code;
 
-    ctrust_role_t role;
+    int role_instance;     // role granted by the CA cert in the chain of trust with the MQTT broker (instance in Device.LocalAgent.ControllerTrust.Role.{i})
 
     // Scheduler
     mqtt_conn_params_t next_params;
@@ -1615,7 +1615,7 @@ void InitClient(mqtt_client_t *client, int index)
 
     client->state = kMqttState_Idle;
     client->mosq = NULL;
-    client->role = ROLE_DEFAULT;
+    client->role_instance = ROLE_DEFAULT;
     client->schedule_reconnect = kScheduledAction_Off;
     client->schedule_close = kScheduledAction_Off;
     client->cert_chain = NULL;
@@ -2345,7 +2345,7 @@ void ConnectCallback(struct mosquitto *mosq, void *userdata, int result)
     {
         if (client->cert_chain != NULL)
         {
-            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role);
+            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role_instance);
             if (err != USP_ERR_OK)
             {
                 USP_LOG_Error("%s: Failed to get the controller trust with err: %d", __FUNCTION__, err);
@@ -2422,7 +2422,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
     {
         if (client->cert_chain != NULL)
         {
-            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role);
+            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role_instance);
             if (err != USP_ERR_OK)
             {
                 USP_LOG_Error("%s: Failed to get the controller trust with err: %d", __FUNCTION__, err);
@@ -2828,7 +2828,7 @@ void SubscribeToAll(mqtt_client_t *client)
     // Let the DM know we're ready for sending messages and instruct it to send a USP Connect record
     // NOTE: client->response_subscription.topic will contain either the value configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured
     //       or the value received in the CONNACK (for MQTTv5)
-    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->conn_params.version, client->response_subscription.topic, client->role);
+    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->conn_params.version, client->response_subscription.topic, client->role_instance);
 }
 
 /*********************************************************************//**
@@ -3394,7 +3394,7 @@ void ReceiveMqttMessage(mqtt_client_t *client, const struct mosquitto_message *m
     }
 
     // Message may not be valid USP
-    DM_EXEC_PostUspRecord(message->payload, message->payloadlen, UNKNOWN_ENDPOINT_ID, client->role, &mtpc);
+    DM_EXEC_PostUspRecord(message->payload, message->payloadlen, UNKNOWN_ENDPOINT_ID, client->role_instance, &mtpc);
 }
 
 /*********************************************************************//**

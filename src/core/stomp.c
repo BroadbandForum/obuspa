@@ -165,7 +165,7 @@ typedef struct
     SSL *ssl;               // SSL used for this STOMP connection
     STACK_OF(X509) *cert_chain; // Full SSL certificate chain for the STOMP connection, collected in the SSL verify callback
 
-    ctrust_role_t role;     // role granted by the CA cert in the chain of trust with the STOMP broker
+    int role_instance;     // role granted by the CA cert in the chain of trust with the STOMP broker (instance in Device.LocalAgent.ControllerTrust.Role.{i})
 
     char *subscribe_dest;   // STOMP destination to subscribe to (received from the STOMP server in the CONNECTED frame).
                             // This overrides Device.LocalAgent.MTP.{i}.STOMP.Destination.
@@ -1402,7 +1402,7 @@ void StartStompConnection(stomp_connection_t *sc)
     else
     {
         // If encryption is off, then use the Non SSL role
-        sc->role = ROLE_NON_SSL;
+        sc->role_instance = ROLE_NON_SSL;
     }
 
     // Update the address used to connect to the controller
@@ -1486,7 +1486,7 @@ void StopStompConnection(stomp_connection_t *sc, bool purge_queued_messages)
     sc->socket_fd = -1;
     sc->ssl = NULL;
     sc->cert_chain = NULL;
-    sc->role = ROLE_DEFAULT;
+    sc->role_instance = ROLE_DEFAULT;
     USP_SAFE_FREE(sc->subscribe_dest);
     sc->agent_heartbeat_period = 0;
     sc->server_heartbeat_period = 0;
@@ -1548,7 +1548,7 @@ void InitStompConnection(stomp_connection_t *sc)
     sc->socket_fd = -1;
     sc->ssl = NULL;
     sc->cert_chain = NULL;
-    sc->role = ROLE_DEFAULT;
+    sc->role_instance = ROLE_DEFAULT;
     sc->subscribe_dest = NULL;
 
     sc->agent_heartbeat_period = 0;
@@ -1641,7 +1641,7 @@ int PerformStompSslConnect(stomp_connection_t *sc)
     if (sc->cert_chain != NULL)
     {
         // Exit if unable to determine the role associated with the trusted root cert
-        err = DEVICE_SECURITY_GetControllerTrust(sc->cert_chain, &sc->role);
+        err = DEVICE_SECURITY_GetControllerTrust(sc->cert_chain, &sc->role_instance);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -2197,7 +2197,7 @@ int TransmitStompMessage(stomp_connection_t *sc)
             // Notify the data model of the role to use for controllers connected to this STOMP connection
             // This will also unblock the Boot! event, subscriptions, and restarting of operations
             agent_queue = (sc->subscribe_dest != NULL) ? sc->subscribe_dest : sc->provisionned_queue;
-            DM_EXEC_PostStompHandshakeComplete(sc->instance, agent_queue, sc->role);
+            DM_EXEC_PostStompHandshakeComplete(sc->instance, agent_queue, sc->role_instance);
             break;
 
         default:
@@ -2598,7 +2598,7 @@ void RemoveReceivedHeartBeats(stomp_connection_t *sc)
     // Determine how many bytes are heartbeat messages
     p = sc->rxframe;
     heartbeat_bytes = 0;
-    while ((*p == '\n') && (heartbeat_bytes < len))
+    while ((heartbeat_bytes < len) && (*p == '\n'))
     {
         heartbeat_bytes++;
         p++;
@@ -2923,7 +2923,7 @@ void HandleRxMsg_RunningState(stomp_connection_t *sc, int msg_size)
     USP_PROTOCOL("%s", &sc->rxframe[offset]);
 
     // Send the USP Record to the data model thread for processing
-    DM_EXEC_PostUspRecord(pbuf, pbuf_len, UNKNOWN_ENDPOINT_ID, sc->role, &mtp_conn);
+    DM_EXEC_PostUspRecord(pbuf, pbuf_len, UNKNOWN_ENDPOINT_ID, sc->role_instance, &mtp_conn);
 }
 
 /*********************************************************************//**

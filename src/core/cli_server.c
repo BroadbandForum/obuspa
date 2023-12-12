@@ -1416,37 +1416,46 @@ int ExecuteCli_Dump(char *arg1, char *arg2, char *usage)
 **************************************************************************/
 int ExecuteCli_Perm(char *arg1, char *arg2, char *usage)
 {
-    int role;
+    int role_index;
     unsigned short perm;
     char path[MAX_DM_PATH];
-    char value[MAX_DM_VALUE_LEN];
+    char role_name[MAX_DM_SHORT_VALUE_LEN];
     combined_role_t combined_role;
+    int role_instance;
     int err;
 
     // Iterate over all roles, getting the permissions for each role
-    for (role=0; role < kCTrustRole_Max; role++)
+    for (role_index=0; role_index < MAX_CTRUST_ROLES; role_index++)
     {
-        // Get the value of the specified parameter
-        USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.ControllerTrust.Role.%d.Name", role+1);
-        err = DATA_MODEL_GetParameterValue(path, value, sizeof(value), 0);
+        // Skip to next role index, if there is no role instance in this slot
+        role_instance = DEVICE_CTRUST_RoleIndexToInstance(role_index);
+        if (role_instance == INVALID)
+        {
+            continue;
+        }
+
+        // Get the name of the role
+        USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.ControllerTrust.Role.%d.Name", role_instance);
+        err = DATA_MODEL_GetParameterValue(path, role_name, sizeof(role_name), DONT_LOG_NO_INSTANCE_ERROR);
         if (err != USP_ERR_OK)
         {
-            goto exit;
+            continue;
         }
 
         // Get the permissions for the specified parameter or object
-        combined_role.inherited = role;
-        combined_role.assigned = role;
+        combined_role.inherited_index = role_index;
+        combined_role.assigned_index = role_index;
         err = DATA_MODEL_GetPermissions(arg1, &combined_role, &perm);
         if (err != USP_ERR_OK)
         {
-            goto exit;
+            continue;
         }
 
         // Since successful, send back the permissions for the parameter
         #define PERMISSION_CHAR(bitmask, c, mask) ( ((bitmask & mask) == 0) ? '-' : c )
-        SendCliResponse("%s role: Param(%c%c-%c) Obj(%c%c-%c) InstantiatedObj (%c%c-%c) CommandEvent(%c-%c%c)\n",
-                         value,
+        SendCliResponse("Role.%d (Name=%s) : Param(%c%c-%c) Obj(%c%c-%c) InstantiatedObj(%c%c-%c) CommandEvent(%c-%c%c)\n",
+                         role_instance,
+                         role_name,
                          PERMISSION_CHAR(perm, 'r', PERMIT_GET),
                          PERMISSION_CHAR(perm, 'w', PERMIT_SET),
                          PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_VAL_CHANGE),
@@ -1464,10 +1473,7 @@ int ExecuteCli_Perm(char *arg1, char *arg2, char *usage)
                          PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_EVT_OPER_COMP) );
     }
 
-    err = USP_ERR_OK;
-
-exit:
-    return err;
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**

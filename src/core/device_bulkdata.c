@@ -1782,7 +1782,7 @@ exit:
 **
 ** bulkdata_expand_param_ref
 **
-** Expands the specified parameter reference, storing all the parameters it refrences into the get group vector
+** Expands the specified parameter reference, storing all the parameters it references into the get group vector
 **
 ** \param   pr - pointer to parameter reference to expand
 ** \param   ggv - pointer to vector to add params found in this path expression to
@@ -1795,16 +1795,13 @@ void bulkdata_expand_param_ref(param_ref_entry_t *pr, group_get_vector_t *ggv)
     int err;
     str_vector_t params;
     int_vector_t group_ids;
-    combined_role_t combined_role;
 
     STR_VECTOR_Init(&params);
     INT_VECTOR_Init(&group_ids);
 
     // Exit if unable to get the resolved paths
     // NOTE: We can safely use the FullAccess role here, because we have already validated the path expression against the controller's role
-    combined_role.inherited = kCTrustRole_FullAccess;
-    combined_role.assigned = kCTrustRole_FullAccess;
-    err = PATH_RESOLVER_ResolveDevicePath(pr->path_expr, &params, &group_ids, kResolveOp_GetBulkData, FULL_DEPTH, &combined_role, 0);
+    err = PATH_RESOLVER_ResolveDevicePath(pr->path_expr, &params, &group_ids, kResolveOp_GetBulkData, FULL_DEPTH, INTERNAL_ROLE, 0);
     if (err != USP_ERR_OK)
     {
         STR_VECTOR_Destroy(&params);

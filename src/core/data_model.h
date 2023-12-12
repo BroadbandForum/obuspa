@@ -199,7 +199,7 @@ typedef struct dm_node_tag
                                  // it's instance separator is included e.g. Device.Wifi.{i}.Interface.{i} would have an order of 2
     struct dm_node_tag *instance_nodes[MAX_DM_INSTANCE_ORDER]; // See 'order' above
 
-    unsigned short permissions[kCTrustRole_Max];    // Bitmask of permissions for each role
+    unsigned short permissions[MAX_CTRUST_ROLES];    // Bitmask of permissions for each role
 
     int group_id;                   // Indicates the group_id of the software component implementing this object, or NON_GROUPED
 
@@ -282,6 +282,7 @@ extern char *reboot_cause_path;
 //------------------------------------------------------------------------------
 // Definitions for flags in DATA_MODEL_GetParameterValue()
 #define SHOW_PASSWORD 0x00000001        // Used internally by USP Agent to get the actual value of passwords (default behaviour is to return an empty string)
+#define DONT_LOG_NO_INSTANCE_ERROR  0x00000002  // Suppresses logging of the no instance error. The error code is still returned, just not logged
 
 //------------------------------------------------------------------------------
 // Definitions for flags in DATA_MODEL_SetParameterValue()
@@ -357,11 +358,12 @@ int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash
 dm_node_t *DM_PRIV_GetNodeFromPath(char *path, dm_instances_t *inst, bool *is_qualified_instance, unsigned flags);
 dm_node_t *DM_PRIV_FindMatchingChild(dm_node_t *parent, char *name);
 void DM_PRIV_AddUniqueKey(dm_node_t *node, dm_unique_key_t *unique_key);
-void DM_PRIV_ApplyPermissions(dm_node_t *node, ctrust_role_t role, unsigned short permission_bitmask);
+void DM_PRIV_ApplyPermissions(dm_node_t *node, int role_index, unsigned short permission_bitmask);
 unsigned short DM_PRIV_GetPermissions(dm_node_t *node, combined_role_t *combined_role);
 int DM_PRIV_ReRegister_DBParam_Default(char *path, char *value);
 int DM_PRIV_RegisterGroupedObject(int group_id, char *path, bool is_writable, unsigned flags);
 bool DM_PRIV_IsChildOf(char *path, dm_node_t *parent_node);
+bool DM_PRIV_IsChildNodeOf(dm_node_t *node, dm_node_t *parent_node);
 
 #endif
 

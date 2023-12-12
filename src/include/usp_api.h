@@ -180,25 +180,29 @@ typedef enum
 
 //------------------------------------------------------------------------------
 // Bits in bitmask defining permissions. If the bit is set, then the permission is granted
-#define PERMIT_GET                0x0001 // Grants the capability to read the value of the Parameter via Get and read the meta-information of the Parameter via GetSupportedDM.
-#define PERMIT_SET                0x0002 // Grants the capability to update the value of the Parameter via Add or Set.
-#define PERMIT_ADD                0x0004 // Grants no capabilities for Static Objects. Grants the capability to create a new instance of a Multi-Instanced Object via Add
-#define PERMIT_DEL                0x0008 // Grants the capability to remove an existing instance of an Instantiated Object via Delete (e.g. Device.LocalAgent.Controller.1.).
-#define PERMIT_OPER               0x0010 // Grants the capability to execute the Command via Operate, but grants no capabilities to an Event.
+// NOTE: The definitions of these bits have been ordered to match the bits in the data model parameters. This is for convenience, the code does not rely on this ordering
+// Param rw-n
+#define PERMIT_GET                0x8000 // Grants the capability to read the value of the Parameter via Get and read the meta-information of the Parameter via GetSupportedDM
+#define PERMIT_SET                0x4000 // Grants the capability to update the value of the Parameter via Add or Set
+#define PERMIT_SUBS_VAL_CHANGE    0x1000 // Grants the capability to receive Notify Messages of type ValueChange for this Parameter
 
-#define PERMIT_SUBS_VAL_CHANGE    0x0020 // Grants the capability to use this Parameter in the ReferenceList of an Event or ValueChange Subscription.
-#define PERMIT_SUBS_OBJ_ADD       0x0040 // Grants the capability to use this Object in the ReferenceList of an Event or ObjectCreation (for multi-instance objects only) Subscription.
-#define PERMIT_SUBS_OBJ_DEL       0x0100 // Grants the capability to use this Instantiated Object in the ReferenceList of an Event or ObjectDeletion Subscription
-#define PERMIT_SUBS_EVT_OPER_COMP 0x0200 // Grants the capability to use this Event or Command in the ReferenceList of an Event or OperationComplete Subscription.
+// Obj rw-n
+#define PERMIT_OBJ_INFO           0x0800 // Grants the capability to read the meta-information of the Object via GetSupportedDM
+#define PERMIT_ADD                0x0400 // Grants the capability to create a new instance of a Multi-Instanced Object via Add
+#define PERMIT_SUBS_OBJ_ADD       0x0100 // Grants the capability to receive Notify Messages of type ObjectCreation for this Object (multi-instance objects only)
 
-#define PERMIT_GET_INST           0x0080 // Grants the capability to read the instance numbers and unique keys of the Instantiated Object via GetInstances.
-#define PERMIT_OBJ_INFO           0x0400 // Grants the capability to read the meta-information of the Object via GetSupportedDM.
-#define PERMIT_CMD_INFO           0x0800 // Grants the capability to read the meta-information of the Command (including input and output arguments) and Event (including arguments) via GetSupportedDM.
+// InstantiatedObj rw-n
+#define PERMIT_GET_INST           0x0080 // Grants the capability to read the instance numbers and unique keys of the Instantiated Object via GetInstances and read the value of Parameters related to the Instantiated Object via a Get containing a search expression or wildcard in place of the instance identifier
+#define PERMIT_DEL                0x0040 // Grants the capability to remove an existing instance of an Instantiated Object via Delet
+#define PERMIT_SUBS_OBJ_DEL       0x0010 // Grants the capability to receive Notify Messages of type ObjectDeletion for this Instantiated Object
+
+// CommandEvent r-xn
+#define PERMIT_CMD_INFO           0x0008 // Grants the capability to read the meta-information of the Command (including input and output arguments) and Event (including arguments) via GetSupportedDM
+#define PERMIT_OPER               0x0002 // Grants the capability to execute the Command via Operate, but grants no capabilities to an Event
+#define PERMIT_SUBS_EVT_OPER_COMP 0x0001 // Grants the capability to receive Notify Messages of type OperationComplete for this Event or Command.
 
 #define PERMIT_NONE               0x0000 // Grants no capabilities
 #define PERMIT_ALL                0xFFFF // Grants all capabilities
-
-#define INVALID_ROLE              kCTrustRole_Max  // Role returned by DEVICE_CTRUST_GetCertRole() if no matching entry in the credential table was found
 
 //---------------------------------------------------------------------
 // Structure for each element of trust store array
@@ -206,7 +210,7 @@ typedef struct
 {
     const unsigned char *cert_data;
     int cert_len;
-    ctrust_role_t role;        // Controller Trust role that this certificate permits
+    int role_instance;        // Role in Device.LocalAgent.ControllerTrust.Role.{i} that this certificate permits
 } trust_store_t;
 
 //---------------------------------------------------------------------
@@ -442,8 +446,8 @@ int USP_DM_DeleteInstance(char *path);
 int USP_DM_InformInstance(char *path);
 int USP_DM_RefreshInstance(char *path);
 int USP_DM_GetInstances(char *path, int *vector, int max_entries, int *num_entries);
-int USP_DM_RegisterRoleName(ctrust_role_t role, char *name);
-int USP_DM_AddControllerTrustPermission(ctrust_role_t role, char *path, unsigned short permission_bitmask);
+int USP_DM_RegisterRoleName(int role_instance, char *name);
+int USP_DM_AddControllerTrustPermission(int role_instance, char *path, unsigned short permission_bitmask);
 int USP_DM_InformDataModelEvent(char *event_name, kv_vector_t *output_args);
 
 //------------------------------------------------------------------------------

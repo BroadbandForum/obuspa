@@ -78,7 +78,7 @@ static int cur_msg_controller_instance = INVALID;
 //------------------------------------------------------------------------
 // Role to use with current USP message
 // This is saved off before handling each message, as each message handler needs it fairly deeply in its processing
-static combined_role_t cur_msg_combined_role = { ROLE_DEFAULT, ROLE_DEFAULT};
+static combined_role_t cur_msg_combined_role = { 0, 0 };
 
 //------------------------------------------------------------------------
 // Role to use with current USP message
@@ -153,13 +153,13 @@ void HandleUspError(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
 ** \param   pbuf - pointer to buffer containing protobuf encoded USP record. Ownership of this buffer stays with the caller.
 ** \param   pbuf_len - length of protobuf encoded message
 ** \param   originator - EndpointID which sent this USP Record (if known) or UNKNOWN_ENDPOINT_ID
-** \param   role - Role allowed for this message
+** \param   role_instance - Inherited role in Device.LocalAgent.ControllerTrust.Role.{i}
 ** \param   mtpc - MTP details of where response to this USP message should be sent
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, char *originator, ctrust_role_t role, mtp_conn_t *mtpc)
+int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, char *originator, int role_instance, mtp_conn_t *mtpc)
 {
     int err = USP_ERR_OK;
     UspRecord__Record *rec = NULL;
@@ -229,12 +229,12 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, char *orig
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
     // Process the USP Record through the End-to-End exchange context.
-    err = E2E_CONTEXT_HandleUspRecord(rec, role, mtpc);
+    err = E2E_CONTEXT_HandleUspRecord(rec, role_instance, mtpc);
 #else
     // Process directly the encapsulated USP Message contained in the USP Record struct.
     err = MSG_HANDLER_HandleBinaryMessage(rec->no_session_context->payload.data,
                                           rec->no_session_context->payload.len,
-                                          role, rec->from_id, mtpc);
+                                          role_instance, rec->from_id, mtpc);
 #endif
 
 exit:
@@ -253,14 +253,14 @@ exit:
 **
 ** \param   pbuf - pointer to buffer containing protobuf encoded USP message
 ** \param   pbuf_len - length of protobuf encoded message
-** \param   role - Role allowed for this message
+** \param   role_instance - Inherited role in Device.LocalAgent.ControllerTrust.Role.{i}
 ** \param   endpoint_id - endpoint which sent this message
 ** \param   mtpc - details of where response to this USP message should be sent
 **
 ** \return  USP_ERR_OK if successful, USP_ERR_MESSAGE_NOT_UNDERSTOOD if unable to unpack the USP Record
 **
 **************************************************************************/
-int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *endpoint_id, mtp_conn_t *mtpc)
+int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, int role_instance, char *endpoint_id, mtp_conn_t *mtpc)
 {
     int err;
     Usp__Msg *usp;
@@ -275,7 +275,7 @@ int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_ro
 
     // Set the role that the controller should use when handling this message
     cur_msg_controller_info.endpoint_id = endpoint_id;
-    DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(endpoint_id, role, mtpc->protocol, &cur_msg_combined_role);
+    DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(endpoint_id, role_instance, mtpc->protocol, &cur_msg_combined_role);
 
     // Print USP message in human readable form
     PROTO_TRACE_ProtobufMessage(&usp->base);

@@ -89,8 +89,8 @@ typedef struct
 
 //------------------------------------------------------------------------------
 // API functions
-int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, char *originator, ctrust_role_t role, mtp_conn_t *mtpc);
-int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, ctrust_role_t role, char *endpoint_id, mtp_conn_t *mtpc);
+int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, char *originator, int role_instance, mtp_conn_t *mtpc);
+int MSG_HANDLER_HandleBinaryMessage(unsigned char *pbuf, int pbuf_len, int role_instance, char *endpoint_id, mtp_conn_t *mtpc);
 void MSG_HANDLER_LogMessageToSend(mtp_send_item_t *msi, mtp_protocol_t protocol, char *host, unsigned char *stomp_header);
 int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_conn_t *mtpc);
 int MSG_HANDLER_QueueUspRecord(usp_send_item_t *usi, char *endpoint_id, char *usp_msg_id, mtp_conn_t *mtpc, time_t expiry_time);

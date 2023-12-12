@@ -1732,7 +1732,7 @@ void ProcessUdsFrame(uds_connection_t *uc)
             mtp_conn.protocol = kMtpProtocol_UDS;
             mtp_conn.uds.conn_id = uc->conn_id;
             mtp_conn.uds.path_type = uc->path_type;
-            DM_EXEC_PostUspRecord(&uc->rx_buf[5], uc->payload_length-5, EndpointIdForLog(uc), kCTrustRole_FullAccess, &mtp_conn);
+            DM_EXEC_PostUspRecord(&uc->rx_buf[5], uc->payload_length-5, EndpointIdForLog(uc), ROLE_UDS, &mtp_conn);
             break;
 
 
@@ -1810,6 +1810,7 @@ char *ValidateUdsEndpointID(char* endpointID, uds_path_t path_type)
     int i;
     int count;
     uds_connection_t *uc;
+    char *our_endpoint_id;
 
     if((strcmp(endpointID, "") == 0) || (strcmp(endpointID, " ") == 0))
     {
@@ -1841,6 +1842,13 @@ char *ValidateUdsEndpointID(char* endpointID, uds_path_t path_type)
             USP_LOG_Info("%s: Found matching path type %s and endpoint ID %s in existing connections", __FUNCTION__, UDS_PathTypeToString(path_type), endpointID);
             return "Duplicate EndpointID connecting on same UDS path, Failed to process Handshake Frame";
         }
+    }
+
+    // Disallow connections between endpoints with the same Endpoint ID
+    our_endpoint_id = DEVICE_LOCAL_AGENT_GetEndpointID();
+    if (strcmp(endpointID, our_endpoint_id)==0)
+    {
+        return "Connecting EndpointID is the same as this Endpoint, Failed to process Handshake Frame";
     }
 
     return NULL;

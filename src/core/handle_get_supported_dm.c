@@ -252,7 +252,7 @@ void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResul
             case kDMNodeType_AsyncOperation:
                 if ((gs_flags & RETURN_COMMANDS) &&
                     (parent_perm & PERMIT_OBJ_INFO) && (parent_perm & PERMIT_CMD_INFO) &&
-                    (child_perm & PERMIT_OPER))
+                    (child_perm & PERMIT_CMD_INFO))
                 {
                     AddSupportedObjResult_SupportedCommandResult(sor, child);
                 }
@@ -261,7 +261,7 @@ void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResul
             case kDMNodeType_Event:
                 if ((gs_flags & RETURN_EVENTS) &&
                     (parent_perm & PERMIT_OBJ_INFO) && (parent_perm & PERMIT_CMD_INFO) &&
-                    (child_perm & PERMIT_SUBS_EVT_OPER_COMP))
+                    (child_perm & PERMIT_CMD_INFO))
                 {
                     AddSupportedObjResult_SupportedEventResult(sor, child);
                 }

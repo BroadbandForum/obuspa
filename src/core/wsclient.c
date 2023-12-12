@@ -133,8 +133,8 @@ typedef struct
     scheduled_action_t  schedule_reconnect;  // Sets whether a reconnect is scheduled after the send queue has cleared
     scheduled_action_t  schedule_close;      // Sets whether a close is scheduled after the send queue has cleared
 
-    STACK_OF(X509) *cert_chain; // Full SSL certificate chain for the Websocket connection, collected in the SSL verify callback
-    ctrust_role_t role;         // role granted by the CA cert in the chain of trust with the websockets server
+    STACK_OF(X509) *cert_chain;     // Full SSL certificate chain for the Websocket connection, collected in the SSL verify callback
+    int role_instance;              // role granted by the CA cert in the chain of trust with the websockets server (instance in Device.LocalAgent.ControllerTrust.Role.{i})
 
 } wsclient_t;
 
@@ -873,7 +873,7 @@ void HandleWsclient_StartClient(start_client_msg_t *scm)
     wc->rx_buf_max_len = 0;
     wc->tx_index = 0;
     wc->cert_chain = NULL;
-    wc->role = (scm->enable_encryption) ? ROLE_NON_SSL : ROLE_DEFAULT;
+    wc->role_instance = (scm->enable_encryption) ? ROLE_NON_SSL : ROLE_DEFAULT;
 
     // Start the connection. If an error occurs, handle by putting into retry state
     AttemptWsclientConnect(wc);
@@ -1739,7 +1739,7 @@ int HandleWscEvent_Connected(struct lws *handle)
     if (wc->cert_chain != NULL)
     {
         // NOTE: Ignoring any error returned by DEVICE_SECURITY_GetControllerTrust() - just leave the role to the default set in HandleWsclient_StartClient
-        DEVICE_SECURITY_GetControllerTrust(wc->cert_chain, &wc->role);
+        DEVICE_SECURITY_GetControllerTrust(wc->cert_chain, &wc->role_instance);
 
         // Free the saved cert chain as we don't need it anymore
         sk_X509_pop_free(wc->cert_chain, X509_free);
@@ -1833,7 +1833,7 @@ int HandleWscEvent_Receive(struct lws *handle, unsigned char *chunk, int chunk_l
     mtp_conn.ws.client_cont_instance = wc->cont_instance;
     mtp_conn.ws.client_mtp_instance = wc->mtp_instance;
     mtp_conn.ws.serv_conn_id = INVALID;
-    DM_EXEC_PostUspRecord(wc->rx_buf, wc->rx_buf_len, wc->cont_endpoint_id, wc->role, &mtp_conn);
+    DM_EXEC_PostUspRecord(wc->rx_buf, wc->rx_buf_len, wc->cont_endpoint_id, wc->role_instance, &mtp_conn);
 
     // Free receive buffer
     USP_FREE(wc->rx_buf);

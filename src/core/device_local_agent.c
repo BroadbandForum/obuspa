@@ -446,7 +446,8 @@ exit_action_t DEVICE_LOCAL_AGENT_GetExitAction(void)
 ** DEVICE_LOCAL_AGENT_GetEndpointID
 **
 ** Returns the cached value of the EndpointID of this device
-** NOTE: This function is threadsafe - the value is immutable
+** NOTE: This function is threadsafe as the value does not change after being
+** determined. It is determined after VENDOR_Init(), but before VENDOR_Start() is called
 **
 ** \param   None
 **

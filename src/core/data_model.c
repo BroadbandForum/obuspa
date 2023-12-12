@@ -293,16 +293,6 @@ int DATA_MODEL_Start(void)
     dm_trans_vector_t trans;
     register_controller_trust_cb_t   register_controller_trust_cb;
 
-    // Seed data model with instance numbers from the database
-    if (is_running_cli_local_command == false)
-    {
-        err = DATABASE_ReadDataModelInstanceNumbers(false);
-        if (err != USP_ERR_OK)
-        {
-            return err;
-        }
-    }
-
     // Determine function to call to register controller trust and data model permissions
     register_controller_trust_cb = vendor_hook_callbacks.register_controller_trust_cb;
     if (register_controller_trust_cb == NULL)
@@ -320,11 +310,22 @@ int DATA_MODEL_Start(void)
         return err;
     }
 
+    // Seed data model with instance numbers from the database
+    // NOTE: This is called after the register controller trust vendor hook has been called, as it may seed the DB with roles and permissions
+    if (is_running_cli_local_command == false)
+    {
+        err = DATABASE_ReadDataModelInstanceNumbers(false);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+    }
+
     // As most start routines also clean the database, start a transaction
     err = DM_TRANS_Start(&trans);
     if (err != USP_ERR_OK)
     {
-        goto exit;
+        return err;
     }
 
     // Exit if unable to start all nodes in the schema (that require a separate start)
@@ -335,7 +336,8 @@ int DATA_MODEL_Start(void)
 #ifndef REMOVE_DEVICE_TIME
     err |= DEVICE_TIME_Start();
 #endif
-    err |= DEVICE_CONTROLLER_Start();
+    err |= DEVICE_CTRUST_Start();
+    err |= DEVICE_CONTROLLER_Start();      // NOTE: This must come after DEVICE_CTRUST_Start() because it determines the role of the controller
 
     // Load trust store and client certs into USP Agent's cache
     // NOTE: This call does not leave any dynamic allocations owned by SSL (which is necessary, since libwebsockets is going to re-initialise SSL)
@@ -364,7 +366,6 @@ int DATA_MODEL_Start(void)
 #endif
     err |= DEVICE_MTP_Start();            // NOTE: This must come after COAP_Start, as it assumes that the CoAP SSL contexts have been created
     err |= DEVICE_SUBSCRIPTION_Start();   // NOTE: This must come after DEVICE_LOCAL_AGENT_Start(), as it calls DEVICE_LOCAL_AGENT_GetRebootInfo()
-    err |= DEVICE_CTRUST_Start();
 #ifndef REMOVE_DEVICE_BULKDATA
     err |= DEVICE_BULKDATA_Start();
 #endif
@@ -384,7 +385,6 @@ int DATA_MODEL_Start(void)
     // Ensure that if the Boot! event is generated a long time after startup, that it refreshes the instance numbers if they have expired
     DM_INST_VECTOR_NextLockPeriod();
 
-exit:
     // Commit all database changes
     if (err == USP_ERR_OK)
     {
@@ -508,7 +508,10 @@ int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags)
 
         if (exists == false)
         {
-            USP_ERR_SetMessage("%s: Path %s: Instance numbers do not exist", __FUNCTION__, path);
+            if ((flags & DONT_LOG_NO_INSTANCE_ERROR) == 0)
+            {
+                USP_ERR_SetMessage("%s: Path %s: Instance numbers do not exist", __FUNCTION__, path);
+            }
             return USP_ERR_OBJECT_DOES_NOT_EXIST;
         }
     }
@@ -703,7 +706,7 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags)
         return err;
     }
 
-    // Peform the set
+    // Perform the set
     switch(node->type)
     {
         case kDMNodeType_VendorParam_ReadWrite:
@@ -1390,6 +1393,9 @@ int DATA_MODEL_NotifyInstanceDeleted(char *path)
         USP_ERR_SetMessage("%s: Object (%s) does not exist in the data model", __FUNCTION__, path);
         return USP_ERR_OBJECT_DOES_NOT_EXIST;
     }
+
+    // Ensure that object is present in list of objects to match against for deletion
+    DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths();
 
     // Queue object life events for this object and all child objects
     STR_VECTOR_Init(&child_objs);
@@ -2946,7 +2952,7 @@ void DM_PRIV_RequestInit(dm_req_t *req, dm_node_t *node, char *path, dm_instance
 **                 NOTE: This parameter may be NULL if instances are not required
 **
 ** \param   p_hash - pointer to variable in which to return the calculated hash
-** \param   flags - bitmask of options controling execution (eg DONT_LOG_ERRORS)
+** \param   flags - bitmask of options controlling execution (eg DONT_LOG_ERRORS)
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -3620,31 +3626,37 @@ void DM_PRIV_AddUniqueKey(dm_node_t *node, dm_unique_key_t *unique_key)
 ** Applies the specified permission to this node and all of it's children
 ** NOTE: This function is recursive
 **
-** \param   node - Node to apply permissions to
-** \param   role - role to apply permissions to
+** \param   node - Node to apply permissions to. If set to NULL, this imples that permissions must be set from the root device node
+** \param   role_index - role to apply permissions to
 ** \param   permission_bitmask - bitmask of permissions to apply
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_PRIV_ApplyPermissions(dm_node_t *node, ctrust_role_t role, unsigned short permission_bitmask)
+void DM_PRIV_ApplyPermissions(dm_node_t *node, int role_index, unsigned short permission_bitmask)
 {
     dm_node_t *child;
 
+    // Apply special case of passing in NULL, to denote the root_device_node
+    if (node == NULL)
+    {
+        node = root_device_node;
+    }
+
     // Apply permissions to this node
-    node->permissions[role] = permission_bitmask;
+    node->permissions[role_index] = permission_bitmask;
 
     // Iterate over list of children
     child = (dm_node_t *) node->child_nodes.head;
     while (child != NULL)
     {
         // Apply permissions to child node
-        child->permissions[role] = permission_bitmask;
+        child->permissions[role_index] = permission_bitmask;
 
         // Apply permissions to all children of the child node
         if (child->child_nodes.head != NULL)
         {
-            DM_PRIV_ApplyPermissions(child, role, permission_bitmask);
+            DM_PRIV_ApplyPermissions(child, role_index, permission_bitmask);
         }
 
         // Move to next sibling in the data model tree
@@ -3752,7 +3764,7 @@ int DM_PRIV_RegisterGroupedObject(int group_id, char *path, bool is_writable, un
 unsigned short DM_PRIV_GetPermissions(dm_node_t *node, combined_role_t *combined_role)
 {
     unsigned short permissions = 0;
-    ctrust_role_t role;
+    int role_index;
 
     // If using the internal role, then this overrides all permissions setup and permits all
     // This is necessary because at startup the permission bitmask in the data model is not setup, but we still need to ensure that we can do everything
@@ -3762,17 +3774,17 @@ unsigned short DM_PRIV_GetPermissions(dm_node_t *node, combined_role_t *combined
     }
 
     // Add permissions from inherited role
-    role = combined_role->inherited;
-    if ((role < kCTrustRole_Max) && (role != INVALID_ROLE))
+    role_index = combined_role->inherited_index;
+    if ((role_index < MAX_CTRUST_ROLES) && (role_index != INVALID))
     {
-        permissions |= node->permissions[ role ];
+        permissions |= node->permissions[ role_index ];
     }
 
     // Add permissions from assigned role
-    role = combined_role->assigned;
-    if ((role < kCTrustRole_Max) && (role != INVALID_ROLE))
+    role_index = combined_role->assigned_index;
+    if ((role_index < MAX_CTRUST_ROLES) && (role_index != INVALID))
     {
-        permissions |= node->permissions[ role ];
+        permissions |= node->permissions[ role_index ];
     }
 
     return permissions;
@@ -3846,8 +3858,25 @@ bool DM_PRIV_IsChildOf(char *path, dm_node_t *parent_node)
         return false;
     }
 
+    return DM_PRIV_IsChildNodeOf(node, parent_node);
+}
+
+/*********************************************************************//**
+**
+** DM_PRIV_IsChildNodeOf
+**
+** Determines whether the specified node is a child of the specified parent node
+**
+** \param   node - data model node to test whether it's a child
+** \param   parent_node - data model node of parent to test against
+**
+** \return  true if the specified path is a child of the specified parent node, false otherwise
+**
+**************************************************************************/
+bool DM_PRIV_IsChildNodeOf(dm_node_t *node, dm_node_t *parent_node)
+{
     // Traverse the data model tree upwards, seeing if any parents match the specified parent
-    while(node->parent_node != NULL)
+    while (node->parent_node != NULL)
     {
         // Exit if the path had the specified parent node as a parent
         if (node->parent_node == parent_node)
@@ -5112,14 +5141,14 @@ int RegisterDefaultControllerTrust(void)
 
     // Currently, it is important that the first role registered is full access, as all controllers
     // inherit the first role in this table, and we currently want all controllers to have full access
-    err |= USP_DM_RegisterRoleName(kCTrustRole_FullAccess, "Full Access");
-    err |= USP_DM_AddControllerTrustPermission(kCTrustRole_FullAccess, "Device.", PERMIT_ALL);
+    err |= USP_DM_RegisterRoleName(ROLE_FULL_ACCESS, "Full Access");
+    err |= USP_DM_AddControllerTrustPermission(ROLE_FULL_ACCESS, "Device.", PERMIT_ALL);
 
-    err |= USP_DM_RegisterRoleName(kCTrustRole_Untrusted,  "Untrusted");
-    err |= USP_DM_AddControllerTrustPermission(kCTrustRole_Untrusted, "Device.", PERMIT_NONE);
-    err |= USP_DM_AddControllerTrustPermission(kCTrustRole_Untrusted, "Device.DeviceInfo.", PERMIT_GET | PERMIT_OBJ_INFO);
-    err |= USP_DM_AddControllerTrustPermission(kCTrustRole_Untrusted, "Device.LocalAgent.ControllerTrust.RequestChallenge()", PERMIT_OPER);
-    err |= USP_DM_AddControllerTrustPermission(kCTrustRole_Untrusted, "Device.LocalAgent.ControllerTrust.ChallengeResponse()", PERMIT_OPER);
+    err |= USP_DM_RegisterRoleName(ROLE_UNTRUSTED,  "Untrusted");
+    err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, "Device.", PERMIT_NONE);
+    err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, "Device.DeviceInfo.", PERMIT_GET | PERMIT_OBJ_INFO);
+    err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, "Device.LocalAgent.ControllerTrust.RequestChallenge()", PERMIT_OPER);
+    err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, "Device.LocalAgent.ControllerTrust.ChallengeResponse()", PERMIT_OPER);
 
     if (err != USP_ERR_OK)
     {

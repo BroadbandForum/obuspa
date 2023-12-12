@@ -68,11 +68,11 @@ typedef enum
 // Combined controller trust role consisting of inherited and assigned role
 typedef struct
 {
-    ctrust_role_t inherited;
-    ctrust_role_t assigned;
+    int inherited_index;      // index of the role in roles[] and in node->permissions[] for the inherited role
+    int assigned_index;       // index of the role in roles[] and in node->permissions[] for the assigned role
 } combined_role_t;
 
-#define INTERNAL_ROLE             NULL   // Role used internally by Data Model. This always permits all operations (Even at bootup, when the permissions table has not been seeded yet)
+#define INTERNAL_ROLE             NULL   // Pointer to combined role used internally by Data Model. This always permits all operations (Even at bootup, when the permissions table has not been seeded yet)
 
 //------------------------------------------------------------------------------
 // Controller information to be used inside USP message processing
@@ -221,9 +221,9 @@ char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_conn_t *mtpc);
 e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByInstance(int instance);
 e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByEndpointId(char *endpoint_id);
 #endif
-int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_role);
-void DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, ctrust_role_t role, mtp_protocol_t protocol, combined_role_t *combined_role);
-void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role);
+int DEVICE_CONTROLLER_GetCombinedRoleByInstance(int instance, combined_role_t *combined_role);
+void DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, int role_instance, mtp_protocol_t protocol, combined_role_t *combined_role);
+void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, int role_instance);
 int DEVICE_CONTROLLER_GetSubsRetryParams(char *endpoint_id, unsigned *min_wait_interval, unsigned *interval_multiplier);
 void DEVICE_CONTROLLER_QueueMqttConnectRecord(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic);
 void DEVICE_CONTROLLER_QueueStompConnectRecord(int stomp_instance, char *agent_queue);
@@ -268,7 +268,7 @@ void DEVICE_SUBSCRIPTION_Dump(void);
 int DEVICE_SECURITY_Init(void);
 int DEVICE_SECURITY_Start(void);
 void DEVICE_SECURITY_Stop(void);
-int DEVICE_SECURITY_GetControllerTrust(STACK_OF(X509) *cert_chain, ctrust_role_t *role);
+int DEVICE_SECURITY_GetControllerTrust(STACK_OF(X509) *cert_chain, int *role_instance);
 bool DEVICE_SECURITY_IsClientCertAvailable(void);
 SSL_CTX *DEVICE_SECURITY_CreateSSLContext(const SSL_METHOD *method, int verify_mode, ssl_verify_callback_t verify_callback);
 int DEVICE_SECURITY_LoadTrustStore(SSL_CTX *ssl_ctx, int verify_mode, ssl_verify_callback_t verify_callback);
@@ -281,12 +281,13 @@ int DEVICE_SECURITY_AddCertHostnameValidationCtx(SSL_CTX* ssl_ctx, const char* n
 int DEVICE_CTRUST_Init(void);
 int DEVICE_CTRUST_Start(void);
 void DEVICE_CTRUST_Stop(void);
-int DEVICE_CTRUST_AddCertRole(int cert_instance, ctrust_role_t role);
-ctrust_role_t DEVICE_CTRUST_GetCertRole(int cert_instance);
-int DEVICE_CTRUST_GetInstanceFromRole(ctrust_role_t role);
-ctrust_role_t DEVICE_CTRUST_GetRoleFromInstance(int instance);
-int DEVICE_CTRUST_AddPermissions(ctrust_role_t role, char *path, unsigned short permission_bitmask);
-void DEVICE_CTRUST_RegisterRoleName(ctrust_role_t role, char *name);
+int DEVICE_CTRUST_AddCertRole(int cert_instance, int role_instance);
+int DEVICE_CTRUST_GetCertInheritedRole(int cert_instance);
+int DEVICE_CTRUST_RoleInstanceToIndex(int role_instance);
+int DEVICE_CTRUST_RoleIndexToInstance(int role_index);
+void DEVICE_CTRUST_ApplyPermissionsToSubTree(char *path);
+int DEVICE_CTRUST_SetRoleParameter(int instance, char *param_name, char *new_value);
+int DEVICE_CTRUST_SetPermissionParameter(int instance1, int instance2, char *param_name, char *new_value);
 int DEVICE_REQUEST_Init(void);
 int DEVICE_REQUEST_Add(char *path, char *command_key, int *instance);
 void DEVICE_REQUEST_OperationComplete(int instance, int err_code, char *err_msg, kv_vector_t *output_args);
@@ -316,7 +317,7 @@ int DEVICE_MTP_GetUdsReference(char *path, int *uds_connection_instance);
 void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance);
 void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance);
 int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value);
-void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role);
+void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, int role_instance);
 char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance);
 
 #ifndef REMOVE_USP_BROKER

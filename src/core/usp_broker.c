@@ -207,7 +207,7 @@ bool AttemptPassThruForSetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
 bool AttemptPassThruForAddRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc, combined_role_t *combined_role, UspRecord__Record *rec);
 bool AttemptPassThruForDeleteRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc, combined_role_t *combined_role, UspRecord__Record *rec);
 bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc, UspRecord__Record *rec);
-bool CheckPassThruPermissions(dm_node_t *node, int depth, unsigned short perm_mask, combined_role_t *combined_role);
+bool CheckPassThruPermissions(dm_node_t *node, int depth, unsigned short required_permissions, combined_role_t *combined_role);
 int PassThruToUspService(usp_service_t *us, Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc, UspRecord__Record *rec);
 void MsgMap_Init(double_linked_list_t *mm);
 void MsgMap_Destroy(double_linked_list_t *mm);
@@ -1411,23 +1411,13 @@ void QueueGetSupportedDMToUspService(usp_service_t *us)
 void ApplyPermissionsToUspService(usp_service_t *us)
 {
     int i;
-    int role;
     char *path;
-    dm_node_t *node;
 
     // Iterate over all paths registered for the USP Service
     for (i=0; i < us->registered_paths.num_entries; i++)
     {
         path = us->registered_paths.vector[i];
-
-        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
-        USP_ASSERT(node != NULL);   // Since this function should only ever be called after the node has been addded to the data model
-
-        for (role=0; role<kCTrustRole_Max; role++)
-        {
-            // Apply the permissions to this node and all children
-            DM_PRIV_ApplyPermissions(node, (ctrust_role_t)role, PERMIT_ALL);
-        }
+        DEVICE_CTRUST_ApplyPermissionsToSubTree(path);
     }
 }
 
@@ -1813,28 +1803,10 @@ int Broker_AsyncOperate(dm_req_t *req, kv_vector_t *input_args, int instance)
     req_map_t *rmap;
     usp_service_t *us;
     bool is_complete = false;
-    dm_node_t *node;
-    combined_role_t combined_role;
-    unsigned short permission_bitmask;
 
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(req->group_id);
     USP_ASSERT(us != NULL);
-
-    // Exit if the controller invoking the USP command does not have permission to receive the OperationComplete notification
-    // We require this because we need to be sure that we can send back an OperationComplete notification indicating failure
-    // in the case of an async command interrupted by reboot. Without this check, after reboot it would be hard to determine
-    // whether the controller had permission or not, as the data model for the USP Service is not registered at bootup
-    // and hence the permissions for the data model node have not been calculated.
-    node = DM_PRIV_GetNodeFromPath(req->path, NULL, NULL, 0);
-    USP_ASSERT(node != NULL);
-    MSG_HANDLER_GetMsgRole(&combined_role);
-    permission_bitmask = DM_PRIV_GetPermissions(node, &combined_role);
-    if ((permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP) == 0)
-    {
-        USP_ERR_SetMessage("%s: Controller must have permission to receive the OperationComplete notification before invoking '%s'", __FUNCTION__, req->path);
-        return USP_ERR_REQUEST_DENIED;
-    }
 
     // Exit if no subscription was setup on the USP service for an OperateComplete. We disallow async commands from being started
     // unless there is a subscription setup because otherwise the Broker will not know when the USP Command has completed and hence
@@ -4564,7 +4536,7 @@ bool AttemptPassThruForGetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
         }
 
         // Exit if the originator does not have permission to get all the referenced parameters
-        is_permitted = CheckPassThruPermissions(node, depth, PERMIT_GET, combined_role);
+        is_permitted = CheckPassThruPermissions(node, depth, PERMIT_GET | PERMIT_GET_INST, combined_role);
         if (is_permitted == false)
         {
             return false;
@@ -4610,6 +4582,7 @@ bool AttemptPassThruForSetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
     Usp__Set__UpdateObject *obj;
     Usp__Set__UpdateParamSetting *param;
     char path[MAX_DM_PATH];
+    unsigned short permission_bitmask;
 
     // Exit if message was badly formed - the error will be handled by the normal handlers
     if ((usp->body == NULL) || (usp->body->msg_body_case != USP__BODY__MSG_BODY_REQUEST) ||
@@ -4681,8 +4654,8 @@ bool AttemptPassThruForSetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
             USP_ASSERT(param_node->group_id == group_id);  // Since this is a child parameter of the object, it must have the same group_id
 
             // Exit if the originator does not have permission to set this child parameter
-            if ( ((param_node->permissions[combined_role->inherited] & PERMIT_SET) == 0) &&
-                 ((param_node->permissions[combined_role->assigned] & PERMIT_SET) == 0) )
+            permission_bitmask = DM_PRIV_GetPermissions(param_node, combined_role);
+            if ((permission_bitmask & PERMIT_SET) == 0)
             {
                 return false;
             }
@@ -4728,6 +4701,7 @@ bool AttemptPassThruForAddRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
     Usp__Add__CreateObject *obj;
     Usp__Add__CreateParamSetting *param;
     char path[MAX_DM_PATH];
+    unsigned short permission_bitmask;
 
     // Exit if message was badly formed - the error will be handled by the normal handlers
     if ((usp->body == NULL) || (usp->body->msg_body_case != USP__BODY__MSG_BODY_REQUEST) ||
@@ -4756,8 +4730,8 @@ bool AttemptPassThruForAddRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
         }
 
         // Exit if the originator does not have permission to add an instance of this object
-        if ( ((obj_node->permissions[combined_role->inherited] & PERMIT_ADD) == 0) &&
-             ((obj_node->permissions[combined_role->assigned] & PERMIT_ADD) == 0) )
+        permission_bitmask = DM_PRIV_GetPermissions(obj_node, combined_role);
+        if ((permission_bitmask & PERMIT_ADD) == 0)
         {
             return false;
         }
@@ -4814,8 +4788,8 @@ bool AttemptPassThruForAddRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
             USP_ASSERT(param_node->group_id == group_id);  // Since this is a child parameter of the object, it must have the same group_id
 
             // Exit if the originator does not have permission to set this child parameter
-            if ( ((param_node->permissions[combined_role->inherited] & PERMIT_SET) == 0) &&
-                 ((param_node->permissions[combined_role->assigned] & PERMIT_SET) == 0) )
+            permission_bitmask = DM_PRIV_GetPermissions(param_node, combined_role);
+            if ((permission_bitmask & PERMIT_SET) == 0)
             {
                 return false;
             }
@@ -4858,6 +4832,7 @@ bool AttemptPassThruForDeleteRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_
     usp_service_t *us = NULL;
     char *path;
     int err;
+    unsigned short permission_bitmask;
 
     // Exit if message was badly formed - the error will be handled by the normal handlers
     if ((usp->body == NULL) || (usp->body->msg_body_case != USP__BODY__MSG_BODY_REQUEST) ||
@@ -4908,8 +4883,8 @@ bool AttemptPassThruForDeleteRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_
         }
 
         // Exit if the originator does not have permission to delete an instance of this object
-        if ( ((node->permissions[combined_role->inherited] & PERMIT_DEL) == 0) &&
-             ((node->permissions[combined_role->assigned] & PERMIT_DEL) == 0) )
+        permission_bitmask = DM_PRIV_GetPermissions(node, combined_role);
+        if ((permission_bitmask & PERMIT_DEL) == 0)
         {
             return false;
         }
@@ -5033,20 +5008,21 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
 **
 ** \param   node - pointer to node in the data model to check the permissions of
 ** \param   depth - the number of hierarchical levels to traverse in the data model when checking permissions
-** \param   perm_mask - bitmask of permissions that must be allowed
+** \param   required_permissions - bitmask of permissions that must be allowed
 ** \param   combined_role - roles that the originator has (inherited & assigned)
 **
 ** \return  true if the originator has permission, false otherwise
 **
 **************************************************************************/
-bool CheckPassThruPermissions(dm_node_t *node, int depth, unsigned short perm_mask, combined_role_t *combined_role)
+bool CheckPassThruPermissions(dm_node_t *node, int depth, unsigned short required_permissions, combined_role_t *combined_role)
 {
     bool is_permitted;
+    unsigned short permission_bitmask;
     dm_node_t *child;
 
     // Exit if the originator does not have permission
-    if ( ((node->permissions[combined_role->inherited] & perm_mask) != perm_mask) &&
-         ((node->permissions[combined_role->assigned] & perm_mask) != perm_mask) )
+    permission_bitmask = DM_PRIV_GetPermissions(node, combined_role);
+    if ((permission_bitmask & required_permissions) != required_permissions)
     {
         return false;
     }
@@ -5061,7 +5037,7 @@ bool CheckPassThruPermissions(dm_node_t *node, int depth, unsigned short perm_ma
     child = (dm_node_t *) node->child_nodes.head;
     while (child != NULL)
     {
-        is_permitted = CheckPassThruPermissions(child, depth-1, perm_mask, combined_role);
+        is_permitted = CheckPassThruPermissions(child, depth-1, required_permissions, combined_role);
         if (is_permitted == false)
         {
             return false;

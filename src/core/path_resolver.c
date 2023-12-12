@@ -86,6 +86,10 @@ typedef struct
 // Typedef for the compare callback
 typedef int (*dm_cmp_cb_t)(char *lhs, expr_op_t op, char *rhs, bool *result);
 
+//--------------------------------------------------------------------
+// Convenience macro to wrap calls to USP_ERR_SetMessage(). Prevents USP_ERR_SetMessage() being called if DONT_LOG_RESOLVER_ERRORS is set
+#define USP_ERR_SetMessageIfAllowed(...)      if ((state->flags & DONT_LOG_RESOLVER_ERRORS)==0) { USP_ERR_SetMessage(__VA_ARGS__); }
+
 //-------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int ExpandPath(char *resolved, char *unresolved, resolver_state_t *state);
@@ -457,6 +461,21 @@ int ExpandWildcard(char *resolved, char *unresolved, resolver_state_t *state)
     int len;
     int len_left;
     char *p;
+    unsigned short permission_bitmask;
+
+    // Exit if unable to get the permissions for this object
+    err = DATA_MODEL_GetPermissions(resolved, state->combined_role, &permission_bitmask);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if the controller does not have permission to read the instance numbers
+    if ((permission_bitmask & PERMIT_GET_INST)==0)
+    {
+        USP_ERR_SetMessageIfAllowed("%s: Not permitted to read instance numbers in %s", __FUNCTION__, resolved);
+        return USP_ERR_PERMISSION_DENIED;
+    }
 
     // Exit if unable to get the instances of this object
     INT_VECTOR_Init(&iv);
@@ -1080,6 +1099,7 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     bool is_match;
     bool is_ref_match;
     expr_op_t valid_ops[] = {kExprOp_Equal, kExprOp_NotEqual, kExprOp_LessThanOrEqual, kExprOp_GreaterThanOrEqual, kExprOp_LessThan, kExprOp_GreaterThan};
+    unsigned short permission_bitmask;
 
     // Exit if unable to find the end of the unique key
     p = strchr(unresolved, ']');
@@ -1087,6 +1107,20 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     {
         USP_ERR_SetMessage("%s: Unterminated Unique Key (%s) in search path", __FUNCTION__, unresolved);
         return USP_ERR_INVALID_PATH_SYNTAX;
+    }
+
+    // Exit if unable to get the permissions for this object
+    err = DATA_MODEL_GetPermissions(resolved, state->combined_role, &permission_bitmask);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if the controller does not have permission to read the instance numbers
+    if ((permission_bitmask & PERMIT_GET_INST)==0)
+    {
+        USP_ERR_SetMessage("%s: Not permitted to read instance numbers in %s", __FUNCTION__, resolved);
+        return USP_ERR_PERMISSION_DENIED;
     }
 
     // Initialise vectors used by this function
@@ -2006,7 +2040,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_Add:
             if ((permission_bitmask & PERMIT_ADD)==0)
             {
-                USP_ERR_SetMessage("%s: No permission to add to %s", __FUNCTION__, path);
+                USP_ERR_SetMessageIfAllowed("%s: No permission to add to %s", __FUNCTION__, path);
                 return USP_ERR_PERMISSION_DENIED;
             }
             break;
@@ -2014,7 +2048,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_Del:
             if ((permission_bitmask & PERMIT_DEL)==0)
             {
-                USP_ERR_SetMessage("%s: No permission to delete %s", __FUNCTION__, path);
+                USP_ERR_SetMessageIfAllowed("%s: No permission to delete %s", __FUNCTION__, path);
                 return USP_ERR_PERMISSION_DENIED;
             }
             break;
@@ -2027,7 +2061,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_Oper:
             if ((permission_bitmask & PERMIT_OPER)==0)
             {
-                USP_ERR_SetMessage("%s: No permission to perform operation %s", __FUNCTION__, path);
+                USP_ERR_SetMessageIfAllowed("%s: No permission to perform operation %s", __FUNCTION__, path);
                 return USP_ERR_COMMAND_FAILURE;
             }
             break;
@@ -2036,7 +2070,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_SubsEvent:
             if ((permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP)==0)
             {
-                USP_ERR_SetMessage("%s: No permission to subscribe to event %s", __FUNCTION__, path);
+                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to event %s", __FUNCTION__, path);
                 return USP_ERR_PERMISSION_DENIED;
             }
             break;
@@ -2044,7 +2078,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_SubsOper:
             if ((permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP)==0)
             {
-                USP_ERR_SetMessage("%s: No permission to subscribe to operation %s", __FUNCTION__, path);
+                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to operation %s", __FUNCTION__, path);
                 return USP_ERR_PERMISSION_DENIED;
             }
             break;
@@ -2052,7 +2086,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_SubsAdd:
             if ((permission_bitmask & PERMIT_SUBS_OBJ_ADD)==0)
             {
-                USP_ERR_SetMessage("%s: No permission to subscribe to object creation on %s", __FUNCTION__, path);
+                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to object creation on %s", __FUNCTION__, path);
                 return USP_ERR_PERMISSION_DENIED;
             }
             break;
@@ -2060,7 +2094,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_SubsDel:
             if ((permission_bitmask & PERMIT_SUBS_OBJ_DEL)==0)
             {
-                USP_ERR_SetMessage("%s: No permission to subscribe to object deletion on %s", __FUNCTION__, path);
+                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to object deletion on %s", __FUNCTION__, path);
                 return USP_ERR_PERMISSION_DENIED;
             }
             break;
@@ -2068,7 +2102,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_SubsValChange:
             if ((permission_bitmask & PERMIT_SUBS_VAL_CHANGE)==0)
             {
-                USP_ERR_SetMessage("%s: No permission to subscribe to value change on %s", __FUNCTION__, path);
+                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to value change on %s", __FUNCTION__, path);
                 return USP_ERR_PERMISSION_DENIED;
             }
             break;
@@ -2076,7 +2110,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_GetBulkData:
             if ((permission_bitmask & PERMIT_GET)==0)
             {
-                USP_ERR_SetMessage("%s: No permission to get bulk data on %s", __FUNCTION__, path);
+                USP_ERR_SetMessageIfAllowed("%s: No permission to get bulk data on %s", __FUNCTION__, path);
                 return USP_ERR_PERMISSION_DENIED;
             }
             break;

@@ -159,7 +159,9 @@ typedef struct
     time_t periodic_base;
     unsigned periodic_interval;
     time_t next_time_to_fire;   // Absolute time at which periodic notification should fire for this controller
-    combined_role_t combined_role; // Inherited and Assigned roles to use for this controller
+    int inherited_instance;     // Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
+    int assigned_instance;      // Assigned role instance in Device.LocalAgent.ControllerTrust.Role.{i}
+
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
     e2e_session_t e2e_session;
 #endif
@@ -750,7 +752,7 @@ e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByEndpointId(char *endpoint_id)
 
 /*********************************************************************//**
 **
-** DEVICE_CONTROLLER_GetCombinedRole
+** DEVICE_CONTROLLER_GetCombinedRoleByInstance
 **
 ** Gets the inherited and assigned role to use for the specified controller instance
 ** This is used when resolving paths used by subscriptions
@@ -761,7 +763,7 @@ e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByEndpointId(char *endpoint_id)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_role)
+int DEVICE_CONTROLLER_GetCombinedRoleByInstance(int instance, combined_role_t *combined_role)
 {
     controller_t *cont;
 
@@ -772,9 +774,9 @@ int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_ro
         return USP_ERR_INTERNAL_ERROR;
     }
 
-
-    // Copy across the combined role values
-    *combined_role = cont->combined_role;
+    // Calculate the role indexes to be used for Assigned and Inherited roles
+    combined_role->assigned_index = DEVICE_CTRUST_RoleInstanceToIndex(cont->assigned_instance);
+    combined_role->inherited_index = DEVICE_CTRUST_RoleInstanceToIndex(cont->inherited_instance);
 
     return USP_ERR_OK;
 }
@@ -787,14 +789,14 @@ int DEVICE_CONTROLLER_GetCombinedRole(int instance, combined_role_t *combined_ro
 ** processing request messages from that controller
 **
 ** \param   endpoint_id - endpoint_id of the controller that has sent the current message being processed
-** \param   role - Role allowed for this message from the MTP (inherited)
+** \param   role_instance - Inherited role in Device.LocalAgent.ControllerTrust.Role.{i}
 ** \param   protocol - protocol that the message was received on
 ** \param   combined_role - pointer to structure to return combined role in
 **
 ** \return  None
 **
 **************************************************************************/
-void DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, ctrust_role_t role, mtp_protocol_t protocol, combined_role_t *combined_role)
+void DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, int role_instance, mtp_protocol_t protocol, combined_role_t *combined_role)
 {
     controller_t *cont;
 
@@ -803,62 +805,33 @@ void DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, ctrust_rol
     if (cont == NULL)
     {
         // If this is an unknown controller, then grant it a limited set of permissions
-        combined_role->inherited = kCTrustRole_Untrusted;
-        combined_role->assigned = INVALID_ROLE;
+        combined_role->inherited_index = DEVICE_CTRUST_RoleInstanceToIndex(ROLE_UNTRUSTED);
+        combined_role->assigned_index = INVALID;
         return;
     }
 
-    // Copy across the combined role values
-    *combined_role = cont->combined_role;
-
-
+    // Save the inherited role that the MTP cert has granted the controller sending this message (if necessary)
     switch(protocol)
     {
 #ifndef DISABLE_STOMP
         case kMtpProtocol_STOMP:
-            // If the message was received over STOMP, then the inherited role will have been saved in DEVICE_CONTROLLER
-            // when the STOMP handshake completed and will already equal the role passed with the USP message
-            USP_ASSERT(combined_role->inherited == role);
+            // No need to save for STOMP - Already setup by DEVICE_CONTROLLER_SetRolesFromStomp
             break;
 #endif
-
-#ifdef ENABLE_COAP
-        case kMtpProtocol_CoAP:
-            // If the message was received over CoAP, then the inherited role won't have been saved in DEVICE_CONTROLLER,
-            // so override with the role that was passed with the USP message
-            USP_ASSERT(combined_role->inherited == ROLE_DEFAULT);
-            combined_role->inherited = role;
-            break;
-#endif
-
 #ifdef ENABLE_MQTT
         case kMtpProtocol_MQTT:
-            USP_ASSERT(combined_role->inherited == role);
-            break;
-#endif
-
-#ifdef ENABLE_WEBSOCKETS
-        case kMtpProtocol_WebSockets:
-            // If the message was received over WebSockets, then the inherited role won't have been saved in DEVICE_CONTROLLER,
-            // so override with the role that was passed with the USP message
-            USP_ASSERT(combined_role->inherited == ROLE_DEFAULT);
-            combined_role->inherited = role;
-            break;
-#endif
-
-#ifdef ENABLE_UDS
-        case kMtpProtocol_UDS:
-            // If the message was received over UDS, then the inherited role won't have been saved in DEVICE_CONTROLLER,
-            // so override with the role that was passed with the USP message
-            USP_ASSERT(combined_role->inherited == ROLE_DEFAULT);
-            combined_role->inherited = role;
+            // No need to save for MQTT - Already setup by DEVICE_CONTROLLER_SetRolesFromMqtt
             break;
 #endif
 
         default:
-            TERMINATE_BAD_CASE(protocol);
+            cont->inherited_instance = role_instance;
             break;
     }
+
+    // Calculate the role indexes to be used for Assigned and Inherited roles
+    combined_role->assigned_index = DEVICE_CTRUST_RoleInstanceToIndex(cont->assigned_instance);
+    combined_role->inherited_index = DEVICE_CTRUST_RoleInstanceToIndex(cont->inherited_instance);
 }
 
 #ifndef DISABLE_STOMP
@@ -869,12 +842,12 @@ void DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, ctrust_rol
 ** Sets the controller trust role to use for all controllers connected to the specified STOMP controller
 **
 ** \param   stomp_instance - STOMP instance (in Device.STOMP.Connection table)
-** \param   role - Role allowed for this message
+** \param   role_instance - Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
 **
 ** \return  None
 **
 **************************************************************************/
-void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role)
+void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, int role_instance)
 {
     int i, j;
     controller_t *cont;
@@ -895,7 +868,7 @@ void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, ctrust_role_t role)
                     // If this controller is connected to the specified STOMP connection, then set its inherited role
                     if ((mtp->protocol == kMtpProtocol_STOMP) && (mtp->stomp_connection_instance == stomp_instance))
                     {
-                        cont->combined_role.inherited = role;
+                        cont->inherited_instance = role_instance;
                     }
                 }
             }
@@ -1257,12 +1230,12 @@ char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance)
 ** Sets the controller trust role to use for all controllers connected to the specified MQTT Client
 **
 ** \param   mqtt_instance - MQTT instance (in Device.MQTT.Client table)
-** \param   role - Role allowed for this message
+** \param   role_instance - Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
 **
 ** \return  None
 **
 **************************************************************************/
-void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role)
+void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, int role_instance)
 {
     int i, j;
     controller_t *cont;
@@ -1283,7 +1256,7 @@ void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, ctrust_role_t role)
                     // If this controller is connected to the specified MQTT connection, then set its inherited role
                     if ((mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
                     {
-                        cont->combined_role.inherited = role;
+                        cont->inherited_instance = role_instance;
                     }
                 }
             }
@@ -1432,7 +1405,14 @@ update:
         // Commit the transaction for adding/updating the controller
         // NOTE: Ths will chain to updating the controllers[] data structure, and allow the MTP to be added
         DM_TRANS_Commit();
+
+        // Ensure that cont points to the controller whcih we jsut added
+        cont = FindControllerByInstance(cont_instance);
+        USP_ASSERT(cont != NULL);           // Because we just added it (when the commit chained to updating controllers[])
     }
+
+    // Controllers that are connected over UDS have implicit full access
+    cont->inherited_instance = ROLE_UDS;
 
     //-------------------------------------------------------
     // ADD / UPDATE MTP
@@ -3686,29 +3666,23 @@ int Notify_ControllerRetryIntervalMultiplier(dm_req_t *req, char *value)
 **************************************************************************/
 int Get_ControllerInheritedRole(dm_req_t *req, char *buf, int len)
 {
-    int err;
-    combined_role_t combined_role;
-    int instance;
+    controller_t *cont;
 
     // Set default inherited role
     *buf = '\0';
 
-    // Exit if this controller is not enabled, or does not have a role setup yet
-    err = DEVICE_CONTROLLER_GetCombinedRole(inst1, &combined_role);
-    if (err != USP_ERR_OK)
-    {
-        return USP_ERR_OK;
-    }
-
-    // Exit if the controller's role is INVALID_ROLE
-    instance = DEVICE_CTRUST_GetInstanceFromRole(combined_role.inherited);
-    if (instance == INVALID)
+    // Exit if unable to find a matching enabled controller
+    cont = FindControllerByInstance(inst1);
+    if ((cont == NULL) || (cont->enable == false))
     {
         return USP_ERR_OK;
     }
 
     // If the code gets here, then we have determined which instance of the Role table is associated with the controller's role
-    USP_SNPRINTF(buf, len, "Device.LocalAgent.ControllerTrust.Role.%d", instance);
+    if (cont->inherited_instance != INVALID)
+    {
+        USP_SNPRINTF(buf, len, "Device.LocalAgent.ControllerTrust.Role.%d", cont->inherited_instance);
+    }
 
     return USP_ERR_OK;
 }
@@ -3740,6 +3714,7 @@ int ProcessControllerAdded(int cont_instance)
     cont = FindUnusedController();
     if (cont == NULL)
     {
+        USP_LOG_Error("%s: Attempted to add too many controllers. Only %d supported", __FUNCTION__, MAX_CONTROLLERS);
         return USP_ERR_RESOURCES_EXCEEDED;
     }
 
@@ -3747,8 +3722,8 @@ int ProcessControllerAdded(int cont_instance)
     INT_VECTOR_Init(&iv);
     memset(cont, 0, sizeof(controller_t));
     cont->instance = cont_instance;
-    cont->combined_role.inherited = ROLE_DEFAULT;
-    cont->combined_role.assigned = ROLE_DEFAULT;
+    cont->inherited_instance = INVALID;
+    cont->assigned_instance = INVALID;
 
     for (i=0; i<MAX_CONTROLLER_MTPS; i++)
     {
@@ -4146,31 +4121,23 @@ exit:
 int UpdateAssignedRole(controller_t *cont, char *reference)
 {
     int err;
-    int instance;
-    ctrust_role_t role;
+    int role_instance;
 
     // Exit if reference is a blank string
     if (*reference == '\0')
     {
-        cont->combined_role.assigned = INVALID_ROLE;
+        cont->assigned_instance = INVALID;
         return USP_ERR_OK;
     }
 
     // Exif if the controller trust role instance number does not exist
-    err = DM_ACCESS_ValidateReference(reference, "Device.LocalAgent.ControllerTrust.Role.{i}", &instance);
+    err = DM_ACCESS_ValidateReference(reference, "Device.LocalAgent.ControllerTrust.Role.{i}", &role_instance);
     if (err != USP_ERR_OK)
     {
         return err;
     }
 
-    // Exit if unable to convert the instance number to its associated role
-    role = DEVICE_CTRUST_GetRoleFromInstance(instance);
-    if (role == INVALID_ROLE)
-    {
-        return USP_ERR_INVALID_VALUE;
-    }
-
-    cont->combined_role.assigned = role;
+    cont->assigned_instance = role_instance;
 
     return USP_ERR_OK;
 }

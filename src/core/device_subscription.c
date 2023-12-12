@@ -2686,7 +2686,7 @@ void ResolveAllPathExpressions(int subs_instance, str_vector_t *path_expressions
     }
 
     // Exit if we cannot retrieve the role to use for this endpoint
-    err = DEVICE_CONTROLLER_GetCombinedRole(cont_instance, &combined_role);
+    err = DEVICE_CONTROLLER_GetCombinedRoleByInstance(cont_instance, &combined_role);
     if (err != USP_ERR_OK)
     {
         return;
@@ -2702,7 +2702,7 @@ void ResolveAllPathExpressions(int subs_instance, str_vector_t *path_expressions
         }
 
         expr = path_expressions->vector[i];
-        PATH_RESOLVER_ResolveDevicePath(expr, resolved_paths, group_ids, op, FULL_DEPTH, &combined_role, 0);
+        PATH_RESOLVER_ResolveDevicePath(expr, resolved_paths, group_ids, op, FULL_DEPTH, &combined_role, DONT_LOG_RESOLVER_ERRORS);
         // NOTE: Ignoring any errors. Errors are possible if the vendor layer returns any error
         // eg due to an instances cache mismatch
     }
@@ -3134,12 +3134,42 @@ bool DoesSubscriptionMatchEvent(subs_t *sub, char *event_name)
 
         // Iterate over all path expressions, seeing if the USP Command matches the path expression
         // NOTE: This simpler method is only possible because we limit the path expressions for OperComplete & Events
-        // to only absolute or wildcarded in a USP Broker
+        // to only absolute or wildcarded in a USP Broker. If the path expression is more complicated than this, then the NORMAL method is used
         for (i=0; i < sub->path_expressions.num_entries; i++)
         {
             path_spec = sub->path_expressions.vector[i];
             if (TEXT_UTILS_IsPathMatch(event_name, path_spec))
             {
+                int err;
+                combined_role_t combined_role;
+                unsigned flags;
+                unsigned short permission_bitmask;
+
+                // Exit if unable to determine the role of the controller
+                // This could occur if the controller had been deleted
+                err = DEVICE_CONTROLLER_GetCombinedRoleByInstance(sub->cont_instance, &combined_role);
+                if (err != USP_ERR_OK)
+                {
+                    return false;
+                }
+
+                // Exit if the path does not exist in the schema
+                // This could occur at startup, if the previous power cycle had started an async command but not completed it
+                // The Controller will have permission to send the notification in this case, because we prevent a controller
+                // from setting an OperateComplete subscription if they do not have permission to receive the notification
+                flags = DATA_MODEL_GetPathProperties(event_name, &combined_role, &permission_bitmask, NULL, NULL);
+                if ((flags & PP_EXISTS_IN_SCHEMA)==0)
+                {
+                    return true;
+                }
+
+                // Exit if the controller does not have permission to receive the notification
+                if ((permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP)==0)
+                {
+                    return false;
+                }
+
+                // If the code gets here, then the controller has permission to receive the notification
                 return true;
             }
         }
@@ -3189,7 +3219,7 @@ bool HasControllerGotNotificationPermission(int cont_instance, char *path, unsig
 
     // Exit if unable to determine role used by the controller that set this subscription
     // NOTE: This could occur if the controller doesn't exist in the controller table anymore
-    err = DEVICE_CONTROLLER_GetCombinedRole(cont_instance, &combined_role);
+    err = DEVICE_CONTROLLER_GetCombinedRoleByInstance(cont_instance, &combined_role);
     if (err != USP_ERR_OK)
     {
         return false;
