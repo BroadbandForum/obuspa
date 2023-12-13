@@ -132,6 +132,23 @@ const enum_entry_t mtp_protocols[kMtpProtocol_Max] =
 };
 
 //------------------------------------------------------------------------------
+// Define for default value of Device.LocalAgent.MTP.{i}.Protocol
+// We attempt to use WebSockets if present (TR181-2-15-1), falling back to an enabled MTP
+#if defined(ENABLE_WEBSOCKETS)
+#define DEFAULT_MTP_PROTOCOL "WebSocket"
+#elif !defined(DISABLE_STOMP)
+#define DEFAULT_MTP_PROTOCOL "STOMP"
+#elif defined(ENABLE_MQTT)
+#define DEFAULT_MTP_PROTOCOL "MQTT"
+#elif defined(ENABLE_COAP)
+#define DEFAULT_MTP_PROTOCOL "CoAP"
+#elif defined(ENABLE_UDS)
+#define DEFAULT_MTP_PROTOCOL "UDS"
+#else
+#define DEFAULT_MTP_PROTOCOL ""
+#endif
+
+//------------------------------------------------------------------------------
 // Table used to convert from an enumeration of an MTP status to a textual representation
 const enum_entry_t mtp_statuses[] =
 {
@@ -231,7 +248,7 @@ int DEVICE_MTP_Init(void)
     err |= USP_REGISTER_Param_NumEntries("Device.LocalAgent.MTPNumberOfEntries", DEVICE_AGENT_MTP_ROOT ".{i}");
     err |= USP_REGISTER_DBParam_Alias(DEVICE_AGENT_MTP_ROOT ".{i}.Alias", NULL);
 
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Protocol", "STOMP", Validate_AgentMtpProtocol, NotifyChange_AgentMtpProtocol, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Protocol", DEFAULT_MTP_PROTOCOL, Validate_AgentMtpProtocol, NotifyChange_AgentMtpProtocol, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Enable", "false", Validate_AgentMtpEnable, NotifyChange_AgentMtpEnable, DM_BOOL);
 
 #ifndef DISABLE_STOMP
@@ -509,6 +526,37 @@ int DEVICE_MTP_GetStompReference(char *path, int *stomp_connection_instance)
     return USP_ERR_OK;
 }
 
+/*********************************************************************//**
+**
+** DEVICE_MTP_NotifyStompConnDeleted
+**
+** Called when a STOMP connection is deleted
+** This code unpicks all references to the STOMP connection existing in the LocalAgent MTP table
+**
+** \param   stomp_instance - instance in Device.STOMP.Connection which has been deleted
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_MTP_NotifyStompConnDeleted(int stomp_instance)
+{
+    int i;
+    agent_mtp_t *mtp;
+    char path[MAX_DM_PATH];
+
+    // Iterate over all agent MTPs, clearing out all references to the deleted STOMP connection
+    for (i=0; i<MAX_AGENT_MTPS; i++)
+    {
+        mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_STOMP) && (mtp->stomp_connection_instance == stomp_instance))
+        {
+            USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.MTP.%d.STOMP.Reference", mtp->instance);
+            DATA_MODEL_SetParameterValue(path, "", 0);
+        }
+    }
+}
+#endif
+
 #ifdef ENABLE_UDS
 /*********************************************************************//**
 **
@@ -555,38 +603,6 @@ int DEVICE_MTP_GetUdsReference(char *path, int *uds_connection_instance)
     }
 
     return USP_ERR_OK;
-}
-#endif
-
-
-/*********************************************************************//**
-**
-** DEVICE_MTP_NotifyStompConnDeleted
-**
-** Called when a STOMP connection is deleted
-** This code unpicks all references to the STOMP connection existing in the LocalAgent MTP table
-**
-** \param   stomp_instance - instance in Device.STOMP.Connection which has been deleted
-**
-** \return  None
-**
-**************************************************************************/
-void DEVICE_MTP_NotifyStompConnDeleted(int stomp_instance)
-{
-    int i;
-    agent_mtp_t *mtp;
-    char path[MAX_DM_PATH];
-
-    // Iterate over all agent MTPs, clearing out all references to the deleted STOMP connection
-    for (i=0; i<MAX_AGENT_MTPS; i++)
-    {
-        mtp = &agent_mtps[i];
-        if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_STOMP) && (mtp->stomp_connection_instance == stomp_instance))
-        {
-            USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.MTP.%d.STOMP.Reference", mtp->instance);
-            DATA_MODEL_SetParameterValue(path, "", 0);
-        }
-    }
 }
 #endif
 
