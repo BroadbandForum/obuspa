@@ -43,7 +43,7 @@
 #include "msg_utils.h"
 #include "text_utils.h"
 
-#if !defined(REMOVE_USP_BROKER) && !defined(REMOVE_USP_SERVICE)
+#if !defined(REMOVE_USP_BROKER) || !defined(REMOVE_USP_SERVICE)
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int CalcFailureIndex(Usp__Msg *resp, kv_vector_t *params, int *modified_err);
@@ -533,4 +533,4 @@ void LogSetResponse_OperFailure(Usp__SetResp__UpdatedObjectResult__OperationStat
     }
 }
 
-#endif // !defined(REMOVE_USP_BROKER) && !defined(REMOVE_USP_SERVICE)
+#endif // !defined(REMOVE_USP_BROKER) || !defined(REMOVE_USP_SERVICE)

@@ -163,7 +163,6 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, char *orig
 {
     int err = USP_ERR_OK;
     UspRecord__Record *rec = NULL;
-    char buf[MAX_ISO8601_LEN];
 
     // Exit if unable to unpack the USP record, ignoring it as required by R-MTP.5
     rec = usp_record__record__unpack(pbuf_allocator, pbuf_len, pbuf);
@@ -202,6 +201,7 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, char *orig
         case USP_RECORD__RECORD__RECORD_TYPE_MQTT_CONNECT:
         case USP_RECORD__RECORD__RECORD_TYPE_STOMP_CONNECT:
         case USP_RECORD__RECORD__RECORD_TYPE_UDS_CONNECT:
+            char buf[MAX_ISO8601_LEN];
             USP_LOG_Info("USP_CONNECT_RECORD received at time %s, from endpoint_id=%s over %s",
                 iso8601_cur_time(buf, sizeof(buf)),
                 originator,
