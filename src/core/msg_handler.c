@@ -201,15 +201,17 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, char *orig
         case USP_RECORD__RECORD__RECORD_TYPE_MQTT_CONNECT:
         case USP_RECORD__RECORD__RECORD_TYPE_STOMP_CONNECT:
         case USP_RECORD__RECORD__RECORD_TYPE_UDS_CONNECT:
-            char buf[MAX_ISO8601_LEN];
-            USP_LOG_Info("USP_CONNECT_RECORD received at time %s, from endpoint_id=%s over %s",
-                iso8601_cur_time(buf, sizeof(buf)),
-                originator,
-                DEVICE_MTP_EnumToString(mtpc->protocol) );
+            {
+                char buf[MAX_ISO8601_LEN];
+                USP_LOG_Info("USP_CONNECT_RECORD received at time %s, from endpoint_id=%s over %s",
+                    iso8601_cur_time(buf, sizeof(buf)),
+                    originator,
+                    DEVICE_MTP_EnumToString(mtpc->protocol) );
 
-            PROTO_TRACE_ProtobufMessage(&rec->base);
-            err = USP_ERR_OK;
-            goto exit;
+                PROTO_TRACE_ProtobufMessage(&rec->base);
+                err = USP_ERR_OK;
+                goto exit;
+            }
             break;
 
         default:
