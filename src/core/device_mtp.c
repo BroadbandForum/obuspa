@@ -120,6 +120,21 @@ const enum_entry_t mtp_protocols[kMtpProtocol_Max] =
 };
 
 //------------------------------------------------------------------------------
+// Define for default value of Device.LocalAgent.MTP.{i}.Protocol
+// We attempt to use WebSockets if present (TR181-2-15-1), falling back to an enabled MTP
+#if defined(ENABLE_WEBSOCKETS)
+#define DEFAULT_MTP_PROTOCOL "WebSocket"
+#elif !defined(DISABLE_STOMP)
+#define DEFAULT_MTP_PROTOCOL "STOMP"
+#elif defined(ENABLE_MQTT)
+#define DEFAULT_MTP_PROTOCOL "MQTT"
+#elif defined(ENABLE_COAP)
+#define DEFAULT_MTP_PROTOCOL "CoAP"
+#else
+#define DEFAULT_MTP_PROTOCOL ""
+#endif
+
+//------------------------------------------------------------------------------
 // Table used to convert from an enumeration of an MTP status to a textual representation
 const enum_entry_t mtp_statuses[] =
 {
@@ -215,7 +230,7 @@ int DEVICE_MTP_Init(void)
     err |= USP_REGISTER_Param_NumEntries("Device.LocalAgent.MTPNumberOfEntries", DEVICE_AGENT_MTP_ROOT ".{i}");
     err |= USP_REGISTER_DBParam_Alias(DEVICE_AGENT_MTP_ROOT ".{i}.Alias", NULL);
 
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Protocol", "STOMP", Validate_AgentMtpProtocol, NotifyChange_AgentMtpProtocol, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Protocol", DEFAULT_MTP_PROTOCOL, Validate_AgentMtpProtocol, NotifyChange_AgentMtpProtocol, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.Enable", "false", Validate_AgentMtpEnable, NotifyChange_AgentMtpEnable, DM_BOOL);
 
 #ifndef DISABLE_STOMP

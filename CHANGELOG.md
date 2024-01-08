@@ -1,5 +1,9 @@
 # OB-USP-AGENT Changelog since Release 7.0.0
 
+## 2024-01-08 v7.0.6
+### Fixed
+- The default value for Device.LocalAgent.MTP.{i}.Protocol now takes into account which MTPs are present
+
 
 ## 2023-11-15 v7.0.5
 ### Fixed
