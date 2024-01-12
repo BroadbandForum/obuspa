@@ -1226,17 +1226,18 @@ int DATA_MODEL_DeleteInstance(char *path, unsigned flags)
 ** \param   path - path of the object or parameter to get the permissions of
 ** \param   combined_role - role used to access this path. If set to INTERNAL_ROLE, then full permissions are always returned
 ** \param   perm - pointer to variable in which to return permission bitmask
+** \param   flags - bitmask of options controling execution (eg DONT_LOG_ERRORS)
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsigned short *perm)
+int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsigned short *perm, unsigned flags)
 {
     dm_node_t *node;
 
     // Exit if unable to get node associated with object or parameter
     // This could occur if the parameter is not present in the schema, or if the specified instance does not exist
-    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, flags);
     if (node == NULL)
     {
         *perm = 0;
@@ -1738,12 +1739,13 @@ int DATA_MODEL_RestartAsyncOperation(char *path, kv_vector_t *input_args, int in
 **                               and the role argument is ignored
 ** \param   group_id - pointer to variable in which to return the group_id, or NULL if this is not required
 ** \param   type_flags - pointer to variable in which to return the type of the parameter, or NULL if this is not required. NOTE: Only applicable for parameters
+** \param   exec_flags - bitmask of options controling execution (eg DONT_LOG_ERRORS)
 **
 ** \return  flag variable containing the path's properties
 **          NOTE: Sets USP error message if returning flags that would constitute an error
 **
 **************************************************************************/
-unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role, unsigned short *permission_bitmask, int *group_id, unsigned *type_flags)
+unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role, unsigned short *permission_bitmask, int *group_id, unsigned *type_flags, unsigned exec_flags)
 {
     dm_node_t *node;
     dm_instances_t inst;
@@ -1760,7 +1762,7 @@ unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role
     }
 
     // Exit if path does not exist in the schema
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance, 0);
+    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance, exec_flags);
     if (node == NULL)
     {
         return flags;
@@ -2147,7 +2149,7 @@ int DATA_MODEL_GetUniqueKeyParams(char *obj_path, kv_vector_t *params, combined_
             USP_STRNCPY(&param_path[len], name, sizeof(param_path)-len);
 
             // Move to next param in the compound unique key if role does not have permission to read this parameter
-            DATA_MODEL_GetPathProperties(param_path, combined_role, &permission_bitmask, &group_id, NULL);
+            DATA_MODEL_GetPathProperties(param_path, combined_role, &permission_bitmask, &group_id, NULL, 0);
             if ((permission_bitmask & PERMIT_GET)==0)
             {
                 continue;
@@ -2750,7 +2752,7 @@ int DATA_MODEL_SetParameterInDatabase(char *path, char *value)
     }
 
     // Determine if this parameter is secure and hence whether the database needs to obfuscate the value
-    path_flags = DATA_MODEL_GetPathProperties(path, INTERNAL_ROLE, NULL, NULL, NULL);
+    path_flags = DATA_MODEL_GetPathProperties(path, INTERNAL_ROLE, NULL, NULL, NULL, 0);
     db_flags = (path_flags & PP_IS_SECURE_PARAM) ? OBFUSCATED_VALUE : 0;
 
     // Exit if unable to set value of parameter in DB

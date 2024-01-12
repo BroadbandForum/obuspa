@@ -118,7 +118,7 @@ typedef struct
     mtp_conn_t agent_mtp;           // Identifies the MTP to use when acting as an agent sending to the Endpoint's controller
     int group_id;                   // Group Id assigned for this endpoint
     bool has_controller;            // Set if the USP Service's Controller is connected via the Broker's agent socket
-    char *gsdm_msg_id;              // Message Id of the Get Supported Data Model request sent to the USP Service
+    str_vector_t gsdm_msg_ids;      // Message Ids of all outstanding GSDM requests sent to the USP Service
     str_vector_t registered_paths;  // vector of top level data model objects that the USP Service provides
     double_linked_list_t subs_map;  // linked list implementing a table mapping the subscription in the Broker's subscription table to the subscription in the Service's subscription table
     double_linked_list_t req_map;   // linked list implementing a table mapping the instance in the Broker's request table to the command_key of the request
@@ -151,7 +151,7 @@ int ProcessGetResponse(Usp__Msg *resp, kv_vector_t *kvv);
 int ProcessGetInstancesResponse(Usp__Msg *resp, usp_service_t *us, bool within_vendor_hook);
 Usp__Msg *CreateRegisterResp(char *msg_id);
 void AddRegisterResp_RegisteredPathResult(Usp__RegisterResp *reg_resp, char *requested_path, int err_code);
-void ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *ror, int group_id, str_vector_t *registered_paths);
+bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *ror, usp_service_t *us);
 void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult *sor, int group_id);
 unsigned CalcParamType(Usp__GetSupportedDMResp__ParamValueType value_type);
 Usp__Msg *CreateBroker_GetReq(kv_vector_t *kvv);
@@ -162,9 +162,9 @@ Usp__Msg *CreateBroker_OperateReq(char *path, char *command_key, kv_vector_t *in
 Usp__Msg *CreateBroker_GetInstancesReq(str_vector_t *sv);
 Usp__Msg *CreateBroker_GetSupportedDMReq(char *msg_id, str_vector_t *sv);
 usp_service_t *AddUspService(char *endpoint_id, mtp_conn_t *mtpc);
-int RegisterUspServicePath(usp_service_t *us, char *requested_path);
+int IsPathAlreadyRegistered(char *requested_path);
 void FreeUspService(usp_service_t *us);
-void QueueGetSupportedDMToUspService(usp_service_t *us);
+void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths);
 void ApplyPermissionsToUspService(usp_service_t *us);
 int Broker_GroupGet(int group_id, kv_vector_t *kvv);
 int Broker_GroupSet(int group_id, kv_vector_t *params, unsigned *param_types, int *failure_index);
@@ -456,13 +456,15 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
     Usp__Msg *resp = NULL;
     int i;
     int err;
-    usp_service_t *us;
+    usp_service_t *us = NULL;
     Usp__Register *reg;
     Usp__Register__RegistrationPath *rp;
     Usp__RegisterResp *reg_resp;
     bool allow_partial;
-    int count = 0;      // Count of paths that were accepted
+    str_vector_t accepted_paths;    // List of paths accepted from this register message, which have not been previously registered
     char path[MAX_DM_PATH];
+
+    STR_VECTOR_Init(&accepted_paths);
 
     // Exit if message is invalid or failed to parse
     // This code checks the parsed message enums and pointers for expectations and validity
@@ -487,21 +489,10 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
         goto exit;
     }
 
-    // Determine whether this USP Service has already been added
+    // Add USP Service if not already added
     us = FindUspServiceByEndpoint(endpoint_id);
-    if (us != NULL)
+    if (us == NULL)
     {
-        // USP Service has already been added. Exit if it has already successfully registered some paths
-        if (us->registered_paths.num_entries != 0)
-        {
-            USP_ERR_SetMessage("%s: USP Service already registered. Multiple registration messages not supported", __FUNCTION__);
-            resp = ERROR_RESP_CreateSingle(usp->header->msg_id, USP_ERR_REGISTER_FAILURE, resp);
-            goto exit;
-        }
-    }
-    else
-    {
-        // USP Service has not been added yet, so add it
         us = AddUspService(endpoint_id, mtpc);
         if (us == NULL)
         {
@@ -531,19 +522,33 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
         rp = reg->reg_paths[i];
         USP_ASSERT((rp != NULL) && (rp->path != NULL));
 
-        // Exit if this path conflicted, and we are not allowing partial registration. In which case, no paths were registered.
-        err = RegisterUspServicePath(us, rp->path);
-        if ((err != USP_ERR_OK) && (allow_partial == false))
+        // Determine whather this path is valid and whether it has already been registered
+        err = IsPathAlreadyRegistered(rp->path);
+        if (err == USP_ERR_OK)
         {
-            resp = ERROR_RESP_CreateSingle(usp->header->msg_id, err, resp);
-            STR_VECTOR_Destroy(&us->registered_paths);
-            count = 0;
-            goto exit;
+            // Path is valid and not currently registered into the data model, so add it to the list of paths to perform a GSDM on
+            STR_VECTOR_Add(&accepted_paths, rp->path);
+        }
+        else
+        {
+            // Path is currently registered into the data model or is invalid
+            // Exit if we are not allowing partial registration. In which case, no paths were registered.
+            if (allow_partial == false)
+            {
+                resp = ERROR_RESP_CreateSingle(usp->header->msg_id, err, resp);
+                STR_VECTOR_Destroy(&accepted_paths);
+                goto exit;
+            }
         }
 
-        // Otherwise, add the registered path result (which maybe successful or unsuccessful)
+        // Add the registered path result (which may be successful or unsuccessful)
         AddRegisterResp_RegisteredPathResult(reg_resp, rp->path, err);
-        count++;
+    }
+
+    // Add all accepted paths to the list of registered paths
+    for (i=0; i<accepted_paths.num_entries; i++)
+    {
+        STR_VECTOR_Add(&us->registered_paths, accepted_paths.vector[i]);
     }
 
 exit:
@@ -556,10 +561,12 @@ exit:
 
     // If any paths were accepted, then register the paths into the data model and
     // kick off a query to get the supported data model for the registered paths
-    if (count > 0)
+    if (accepted_paths.num_entries > 0)
     {
-        QueueGetSupportedDMToUspService(us);
+        QueueGetSupportedDMToUspService(us, &accepted_paths);
     }
+
+    STR_VECTOR_Destroy(&accepted_paths);
 }
 
 /*********************************************************************//**
@@ -606,6 +613,19 @@ void USP_BROKER_HandleDeRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *m
     if ((us == NULL) || (us->registered_paths.num_entries == 0))
     {
         USP_ERR_SetMessage("%s: Endpoint '%s' has not registered any paths", __FUNCTION__, endpoint_id);
+        for (i=0; i < dreg->n_paths; i++)
+        {
+            path = dreg->paths[i];
+            AddDeRegisterResp_DeRegisteredPathResult(dreg_resp, path, path, USP_ERR_DEREGISTER_FAILURE, USP_ERR_GetMessage());
+        }
+        goto exit;
+    }
+
+    // Exit if there are any outstanding GSDM requests
+    // In this case, we disallow the deregister until after the GSDM response sequence has completed, to prevent the registered data model being inconsistent with the GSDM response
+    if (us->gsdm_msg_ids.num_entries > 0)
+    {
+        USP_ERR_SetMessage("%s: Cannot deregister whilst registration follow-on sequence in progress", __FUNCTION__);
         for (i=0; i < dreg->n_paths; i++)
         {
             path = dreg->paths[i];
@@ -667,7 +687,11 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
 {
     int i;
     Usp__GetSupportedDMResp *gsdm;
+    Usp__GetSupportedDMResp__RequestedObjectResult *ror;
     usp_service_t *us;
+    int index;
+    bool is_accepted;
+    str_vector_t ipaths;
 
     // NOTE: Errors in response messages should be ignored according to R-MTP.5 (they should not send a USP ERROR response)
 
@@ -689,30 +713,40 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
         return;
     }
 
-    // Exit if we are not expecting a GSDM response
-    if (us->gsdm_msg_id == NULL)
+    // Exit if we are not expecting this GSDM response
+    index = STR_VECTOR_Find(&us->gsdm_msg_ids, usp->header->msg_id);
+    if (index == INVALID)
     {
-        USP_LOG_Error("%s: Ignoring GSDM Response from %s as not expecting one", __FUNCTION__, endpoint_id);
+        USP_LOG_Error("%s: Ignoring GSDM response from endpoint '%s' because msg_id='%s' was unexpected", __FUNCTION__, endpoint_id, usp->header->msg_id);
         return;
     }
 
-    // Exit if the msg_id of this GSDM response does not match the one we sent in our request
-    if (strcmp(usp->header->msg_id, us->gsdm_msg_id) != 0)
+    // Exit if the reponse did not contain the GSDM of any paths
+    gsdm = usp->body->response->get_supported_dm_resp;
+    if (gsdm->n_req_obj_results == 0)
     {
-        USP_LOG_Error("%s: Ignoring GSDM response from endpoint '%s' because msg_id='%s' (expected '%s')", __FUNCTION__, endpoint_id, usp->header->msg_id, us->gsdm_msg_id);
+        USP_LOG_Error("%s: Incoming GSDM Response from endpoint_is=%s  contains no results", __FUNCTION__, endpoint_id);
         return;
     }
 
     // Since we've received the response now, free the expected msg_id
-    USP_FREE(us->gsdm_msg_id);
-    us->gsdm_msg_id = NULL;
+    STR_VECTOR_RemoveByIndex(&us->gsdm_msg_ids, index);
+
+    // Form a temporary string vector in which to accumulate a list of paths to refresh the instances of
+    // NOTE: The vector is sized to the largest it could possibly be, and the strings stored into it will stay owned by the GSDM response
+    ipaths.num_entries = 0;
+    ipaths.vector = USP_MALLOC(gsdm->n_req_obj_results * sizeof(char *));
 
     // Iterate over all RequestedObjectResults, registering the data model elements provided
     // by this USP service into this USP Broker's data model
-    gsdm = usp->body->response->get_supported_dm_resp;
     for (i=0; i < gsdm->n_req_obj_results; i++)
     {
-        ProcessGsdm_RequestedPath(gsdm->req_obj_results[i], us->group_id, &us->registered_paths);
+        ror = gsdm->req_obj_results[i];
+        is_accepted = ProcessGsdm_RequestedPath(ror, us);
+        if (is_accepted)
+        {
+            ipaths.vector[ipaths.num_entries++] = ror->req_obj_path;
+        }
     }
 
     // Register group vendor hooks that use USP messages for these data model elements
@@ -727,10 +761,13 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
     // Ensure that the USP Service contains only the subscriptions which it is supposed to
     SyncSubscriptions(us);
 
-    // Get a baseline sent of instances for this USP Service into the instance cache
+    // Get a baseline set of instances for this USP Service into the instance cache
     // This is necessary, otherwise an Object creation subscription that uses the legacy polling mechanism (via refresh instances vendor hook)
     // may erroneously fire, immediately after this service has registered
-    UspService_RefreshInstances(us, &us->registered_paths, false);
+    UspService_RefreshInstances(us, &ipaths, false);
+
+    // Free the temporary string vector. NOTE: None of the strings need to be freed, as their ownership stayed with the GSDM response
+    USP_FREE(ipaths.vector);
 }
 
 /*********************************************************************//**
@@ -1089,6 +1126,7 @@ usp_service_t *AddUspService(char *endpoint_id, mtp_conn_t *mtpc)
     us->endpoint_id = USP_STRDUP(endpoint_id);
     us->group_id = group_id;
     us->has_controller = false;
+    STR_VECTOR_Init(&us->gsdm_msg_ids);
     STR_VECTOR_Init(&us->registered_paths);
     SubsMap_Init(&us->subs_map);
     ReqMap_Init(&us->req_map);
@@ -1166,34 +1204,31 @@ void UpdateUspServiceMRT(usp_service_t *us, mtp_conn_t *mtpc)
 
 /*********************************************************************//**
 **
-** RegisterUspServicePath
+** IsPathAlreadyRegistered
 **
-** Registers a data model path which the specified USP Service is offering to provide
-** NOTE: This function just validates the path and adds it to the list that the USP servce owns
-**       It does not register the ath into the data model (this is done later when the GSDM response is received)
+** Validate whether the specified path is valid and has not been registered into the data model before
 **
-** \param   us - pointer to USP service in usp_services[]
 ** \param   requested_path - path of the data model object to register
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int RegisterUspServicePath(usp_service_t *us, char *requested_path)
+int IsPathAlreadyRegistered(char *requested_path)
 {
     int i;
     int err;
-    usp_service_t *p;
+    usp_service_t *us;
     int index;
     unsigned flags;
 
     // Exit if this path has already been registered by any of the USP Services (including this USP Service)
     for (i=0; i<MAX_USP_SERVICES; i++)
     {
-        p = &usp_services[i];
-        index = STR_VECTOR_Find(&p->registered_paths, requested_path);
+        us = &usp_services[i];
+        index = STR_VECTOR_Find(&us->registered_paths, requested_path);
         if (index != INVALID)
         {
-            USP_ERR_SetMessage("%s: Requested path '%s' has already been registered by endpoint '%s'", __FUNCTION__, requested_path, p->endpoint_id);
+            USP_ERR_SetMessage("%s: Requested path '%s' has already been registered by endpoint '%s'", __FUNCTION__, requested_path, us->endpoint_id);
             return USP_ERR_PATH_ALREADY_REGISTERED;
         }
     }
@@ -1206,15 +1241,12 @@ int RegisterUspServicePath(usp_service_t *us, char *requested_path)
     }
 
     // Exit if this path already exists in the schema e.g it may be one of the paths that are internal to this USP Broker
-    flags = DATA_MODEL_GetPathProperties(requested_path, INTERNAL_ROLE, NULL, NULL, NULL);
+    flags = DATA_MODEL_GetPathProperties(requested_path, INTERNAL_ROLE, NULL, NULL, NULL, 0);
     if (flags & PP_EXISTS_IN_SCHEMA)
     {
         USP_ERR_SetMessage("%s: Requested path '%s' already exists in the data model", __FUNCTION__, requested_path);
         return USP_ERR_PATH_ALREADY_REGISTERED;
     }
-
-    // Add the requested path
-    STR_VECTOR_Add(&us->registered_paths, requested_path);
 
     return USP_ERR_OK;
 }
@@ -1321,7 +1353,7 @@ void FreeUspService(usp_service_t *us)
     USP_SAFE_FREE(us->endpoint_id);
     DM_EXEC_FreeMTPConnection(&us->controller_mtp);
     DM_EXEC_FreeMTPConnection(&us->agent_mtp);
-    USP_SAFE_FREE(us->gsdm_msg_id);
+    STR_VECTOR_Destroy(&us->gsdm_msg_ids);
 
     STR_VECTOR_Destroy(&us->registered_paths);
     SubsMap_Destroy(&us->subs_map);
@@ -1340,11 +1372,12 @@ void FreeUspService(usp_service_t *us)
 ** And registers all paths owned by the USP Service into the data model
 **
 ** \param   us - pointer to USP service in usp_services[]
+** \param   paths - pointer to string vector containing paths to include in the GSDM request
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-void QueueGetSupportedDMToUspService(usp_service_t *us)
+void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths)
 {
     int i;
     Usp__Msg *req = NULL;
@@ -1352,12 +1385,6 @@ void QueueGetSupportedDMToUspService(usp_service_t *us)
     dm_node_t *node;
     dm_object_info_t *info;
     char *path;
-
-    // Exit if this USP Service hasn't registered any paths (since there's no point sending a GSDM in this case)
-    if (us->registered_paths.num_entries == 0)
-    {
-        return;
-    }
 
     // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
     if (us->controller_mtp.protocol == kMtpProtocol_None)
@@ -1368,19 +1395,21 @@ void QueueGetSupportedDMToUspService(usp_service_t *us)
 
     // Create the GSDM request
     CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    us->gsdm_msg_id = USP_STRDUP(msg_id);
-    req = CreateBroker_GetSupportedDMReq(msg_id, &us->registered_paths);
+    req = CreateBroker_GetSupportedDMReq(msg_id, paths);
 
     // Queue the GSDM request
     MSG_HANDLER_QueueMessage(us->endpoint_id, req, &us->controller_mtp);
     usp__msg__free_unpacked(req, pbuf_allocator);
 
-    // Register all paths owned by the USP Service into the data model as single instance objects
+    // Add the msg_id of the GSDM request to the list of GSDM responses we're expecting
+    STR_VECTOR_Add(&us->gsdm_msg_ids, msg_id);
+
+    // Register these paths owned by the USP Service into the data model as single instance objects
     // This is necessary to ensure that no other USP Services can register the same path
-    // Whether the obect is actually a single or multi-instance object will be discovered (and correctly set) when the GSDM response is processed
-    for (i=0; i < us->registered_paths.num_entries; i++)
+    // Whether the path is actually a single or multi-instance object will be discovered (and correctly set) when the GSDM response is processed
+    for (i=0; i < paths->num_entries; i++)
     {
-        path = us->registered_paths.vector[i];
+        path = paths->vector[i];
         node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_SingleInstance, 0);
         if (node != NULL)
         {
@@ -1961,8 +1990,8 @@ int Broker_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notif
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Build up the list of child params to set in the Add request
-    USP_SNPRINTF(subscription_id, sizeof(subscription_id), "%X-%X-%s", id_count, (unsigned) time(NULL), broker_unique_str);
+    // Form the value of the subscription ID
+    USP_SNPRINTF(subscription_id, sizeof(subscription_id), "%d-%X-%s", id_count, (unsigned) time(NULL), broker_unique_str);
     id_count++;
 
     // Form the USP Add Request message, ensuring that the path contains a trailing dot
@@ -3245,40 +3274,41 @@ void ProcessUniqueKeys(char *path, Usp__GetInstancesResp__CurrInstance__UniqueKe
 **
 ** ProcessGsdm_RequestedPath
 **
-** Parses the specified RequestedObjectResult, registering the data model elements found into the USP Broker's data model
+** Parses the specified RequestedObjectResult of a GSDM Response, registering the data model elements found into the USP Broker's data model
 **
 ** \param   ror - pointer to result object to parse
-** \param   group_id - group_id of the USP Service
-** \param   registered_paths - string vector containing the paths that were requested in the GSDM request
+** \param   us - USP Service that sent the GDSM response
 **
-** \return  None
+** \return  true if the RequestedObjectResult contained a successful response, and the data model elemts were added into the Broker's data model
 **
 **************************************************************************/
-void ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *ror, int group_id, str_vector_t *registered_paths)
+bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *ror, usp_service_t *us)
 {
     int i;
     int index;
 
     // Exit if this result was not one of the paths that the USP Service originally requested
-    index = STR_VECTOR_Find(registered_paths, ror->req_obj_path);
+    index = STR_VECTOR_Find(&us->registered_paths, ror->req_obj_path);
     if (index == INVALID)
     {
         USP_LOG_Error("%s: Ignoring requested_object_result for '%s', as it wasn't requested", __FUNCTION__, ror->req_obj_path);
-        return;
+        return false;
     }
 
     // Exit if the USP Service encountered an error providing the supported data model for this path
     if (ror->err_code != USP_ERR_OK)
     {
         USP_LOG_Error("%s: USP Service did not provide data model for '%s' (err_code=%d, err_msg='%s')", __FUNCTION__, ror->req_obj_path, ror->err_code, ror->err_msg);
-        return;
+        return false;
     }
 
     // Iterate over all supported objects, registering them into the data model
     for (i=0; i < ror->n_supported_objs; i++)
     {
-        ProcessGsdm_SupportedObject(ror->supported_objs[i], group_id);
+        ProcessGsdm_SupportedObject(ror->supported_objs[i], us->group_id);
     }
+
+    return true;
 }
 
 /*********************************************************************//**
@@ -3474,7 +3504,7 @@ int ValidateUspServicePath(char *path)
     len = strlen(path);
     if (path[len-1] != '.')
     {
-        USP_ERR_SetMessage("%s: Requested path '%s' must end in '.'", __FUNCTION__, path);
+        USP_ERR_SetMessage("%s: Requested path '%s' must be a data model object ending in '.'", __FUNCTION__, path);
         return USP_ERR_REGISTER_FAILURE;
     }
 

@@ -129,7 +129,7 @@ void GROUP_SET_VECTOR_Add(group_set_vector_t *gsv, char *path, char *value, bool
     unsigned type_flags;
 
     // Exit if path does not exist in the schema
-    path_properties = DATA_MODEL_GetPathProperties(path, combined_role, &permission_bitmask, &group_id, &type_flags);
+    path_properties = DATA_MODEL_GetPathProperties(path, combined_role, &permission_bitmask, &group_id, &type_flags, 0);
     if ((path_properties & PP_EXISTS_IN_SCHEMA) == 0)
     {
         err_code = USP_ERR_UNSUPPORTED_PARAM;

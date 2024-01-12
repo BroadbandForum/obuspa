@@ -1445,7 +1445,7 @@ int ExecuteCli_Perm(char *arg1, char *arg2, char *usage)
         // Get the permissions for the specified parameter or object
         combined_role.inherited_index = role_index;
         combined_role.assigned_index = role_index;
-        err = DATA_MODEL_GetPermissions(arg1, &combined_role, &perm);
+        err = DATA_MODEL_GetPermissions(arg1, &combined_role, &perm, 0);
         if (err != USP_ERR_OK)
         {
             continue;
@@ -1506,7 +1506,7 @@ int ExecuteCli_DbGet(char *param, char *arg2, char *usage)
 
     // Exit, not printing any value, if this parameter is obfuscated (eg containing a password)
     value[0] = '\0';
-    path_flags = DATA_MODEL_GetPathProperties(param, INTERNAL_ROLE, NULL, NULL, NULL);
+    path_flags = DATA_MODEL_GetPathProperties(param, INTERNAL_ROLE, NULL, NULL, NULL, 0);
     if (path_flags & PP_IS_SECURE_PARAM)
     {
         goto exit;

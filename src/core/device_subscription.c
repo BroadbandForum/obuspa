@@ -3157,7 +3157,7 @@ bool DoesSubscriptionMatchEvent(subs_t *sub, char *event_name)
                 // This could occur at startup, if the previous power cycle had started an async command but not completed it
                 // The Controller will have permission to send the notification in this case, because we prevent a controller
                 // from setting an OperateComplete subscription if they do not have permission to receive the notification
-                flags = DATA_MODEL_GetPathProperties(event_name, &combined_role, &permission_bitmask, NULL, NULL);
+                flags = DATA_MODEL_GetPathProperties(event_name, &combined_role, &permission_bitmask, NULL, NULL, 0);
                 if ((flags & PP_EXISTS_IN_SCHEMA)==0)
                 {
                     return true;
@@ -3227,7 +3227,7 @@ bool HasControllerGotNotificationPermission(int cont_instance, char *path, unsig
 
     // Determine permissions that this controller has for the notification that occurred
     // NOTE: Ignoring error message. If the path is not present in the data model, then the controller will not have permissions anyway
-    DATA_MODEL_GetPermissions(path, &combined_role, &perm);
+    DATA_MODEL_GetPermissions(path, &combined_role, &perm, 0);
 
     // Exit if controller has permission for this notification
     if (perm & mask)

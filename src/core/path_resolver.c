@@ -90,6 +90,10 @@ typedef int (*dm_cmp_cb_t)(char *lhs, expr_op_t op, char *rhs, bool *result);
 // Convenience macro to wrap calls to USP_ERR_SetMessage(). Prevents USP_ERR_SetMessage() being called if DONT_LOG_RESOLVER_ERRORS is set
 #define USP_ERR_SetMessageIfAllowed(...)      if ((state->flags & DONT_LOG_RESOLVER_ERRORS)==0) { USP_ERR_SetMessage(__VA_ARGS__); }
 
+//--------------------------------------------------------------------
+// Convenience macro passed to data model functions to prevent USP_ERR_SetMessage() being called if DONT_LOG_RESOLVER_ERRORS is set
+#define DONT_LOG_ERRS_FLAG    (state->flags & DONT_LOG_RESOLVER_ERRORS) ? DONT_LOG_ERRORS : 0
+
 //-------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int ExpandPath(char *resolved, char *unresolved, resolver_state_t *state);
@@ -464,7 +468,7 @@ int ExpandWildcard(char *resolved, char *unresolved, resolver_state_t *state)
     unsigned short permission_bitmask;
 
     // Exit if unable to get the permissions for this object
-    err = DATA_MODEL_GetPermissions(resolved, state->combined_role, &permission_bitmask);
+    err = DATA_MODEL_GetPermissions(resolved, state->combined_role, &permission_bitmask, DONT_LOG_ERRS_FLAG);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -552,7 +556,7 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
     }
 
     // Exit if unable to determine whether we are allowed to read the reference
-    err = DATA_MODEL_GetPermissions(resolved, state->combined_role, &permission_bitmask);
+    err = DATA_MODEL_GetPermissions(resolved, state->combined_role, &permission_bitmask, DONT_LOG_ERRS_FLAG);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -639,7 +643,7 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
 
     // Exit if the dereferenced path is not a fully qualified object
     // NOTE: We do not check permissions here, since there may be further parts of the path to resolve after this reference follow
-    flags = DATA_MODEL_GetPathProperties(dereferenced, INTERNAL_ROLE, NULL, NULL, NULL);
+    flags = DATA_MODEL_GetPathProperties(dereferenced, INTERNAL_ROLE, NULL, NULL, NULL, 0);
     if ( ((flags & PP_IS_OBJECT) == 0) || ((flags & PP_IS_OBJECT_INSTANCE) ==0) )
     {
         USP_ERR_SetMessage("%s: The dereferenced path contained in %s was not an object instance (got the value '%s')", __FUNCTION__, resolved, dereferenced);
@@ -740,7 +744,7 @@ int CheckPathPermission(char *path, resolver_state_t *state, int *gid, int *para
     *has_permission = true;
 
     // Exit if the path is not a parameter
-    flags = DATA_MODEL_GetPathProperties(path, state->combined_role, &permission_bitmask, &param_group_id, &param_type_flags);
+    flags = DATA_MODEL_GetPathProperties(path, state->combined_role, &permission_bitmask, &param_group_id, &param_type_flags, 0);
     if ((flags & PP_IS_PARAMETER) == 0)
     {
         USP_ERR_SetMessage("%s: Search key '%s' is not a parameter", __FUNCTION__, path);
@@ -1110,7 +1114,7 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     }
 
     // Exit if unable to get the permissions for this object
-    err = DATA_MODEL_GetPermissions(resolved, state->combined_role, &permission_bitmask);
+    err = DATA_MODEL_GetPermissions(resolved, state->combined_role, &permission_bitmask, DONT_LOG_ERRS_FLAG);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -1869,7 +1873,7 @@ int AddPathFound(char *path, resolver_state_t *state)
 **************************************************************************/
 int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector, unsigned *path_properties, int *group_id)
 {
-    unsigned flags;
+    unsigned property_flags;
     int err;
     unsigned short permission_bitmask;
 
@@ -1877,11 +1881,11 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
     *add_to_vector = false;
 
     // Exit if the path does not exist in the schema
-    flags = DATA_MODEL_GetPathProperties(path, state->combined_role, &permission_bitmask, group_id, NULL);
-    *path_properties = flags;
-    if ((flags & PP_EXISTS_IN_SCHEMA)==0)
+    property_flags = DATA_MODEL_GetPathProperties(path, state->combined_role, &permission_bitmask, group_id, NULL, DONT_LOG_ERRS_FLAG);
+    *path_properties = property_flags;
+    if ((property_flags & PP_EXISTS_IN_SCHEMA)==0)
     {
-        USP_ERR_SetMessage("%s: Path (%s) does not exist in the schema", __FUNCTION__, path);
+        USP_ERR_SetMessageIfAllowed("%s: Path (%s) does not exist in the schema", __FUNCTION__, path);
         return USP_ERR_INVALID_PATH;
     }
 
@@ -1893,7 +1897,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_SubsValChange:
         case kResolveOp_GetBulkData:
             // Exit if the path does not represent a parameter
-            if ((flags & PP_IS_PARAMETER)==0)
+            if ((property_flags & PP_IS_PARAMETER)==0)
             {
                 USP_ERR_SetMessage("%s: Path (%s) is not a parameter", __FUNCTION__, path);
                 return USP_ERR_INVALID_PATH;
@@ -1907,7 +1911,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_SubsAdd:
         case kResolveOp_SubsDel:
             // Exit if the path does not represent an object
-            if ((flags & PP_IS_OBJECT)==0)
+            if ((property_flags & PP_IS_OBJECT)==0)
             {
                 USP_ERR_SetMessage("%s: Path (%s) is not an object", __FUNCTION__, path);
                 err = (state->op == kResolveOp_Add) ? USP_ERR_OBJECT_NOT_CREATABLE : USP_ERR_NOT_A_TABLE;
@@ -1918,7 +1922,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_Oper:
         case kResolveOp_SubsOper:
             // Exit if the path does not represent an operation
-            if ((flags & PP_IS_OPERATION)==0)
+            if ((property_flags & PP_IS_OPERATION)==0)
             {
                 USP_ERR_SetMessage("%s: Path (%s) is not an operation", __FUNCTION__, path);
                 err = USP_ERR_COMMAND_FAILURE;
@@ -1929,7 +1933,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_Event:
         case kResolveOp_SubsEvent:
             // Exit if the path does not represent an event
-            if ((flags & PP_IS_EVENT)==0)
+            if ((property_flags & PP_IS_EVENT)==0)
             {
                 USP_ERR_SetMessage("%s: Path (%s) is not an event", __FUNCTION__, path);
                 return USP_ERR_INVALID_PATH;
@@ -1965,7 +1969,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
 
         case kResolveOp_Del:
             // Exit if the path is not a fully qualified object instance
-            if ((flags & PP_IS_OBJECT_INSTANCE)==0)
+            if ((property_flags & PP_IS_OBJECT_INSTANCE)==0)
             {
                 USP_ERR_SetMessage("%s: Path (%s) should contain instance number of object", __FUNCTION__, path);
                 return USP_ERR_OBJECT_DOES_NOT_EXIST;
@@ -1981,7 +1985,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_SubsAdd:
         case kResolveOp_SubsDel:
             // Exit if the path is not a multi-instance object
-            if ((flags & PP_IS_MULTI_INSTANCE_OBJECT)==0)
+            if ((property_flags & PP_IS_MULTI_INSTANCE_OBJECT)==0)
             {
                 USP_ERR_SetMessage("%s: Path (%s) is not a multi-instance object", __FUNCTION__, path);
                 return USP_ERR_NOT_A_TABLE;
@@ -1990,9 +1994,9 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
 
         case kResolveOp_Add:
             // Exit if the path is a fully qualified object instance
-            if (flags & PP_IS_OBJECT_INSTANCE)
+            if (property_flags & PP_IS_OBJECT_INSTANCE)
             {
-                if (flags & PP_IS_MULTI_INSTANCE_OBJECT)
+                if (property_flags & PP_IS_MULTI_INSTANCE_OBJECT)
                 {
                     USP_ERR_SetMessage("%s: Path (%s) should not end in an instance number", __FUNCTION__, path);
                     err = USP_ERR_CREATION_FAILURE;
@@ -2141,7 +2145,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
             // It is not an error for instance numbers to not be instantiated for a get parameter value
             // or a delete or a subscription reference list
             // Both are forgiving, so just exit here, without adding the path to the vector
-            if ((flags & PP_INSTANCE_NUMBERS_EXIST)==0)
+            if ((property_flags & PP_INSTANCE_NUMBERS_EXIST)==0)
             {
                 return USP_ERR_OK;
             }
@@ -2153,7 +2157,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_Oper:
         case kResolveOp_Event:
             // Instance numbers must be instantiated (exist in data model)
-            if ((flags & PP_INSTANCE_NUMBERS_EXIST)==0)
+            if ((property_flags & PP_INSTANCE_NUMBERS_EXIST)==0)
             {
                 USP_ERR_SetMessage("%s: Object exists in schema, but instances are invalid: %s", __FUNCTION__, path);
                 return USP_ERR_OBJECT_DOES_NOT_EXIST;

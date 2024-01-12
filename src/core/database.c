@@ -937,6 +937,7 @@ int OpenUspDatabase(char *db_file)
     if (err != SQLITE_OK)
     {
         USP_ERR_SQL(db_handle,"sqlite3_open");
+        USP_LOG_Error("%s: Failed to open USP database (%s). Specify using -f, if you want a different path", __FUNCTION__, db_file);
         return USP_ERR_INTERNAL_ERROR;
     }
 

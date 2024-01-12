@@ -325,7 +325,7 @@ int DATA_MODEL_GetInstancePaths(char *path, str_vector_t *sv, combined_role_t *c
 int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv, combined_role_t *combined_role);
 int DATA_MODEL_AddInstance(char *path, int *instance, unsigned flags);
 int DATA_MODEL_DeleteInstance(char *path, unsigned flags);
-int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsigned short *perm);
+int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsigned short *perm, unsigned flags);
 int DATA_MODEL_NotifyInstanceAdded(char *path);
 int DATA_MODEL_NotifyInstanceDeleted(char *path);
 int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags);
@@ -333,7 +333,7 @@ int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags);
 int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_args, char *command_key, int *instance);
 int DATA_MODEL_ShouldOperationRestart(char *path, int instance, bool *is_restart, int *err_code, char *err_msg, int err_msg_len, kv_vector_t *output_args);
 int DATA_MODEL_RestartAsyncOperation(char *path, kv_vector_t *input_args, int instance);
-unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role, unsigned short *permission_bitmask, int *group_id, unsigned *type_flags);
+unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role, unsigned short *permission_bitmask, int *group_id, unsigned *type_flags, unsigned exec_flags);
 int DATA_MODEL_SplitPath(char *path, char **schema_path, dm_req_instances_t *instances, bool *instances_exist);
 int DATA_MODEL_InformInstance(char *path);
 int DATA_MODEL_AddParameterInstances(dm_hash_t hash, char *instances);

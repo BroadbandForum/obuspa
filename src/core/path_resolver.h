@@ -75,8 +75,8 @@ typedef enum
 } resolve_op_t;
 
 // Bitmask for the flags argument of PATH_RESOLVER_ResolvePath(). These flags control resolving of the path
-#define GET_ALL_INSTANCES        0x0001  // Resolve all instances recursively, not just the ones in the path expression (implements first_level_only=false in Get Instances request)
-#define DONT_LOG_RESOLVER_ERRORS 0x0002  // Don't log any errors that the path resolver finds. This flag is used to prevent unnecessary logging when periodically resolving subscription paths
+#define DONT_LOG_RESOLVER_ERRORS 0x0001  // Don't log any errors that the path resolver finds. This flag is used to prevent unnecessary logging when periodically resolving subscription paths
+#define GET_ALL_INSTANCES        0x0002  // Resolve all instances recursively, not just the ones in the path expression (implements first_level_only=false in Get Instances request)
 
 // Constant for depth argument to indicate traversal of all hierarchical levels in the data model when performing partial path resolution
 #define FULL_DEPTH  (INT_MAX)
