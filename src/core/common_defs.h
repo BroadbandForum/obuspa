@@ -135,7 +135,7 @@ extern int USP_SNPRINTF(char *dest, size_t size, const char *fmt, ...) __attribu
 extern bool enable_callstack_debug;
 
 #ifndef REMOVE_USP_SERVICE
-// String specified using the '-R' option. Contains the endpoint_id of the broker to connect to, followed by the data model paths to register
+// String specified using the '-R' option. Contains the data model paths to register
 extern char *usp_service_objects;
 #define RUNNING_AS_USP_SERVICE() (usp_service_objects != NULL)
 #else

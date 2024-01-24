@@ -154,13 +154,6 @@ void AddRegisterResp_RegisteredPathResult(Usp__RegisterResp *reg_resp, char *req
 bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *ror, usp_service_t *us);
 void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult *sor, int group_id);
 unsigned CalcParamType(Usp__GetSupportedDMResp__ParamValueType value_type);
-Usp__Msg *CreateBroker_GetReq(kv_vector_t *kvv);
-Usp__Msg *CreateBroker_SetReq(kv_vector_t *kvv);
-Usp__Msg *CreateBroker_AddReq(char *path, group_add_param_t *params, int num_params);
-Usp__Msg *CreateBroker_DeleteReq(str_vector_t *paths, bool allow_partial);
-Usp__Msg *CreateBroker_OperateReq(char *path, char *command_key, kv_vector_t *input_args);
-Usp__Msg *CreateBroker_GetInstancesReq(str_vector_t *sv);
-Usp__Msg *CreateBroker_GetSupportedDMReq(char *msg_id, str_vector_t *sv);
 usp_service_t *AddUspService(char *endpoint_id, mtp_conn_t *mtpc);
 int IsPathAlreadyRegistered(char *requested_path);
 void FreeUspService(usp_service_t *us);
@@ -175,7 +168,11 @@ int Broker_GroupUnsubscribe(int instance, int group_id, subs_notify_t type, char
 int Broker_MultiDelete(int group_id, bool allow_partial, char **paths, int num_paths, int *failure_index);
 int Broker_CreateObj(int group_id, char *path, group_add_param_t *params, int num_params, int *instance, kv_vector_t *unique_keys);
 int Broker_RefreshInstances(int group_id, char *path, int *expiry_period);
+int CalcFailureIndex(Usp__Msg *resp, kv_vector_t *params, int *modified_err);
 int ProcessAddResponse(Usp__Msg *resp, char *path, int *instance, kv_vector_t *unique_keys, group_add_param_t *params, int num_params);
+int ProcessSetResponse(Usp__Msg *resp, kv_vector_t *params, int *failure_index);
+void LogSetResponse_OperFailure(Usp__SetResp__UpdatedObjectResult__OperationStatus__OperationFailure *oper_failure);
+bool CheckSetResponse_OperSuccess(Usp__SetResp__UpdatedObjectResult__OperationStatus__OperationSuccess *oper_success, kv_vector_t *params);
 void PropagateParamErr(char *path, int err_code, char *err_msg, group_add_param_t *params, int num_params);
 int ValidateAddResponsePath(char *schema_path, char *instantiated_path, int *instance);
 int ProcessDeleteResponse(Usp__Msg *resp, str_vector_t *paths, int *failure_index);
@@ -1395,7 +1392,7 @@ void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths)
 
     // Create the GSDM request
     CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    req = CreateBroker_GetSupportedDMReq(msg_id, paths);
+    req = MSG_UTILS_Create_GetSupportedDMReq(msg_id, paths);
 
     // Queue the GSDM request
     MSG_HANDLER_QueueMessage(us->endpoint_id, req, &us->controller_mtp);
@@ -1470,6 +1467,7 @@ int Broker_GroupGet(int group_id, kv_vector_t *kvv)
     Usp__Msg *req;
     Usp__Msg *resp;
     usp_service_t *us;
+    char msg_id[MAX_MSG_ID_LEN];
 
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(group_id);
@@ -1483,7 +1481,8 @@ int Broker_GroupGet(int group_id, kv_vector_t *kvv)
     }
 
     // Form the USP Get Request message
-    req = CreateBroker_GetReq(kvv);
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_GetReq(msg_id, kvv);
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -1531,6 +1530,7 @@ int Broker_GroupSet(int group_id, kv_vector_t *params, unsigned *param_types, in
     Usp__Msg *req;
     Usp__Msg *resp;
     usp_service_t *us;
+    char msg_id[MAX_MSG_ID_LEN];
 
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(group_id);
@@ -1543,8 +1543,9 @@ int Broker_GroupSet(int group_id, kv_vector_t *params, unsigned *param_types, in
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Form the USP Set Request message
-    req = CreateBroker_SetReq(params);
+    // Create Set Request
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_SetReq(msg_id, params);
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -1559,7 +1560,7 @@ int Broker_GroupSet(int group_id, kv_vector_t *params, unsigned *param_types, in
     }
 
     // Process the set response, determining if it was successful or not
-    err = MSG_UTILS_ProcessSetResponse(resp, params, failure_index);
+    err = ProcessSetResponse(resp, params, failure_index);
 
     // Free the set response, since we've finished with it
     usp__msg__free_unpacked(resp, pbuf_allocator);
@@ -1589,6 +1590,7 @@ int Broker_GroupAdd(int group_id, char *path, int *instance)
     Usp__Msg *resp;
     usp_service_t *us;
     char obj_path[MAX_DM_PATH];
+    char msg_id[MAX_MSG_ID_LEN];
 
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(group_id);
@@ -1603,7 +1605,8 @@ int Broker_GroupAdd(int group_id, char *path, int *instance)
 
     // Form the USP Add Request message, ensuring that the path contains a trailing dot
     USP_SNPRINTF(obj_path, sizeof(obj_path), "%s.", path);
-    req = CreateBroker_AddReq(obj_path, NULL, 0);
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_AddReq(msg_id, obj_path, NULL, 0);
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -1746,6 +1749,7 @@ int Broker_CreateObj(int group_id, char *path, group_add_param_t *params, int nu
     Usp__Msg *resp;
     usp_service_t *us;
     char obj_path[MAX_DM_PATH];
+    char msg_id[MAX_MSG_ID_LEN];
 
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(group_id);
@@ -1760,7 +1764,8 @@ int Broker_CreateObj(int group_id, char *path, group_add_param_t *params, int nu
 
     // Form the USP Add Request message, ensuring that the path contains a trailing dot
     USP_SNPRINTF(obj_path, sizeof(obj_path), "%s.", path);
-    req = CreateBroker_AddReq(obj_path, params, num_params);
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_AddReq(msg_id, obj_path, params, num_params);
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -1978,6 +1983,7 @@ int Broker_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notif
                            {"NotifExpiration", "0", true, USP_ERR_OK, NULL },
                            {"Enable", "true", true, USP_ERR_OK, NULL }
                          };
+    char msg_id[MAX_MSG_ID_LEN];
 
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(group_id);
@@ -1995,7 +2001,8 @@ int Broker_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notif
     id_count++;
 
     // Form the USP Add Request message, ensuring that the path contains a trailing dot
-    req = CreateBroker_AddReq(obj_path, params, NUM_ELEM(params));
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_AddReq(msg_id, obj_path, params, NUM_ELEM(params));
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -2096,6 +2103,7 @@ int SyncSubscriptions(usp_service_t *us)
     Usp__Msg *resp;
     kv_vector_t kvv;        // NOTE: None of the data in this structure will be dynamically allocated, so it does not have to be freed
     kv_pair_t kv;
+    char msg_id[MAX_MSG_ID_LEN];
 
     // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
     if (us->controller_mtp.protocol == kMtpProtocol_None)
@@ -2109,7 +2117,10 @@ int SyncSubscriptions(usp_service_t *us)
     kv.value = NULL;
     kvv.vector = &kv;
     kvv.num_entries = 1;
-    req = CreateBroker_GetReq(&kvv);
+
+    // Form the USP Get Request message
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_GetReq(msg_id, &kvv);
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -2400,6 +2411,7 @@ int UspService_DeleteInstances(usp_service_t *us, bool allow_partial, str_vector
     int err;
     Usp__Msg *req;
     Usp__Msg *resp;
+    char msg_id[MAX_MSG_ID_LEN];
 
     // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
     if (us->controller_mtp.protocol == kMtpProtocol_None)
@@ -2409,7 +2421,8 @@ int UspService_DeleteInstances(usp_service_t *us, bool allow_partial, str_vector
     }
 
     // Form the USP Delete Request message
-    req = CreateBroker_DeleteReq(paths, allow_partial);
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_DeleteReq(msg_id, paths, allow_partial);
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -2453,6 +2466,7 @@ int UspService_RefreshInstances(usp_service_t *us, str_vector_t *paths, bool wit
     int err;
     Usp__Msg *req;
     Usp__Msg *resp;
+    char msg_id[MAX_MSG_ID_LEN];
 
     // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
     if (us->controller_mtp.protocol == kMtpProtocol_None)
@@ -2462,7 +2476,8 @@ int UspService_RefreshInstances(usp_service_t *us, str_vector_t *paths, bool wit
     }
 
     // Create the GetInstances request
-    req = CreateBroker_GetInstancesReq(paths);
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_GetInstancesReq(msg_id, paths);
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -2625,8 +2640,237 @@ int ProcessGetResponse(Usp__Msg *resp, kv_vector_t *kvv)
     return USP_ERR_OK;
 }
 
+/*********************************************************************//**
+**
+** ProcessSetResponse
+**
+** Processes a Set Response that we have received from a USP Service
+**
+** \param   resp - USP response message in protobuf-c structure
+** \param   params - key-value vector containing the parameter names as keys and the parameter values as values
+** \param   failure_index - pointer to value in which to return the index of the first parameter in the params vector
+**                          that failed to be set. This value is only consulted if an error is returned.
+**                          Setting it to INVALID indicates that all parameters failed (e.g. communications failure)
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ProcessSetResponse(Usp__Msg *resp, kv_vector_t *params, int *failure_index)
+{
+    int i;
+    int err;
+    Usp__SetResp *set;
+    Usp__SetResp__UpdatedObjectResult *obj_result;
+    Usp__SetResp__UpdatedObjectResult__OperationStatus *oper_status;
+    bool is_success = false;
+
+    // Default to indicating that all parameters failed
+    *failure_index = INVALID;
+
+    // Exit if the Message body contained an Error response, or the response failed to validate
+    err = MSG_UTILS_ValidateUspResponse(resp, USP__RESPONSE__RESP_TYPE_SET_RESP, NULL);
+    if (err != USP_ERR_OK)
+    {
+        *failure_index = CalcFailureIndex(resp, params, &err);
+        return err;
+    }
+
+    // Exit if set response object is missing
+    set = resp->body->response->set_resp;
+    if (set == NULL)
+    {
+        USP_ERR_SetMessage("%s: Missing set response", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Iterate over all UpdatedObjResults, checking that all were successful
+    // NOTE: We expect all of them to be successful if the code gets here since the Set Request has allow_partial=false and
+    // all parameters are required to set, so we should have received an ERROR response if any failed to set
+    for (i=0; i < set->n_updated_obj_results; i++)
+    {
+        obj_result = set->updated_obj_results[i];
+        oper_status = obj_result->oper_status;
+        switch(oper_status->oper_status_case)
+        {
+            case USP__SET_RESP__UPDATED_OBJECT_RESULT__OPERATION_STATUS__OPER_STATUS_OPER_SUCCESS:
+                // Check that the parameters and values reported as being set, match the ones we requested
+                // NOTE: This code does not verify that we got a success response for EVERY param that we requested, only that the ones indicated in the response were ones we requested
+                is_success = CheckSetResponse_OperSuccess(oper_status->oper_success, params);
+                break;
+
+            case USP__SET_RESP__UPDATED_OBJECT_RESULT__OPERATION_STATUS__OPER_STATUS_OPER_FAILURE:
+                // Log all failures. NOTE: We should have received an Error response instead, if the USP Service was implemented correctly
+                is_success = false;
+                LogSetResponse_OperFailure(oper_status->oper_failure);
+                break;
+
+            default:
+                TERMINATE_BAD_CASE(oper_status->oper_status_case);
+                break;
+        }
+    }
+
+    err = (is_success) ? USP_ERR_OK : USP_ERR_INTERNAL_ERROR;
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** CheckSetResponse_OperSuccess
+**
+** Checks the OperSucces object in the SetResponse, ensuring that the parameters were set to the expected values
+**
+** \param   oper_success - OperSuccess object to check
+** \param   params - key-value vector containing the parameters (and values) that we expected to be set
+**
+** \return  true if no errors were detected in the set response
+**
+**************************************************************************/
+bool CheckSetResponse_OperSuccess(Usp__SetResp__UpdatedObjectResult__OperationStatus__OperationSuccess *oper_success, kv_vector_t *params)
+{
+    int i, j;
+    Usp__SetResp__UpdatedInstanceResult *updated_inst_result;
+    Usp__SetResp__UpdatedInstanceResult__UpdatedParamsEntry *updated_param;
+    Usp__SetResp__ParameterError *param_err;
+    char path[MAX_DM_PATH];
+    bool is_success = true;
+    int index;
+    char *expected_value;
+
+    for (i=0; i < oper_success->n_updated_inst_results; i++)
+    {
+        updated_inst_result = oper_success->updated_inst_results[i];
+
+        // Log all errors (for non-required parameters)
+        // NOTE: We should not get any of these, as we marked all params as required in the request
+        for (j=0; j < updated_inst_result->n_param_errs; j++)
+        {
+            param_err = updated_inst_result->param_errs[j];
+            USP_ERR_SetMessage("%s: SetResponse returned err=%d for param=%s%s but should have returned ERROR Response", __FUNCTION__, param_err->err_code, updated_inst_result->affected_path, param_err->param);
+            is_success = false;
+        }
+
+        // Check that the USP Service hasn't set the wrong value for any params
+        for (j=0; j < updated_inst_result->n_updated_params; j++)
+        {
+            updated_param = updated_inst_result->updated_params[j];
+            USP_SNPRINTF(path, sizeof(path), "%s%s", updated_inst_result->affected_path, updated_param->key);
+
+            // Skip if this param was not one we requested to be set
+            index = KV_VECTOR_FindKey(params, path, 0);
+            if (index == INVALID)
+            {
+                USP_ERR_SetMessage("%s: SetResponse contained a success entry for param=%s but we never requested it to be set", __FUNCTION__, path);
+                is_success = false;
+                continue;
+            }
+
+            // Check that the parameter was set to the expected value
+            expected_value = params->vector[index].value;
+            if (strcmp(expected_value, updated_param->value) != 0)
+            {
+                USP_ERR_SetMessage("%s: SetResponse contained the wrong value for param=%s (expected='%s', got='%s')", __FUNCTION__, path, expected_value, updated_param->key);
+                is_success = false;
+            }
+        }
+    }
+
+    return is_success;
+}
 
 
+/*********************************************************************//**
+**
+** LogSetResponse_OperFailure
+**
+** Logs all errors indicated by an OperFailure object in the SetResponse
+** NOTE: We do not expect any OperFailures, because allow_partial=false and all parameters are required to set
+**       If any parameter failed to set, an ERROR response would have been received instead
+**
+** \param   oper_failure - OperFailure object to og all errors from
+**
+** \return  None
+**
+**************************************************************************/
+void LogSetResponse_OperFailure(Usp__SetResp__UpdatedObjectResult__OperationStatus__OperationFailure *oper_failure)
+{
+    int i, j;
+    Usp__SetResp__UpdatedInstanceFailure *updated_inst_failure;
+    Usp__SetResp__ParameterError *param_err;
+
+    for (i=0; i < oper_failure->n_updated_inst_failures; i++)
+    {
+        updated_inst_failure = oper_failure->updated_inst_failures[i];
+        for (j=0; j < updated_inst_failure->n_param_errs; j++)
+        {
+            param_err = updated_inst_failure->param_errs[j];
+            USP_LOG_Error("%s: SetResponse returned err=%d for param=%s%s but should have returned ERROR Response", __FUNCTION__, param_err->err_code, updated_inst_failure->affected_path, param_err->param);
+        }
+    }
+}
+
+/*********************************************************************//**
+**
+** CalcFailureIndex
+**
+** Calculates the index of the first parameter found that failed to set
+**
+** \param   resp - USP response message in protobuf-c structure
+** \param   params - key-value vector containing the parameter names as keys and the parameter values as values
+** \param   modified_err - pointer to error code to modify with the more specific error given for the first parameter which failed (if available)
+**
+** \return  index of the first parameter in the params vector that failed to be set
+**          INVALID indicates that all parameters failed or that we do not know which parameter failed first
+**
+**************************************************************************/
+int CalcFailureIndex(Usp__Msg *resp, kv_vector_t *params, int *modified_err)
+{
+    int i;
+    Usp__Error *err_obj;
+    int index;
+    int lowest_index;
+    char *path;
+    int first_err;       // This is the error code given for the first parameter that failed, which may be different than the holistic error for all of the params that failed
+
+    // Exit if cause of error was something other than an error response
+    if ((resp->body == NULL) || (resp->body->msg_body_case != USP__BODY__MSG_BODY_ERROR) || (resp->body->error == NULL))
+    {
+        return INVALID;
+    }
+
+    // Exit if the Error response does not contain details of which parameter(s) were in error
+    err_obj = resp->body->error;
+    if ((err_obj->n_param_errs == 0) || (err_obj->param_errs == NULL))
+    {
+        return INVALID;
+    }
+
+    // Iterate over all parameters in error, finding the first one in the list of parameters to set, that failed
+    lowest_index = INT_MAX;
+    first_err = *modified_err;
+    for (i=0; i< err_obj->n_param_errs; i++)
+    {
+        path = err_obj->param_errs[i]->param_path;
+        index = KV_VECTOR_FindKey(params, path, 0);
+        if (index < lowest_index)
+        {
+            lowest_index = index;
+            first_err = err_obj->param_errs[i]->err_code;
+        }
+    }
+
+    // Exit if none of the parameters in the error matched those that we were trying to set
+    // NOTE: This should never happen, because we expect that at least one of the params in error was one that we were trying to set
+    if (lowest_index == INT_MAX)
+    {
+        return INVALID;
+    }
+
+    // Return the index of the first parameter which failed, and it's associated, more specific, error code
+    *modified_err = first_err;
+    return lowest_index;
+}
 
 /*********************************************************************//**
 **
@@ -2969,6 +3213,7 @@ int SendOperateAndProcessResponse(int group_id, char *path, bool is_sync, char *
     Usp__Msg *req;
     Usp__Msg *resp;
     usp_service_t *us;
+    char msg_id[MAX_MSG_ID_LEN];
 
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(group_id);
@@ -2982,7 +3227,8 @@ int SendOperateAndProcessResponse(int group_id, char *path, bool is_sync, char *
     }
 
     // Form the USP Operate Request message
-    req = CreateBroker_OperateReq(path, command_key, input_args);
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_OperateReq(msg_id, path, command_key, input_args);
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -3755,344 +4001,6 @@ int GetUspService_HasController(dm_req_t *req, char *buf, int len)
     val_bool = us->has_controller;
 
     return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
-** CreateBroker_GetReq
-**
-** Create a USP Get request message
-**
-** \param   kvv - pointer to key-value vector containing the parameters to get as the key
-**
-** \return  Pointer to a Get Request object
-**          NOTE: If out of memory, USP Agent is terminated
-**
-**************************************************************************/
-Usp__Msg *CreateBroker_GetReq(kv_vector_t *kvv)
-{
-    int i;
-    int num_paths;
-    Usp__Msg *msg;
-    Usp__Get *get;
-    char msg_id[MAX_MSG_ID_LEN];
-
-    // Create Get Request
-    CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    msg =  MSG_HANDLER_CreateRequestMsg(msg_id, USP__HEADER__MSG_TYPE__GET, USP__REQUEST__REQ_TYPE_GET);
-    get = USP_MALLOC(sizeof(Usp__Get));
-    usp__get__init(get);
-    msg->body->request->get = get;
-
-    // Copy the paths into the Get
-    num_paths = kvv->num_entries;
-    get->n_param_paths = num_paths;
-    get->param_paths = USP_MALLOC(num_paths*sizeof(char *));
-    for (i=0; i<num_paths; i++)
-    {
-        get->param_paths[i] = USP_STRDUP(kvv->vector[i].key);
-    }
-
-    get->max_depth = 0;
-
-    return msg;
-}
-
-/*********************************************************************//**
-**
-** CreateBroker_SetReq
-**
-** Create a USP Set request message
-**
-** \param   kvv - pointer to key-value vector containing the parameters to get as the key, and the values to set as the value
-**
-** \return  Pointer to a Set Request object
-**          NOTE: If out of memory, USP Agent is terminated
-**
-**************************************************************************/
-Usp__Msg *CreateBroker_SetReq(kv_vector_t *kvv)
-{
-    int i;
-    Usp__Msg *msg;
-    Usp__Set *set;
-    char msg_id[MAX_MSG_ID_LEN];
-    kv_pair_t *kv;
-
-    // Create Set Request
-    CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    msg =  MSG_HANDLER_CreateRequestMsg(msg_id, USP__HEADER__MSG_TYPE__SET, USP__REQUEST__REQ_TYPE_SET);
-    set = USP_MALLOC(sizeof(Usp__Set));
-    usp__set__init(set);
-    msg->body->request->set = set;
-
-    // Initialise the set with initially no UpdateObjects
-    set->allow_partial = false;
-    set->n_update_objs = 0;
-    set->update_objs = NULL;
-
-    // Iterate over all parameters, adding them to the Set request
-    for (i=0; i < kvv->num_entries; i++)
-    {
-        kv = &kvv->vector[i];
-        MSG_UTILS_AddSetReq_Param(set, kv->key, kv->value);
-    }
-
-    return msg;
-}
-
-/*********************************************************************//**
-**
-** CreateBroker_AddReq
-**
-** Create a USP Add request message
-**
-** \param   path - unqualified path of the object to add an instance to
-** \param   params - Array containing initial values of the object's child parameters, or NULL if there are none to set
-** \param   num_params - Number of child arameters to set
-**
-** \return  Pointer to an Add Request object
-**          NOTE: If out of memory, USP Agent is terminated
-**
-**************************************************************************/
-Usp__Msg *CreateBroker_AddReq(char *path, group_add_param_t *params, int num_params)
-{
-    Usp__Msg *msg;
-    Usp__Add *add;
-    char msg_id[MAX_MSG_ID_LEN];
-    Usp__Add__CreateObject *create_obj;
-    Usp__Add__CreateParamSetting *cps;
-    group_add_param_t *p;
-    int i;
-
-    // Create Add Request
-    CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    msg =  MSG_HANDLER_CreateRequestMsg(msg_id, USP__HEADER__MSG_TYPE__ADD, USP__REQUEST__REQ_TYPE_ADD);
-    add = USP_MALLOC(sizeof(Usp__Add));
-    usp__add__init(add);
-    msg->body->request->add = add;
-
-    // Fill in Add object
-    add->allow_partial = false;
-    add->n_create_objs = 1;
-    add->create_objs = USP_MALLOC(sizeof(void *));
-
-    create_obj = USP_MALLOC(sizeof(Usp__Add__CreateObject));
-    usp__add__create_object__init(create_obj);
-    add->create_objs[0] = create_obj;
-
-    create_obj->obj_path = USP_STRDUP(path);
-
-    // Exit if there are no parameters to set in this object
-    if ((params==NULL) || (num_params == 0))
-    {
-        create_obj->n_param_settings = 0;
-        create_obj->param_settings = NULL;
-        return msg;
-    }
-
-    // Add all of the objects parameters initial values
-    create_obj->n_param_settings = num_params;
-    create_obj->param_settings = USP_MALLOC(num_params * sizeof(void *));
-
-    for (i=0; i<num_params; i++)
-    {
-        cps = USP_MALLOC(sizeof(Usp__Add__CreateParamSetting));
-        usp__add__create_param_setting__init(cps);
-        create_obj->param_settings[i] = cps;
-
-        p = &params[i];
-        cps->param = USP_STRDUP(p->param_name);
-        cps->value = USP_STRDUP(p->value);
-        cps->required = p->is_required;
-    }
-
-    return msg;
-}
-
-/*********************************************************************//**
-**
-** CreateBroker_DeleteReq
-**
-** Create a USP Delete request message containing multiple instances to delete
-**
-** \param   paths - pointer to vector containing the list of data model objects to delete
-**                  NOTE: All object paths must be absolute (no wildcards etc)
-** \param   allow_partial - if set to true, then a failure to delete any object in the vector should result in no objects being deleted
-**
-** \return  Pointer to a Delete Request object
-**          NOTE: If out of memory, USP Agent is terminated
-**
-**************************************************************************/
-Usp__Msg *CreateBroker_DeleteReq(str_vector_t *paths, bool allow_partial)
-{
-    int i;
-    Usp__Msg *msg;
-    Usp__Delete *del;
-    char msg_id[MAX_MSG_ID_LEN];
-    int num_entries;
-
-    // Create Delete Request
-    CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    msg =  MSG_HANDLER_CreateRequestMsg(msg_id, USP__HEADER__MSG_TYPE__DELETE, USP__REQUEST__REQ_TYPE_DELETE);
-    del = USP_MALLOC(sizeof(Usp__Delete));
-    usp__delete__init(del);
-    msg->body->request->delete_ = del;
-
-    // Fill in Delete object
-    num_entries = paths->num_entries;
-    del->allow_partial = allow_partial;
-    del->n_obj_paths = num_entries;
-    del->obj_paths = USP_MALLOC(num_entries*sizeof(char *));
-
-    // Copy across the object instances to delete
-    for (i=0; i<num_entries; i++)
-    {
-        del->obj_paths[i] = USP_STRDUP(paths->vector[i]);
-    }
-
-    return msg;
-}
-
-/*********************************************************************//**
-**
-** CreateBroker_OperateReq
-**
-** Create a USP Operate request message
-**
-** \param   path - data model path of USP command
-** \param   command_key - Key identifying the command in the Request table of the USP Service
-** \param   input_args - pointer to key-value vector containing the input arguments and their values
-**
-** \return  Pointer to a Operate Request object
-**          NOTE: If out of memory, USP Agent is terminated
-**
-**************************************************************************/
-Usp__Msg *CreateBroker_OperateReq(char *path, char *command_key, kv_vector_t *input_args)
-{
-    int i;
-    Usp__Msg *msg;
-    Usp__Operate *oper;
-    char msg_id[MAX_MSG_ID_LEN];
-    int num_entries;
-    Usp__Operate__InputArgsEntry *arg;
-    kv_pair_t *kv;
-
-    // Create Operate Request
-    CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    msg =  MSG_HANDLER_CreateRequestMsg(msg_id, USP__HEADER__MSG_TYPE__OPERATE, USP__REQUEST__REQ_TYPE_OPERATE);
-    oper = USP_MALLOC(sizeof(Usp__Operate));
-    usp__operate__init(oper);
-    msg->body->request->operate = oper;
-
-    // Fill in Operate object
-    oper->command = USP_STRDUP(path);
-    oper->command_key = USP_STRDUP(command_key);
-    oper->send_resp = true;
-
-    // Create input args
-    num_entries = input_args->num_entries;
-    oper->n_input_args = num_entries;
-    oper->input_args = USP_MALLOC(num_entries*sizeof(Usp__Operate__InputArgsEntry *));
-
-    // Copy across the input args
-    for (i=0; i<num_entries; i++)
-    {
-        kv = &input_args->vector[i];
-        arg = USP_MALLOC(sizeof(Usp__Operate__InputArgsEntry));
-        usp__operate__input_args_entry__init(arg);
-
-        arg->key = USP_STRDUP(kv->key);
-        arg->value = USP_STRDUP(kv->value);
-        oper->input_args[i] = arg;
-    }
-
-    return msg;
-}
-
-/*********************************************************************//**
-**
-** CreateBroker_GetInstancesReq
-**
-** Create a USP GetInstances request message
-**
-** \param   sv - pointer to string vector containing the top level data model object paths to recursively get all child instances of
-**
-** \return  Pointer to a GetInstances Request object
-**          NOTE: If out of memory, USP Agent is terminated
-**
-**************************************************************************/
-Usp__Msg *CreateBroker_GetInstancesReq(str_vector_t *sv)
-{
-    int i;
-    Usp__Msg *msg;
-    Usp__GetInstances *geti;
-    char msg_id[MAX_MSG_ID_LEN];
-    int num_entries;
-
-    // Create GetInstances Request
-    CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    msg =  MSG_HANDLER_CreateRequestMsg(msg_id, USP__HEADER__MSG_TYPE__GET_INSTANCES, USP__REQUEST__REQ_TYPE_GET_INSTANCES);
-    geti = USP_MALLOC(sizeof(Usp__GetInstances));
-    usp__get_instances__init(geti);
-    msg->body->request->get_instances = geti;
-
-    // Copy the paths into the GetInstances
-    num_entries = sv->num_entries;
-    geti->n_obj_paths = num_entries;
-    geti->obj_paths = USP_MALLOC(num_entries*sizeof(char *));
-    for (i=0; i<num_entries; i++)
-    {
-        geti->obj_paths[i] = USP_STRDUP(sv->vector[i]);
-    }
-
-    // Get all child instances
-    geti->first_level_only = false;
-
-    return msg;
-}
-
-/*********************************************************************//**
-**
-** CreateBroker_GetSupportedDMReq
-**
-** Create a USP GetSupportedDM request message
-**
-** \param   msg_id - string containing the message id to use for the request
-** \param   sv - pointer to string vector containing the paths to query
-**
-** \return  Pointer to a GetSupportedDM Request object
-**          NOTE: If out of memory, USP Agent is terminated
-**
-**************************************************************************/
-Usp__Msg *CreateBroker_GetSupportedDMReq(char *msg_id, str_vector_t *sv)
-{
-    int i;
-    int num_paths;
-    Usp__Msg *msg;
-    Usp__GetSupportedDM *gsdm;
-
-    // Create GSDM Request
-    msg =  MSG_HANDLER_CreateRequestMsg(msg_id, USP__HEADER__MSG_TYPE__GET_SUPPORTED_DM, USP__REQUEST__REQ_TYPE_GET_SUPPORTED_DM);
-    gsdm = USP_MALLOC(sizeof(Usp__GetSupportedDM));
-    usp__get_supported_dm__init(gsdm);
-    msg->body->request->get_supported_dm = gsdm;
-
-    // Copy the paths into the GSDM
-    num_paths = sv->num_entries;
-    gsdm->n_obj_paths = num_paths;
-    gsdm->obj_paths = USP_MALLOC(num_paths*sizeof(char *));
-    for (i=0; i<num_paths; i++)
-    {
-        gsdm->obj_paths[i] = USP_STRDUP(sv->vector[i]);
-    }
-
-    // Fill in the flags in the GSDM
-    gsdm->first_level_only = false;
-    gsdm->return_commands = true;
-    gsdm->return_events = true;
-    gsdm->return_params = true;
-
-    return msg;
 }
 
 /*********************************************************************//**

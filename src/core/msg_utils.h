@@ -50,8 +50,13 @@
 
 //------------------------------------------------------------------------------
 // API
+Usp__Msg *MSG_UTILS_Create_GetReq(char *msg_id, kv_vector_t *kvv);
+Usp__Msg *MSG_UTILS_Create_SetReq(char *msg_id, kv_vector_t *kvv);
+Usp__Msg *MSG_UTILS_Create_AddReq(char *msg_id, char *path, group_add_param_t *params, int num_params);
+Usp__Msg *MSG_UTILS_Create_DeleteReq(char *msg_id, str_vector_t *paths, bool allow_partial);
+Usp__Msg *MSG_UTILS_Create_GetSupportedDMReq(char *msg_id, str_vector_t *sv);
+Usp__Msg *MSG_UTILS_Create_GetInstancesReq(char *msg_id, str_vector_t *sv);
+Usp__Msg *MSG_UTILS_Create_OperateReq(char *msg_id, char *path, char *command_key, kv_vector_t *input_args);
 int MSG_UTILS_ValidateUspResponse(Usp__Msg *resp, Usp__Response__RespTypeCase response_type, char **param_errs_path);
-int MSG_UTILS_ProcessSetResponse(Usp__Msg *resp, kv_vector_t *params, int *failure_index);
-void MSG_UTILS_AddSetReq_Param(Usp__Set *set, char *path, char *value);
 
 #endif

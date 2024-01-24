@@ -817,7 +817,7 @@ int HandleUspMessage(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc)
 
 #ifndef REMOVE_USP_SERVICE
 {
-    // Check with USP service to see if this is a response to an outgoing contol message
+    // Check with USP service to see if this is a response to an outgoing control message
     bool is_handled;
     is_handled = USP_SERVICE_AsController_IsExpectedResponse(usp);
     if (is_handled)

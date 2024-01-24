@@ -75,6 +75,14 @@ typedef struct
     int num_entries;
 } int_vector_t;
 
+//-----------------------------------------------------------------------------------------
+// Vector containing strings
+typedef struct
+{
+    char **vector;
+    int num_entries;
+} str_vector_t;
+
 //-------------------------------------------------------------------------
 // Structure used for tables to convert from a string to an enumeration
 typedef struct
@@ -487,6 +495,12 @@ void USP_ARG_Destroy(kv_vector_t *kvv);
 void USP_ARG_Delete(kv_vector_t *kvv);
 
 //------------------------------------------------------------------------------
+// Functions for string vector data structure
+void USP_STR_VEC_Init(str_vector_t *sv);
+void USP_STR_VEC_Add(str_vector_t *sv, char *str);
+void USP_STR_VEC_Destroy(str_vector_t *sv);
+
+//------------------------------------------------------------------------------
 // Functions converting data types
 #define INVALID_TIME ((time_t)-1)
 #define MAX_ISO8601_LEN  32   // 23 characters should be sufficient, so this is overkill
@@ -518,6 +532,45 @@ extern log_level_t usp_log_level;
 // Functions used when registering validate_add and validate_delete vendor hooks, if the multi-instance object is read only
 int USP_HOOK_DenyAddInstance(dm_req_t *req);
 int USP_HOOK_DenyDeleteInstance(dm_req_t *req);
+
+/*********************************************************************//**
+**
+** Callback function definition to be called when the USP Service receives a USP notification
+**
+** \param   subscription_id - instance ID of the subscription object generating the notification
+**
+** \param   path - One of the following depending on the type of notification:-
+**                  For a changed value, the datamodel path of the parameter that has changed
+**                  For add/delete, the path containing the instance of the object
+**                  For an event, the datamodel path including the event name
+**                  For an async operation, the path and name of the operation that has completed
+**
+** \param   args - One of the following depending on the type of notification:-
+**                  For a changed value, the parameter path and new value
+**                  For add/delete, the unique keys/values of the affected object
+**                  For an event, the parameter keys/values pertaining to the event
+**                  For an async operation, the output arguments of the command
+**
+** \param   cmd_key - (Operate only) The command key string returned from USP_SERVICE_Operate()
+** \param   err_code - (Operate only) An error code indicating success or an error condition
+** \param   err_msg - (Operate only) Human readable string indicating the cause of the error
+**
+** \return  void
+**
+**************************************************************************/
+typedef void (*usp_service_notify_cb_t)(char *subscription_id, char *path, kv_vector_t *args, char *cmd_key, int err_code, char *err_msg);
+
+//------------------------------------------------------------------------------
+// Functions to query the whole device's data model, when running as a USP Service (and acting as a USP Controller)
+int USP_SERVICE_Get(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
+int USP_SERVICE_Set(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
+int USP_SERVICE_Add(char *path, kv_vector_t *params, int timeout, int *instance, char *err_msg, int err_msg_len);
+int USP_SERVICE_Delete(char *obj_path, int timeout, char *err_msg, int err_msg_len);
+int USP_SERVICE_GetSupportedDM(char *obj_path, int timeout, kv_vector_t *paths, char *err_msg, int err_msg_len);
+int USP_SERVICE_GetInstances(char *path, int timeout, str_vector_t *instances, char *err_msg, int err_msg_len);
+int USP_SERVICE_Operate(char *cmd_path, kv_vector_t *args, int timeout, char **cmd_key, char *err_msg, int err_msg_len);
+int USP_SERVICE_RegisterNotificationCallback(usp_service_notify_cb_t usp_service_notify_cb);
+
 
 
 #endif

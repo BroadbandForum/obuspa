@@ -50,6 +50,7 @@
 #include "device.h"
 #include "dm_inst_vector.h"
 #include "dm_trans.h"
+#include "str_vector.h"
 
 /*********************************************************************//**
 **
@@ -600,6 +601,56 @@ void USP_ARG_Delete(kv_vector_t *kvv)
 {
     KV_VECTOR_Destroy(kvv);
     USP_FREE(kvv);
+}
+
+/*********************************************************************//**
+**
+** USP_STR_VEC_Init
+**
+** Initialises a string vector structure
+**
+** \param   sv - pointer to structure to initialise
+**
+** \return  None
+**
+**************************************************************************/
+void USP_STR_VEC_Init(str_vector_t *sv)
+{
+    STR_VECTOR_Init(sv);
+}
+
+/*********************************************************************//**
+**
+** USP_STR_VEC_Add
+**
+** Copies a string into the vector of strings
+**
+** \param   sv - pointer to structure to add the string to
+** \param   str - pointer to string to copy
+**
+** \return  None
+**
+**************************************************************************/
+void USP_STR_VEC_Add(str_vector_t *sv, char *str)
+{
+    STR_VECTOR_Add(sv, str);
+}
+
+/*********************************************************************//**
+**
+** USP_STR_VEC_Destroy
+**
+** Deallocates all memory associated with the string vector, apart from the str_vector_t structure itself
+** This is the opposite of USP_STR_VEC_Init()
+**
+** \param   sv - pointer to structure to destroy all dynmically allocated memory it contains
+**
+** \return  None
+**
+**************************************************************************/
+void USP_STR_VEC_Destroy(str_vector_t *sv)
+{
+    STR_VECTOR_Destroy(sv);
 }
 
 /*********************************************************************//**
