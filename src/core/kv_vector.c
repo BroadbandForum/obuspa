@@ -309,8 +309,8 @@ void KV_VECTOR_Destroy(kv_vector_t *kvv)
     for (i=0; i < kvv->num_entries; i++)
     {
         pair = &kvv->vector[i];
-        USP_FREE( pair->key );
-        USP_FREE( pair->value );
+        USP_SAFE_FREE( pair->key );
+        USP_SAFE_FREE( pair->value );
     }
 
     // Free the vector itself

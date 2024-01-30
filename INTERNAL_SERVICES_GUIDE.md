@@ -2,8 +2,10 @@
 This document describes how to use OBUSPA to provide USP Internal Services
 ## Overview 
 USP Internal Services are described in detail on the Broadband Forum website here:-
-https://usp.technology/specification/index.html#sec:software-modularization-theory-of-operations
+
 ![USPservices](https://usp.technology/specification/extensions/device-modularization/use-cases.png)
+
+https://usp.technology/specification/index.html#sec:software-modularization-theory-of-operations
 
 ## Features
 USP Services provide broadly two features:-
@@ -27,9 +29,9 @@ We need to copy and modify the factory_reset_example.txt to broker_reset.txt and
 ### Configuring the Broker's Controller socket
 The following well known path should be used to configure the Broker's Controller socket.  OBUSPA will use this information to create a listening socket at the specified path that a USP Service's Agent can connect to. 
 ```
-Device.UnixDomainSockets.UnixDomainSocket.1.Alias" "cpe-1"
-Device.UnixDomainSockets.UnixDomainSocket.1.Mode" "Listen"
-Device.UnixDomainSockets.UnixDomainSocket.1.Path" "/var/run/usp/broker_controller_path"
+Device.UnixDomainSockets.UnixDomainSocket.1.Alias "cpe-1"
+Device.UnixDomainSockets.UnixDomainSocket.1.Mode "Listen"
+Device.UnixDomainSockets.UnixDomainSocket.1.Path "/var/run/usp/broker_controller_path"
 ```
 OBUSPA will create and configure the database the first time it is run.  Note that OBUSPA will only use these factory default values if no database already exists.  If you wish to change the default parameters then you must remove the existing database.  In the below command, '-f' selects usp_broker.db as the database (instead of the default usp.db) and '-s' selects broker_cli as the CLI socket (instead of the default usp_cli).
 
@@ -123,96 +125,125 @@ In the previous example we created a vendor backend that, as an Agent, registere
 ```
 #include "usp_service.h"
 ```
+The functions provided by this API allow your vendor specific application code to interact with the broker's data model, including data model paths registered by other USP services.  Each function will block until it recieves a response or times out after the specified number of seconds.  An error code is returned indicating the success or failure of the request.  A comprehensive description of each functions parameters can be found in the source code.
+```
+int USP_SERVICE_Get(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
+int USP_SERVICE_Set(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
+int USP_SERVICE_Add(char *path, kv_vector_t *params, int timeout, int *instance, char *err_msg, int err_msg_len);
+int USP_SERVICE_Delete(char *obj_path, int timeout, char *err_msg, int err_msg_len);
+int USP_SERVICE_GetSupportedDM(char *obj_path, int timeout, kv_vector_t *paths, char *err_msg, int err_msg_len);
+int USP_SERVICE_GetInstances(char *path, int timeout, str_vector_t *instances, char *err_msg, int err_msg_len);
+int USP_SERVICE_Operate(char *cmd_path, kv_vector_t *args, int timeout, char **cmd_key, char *err_msg, int err_msg_len);
+```
+
 We need some way to issue control commands to the Service. We will implement a vendor backend that behaves that provides a CLI interface.  This is similar to how we used the CLI in the datamodel provider example earlier.  The difference is that the control commands are issued from our Service to the Broker over USP protocol (previously the CLI commands were executing on the Broker itself).
 
-Our Vendor backend needs a thread that takes control commands as input from the command line, interprets and executes them, displays the result and then loops back around to wait for more input.   In VENDOOR_Start() we can spawn a thread:-
+## An Example calling GET and SET
+
+This section illustrates how to implement a vendor backend that takes control commands as input from the command line, interprets and executes them, displays the result and then loops back around to wait for more input.   
+
+Because the API functions will block the calling thread until they receive a response, we should create our own worker thread to perform this task.  In VENDOOR_Start() we can spawn a thread using ControllerThread as the entry point:-
 ```
+#include "os_utils.h"
+
 int VENDOR_Start(void)
 {
     int err = USP_ERR_OK;
-    err = OS_UTILS_CreateThread("vendortest", UspVendorThread, (void*)NULL);
+    err = OS_UTILS_CreateThread("ctrler", ControllerThread, (void*)NULL);
     return err;
 }
 ```
-We use the readline library to provide a more functional command line and provide a useful command history.  To link against a dynamic library modify /src/vendor/vendor.am and add the linker argument:-
+We can use the readline library to provide a more functional command line and provide a useful command history.  To link against a dynamic library modify /src/vendor/vendor.am and add the linker argument:-
 ```
 eco_envoy_LDFLAGS += -lreadline
 ```
-usp_service.h contains the followinig API functions that can be used to perform GET and SET operations on other data model provider Services
+This example is limited to GET and SET commands.  However - it should be straightforward to implement other commands (ADD/DELETE etc).  usp_service.h contains the followinig API functions that can be used to perform GET and SET operations on other data model provider Services
 ```
 // API functions called when acting as a Controller
-int USP_SERVICE_Get_AsController(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
-int USP_SERVICE_Set_AsController(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
+int USP_SERVICE_Get(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
+int USP_SERVICE_Set(kv_vector_t *params, int timeout, char *err_msg, int err_msg_len);
 ```
 In both cases "params" is a structure containing a list of key/value pairs.  Both Get and Set can take a list of one or more TR-181 datamodel paths (and in the case of "set" also the corresponding values of the keys to update).   For the purposes of the example we'll wrap these in some primitive string parsing code to extract the keys and values from the string returned from readline.  The full listing for our thread function is shown below (note that in the interest of brevity this source code does not handle error paths. It's intended to serve only as an example of how USP Service API can be used):-
 ````
-void *UspVendorThread(void *args)
-{
-   using_history();
+#include "usp_api.h"
+#include "kv_vector.h"
+#include "text_utils.h"
+#include <stdio.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
+void *ControllerThread(void *args)
+{
+   str_vector_t sv_params;
+   kv_vector_t kvv_params;
+   int index = 0;
+   char errMsg[128];
+   kv_pair_t *kv;
    char *s = NULL; 
 
-   while ((s = readline(">>"))) 
+   using_history();
+
+   s = readline(">>");
+   while (s != NULL)
    {
-        if (strcmp (s, "quit") == 0) {
-            free (s);
+        if (strcmp(s, "quit") == 0)
+        {
+            free(s);
             break;
         }
 
-        if (s && *s)
-           add_history (s);
+        if (*s == '\0')
+        {
+            goto next;
+        }
 
-        str_vector_t sv_params;
-        kv_vector_t kvv_params;
-        char *c = NULL;
-        int index = 0;
-        char errMsg[VENDOR_TEST_ERR_MSG_LEN];
-        int err = USP_ERR_OK;
+        add_history(s);
 
         errMsg[0] = '\0';
-
-        KV_VECTOR_Init(&kvv_params);
-        STR_VECTOR_Init(&sv_params);
+        USP_ARG_Init(&kvv_params);
+        USP_STR_VEC_Init(&sv_params);
 
         // 1st value is command followed by arguments
-        // Note using comma as delimiter as value may be a string containing spaces
+        // Note using comma as delimiter may cause problems with arguments containing embedded commas
         TEXT_UTILS_SplitString(s, &sv_params, ",");
+        #define VENDOR_TEST_USP_TIMEOUT 30
 
-        if (!strcmp(sv_params.vector[0], "GET"))
+        if (strcmp(sv_params.vector[0], "GET")==0)
         {
             for (index = 1 ; index < sv_params.num_entries ; index++)
             {
-                KV_VECTOR_Add(&kvv_params, sv_params.vector[index], "");
+                USP_ARG_Add(&kvv_params, sv_params.vector[index], NULL);
             }
-            err = USP_SERVICE_Get_AsController(&kvv_params, VENDOR_TEST_USP_TIMEOUT, errMsg, VENDOR_TEST_ERR_MSG_LEN);
+            USP_SERVICE_Get(&kvv_params, VENDOR_TEST_USP_TIMEOUT, errMsg, sizeof(errMsg));
         }
-        else if (!strcmp(sv_params.vector[0], "SET"))
+        else if (strcmp(sv_params.vector[0], "SET")==0)
         {
             for (index = 1 ; index < sv_params.num_entries ; index+=2)
             {
-                KV_VECTOR_Add(&kvv_params, sv_params.vector[index], sv_params.vector[index+1]);
+                USP_ARG_Add(&kvv_params, sv_params.vector[index], sv_params.vector[index+1]);
             }
-            err = USP_SERVICE_Set_AsController(&kvv_params, VENDOR_TEST_USP_TIMEOUT, errMsg, VENDOR_TEST_ERR_MSG_LEN);
+            USP_SERVICE_Set(&kvv_params, VENDOR_TEST_USP_TIMEOUT, errMsg, sizeof(errMsg));
         }
         else
         {
-            USP_LOG_Error("Unrecognised parameter %s", sv_params.vector[0]);
-            goto exit;
+            USP_LOG_Error("Unrecognised command %s", sv_params.vector[0]);
+            goto next;
         }
 
         for (index = 0 ; index < kvv_params.num_entries ; index++)
         {
-            kv_pair_t *kv = &kvv_params.vector[index];
-            USP_ASSERT(kv->value != NULL);
+            kv = &kvv_params.vector[index];
+            assert(kv->value != NULL);
             printf("\"%s\" => \"%s\" \n", kv->key, kv->value);
         }
 
-exit:
-        KV_VECTOR_Destroy(&kvv_params);
-        STR_VECTOR_Destroy(&sv_params);
-
+next:
+        USP_ARG_Destroy(&kvv_params);
+        USP_STR_VEC_Destroy(&sv_params);
         free (s);
+        s = readline(">>");
     }
+
     return NULL;
 }
 ````
@@ -232,7 +263,9 @@ And our USP Service registering the datamodel:-
 ````
 obuspa -i wan -v 3 -r /fac_reset_service1.txt -f /obuspa_service1.db -R Device.Test.
 ````
- In order for a USP Service to act as a Controller it must connect to the Broker through the Broker's Agent socket described above.  Modify fac_reset_service2.txt and add the following lines.  Note that a Service can act as a data model provider, a Controller or as both at the same time.  The USP Service must "connect" to the Broker's listening socket.
+IMPORTANT: You must specify the -R option. If the USP Service is a pure controller (provides no data model) use `-R ""`.
+
+In order for a USP Service to act as a Controller it must connect to the Broker through the Broker's Agent socket described above.  Modify fac_reset_service2.txt and add the following lines.  Note that a Service can act as a data model provider, a Controller or as both at the same time.  The USP Service must "connect" to the Broker's listening socket.
 ````
 Device.UnixDomainSockets.UnixDomainSocket.2.Alias "cpe-2"
 Device.UnixDomainSockets.UnixDomainSocket.2.Mode "Connect"
@@ -282,4 +315,59 @@ NotifyChange_ParamD enter : value bar
 SET_RESP sending at time 2023-11-29T09:38:11Z, to host self::obuspa_broker over UDS
 Sending USP RECORD to endpoint_id=self::obuspa_broker on Broker's Controller path
 ````
+## Handling Notifications
+
+USP Controllers can subscribe to asynchronous notifications from the broker.  Notifications are handled by registering a callback function with:-
+```
+int USP_SERVICE_RegisterNotificationCallback(usp_service_notify_cb_t usp_service_notify_cb);
+```
+Subscriptions are created be adding an entry to the datamodel "Device.LocalAgent.Subscription." table.  For instance, if we want to subscribe to notifications that the timezone has changed then we would ADD a new object.
+```
+int instance;
+kv_vector_t kvv_params;
+
+KV_VECTOR_Init(&kvv_params);
+KV_VECTOR_Add(&kvv_params, "Enable", "true");
+KV_VECTOR_Add(&kvv_params, "ID", "NOTIFY-FOO");
+KV_VECTOR_Add(&kvv_params, "NotifType", "ValueChange");
+KV_VECTOR_Add(&kvv_params, "ReferenceList", "Device.Time.LocalTimeZone");
+KV_VECTOR_Add(&kvv_params, "Persistent", "0");
+KV_VECTOR_Add(&kvv_params, "TimeToLive", "0");
+err = USP_SERVICE_Add("Device.LocalAgent.Subscription.", &kvv_params, 10, &instance, errMsg, sizeof(errMsg));
+
+```
+NotifType can be any one of ValueChange, ObjectCreation, ObjectDeletion, OperationComplete or Event.
+Our callback function must have the following parameters:-
+```
+void notify_cb(char *subscription_id, char *path, kv_vector_t *args, char *cmd_key, int err_code, char *err_msg)
+{
+    int index;
+    USP_LOG_Info("%s: received a notification ID=%s on path=%s", __FUNCTION__, subscription_id, path);
+    for (index = 0 ; index < args->num_entries ; index++)
+    {
+        kv_pair_t *args = &args->vector[index];
+        USP_LOG_Info("%s: %s -> %s", __FUNCTION__, args->key, args->value);
+    }
+}
+```
+Then we can change the value of Device.Time.LocalTimeZone:-
+```
+SET,Device.Time.LocalTimeZone,GMT+1
+```
+We will see a callback after the value has changed:-
+```
+notify_cb: received a callback ID NOTIFY-FOO on path Device.Time.LocalTimeZone
+notify_cb: Device.Time.LocalTimeZone -> GMT+1
+```
+
+## Asynchronous Operations
+Some operate calls are asynchronous as they may take several seconds or even minutes to complete.  For these calls,  USP_SERVICE_Operate() will return after starting the operation successfully and before the operation has completed.  It is expected that the vendor will subscribe to an operation complete subscription if either the vendor code needs to know when the operation has completed, or the operation returns any output arguments that need to be handled.  In this case NotifType should be "OperationComplete" and ReferenceList should include the path of the operation that is going to be invoked:-
+```
+KV_VECTOR_Add(&kvv_params, "NotifType", "OperationComplete");
+KV_VECTOR_Add(&kvv_params, "ReferenceList", "Device.DeviceInfo.VendorLogFile.1.Upload()");
+```
+
+The notification callback includes parameters "cmd_key", "err_code" and "err_msg".  These three parameters are used specifically for asynchronous operation complete callbacks.  "err_code" and "err_msg" are used in the same way that they are for any other API calls.  If the operation completed without error then "err_code" will be set to USP_ERR_OK.  If any errors are reported then "err_code" will be set to an appropriate USP return value, and the err_msg will contain a human readable string indicating the fault.
+
+cmd_key contains the (optional) unique key generated and returned by USP_SERVICE_Operate() when the original operation was invoked.  The command key can be useful for matching operation complete notifications with calls to USP_SERVICE_Operate().
 
