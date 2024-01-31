@@ -335,13 +335,14 @@ void DATABASE_PerformFactoryReset_ControllerInitiated(void)
         }
     }
 
+#ifndef REMOVE_DEVICE_BOOT_EVENT
     // Finally set the reboot cause to "RemoteFactoryReset"
     err = DATA_MODEL_SetParameterInDatabase(reboot_cause_path, "RemoteFactoryReset");
     if (err != USP_ERR_OK)
     {
         return;
     }
-
+#endif
     // NOTE: No need to close this database, as it will be closed by DM_EXEC_Destroy()
 }
 

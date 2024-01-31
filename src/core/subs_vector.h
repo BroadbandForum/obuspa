@@ -65,6 +65,7 @@ typedef struct
                                         // For internal services, the handle is set to the group_id of the subscription path, if the path is being handled by the vendor layer
     subs_notify_t notify_type;          // Device.LocalAgent.Subscription.{i}.NotifType
     time_t expiry_time;                 // Time at which this subscription should be stopped and removed from the DB
+    bool persistent;                    // Whether the subscription should be persisted across reboots
     unsigned retry_expiry_period;       // Device.LocalAgent.Subscription.{i}.NotifExpiration
     kv_vector_t last_values;            // List of parameters+values from last time that the subscription was polled (if the subscription is a value change subscription)
     str_vector_t cur_watch_objs;        // Current set of objects to match against object creation or deletions. The lifetime of this vector is just the current DM_EXEC processing period

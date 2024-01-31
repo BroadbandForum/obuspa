@@ -206,7 +206,9 @@ int DEVICE_LOCAL_AGENT_ScheduleReboot(exit_action_t exit_action, char *reboot_ca
 exit_action_t DEVICE_LOCAL_AGENT_GetExitAction(void);
 int DEVICE_LOCAL_AGENT_SetDefaultRebootCause(void);
 char *DEVICE_LOCAL_AGENT_GetEndpointID(void);
+#ifndef REMOVE_DEVICE_BOOT_EVENT
 void DEVICE_LOCAL_AGENT_GetRebootInfo(reboot_info_t *info);
+#endif
 bool DEVICE_LOCAL_AGENT_GetDualStackPreference(void);
 void DEVICE_LOCAL_AGENT_Stop(void);
 int DEVICE_CONTROLLER_Init(void);
@@ -326,6 +328,7 @@ int DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(subs_notify_t notify_type, char *pat
 void DEVICE_SUBSCRIPTION_StartAllVendorLayerSubsForGroup(int group_id);
 void DEVICE_SUBSCRIPTION_FreeAllVendorLayerSubsForGroup(int group_id);
 int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance, int service_instance, char *path);
+bool DEVICE_SUBSCRIPTION_IsMatch(int broker_instance, subs_notify_t notify_type, char *path);
 #endif
 #if defined(ENABLE_UDS) && !(defined(REMOVE_USP_BROKER) && defined(REMOVE_USP_SERVICE))
 void DEVICE_CONTROLLER_AddController_UDS(char *endpoint_id, int uds_instance);

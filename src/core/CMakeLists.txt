@@ -39,6 +39,8 @@ add_library(core
     handle_get_supported_dm.c
     group_get_vector.c
     group_set_vector.c
+    group_add_vector.c
+    group_del_vector.c
     proto_trace.c
     data_model.c
     error_resp.c
@@ -94,6 +96,8 @@ add_library(core
     e2e_context.c
     device_uds.c
     uds.c
+    plugin.c
+    msg_utils.c
     usp_broker.c
     usp_service.c)
 

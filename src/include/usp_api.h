@@ -307,7 +307,7 @@ typedef int (*dm_del_group_cb_t)(int group_id, char *path);
 typedef int (*dm_create_obj_cb_t)(int group_id, char *path, group_add_param_t *params, int num_params, int *instance, kv_vector_t *unique_keys);
 typedef int (*dm_multi_del_cb_t)(int group_id, bool allow_partial, char **paths, int num_paths, int *failure_index);
 typedef int (*dm_refresh_instances_cb_t)(int group_id, char *path, int *expiry_period);
-typedef int (*dm_subscribe_cb_t)(int instance, int group_id, subs_notify_t notify_type, char *path);
+typedef int (*dm_subscribe_cb_t)(int instance, int group_id, subs_notify_t notify_type, char *path, bool persistent);
 typedef int (*dm_unsubscribe_cb_t)(int instance, int group_id, subs_notify_t notify_type, char *path);
 
 //-------------------------------------------------------------------------

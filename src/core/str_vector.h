@@ -53,6 +53,7 @@ void STR_VECTOR_Add(str_vector_t *sv, char *str);
 void STR_VECTOR_Add_IfNotExist(str_vector_t *sv, char *str);
 int STR_VECTOR_Find(str_vector_t *sv, char *str);
 void STR_VECTOR_RemoveByIndex(str_vector_t *sv, int index);
+void STR_VECTOR_RemoveUnusedEntries(str_vector_t *sv);
 void STR_VECTOR_Destroy(str_vector_t *sv);
 void STR_VECTOR_Dump(str_vector_t *sv);
 void STR_VECTOR_ConvertToKeyValueVector(str_vector_t *sv, kv_vector_t *kvv);

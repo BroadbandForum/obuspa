@@ -757,10 +757,12 @@ int USP_DM_AddControllerTrustPermission(int role_instance, char *path, unsigned 
     }
 
     // Exit if path is not a data model path
-    node =  DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
+    // This may occur if the path is owned by a USP Service, and the USP Service has not registered yet.
+    // In this case, when the USP Service registers the path, the permissions will be set then, instead of now
+    node =  DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
     if (node == NULL)
     {
-        return USP_ERR_INTERNAL_ERROR;
+        return USP_ERR_OK;
     }
 
     // Increment the permission instance counter for this role

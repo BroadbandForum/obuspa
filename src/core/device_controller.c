@@ -4092,6 +4092,13 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
         goto exit;
     }
 
+    // The inherited role when using UDS is known before connection, so set it now, so that permissions are correct
+    // when generating any USP events before UDS has connected
+    if (mtp->protocol == kMtpProtocol_UDS)
+    {
+        cont->inherited_instance = ROLE_UDS;
+    }
+
     // NOTE: No need to start a UDS Client/Server based on this reference - they are started based on being present in the UnixDomainSockets table
 #endif
 

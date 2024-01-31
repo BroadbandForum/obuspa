@@ -134,12 +134,14 @@ static bool object_deletion_paths_resolved = false;
 #define DEVICE_SUBS_ROOT "Device.LocalAgent.Subscription"
 static const char device_subs_root[] = DEVICE_SUBS_ROOT;
 
+static const char *periodic_event_str = "Device.LocalAgent.Periodic!";
+
+#ifndef REMOVE_DEVICE_BOOT_EVENT
+//------------------------------------------------------------------------------------
 // Location of the boot event within the data model
 #define DEVICE_BOOT_EVENT "Device.Boot!"
 static const char device_boot_event[] = DEVICE_BOOT_EVENT;
-static const char *periodic_event_str = "Device.LocalAgent.Periodic!";
 
-//------------------------------------------------------------------------------------
 // Array of arguments sent in Boot! event
 static char *boot_event_args[] =
 {
@@ -148,6 +150,7 @@ static char *boot_event_args[] =
     "FirmwareUpdated",
     "ParameterMap",
 };
+#endif
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -158,6 +161,7 @@ int NotifyChange_SubsEnable(dm_req_t *req, char *value);
 int NotifyChange_NotifyType(dm_req_t *req, char *value);
 int NotifyChange_SubsID(dm_req_t *req, char *value);
 int NotifyChange_SubsRefList(dm_req_t *req, char *value);
+int NotifyChange_Persistent(dm_req_t *req, char *value);
 int NotifyChange_SubsTimeToLive(dm_req_t *req, char *value);
 int NotifyChange_NotifRetry(dm_req_t *req, char *value);
 int NotifyChange_NotifExpiration(dm_req_t *req, char *value);
@@ -172,8 +176,6 @@ int NotifySubsAdded(dm_req_t *req);
 int NotifySubsDeleted(dm_req_t *req);
 void DeleteExpiredSubscriptions(void);
 int DeleteNonPersistentSubscriptions(void);
-void ProcessAllBootSubscriptions(void);
-void SendBootNotify(subs_t *sub);
 void ProcessObjectLifeEventSubscription(subs_t *sub);
 void ProcessAllValueChangeSubscriptions(void);
 void ProcessValueChangeSubscription(subs_t *sub);
@@ -183,7 +185,6 @@ void GetAllPathExpressionParameterValues(subs_t *sub, str_vector_t *path_express
 char *SerializeToJSONObject(kv_vector_t *param_values);
 void SendOperationCompleteNotify(subs_t *sub, char *command, char *command_key, int err_code, char *err_msg, kv_vector_t *output_args);
 void SendNotify(Usp__Msg *req, subs_t *sub, char *path);
-void SeedLastValueChangeValues(void);
 bool DoesSubscriptionSendNotification(subs_t *sub, char *event_name);
 bool DoesSubscriptionMatchEvent(subs_t *subs, char *event_name);
 bool HasControllerGotNotificationPermission(int cont_instance, char *path, unsigned short mask);
@@ -192,6 +193,15 @@ void StartSubscription(subs_t *sub);
 void StartSubscriptionInVendorLayer(subs_t *sub);
 void StopSubscriptionInVendorLayer(subs_t *sub);
 subs_t *FindSubsByInstance(int instance);
+char *ExtractNotificationEventArg(Usp__Notify__Event *event, char *arg_name);
+
+#ifndef REMOVE_DEVICE_BOOT_EVENT
+void SeedLastValueChangeValues(void);
+void ProcessAllBootSubscriptions(void);
+#endif
+#if !defined(REMOVE_DEVICE_BOOT_EVENT) || !defined(REMOVE_USP_BROKER)
+void SendBootNotify(subs_t *sub, char *command_key, char *reboot_cause, char *firmware_updated);
+#endif
 
 /*********************************************************************//**
 **
@@ -224,7 +234,7 @@ int DEVICE_SUBSCRIPTION_Init(void)
 
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.NotifType", "", Validate_SubsNotifType, NotifyChange_NotifyType, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.ReferenceList", "", Validate_SubsRefList, NotifyChange_SubsRefList, DM_STRING);
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.Persistent", "false", NULL, NULL, DM_BOOL);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.Persistent", "false", NULL, NotifyChange_Persistent, DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.TimeToLive", "0", NULL, NotifyChange_SubsTimeToLive, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.NotifRetry", "false", NULL, NotifyChange_NotifRetry, DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SUBS_ROOT ".{i}.NotifExpiration", "0", NULL, NotifyChange_NotifExpiration, DM_UINT);
@@ -245,9 +255,11 @@ int DEVICE_SUBSCRIPTION_Init(void)
     char *unique_keys1[] = { "ParameterName" };
     err |= USP_REGISTER_Object_UniqueKey("Device.LocalAgent.Controller.{i}.BootParameter.{i}", unique_keys1, NUM_ELEM(unique_keys1));
 
-    // Register Events
+#ifndef REMOVE_DEVICE_BOOT_EVENT
+    // Register Boot! Event
     err |= USP_REGISTER_Event((char *)device_boot_event);
     err |= USP_REGISTER_EventArguments((char *)device_boot_event, boot_event_args, NUM_ELEM(boot_event_args));
+#endif
 
     if (err != USP_ERR_OK)
     {
@@ -319,8 +331,10 @@ int DEVICE_SUBSCRIPTION_Start(void)
         }
     }
 
+#ifndef REMOVE_DEVICE_BOOT_EVENT
     // Override the initial value for SoftwareVersion with the value before the current boot cycle
     SeedLastValueChangeValues();
+#endif
 
 exit:
     INT_VECTOR_Destroy(&iv);
@@ -369,10 +383,14 @@ void DEVICE_SUBSCRIPTION_Update(int id)
     cur_time = time(NULL);
     if (boot_subs_processed == false)
     {
+#ifndef REMOVE_DEVICE_BOOT_EVENT
         ProcessAllBootSubscriptions();
+#endif
         boot_subs_processed = true;
 
         // Also at bootup, delete all non-persistent subscriptions
+        // NOTE: We do this after sending the Boot! event, because deletion of any subscriptions might trigger an
+        // ObjectDeletion notification, and we'd like the notification to be sent after the Boot! event
         DeleteNonPersistentSubscriptions();
     }
 
@@ -858,6 +876,9 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance)
     char *path;
     char buf[MAX_DM_PATH];
     char msg_id[MAX_MSG_ID_LEN];
+    char *command_key;
+    char *reboot_cause;
+    char *firmware_updated;
 
     // Calculate various values which depend on the type of the received message
     notify = usp->body->request->notify;
@@ -918,6 +939,19 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance)
     // Exit if the Controller does not have permission. In this case we just silently drop the notification
     if (HasControllerGotNotificationPermission(sub->cont_instance, path, perm_mask) == false)
     {
+        return USP_ERR_OK;
+    }
+
+    // Exit, sending a new Boot! event containing the ParameterMap for the originating controller
+    // This is necessary because the Boot! event we received won't have been generated by the USP Service with the ParameterMap for the originating controller
+    if ((notify->notification_case == USP__NOTIFY__NOTIFICATION_EVENT) && (strcmp(path, "Device.Boot!")==0))
+    {
+        // Extract arguments which we want to carry over to the new Boot! event
+        command_key = ExtractNotificationEventArg(notify->event, "CommandKey");
+        reboot_cause = ExtractNotificationEventArg(notify->event, "Cause");
+        firmware_updated = ExtractNotificationEventArg(notify->event, "FirmwareUpdated");
+
+        SendBootNotify(sub, command_key, reboot_cause, firmware_updated);
         return USP_ERR_OK;
     }
 
@@ -1038,7 +1072,7 @@ void DEVICE_SUBSCRIPTION_StartAllVendorLayerSubsForGroup(int group_id)
 
                     // Attempt to subscribe to path for the specified notification
                     // NOTE: If this is not successful, then we fallback to the polled mechanism to provide this subscription
-                    err = subscribe_hook(sub->instance, subs_group_id, sub->notify_type, path);
+                    err = subscribe_hook(sub->instance, subs_group_id, sub->notify_type, path, sub->persistent);
                     if (err != USP_ERR_OK)
                     {
                         USP_LOG_Warning("%s: Subscribe vendor hook failed for %s (%s). Falling back to polled", __FUNCTION__, path, NOTIFY_TYPE_STR(sub->notify_type));
@@ -1127,13 +1161,69 @@ int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance,
     // Exit if the unsubscribe vendor hook failed
     unsubscribe_hook = group_vendor_hooks[group_id].unsubscribe_cb;
     USP_ASSERT(unsubscribe_hook != NULL);
-    err = unsubscribe_hook(service_instance, group_id, sub->notify_type, path);
+    err = unsubscribe_hook(broker_instance, group_id, sub->notify_type, path);
     if (err != USP_ERR_OK)
     {
         return err;
     }
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_SUBSCRIPTION_IsMatch
+**
+** Determines whether the specified subscription table entry contains a subscription the the specified path (and notification type)
+** This function is called to determine whether to pass through a notification from the USP Service
+** in the case of the notification being received before the registration sequence has been completed with the USP Service
+** Typically this function is called to match Device.Boot! event notifications
+**
+** \param   broker_instance - instance number of the subscription in our subscription table
+** \param   notify_type - type of the notification to check against
+** \param   path - data model path to check against
+**
+** \return  true if the specified instance contains an enabled subscription that matches, false otherwise
+**
+**************************************************************************/
+bool DEVICE_SUBSCRIPTION_IsMatch(int broker_instance, subs_notify_t notify_type, char *path)
+{
+    subs_t *sub;
+    int index;
+
+    // Exit if we don't have a subscription matching the specified instance number
+    sub = FindSubsByInstance(broker_instance);
+    if (sub == NULL)
+    {
+        return false;
+    }
+
+    // Exit if the subscription is not enabled
+    if (sub->enable == false)
+    {
+        return false;
+    }
+
+    // Exit if the subscription is for a different type of notification
+    if (sub->notify_type != notify_type)
+    {
+        return false;
+    }
+
+    // Exit if the subscription is not to the specified path or not to 'Device.'
+    // NOTE: This test uses a simple string match, which isn't sufficient in many cases (eg if the path expression contains a wildcard)
+    // However it should be sufficient for the main use case of this function (Device.Boot!)
+    index = STR_VECTOR_Find(&sub->path_expressions, path);
+    if (index == INVALID)
+    {
+        index = STR_VECTOR_Find(&sub->path_expressions, "Device.");
+        if (index == INVALID)
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 #endif
 
@@ -1231,6 +1321,14 @@ int ProcessSubscriptionAdded(int instance)
     // Get NotifRetry
     USP_SNPRINTF(path, sizeof(path), "%s.%d.NotifRetry", device_subs_root, instance);
     err = DM_ACCESS_GetBool(path, &sub.notification_retry);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Get Persistent
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.Persistent", device_subs_root, instance);
+    err = DM_ACCESS_GetBool(path, &sub.persistent);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -1380,7 +1478,7 @@ void StartSubscriptionInVendorLayer(subs_t *sub)
 
         // Attempt to subscribe to path for the specified notification
         // NOTE: If this is not successful, then we fallback to the polled mechanism to provide this subscription
-        err = subscribe_hook(sub->instance, subs_group_id, sub->notify_type, path);
+        err = subscribe_hook(sub->instance, subs_group_id, sub->notify_type, path, sub->persistent);
         if (err != USP_ERR_OK)
         {
             USP_LOG_Warning("%s: Subscribe vendor hook failed for %s (%s). Falling back to polled", __FUNCTION__, path, NOTIFY_TYPE_STR(sub->notify_type));
@@ -1712,6 +1810,32 @@ int NotifyChange_SubsRefList(dm_req_t *req, char *value)
         StartSubscriptionInVendorLayer(sub);
     }
 #endif
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** NotifyChange_Persistent
+**
+** Function called when Device.LocalAgent.Subscription.{i}.Persistent is changed
+**
+** \param   req - pointer to structure identifying the subscription
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_Persistent(dm_req_t *req, char *value)
+{
+    subs_t *sub;
+
+    // Determine which subscription this change affects
+    sub = SUBS_VECTOR_GetSubsByInstance(&subscriptions, inst1);
+    USP_ASSERT(sub != NULL);
+
+    // Update the persistent flag for this subscription.
+    sub->persistent = val_bool;
 
     return USP_ERR_OK;
 }
@@ -2291,14 +2415,11 @@ void DeleteExpiredSubscriptions(void)
 int DeleteNonPersistentSubscriptions(void)
 {
     int i;
+    subs_t *sub;
     int err;
-    int instance;
-    int_vector_t iv;
-    bool persistent;
-    time_t expiry_time;
+    dm_trans_vector_t trans;
     time_t cur_time;
     char path[MAX_DM_PATH];
-    dm_trans_vector_t trans;
 
     // As we might delete some subscriptions (from the data model and DB), wrap in a transaction
     err = DM_TRANS_Start(&trans);
@@ -2307,42 +2428,19 @@ int DeleteNonPersistentSubscriptions(void)
         return err;
     }
 
-    // Exit if unable to get the object instance numbers present in the subscription table
-    INT_VECTOR_Init(&iv);
-    err = DATA_MODEL_GetInstances(DEVICE_SUBS_ROOT, &iv);
-    if (err != USP_ERR_OK)
-    {
-        goto exit;
-    }
-
     // Remove any expired or non-persistent subscriptions
     // NOTE: We do this after adding all subscriptions to the subscriptions vector, in order
     // that notify events are sent when the subscription is deleted (if an Object Deletion subscription
     // is present on the Subscriptions table)
-    for (i=0; i < iv.num_entries; i++)
+    for (i=0; i < subscriptions.num_entries; i++)
     {
-        instance = iv.vector[i];
-
-        // Get whether this subscription is persistent or not
-        USP_SNPRINTF(path, sizeof(path), "%s.%d.Persistent", device_subs_root, instance);
-        err = DM_ACCESS_GetBool(path, &persistent);
-        if (err != USP_ERR_OK)
-        {
-            goto exit;
-        }
-
-        // Exit if unable to calculate the expiry time for this subscription
-        err = CalcExpiryTime(instance, &expiry_time);
-        if (err != USP_ERR_OK)
-        {
-            goto exit;
-        }
+        sub = &subscriptions.vector[i];
 
         // Remove this subscription if it is not marked as persistent, or if it has expired
         cur_time = time(NULL);
-        if ((persistent == false) || (cur_time >= expiry_time))
+        if ((sub->persistent == false) || (cur_time >= sub->expiry_time))
         {
-            USP_SNPRINTF(path, sizeof(path), "%s.%d", device_subs_root, instance);
+            USP_SNPRINTF(path, sizeof(path), "%s.%d", device_subs_root, sub->instance);
             err = DATA_MODEL_DeleteInstance(path, 0); // NOTE: This will cascade to delete from subscriptions vector via the delete hook callback
             if (err != USP_ERR_OK)
             {
@@ -2352,14 +2450,13 @@ int DeleteNonPersistentSubscriptions(void)
     }
 
 exit:
-    INT_VECTOR_Destroy(&iv);
-
     // The commit will cascade to delete the subscription from the subscriptions vector
     DM_TRANS_Commit();
 
     return err;
 }
 
+#ifndef REMOVE_DEVICE_BOOT_EVENT
 /*********************************************************************//**
 **
 ** ProcessAllBootSubscriptions
@@ -2375,6 +2472,12 @@ void ProcessAllBootSubscriptions(void)
 {
     int i;
     subs_t *sub;
+    reboot_info_t info;
+    char *firmware_updated;
+
+    // Determine common arguments for Boot! event
+    DEVICE_LOCAL_AGENT_GetRebootInfo(&info);
+    firmware_updated = (info.is_firmware_updated) ? "true" : "false";
 
     // Iterate over all enabled subscriptions, processing each boot event subscription that matches
     // (there may be more than one subscriber)
@@ -2386,11 +2489,12 @@ void ProcessAllBootSubscriptions(void)
             // Send the event, if it matches this subscription
             if (DoesSubscriptionSendNotification(sub, (char *)device_boot_event))
             {
-                SendBootNotify(sub);
+                SendBootNotify(sub, info.command_key, info.cause, firmware_updated);
             }
         }
     }
 }
+#endif
 
 /*********************************************************************//**
 **
@@ -2733,6 +2837,7 @@ void SendValueChangeNotify(subs_t *sub, char *path, char *value)
     usp__msg__free_unpacked(req, pbuf_allocator);
 }
 
+#if !defined(REMOVE_DEVICE_BOOT_EVENT) || !defined(REMOVE_USP_BROKER)
 /*********************************************************************//**
 **
 ** SendBootNotify
@@ -2740,11 +2845,15 @@ void SendValueChangeNotify(subs_t *sub, char *path, char *value)
 ** Sends a Boot notify request message
 **
 ** \param   sub - pointer to boot subscription
+** \param   command_key - pointer to string containing the CommandKey argument to put into the Boot! event
+** \param   reboot_cause - pointer to string containing the Cause argument to put into the Boot! event
+** \param   firmware_updated - pointer to string containing the FirmwareUpdated argument to put into the Boot! event
+**          NOTE: The string arguments may be NULL if the USP Broker was unable to extract the argument from the USP Service's Boot! event
 **
 ** \return  None
 **
 **************************************************************************/
-void SendBootNotify(subs_t *sub)
+void SendBootNotify(subs_t *sub, char *command_key, char *reboot_cause, char *firmware_updated)
 {
     int err;
     int i;
@@ -2759,18 +2868,23 @@ void SendBootNotify(subs_t *sub)
     kv_vector_t param_values;
     kv_vector_t event_params;
     char *json_object;
-    reboot_info_t info;
-    char *firmware_updated;
 
     // Add the cause (and associated command_key) of the last reboot
     KV_VECTOR_Init(&event_params);
-    DEVICE_LOCAL_AGENT_GetRebootInfo(&info);
-    USP_ARG_Add(&event_params, "CommandKey", info.command_key);
-    USP_ARG_Add(&event_params, "Cause", info.cause);
+    if (command_key != NULL)
+    {
+        USP_ARG_Add(&event_params, "CommandKey", command_key);
+    }
 
-    // Set the Firmware updated output argument
-    firmware_updated = (info.is_firmware_updated) ? "true" : "false";
-    USP_ARG_Add(&event_params, "FirmwareUpdated", firmware_updated);
+    if (reboot_cause != NULL)
+    {
+        USP_ARG_Add(&event_params, "Cause", reboot_cause);
+    }
+
+    if (firmware_updated != NULL)
+    {
+        USP_ARG_Add(&event_params, "FirmwareUpdated", firmware_updated);
+    }
 
     // Exit if unable to get the name of the controller table entry. This might be empty if the controller was deleted.
     USP_SNPRINTF(path, sizeof(path), "%s.%d.Recipient", device_subs_root, sub->instance);
@@ -2828,7 +2942,7 @@ void SendBootNotify(subs_t *sub)
     free(json_object);
 
     // Form the Boot notify event message as a protobuf structure
-    req = MSG_HANDLER_CreateNotifyReq_Event((char *)device_boot_event, &event_params, sub->subscription_id, sub->notification_retry);
+    req = MSG_HANDLER_CreateNotifyReq_Event("Device.Boot!", &event_params, sub->subscription_id, sub->notification_retry);
 
     KV_VECTOR_Destroy(&event_params);
 
@@ -2840,6 +2954,7 @@ void SendBootNotify(subs_t *sub)
 exit:
     INT_VECTOR_Destroy(&iv);
 }
+#endif
 
 /*********************************************************************//**
 **
@@ -3034,6 +3149,7 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
     }
 }
 
+#ifndef REMOVE_DEVICE_BOOT_EVENT
 /*********************************************************************//**
 **
 ** SeedLastValueChangeValues
@@ -3067,6 +3183,7 @@ void SeedLastValueChangeValues(void)
         }
     }
 }
+#endif
 
 /*********************************************************************//**
 **
@@ -3294,3 +3411,35 @@ subs_t *FindSubsByInstance(int instance)
 
     return NULL;
 }
+
+/*********************************************************************//**
+**
+** ExtractNotificationEventArg
+**
+** Returns the value of the specified argument in the specified event notification
+**
+** \param   event - pointer to parsed protobuf event structure
+** \param   arg_name - name of argument
+**
+** \return  value of the specified argument or NULL if the argument was not present in the parsed protobuf
+**
+**************************************************************************/
+char *ExtractNotificationEventArg(Usp__Notify__Event *event, char *arg_name)
+{
+    int i;
+    Usp__Notify__Event__ParamsEntry *arg;
+
+    // Iterate over all arguments for the event, finding the one which matches
+    for (i=0; i < event->n_params; i++)
+    {
+        arg = event->params[i];
+        if (strcmp(arg->key, arg_name)==0)
+        {
+            return arg->value;
+        }
+    }
+
+    // If the code gets here, then no arguments matched
+    return NULL;
+}
+

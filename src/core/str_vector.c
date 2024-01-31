@@ -224,6 +224,47 @@ void STR_VECTOR_RemoveByIndex(str_vector_t *sv, int index)
 
 /*********************************************************************//**
 **
+** STR_VECTOR_RemoveUnusedEntries
+**
+** Removes all NULL string entries from the vector, compacting the vector
+** This function is usually called after marking some entries as NULL in the vector (after freeing them)
+**
+** \param   sv - pointer to structure to remove an entry from
+**
+** \return  None
+**
+**************************************************************************/
+void STR_VECTOR_RemoveUnusedEntries(str_vector_t *sv)
+{
+    int i, j;
+
+    // Move down all items in the vector
+    j = 0;
+    for (i=0; i < sv->num_entries; i++)
+    {
+        if (sv->vector[i] != NULL)
+        {
+            if (i != j)
+            {
+                sv->vector[j] = sv->vector[i];
+            }
+            j++;
+        }
+    }
+
+    // Save the new number of entries, after
+    sv->num_entries = j;
+
+    // Ensure that the vector is freed, if it now contains no entries
+    if (sv->num_entries == 0)
+    {
+        USP_FREE(sv->vector);
+        sv->vector = NULL;
+    }
+}
+
+/*********************************************************************//**
+**
 ** STR_VECTOR_Destroy
 **
 ** Deallocates all memory associated with the string vector
