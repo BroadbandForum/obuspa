@@ -1502,6 +1502,7 @@ void CloseUdsConnection(uds_connection_t *uc, bool retry)
 **************************************************************************/
 void ReadUdsFrames(uds_connection_t *uc)
 {
+    int i;
     int num_bytes = 0;
 
     USP_ASSERT(uc->socket != INVALID);
@@ -1530,7 +1531,7 @@ void ReadUdsFrames(uds_connection_t *uc)
 
         // Count the number of correct sync bytes received
         // If any of the sync bytes are incorrect, then disconnect
-        for (int i = 0 ; i < num_bytes && (uc->hdr_bytes_rxed < 4) ; i++ )
+        for (i=0; i < num_bytes && (uc->hdr_bytes_rxed < 4) ; i++ )
         {
             if (buf[i] == uds_frame_sync_bytes[uc->hdr_bytes_rxed])
             {

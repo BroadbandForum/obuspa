@@ -54,7 +54,7 @@ vendor_hook_cb_t vendor_hook_callbacks = { NULL };
 
 //------------------------------------------------------------------------------
 // Array containing the get/set callbacks for each group of vendor parameters
-group_vendor_hook_t group_vendor_hooks[MAX_VENDOR_PARAM_GROUPS] = {0};
+group_vendor_hook_t group_vendor_hooks[MAX_VENDOR_PARAM_GROUPS] = { {0} };
 
 //------------------------------------------------------------------------------
 // Commonly used strings

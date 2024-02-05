@@ -324,7 +324,7 @@ char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance);
 
 #ifndef REMOVE_USP_BROKER
 int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance);
-int DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(subs_notify_t notify_type, char *path, int group_id);
+bool DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(int broker_instance, subs_notify_t notify_type, char *path, int group_id);
 void DEVICE_SUBSCRIPTION_StartAllVendorLayerSubsForGroup(int group_id);
 void DEVICE_SUBSCRIPTION_FreeAllVendorLayerSubsForGroup(int group_id);
 int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance, int service_instance, char *path);

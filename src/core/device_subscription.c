@@ -978,45 +978,50 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance)
 **
 ** DEVICE_SUBSCRIPTION_MarkVendorLayerSubs
 **
-** Marks the first subscription path (matched by notify_type and path) as being satisifed by the vendor layer
+** Checks that the expected broker subscription instance has the specified notify_type and path
+** and if so marks it as being satisfied by the vendor layer
 ** This function is called as part of synching the USP Service's subscriptions with the Broker,
 ** to ensure the Broker's internal state reflects the mapping
 **
+** \param   broker_instance - expected instance number of the subscription in the broker's subscription table
 ** \param   notify_type - type of notification to match
 ** \param   path - data model path for subscription to match
 ** \param   group_id - ID representing the USP Service that owns the path. This is used to mark the path as being satisfied by the USP Service
 **
-** \return  Instance of the subscription in the Broker's subscription table that was marked
-**          or INVALID if no matching subscription was found
+** \return  true if the subscription matched and was marked as being satisfied by the vendor layer, false otherwise
 **
 **************************************************************************/
-int DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(subs_notify_t notify_type, char *path, int group_id)
+bool DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(int broker_instance, subs_notify_t notify_type, char *path, int group_id)
 {
-    int i, j;
+    int i;
     subs_t *sub;
 
-    // Iterate over all subscriptions, trying to find the first enabled subscription that matches the path and notify_type
-    // and is not already satisfied by a vendor layer subscription
-    for (i=0; i < subscriptions.num_entries; i++)
+    // Exit if expected instance did not exist in the Broker's subscription table
+    sub = FindSubsByInstance(broker_instance);
+    if (sub == NULL)
     {
-        sub = &subscriptions.vector[i];
-        if ((sub->enable) && (sub->notify_type == notify_type))
+        return false;
+    }
+
+    // Exit if subscription was not enabled, or was for wrong notify type
+    if ((sub->enable==false) || (sub->notify_type != notify_type))
+    {
+        return false;
+    }
+
+    // Iterate over all paths for this subscription, finding the first matching path that is not already satisfied by a vendor layer subscription
+    for (i=0; i < sub->path_expressions.num_entries; i++)
+    {
+        if ((sub->handler_group_ids.vector[i] == NON_GROUPED) && (strcmp(sub->path_expressions.vector[i], path) == 0))
         {
-            // Iterate over all paths for this subscription
-            for (j=0; j < sub->path_expressions.num_entries; j++)
-            {
-                if ((sub->handler_group_ids.vector[j] == NON_GROUPED) && (strcmp(sub->path_expressions.vector[j], path) == 0))
-                {
-                    // Mark this path as being satisfied by the vendor layer
-                    sub->handler_group_ids.vector[j] = group_id;
-                    return sub->instance;
-                }
-            }
+            // Mark this path as being satisfied by the vendor layer
+            sub->handler_group_ids.vector[i] = group_id;
+            return true;
         }
     }
 
     // If the code gets here, then no match was found
-    return INVALID;
+    return false;
 }
 
 /*********************************************************************//**
@@ -1188,8 +1193,9 @@ int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance,
 **************************************************************************/
 bool DEVICE_SUBSCRIPTION_IsMatch(int broker_instance, subs_notify_t notify_type, char *path)
 {
+    int i;
     subs_t *sub;
-    int index;
+    char *path_spec;
 
     // Exit if we don't have a subscription matching the specified instance number
     sub = FindSubsByInstance(broker_instance);
@@ -1210,20 +1216,19 @@ bool DEVICE_SUBSCRIPTION_IsMatch(int broker_instance, subs_notify_t notify_type,
         return false;
     }
 
-    // Exit if the subscription is not to the specified path or not to 'Device.'
-    // NOTE: This test uses a simple string match, which isn't sufficient in many cases (eg if the path expression contains a wildcard)
-    // However it should be sufficient for the main use case of this function (Device.Boot!)
-    index = STR_VECTOR_Find(&sub->path_expressions, path);
-    if (index == INVALID)
+    // Iterate over all paths that the Broker's subscription is for, seeing if the path matches any of those
+    for (i=0; i < sub->path_expressions.num_entries; i++)
     {
-        index = STR_VECTOR_Find(&sub->path_expressions, "Device.");
-        if (index == INVALID)
+        // Exit if the notification path matches that defined by the path specification in the subscription (ie wildcards and partial paths - including Device.)
+        path_spec = sub->path_expressions.vector[i];
+        if (TEXT_UTILS_IsPathMatch(path, path_spec))
         {
-            return false;
+            return true;
         }
     }
 
-    return true;
+    // If the code gets here, then no match was found
+    return false;
 }
 #endif
 

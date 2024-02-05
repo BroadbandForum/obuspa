@@ -182,7 +182,7 @@ void SubsMap_Init(double_linked_list_t *sm);
 void SubsMap_Destroy(double_linked_list_t *sm);
 void SubsMap_Add(double_linked_list_t *sm, int service_instance, char *path, char *subscription_id, int broker_instance);
 void SubsMap_Remove(double_linked_list_t *sm, subs_map_t *smap);
-subs_map_t *SubsMap_FindByUspServiceSubsId(double_linked_list_t *sm, char *subscription_id);
+subs_map_t *SubsMap_FindByUspServiceSubsId(double_linked_list_t *sm, char *subscription_id, int broker_instance);
 subs_map_t *SubsMap_FindByBrokerInstanceAndPath(double_linked_list_t *sm, int broker_instance, char *path);
 subs_map_t *SubsMap_FindByPath(double_linked_list_t *sm, char *path);
 void ReqMap_Init(double_linked_list_t *rm);
@@ -225,6 +225,8 @@ bool IsPathASpecialException(char *path, int group_id);
 int ShouldPathBeAddedToDataModel(char *path);
 void RegisterBrokerVendorHooks(usp_service_t *us);
 void DeregisterBrokerVendorHooks(usp_service_t *us);
+void AddTopLevelTableNodes(dm_node_t *parent, str_vector_t *sv);
+bool IsUspServiceNotificationMatch(Usp__Notify *notify, usp_service_t *us, int broker_instance);
 
 /*********************************************************************//**
 **
@@ -704,6 +706,7 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
     int index;
     bool is_accepted;
     str_vector_t ipaths;
+    dm_node_t *node;
 
     // NOTE: Errors in response messages should be ignored according to R-MTP.5 (they should not send a USP ERROR response)
 
@@ -744,20 +747,20 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
     // Since we've received the response now, free the expected msg_id
     STR_VECTOR_RemoveByIndex(&us->gsdm_msg_ids, index);
 
-    // Form a temporary string vector in which to accumulate a list of paths to refresh the instances of
-    // NOTE: The vector is sized to the largest it could possibly be, and the strings stored into it will stay owned by the GSDM response
-    ipaths.num_entries = 0;
-    ipaths.vector = USP_MALLOC(gsdm->n_req_obj_results * sizeof(char *));
-
     // Iterate over all RequestedObjectResults, registering the data model elements provided
     // by this USP service into this USP Broker's data model
+    STR_VECTOR_Init(&ipaths);
     for (i=0; i < gsdm->n_req_obj_results; i++)
     {
         ror = gsdm->req_obj_results[i];
         is_accepted = ProcessGsdm_RequestedPath(ror, us);
         if (is_accepted)
         {
-            ipaths.vector[ipaths.num_entries++] = ror->req_obj_path;
+            // Add all top level multi-instance objects under this path to ipaths
+            // NOTE: We cannot just GetInstances to this path directly because GetInstances requires paths to multi-instance objects
+            node = DM_PRIV_GetNodeFromPath(ror->req_obj_path, NULL, NULL, 0);
+            USP_ASSERT(node != NULL);
+            AddTopLevelTableNodes(node, &ipaths);
         }
     }
 
@@ -770,10 +773,12 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
     // Get a baseline set of instances for this USP Service into the instance cache
     // This is necessary, otherwise an Object creation subscription that uses the legacy polling mechanism (via refresh instances vendor hook)
     // may erroneously fire, immediately after this service has registered
-    UspService_RefreshInstances(us, &ipaths, false);
+    if (ipaths.num_entries > 0)
+    {
+        UspService_RefreshInstances(us, &ipaths, false);
+    }
 
-    // Free the temporary string vector. NOTE: None of the strings need to be freed, as their ownership stayed with the GSDM response
-    USP_FREE(ipaths.vector);
+    STR_VECTOR_Destroy(&ipaths);
 }
 
 /*********************************************************************//**
@@ -798,6 +803,9 @@ void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t 
     usp_service_t *us;
     subs_map_t *smap;
     Usp__Notify__OperationComplete *op;
+    int items_converted;
+    int broker_instance;
+    bool is_match;
 
     // Exit if message is invalid or failed to parse
     // This code checks the parsed message enums and pointers for expectations and validity
@@ -828,17 +836,41 @@ void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t 
         goto exit;
     }
 
-    // Exit if the subscription_id of the received notification doesn't match any that we are expecting
-    smap = SubsMap_FindByUspServiceSubsId(&us->subs_map, notify->subscription_id);
-    if (smap == NULL)
+    // Exit if the Subscription ID was not created by the Broker
+    if (strstr(notify->subscription_id, broker_unique_str) == NULL)
+    {
+        USP_ERR_SetMessage("%s: Notification is not for the Broker (subs_id=%s)", __FUNCTION__, notify->subscription_id);
+        err = USP_ERR_REQUEST_DENIED;
+        goto exit;
+    }
+
+    // Exit if unable to extract the broker's subscription instance number from the subscription ID
+    items_converted = sscanf(notify->subscription_id, "%d", &broker_instance);
+    if (items_converted != 1)
     {
         USP_ERR_SetMessage("%s: Notification contains unexpected subscription Id (%s)", __FUNCTION__, notify->subscription_id);
         err = USP_ERR_REQUEST_DENIED;
         goto exit;
     }
 
+    // Exit if the subscription_id of the received notification doesn't match any that we are expecting
+    smap = SubsMap_FindByUspServiceSubsId(&us->subs_map, notify->subscription_id, broker_instance);
+    if (smap == NULL)
+    {
+        // Subscription doesn't match any that have been paired up
+        // However this may be because the notification was received before the USP Service registration sequence has completed (eg Device.Boot!)
+
+        // Exit if the notification does not match the expected entry in the Broker's subscription table
+        is_match = IsUspServiceNotificationMatch(notify, us, broker_instance);
+        if (is_match == false)
+        {
+            err = USP_ERR_REQUEST_DENIED;
+            goto exit;
+        }
+    }
+
     // Forward the notification back to the controller that set up the subscription on the Broker
-    err = DEVICE_SUBSCRIPTION_RouteNotification(usp, smap->broker_instance);
+    err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance);
 
     // If this is an OperationComplete notification, then delete the associated request
     // in the Broker's Request table and from this USP Service's request mapping table
@@ -2289,6 +2321,8 @@ void ProcessGetSubsResponse_ResolvedPathResult(usp_service_t *us, Usp__GetResp__
     int subs_group_id;
     bool enable;
     int err;
+    int items_converted;
+    bool was_marked;
 
     // Exit if unable to extract the instance number of this subscription in the USP Service's subscription table
     node = DM_PRIV_GetNodeFromPath(res->resolved_path, &inst, NULL, 0);
@@ -2340,8 +2374,11 @@ void ProcessGetSubsResponse_ResolvedPathResult(usp_service_t *us, Usp__GetResp__
 
     // Exit if the path does not exist currently in the Broker's data model
     // This could happen if the USP Service issues multiple Register requests, and this subscription will only be paired up after a later Register request
+    // But we delete the subscription anyway, because we don't know whether the USP Service will eventually register the path
+    // (It will be re-created if the USP Service does eventually register the path)
     if (is_present==false)
     {
+        STR_VECTOR_Add(subs_to_delete, res->resolved_path);
         return;
     }
 
@@ -2353,30 +2390,36 @@ void ProcessGetSubsResponse_ResolvedPathResult(usp_service_t *us, Usp__GetResp__
         return;
     }
 
-    // Exit if this subscription is already in the subs mapping table
-    // This could happen if the USP Service issues multiple Register requests, and this subscription was paired up after a previous Register request
-    smap = SubsMap_FindByUspServiceSubsId(&us->subs_map, subscription_id);
-    if (smap != NULL)
-    {
-        return;
-    }
-
-    // Mark the Broker's first enabled subscription matching this as owned by the USP Service (if any match)
-    // NOTE: It is possible for the Broker to have duplicate matches (eg if two controllers subscribe to the same path)
-    //       In this case the duplicate will be paired to a later USP Service subscription instance
-    broker_instance = DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(notify_type, path, us->group_id);
-
-    // Exit if this USP Service subscription does not match any enabled subscriptions owned by the Broker
-    // In which case, this is a stale subscription i.e. the subscription has already been deleted on the Broker,
-    // so needs to be deleted on the USP Service (to synchronize them)
-    if (broker_instance == INVALID)
+    // Exit if unable to extract the broker's subscription instance number from the subscription ID
+    // We delete the subscription in this case as the subscription ID is malformed
+    items_converted = sscanf(subscription_id, "%d", &broker_instance);
+    if (items_converted != 1)
     {
         STR_VECTOR_Add(subs_to_delete, res->resolved_path);
         return;
     }
 
+    // Exit if this subscription is already in the subs mapping table
+    // This could happen if the USP Service issues multiple Register requests, and this subscription was paired up by a previous register sequence
+    smap = SubsMap_FindByUspServiceSubsId(&us->subs_map, subscription_id, broker_instance);
+    if (smap != NULL)
+    {
+        return;
+    }
+
+    // Mark the Broker's subscription matching this as owned by the USP Service
+    was_marked = DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(broker_instance, notify_type, path, us->group_id);
+    if (was_marked == false)
+    {
+        // The USP Service's subscription does not match any enabled subscriptions owned by the Broker
+        // In which case, this is a stale subscription i.e. the subscription has already been deleted (or disabled) on the Broker,
+        // so needs to be deleted on the USP Service (to synchronize them)
+        STR_VECTOR_Add(subs_to_delete, res->resolved_path);
+        return;
+    }
+
     // If the code gets here, then the subscription should be added to the subscription mapping table
-    // (It will already have been marked as owned by the Vendor layer in DEVICE_SUBSCRIPTION_MarkSubsInstance)
+    // (It will already have been marked as owned by the Vendor layer in DEVICE_SUBSCRIPTION_MarkVendorLayerSubs)
     SubsMap_Add(&us->subs_map, service_instance, path, subscription_id, broker_instance);
 }
 
@@ -2484,7 +2527,7 @@ int UspService_DeleteInstances(usp_service_t *us, bool allow_partial, str_vector
 ** Then it waits for a USP GetInstances Response and parses it, caching the instance numbers in the data model
 **
 ** \param   us - pointer to USP service to query
-** \param   paths - paths to the top-level multi-instance node to refresh the instances of
+** \param   paths - paths to the top-level multi-instance nodes to refresh the instances of
 ** \param   within_vendor_hook - Determines whether this function is being called within the context of the
 **                               refresh instances vendor hook (This has some restrictions on which object instances may be refreshed)
 **
@@ -2529,6 +2572,48 @@ int UspService_RefreshInstances(usp_service_t *us, str_vector_t *paths, bool wit
     usp__msg__free_unpacked(resp, pbuf_allocator);
 
     return err;
+}
+
+/*********************************************************************//**
+**
+** AddTopLevelTableNodes
+**
+** Function called recursively to add the object paths of all top level multi-instance object nodes to a string vector
+**
+** \param   parent - pointer to data model node to see whether to add
+** \param   sv - pointer to string vector in which to add the schema paths
+**
+** \return  None
+**
+**************************************************************************/
+void AddTopLevelTableNodes(dm_node_t *parent, str_vector_t *sv)
+{
+    dm_node_t *child;
+    char *path;
+    char *p;
+
+    // Exit if we've found a top level multi-instance object. We do not have to recurse any further for nested multi-instance objects
+    if (parent->type == kDMNodeType_Object_MultiInstance)
+    {
+        STR_VECTOR_Add(sv, parent->path);
+
+        // Convert the schema path back to an object path by in-place truncating the string at the terminating '{i}'
+        path = sv->vector[ sv->num_entries-1 ];
+        p = strchr(path, '{');
+        USP_ASSERT(p != NULL);
+        *p = '\0';
+        return;
+    }
+
+    // Iterate over list of children
+    child = (dm_node_t *) parent->child_nodes.head;
+    while (child != NULL)
+    {
+        AddTopLevelTableNodes(child, sv);
+
+        // Move to next sibling in the data model tree
+        child = (dm_node_t *) child->link.next;
+    }
 }
 
 /*********************************************************************//**
@@ -5065,8 +5150,6 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
     subs_map_t *smap;
     int broker_instance;
     int items_converted;
-    char path[MAX_DM_PATH];
-    bool is_match;
 
     // Exit if message was badly formed - the error will be handled by the normal handlers
     if ((usp->body == NULL) || (usp->body->msg_body_case != USP__BODY__MSG_BODY_REQUEST) ||
@@ -5113,43 +5196,25 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
         return false;
     }
 
+    // Exit if the Subscription ID was not created by the Broker
+    if (strstr(notify->subscription_id, broker_unique_str) == NULL)
+    {
+        return false;
+    }
+
+    // Exit if unable to extract the broker's subscription instance number from the subscription ID
+    items_converted = sscanf(notify->subscription_id, "%d", &broker_instance);
+    if (items_converted != 1)
+    {
+        return false;
+    }
+
     // Determine if the subscription_id of the received notification matches any that we are expecting
-    smap = SubsMap_FindByUspServiceSubsId(&us->subs_map, notify->subscription_id);
-    if (smap != NULL)
+    smap = SubsMap_FindByUspServiceSubsId(&us->subs_map, notify->subscription_id, broker_instance);
+    if (smap == NULL)
     {
-        // Subscription matches - it was paired up during the USP Service registration sequence
-        broker_instance = smap->broker_instance;
+        return false;
     }
-    else
-    {
-        // Subscription doesn't match any that have been paired up
-        // However this may be because the notification was received before the USP Service registration sequence has completed (eg Device.Boot!)
-        // In this case, we check whether the broker subscription instance number (embedded in the subscription ID string)
-        // and the event's path match the entry in the Broker's subscription table
-
-        // Currently this code only handles USP Events received before the register sequence has completed (not any other type of notification)
-        if (notify->notification_case != USP__NOTIFY__NOTIFICATION_EVENT)
-        {
-            return false;
-        }
-
-        // Exit if unable to extract the broker's subscription instance number from the subscription ID
-        items_converted = sscanf(notify->subscription_id, "%d", &broker_instance);
-        if (items_converted != 1)
-        {
-            return false;
-        }
-
-        // Exit if we do not have an enabled matching subscription for this event
-        USP_SNPRINTF(path, sizeof(path), "%s%s", notify->event->obj_path, notify->event->event_name);
-        is_match = DEVICE_SUBSCRIPTION_IsMatch(broker_instance, kSubNotifyType_Event, path);
-        if (is_match == false)
-        {
-            return false;
-        }
-    }
-
-    // From this point on, 'broker_instance' is the instance number of the subscription on the broker which initiated this notification
 
     // Log this message, if not already done so by caller
     if (rec != NULL)
@@ -5170,6 +5235,86 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
     // this Broker code always sets NotifRetry=false on the USP Service
 
     // The notification was passed back successfully
+    return true;
+}
+
+/*********************************************************************//**
+**
+** IsUspServiceNotificationMatch
+**
+** Determines whether the specified notification, which was received before the registration
+** sequence had completed (ie subscriptions on broker and USP Service have not been synched)
+** matches the specified broker subscription
+**
+** \param   notify - pointer to parsed protobuf notify structure of the notification
+** \param   us - USP Service that sent the notification
+** \param   broker_instance - expected instance number of the subscription on the USP Broker, extracted from the subscription ID of the received notification
+**
+** \return  true if the received notification matches the broker's subscription, false if it doesn't
+**
+**************************************************************************/
+bool IsUspServiceNotificationMatch(Usp__Notify *notify, usp_service_t *us, int broker_instance)
+{
+    char buf[MAX_DM_PATH];
+    char *path;
+    bool is_match;
+    subs_notify_t notify_type;
+    dm_node_t *node;
+
+    // Extract the full path to the data model element
+    switch(notify->notification_case)
+    {
+        case USP__NOTIFY__NOTIFICATION_EVENT:
+            USP_SNPRINTF(buf, sizeof(buf), "%s%s", notify->event->obj_path, notify->event->event_name);
+            path = buf;
+            notify_type = kSubNotifyType_Event;
+            break;
+
+        case USP__NOTIFY__NOTIFICATION_VALUE_CHANGE:
+            path = notify->value_change->param_path;
+            notify_type = kSubNotifyType_ValueChange;
+            break;
+
+        case USP__NOTIFY__NOTIFICATION_OBJ_CREATION:
+            path = notify->obj_creation->obj_path;
+            notify_type = kSubNotifyType_ObjectCreation;
+            break;
+
+        case USP__NOTIFY__NOTIFICATION_OBJ_DELETION:
+            path = notify->obj_deletion->obj_path;
+            notify_type = kSubNotifyType_ObjectDeletion;
+            break;
+
+        default:
+            return false;
+            break;
+    }
+
+    // Exit if the path is not yet registered into the data model. This could occur if the GSDM response has not yet been received in the registration sequence
+    // NOTE: The path has to be in the data model, otherwise we will be unable to retrieve permissions for forwarding the notification
+    //       This limitation means that most notifications cannot be forwarded until after the GSDM response has been retrieved
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
+    if (node == NULL)
+    {
+        USP_ERR_SetMessage("%s: Notification path (%s) does not exist in the data model", __FUNCTION__, path);
+        return false;
+    }
+
+    // Exit if the notification path is not owned by the USP Service
+    if (node->group_id != us->group_id)
+    {
+        USP_ERR_SetMessage("%s: Notification path (%s) is not owned by USP Service", __FUNCTION__, path);
+        return false;
+    }
+
+    // Exit if we do not have an enabled matching subscription for this notification
+    is_match = DEVICE_SUBSCRIPTION_IsMatch(broker_instance, notify_type, path);
+    if (is_match == false)
+    {
+        USP_ERR_SetMessage("%s: Notification contains unexpected subscription Id (%s)", __FUNCTION__, notify->subscription_id);
+        return false;
+    }
+
     return true;
 }
 
@@ -5541,18 +5686,19 @@ void SubsMap_Remove(double_linked_list_t *sm, subs_map_t *smap)
 **
 ** \param   sm - pointer to subscription mapping table
 ** \param   subscription_id - Id of the subscription in the USP Service's subscription table
+** \param   broker_instance - instance number of the expected subscription on the Broker (extracted from the USP Service's subscription_id)
 **
 ** \return  Pointer to entry in subscription map table, or NULL if no match was found
 **
 **************************************************************************/
-subs_map_t *SubsMap_FindByUspServiceSubsId(double_linked_list_t *sm, char *subscription_id)
+subs_map_t *SubsMap_FindByUspServiceSubsId(double_linked_list_t *sm, char *subscription_id, int broker_instance)
 {
     subs_map_t *smap;
 
     smap = (subs_map_t *) sm->head;
     while (smap != NULL)
     {
-        if (strcmp(smap->subscription_id, subscription_id)==0)
+        if ((smap->broker_instance == broker_instance) && (strcmp(smap->subscription_id, subscription_id)==0))
         {
             return smap;
         }
