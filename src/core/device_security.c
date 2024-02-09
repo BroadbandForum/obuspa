@@ -2126,7 +2126,7 @@ int AddCert(X509 *cert, cert_usage_t cert_usage, int role_instance)
         }
 
         // Exit if unable to add the certificate to the Device.LocalAgent.ControllerTrust.Credential table
-        err = DEVICE_CTRUST_AddCertRole(ct->la_instance, role_instance);
+        err = DEVICE_CTRUST_AddCertRole(ct->la_instance, role_instance, false);
         if (err != USP_ERR_OK)
         {
             return err;

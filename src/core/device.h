@@ -283,7 +283,7 @@ int DEVICE_SECURITY_AddCertHostnameValidationCtx(SSL_CTX* ssl_ctx, const char* n
 int DEVICE_CTRUST_Init(void);
 int DEVICE_CTRUST_Start(void);
 void DEVICE_CTRUST_Stop(void);
-int DEVICE_CTRUST_AddCertRole(int cert_instance, int role_instance);
+int DEVICE_CTRUST_AddCertRole(int cert_instance, int role_instance, bool signal_event);
 int DEVICE_CTRUST_GetCertInheritedRole(int cert_instance);
 int DEVICE_CTRUST_RoleInstanceToIndex(int role_instance);
 int DEVICE_CTRUST_RoleIndexToInstance(int role_index);

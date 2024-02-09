@@ -453,30 +453,51 @@ void DEVICE_CTRUST_Stop(void)
 **
 ** \param   cert_instance - instance number of the certificate in Device.LocalAgent.Certificate.{i} table
 ** \param   role_instance - instance number in Device.LocalAgent.ControllerTrust.Role.{i}
+** \param   signal_event - Set to true, if the Agent should signal the object creation (set to false when called at startup)
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DEVICE_CTRUST_AddCertRole(int cert_instance, int role_instance)
+int DEVICE_CTRUST_AddCertRole(int cert_instance, int role_instance, bool signal_event)
 {
     int err;
     int new_num_entries;
     credential_t *cp;
     char path[MAX_DM_PATH];
 
+    // Exit if the credential already exists
+    // NOTE: This should never happen, as the cert and credentials tables stay in step with one another
+    cp = FindCredentialByCertInstance(cert_instance);
+    if (cp != NULL)
+    {
+        USP_LOG_Error("%s: Cannot add credential referencing LocalAgent.Certificate.%d (already present at ControllerTrust.Credential.%d)", __FUNCTION__, cert_instance, cp->cert_instance);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
     // First increase the size of the vector
     new_num_entries = num_credentials + 1;
     credentials = USP_REALLOC(credentials, new_num_entries*sizeof(credential_t));
 
     // Fill in the new entry
+    // NOTE: The instance number in the credentials table is the same as the instance number in the certificate table
+    //       This ensures that the credential table doesn't change every reboot if the order of populating the certificate table changes
     cp = &credentials[ num_credentials ];
+    cp->instance = cert_instance;
     cp->role_instance = role_instance;
     cp->cert_instance = cert_instance;
     num_credentials = new_num_entries;
 
     // Exit if unable to add credential instance into the data model
-    USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.ControllerTrust.Credential.%d", num_credentials);
-    err = DATA_MODEL_InformInstance(path);
+    USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.ControllerTrust.Credential.%d", cert_instance);
+    if (signal_event)
+    {
+        err = USP_SIGNAL_ObjectAdded(path);
+    }
+    else
+    {
+        err = DATA_MODEL_InformInstance(path);
+    }
+
     if (err != USP_ERR_OK)
     {
         return err;
@@ -484,6 +505,7 @@ int DEVICE_CTRUST_AddCertRole(int cert_instance, int role_instance)
 
     return USP_ERR_OK;
 }
+
 
 /*********************************************************************//**
 **
