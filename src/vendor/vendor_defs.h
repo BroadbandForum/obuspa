@@ -213,6 +213,12 @@
 #define REPRESENT_JSON_NUMBERS_WITH_FULL_PRECISION
 
 //-----------------------------------------------------------------------------------------
+// Uncomment the following define if you want to use the old way of validating paths for subscriptions, Boot! parameters and Bulk Data parameters.
+// The old way was to actually resolve the path, checking that the path exists in the supported data model
+// The new way performs basic textual checks on the validity of the path but does not check that it exists in the supported data model
+//#define USE_LEGACY_PATH_VALIDATION
+
+//-----------------------------------------------------------------------------------------
 // Uncomment the following define to include the End-to-End Session context in OB-USP-A
 // The current E2E Session Context support is partial and lot of cases are not fully implemented yet.
 //#define E2ESESSION_EXPERIMENTAL_USP_V_1_2

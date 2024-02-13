@@ -2207,9 +2207,12 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
     str_vector_t path_expressions;
     char *path;
     int i;
+
+#ifdef USE_LEGACY_PATH_VALIDATION
     combined_role_t combined_role;
     resolve_op_t op;
 
+    // When running as a pure USP Agent (not a USP Broker)...
     // Convert the notify type to a path resolver operation, so that we can check that
     // ReferenceList matches a node of the specified type, and that the controller has permission
     // to set the notification
@@ -2245,17 +2248,21 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
             break;
     }
 
+    MSG_HANDLER_GetMsgRole(&combined_role);
+#endif
+
     // Split the reference list into a vector of path expressions
     STR_VECTOR_Init(&path_expressions);
     TEXT_UTILS_SplitString(ref_list, &path_expressions, ",");
 
     // Iterate over all path expressions
-    MSG_HANDLER_GetMsgRole(&combined_role);
     for (i=0; i<path_expressions.num_entries; i++)
     {
         path = path_expressions.vector[i];
 
-#ifdef REMOVE_USP_BROKER
+#ifdef USE_LEGACY_PATH_VALIDATION
+        // The legacy path validation code actually resolves the path to determine whether it is valid
+
         // When running as a pure USP Agent, "Device." is supported. This code block just avoids resolving the path on Device.
         if ((op == kResolveOp_SubsOper) || (op == kResolveOp_SubsEvent))
         {
@@ -2265,29 +2272,19 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
                 goto exit;
             }
         }
-#endif
 
         // Exit if path expression is invalid
         err = PATH_RESOLVER_ResolveDevicePath(path, NULL, NULL, op, FULL_DEPTH, &combined_role, 0);
+#else
+        // When running as a USP Broker, we cannot validate the path and controller permissions by resolving it, as the
+        // USP Service owning the DM elements in the path may not have registered yet, so just attempt to validate it textually
+        err = PATH_RESOLVER_ValidatePath(path, notify_type);
+#endif
+
         if (err != USP_ERR_OK)
         {
             goto exit;
         }
-
-#ifndef REMOVE_USP_BROKER
-        // When running as a USP Broker, only absolute paths or wildcarded paths are supported for Operations and Events
-        if ((op == kResolveOp_SubsOper) || (op == kResolveOp_SubsEvent))
-        {
-            dm_node_t *node;
-            node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
-            if ((node == NULL) || (IsOperationEvent(node)==false))
-            {
-                USP_ERR_SetMessage("%s: ReferenceList '%s' is not supported for NotifType=%s", __FUNCTION__, path, TEXT_UTILS_EnumToString(notify_type, notify_types, NUM_ELEM(notify_types)) );
-                err = USP_ERR_RESOURCES_EXCEEDED;
-                goto exit;
-            }
-        }
-#endif
 
     }
 
@@ -3447,4 +3444,5 @@ char *ExtractNotificationEventArg(Usp__Notify__Event *event, char *arg_name)
     // If the code gets here, then no arguments matched
     return NULL;
 }
+
 

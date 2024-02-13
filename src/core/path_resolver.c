@@ -119,6 +119,7 @@ bool GroupReferencedParameters(str_vector_t *params, resolver_state_t *state, in
 void InitSearchParam(search_param_t *sp);
 void DestroySearchParam(search_param_t *sp);
 void RefreshInstances_LifecycleSubscriptionEndingInPartialPath(char *path);
+int ValidatePathSegment(int path_segment_index, char *segment, subs_notify_t notify_type, char *path);
 
 /*********************************************************************//**
 **
@@ -241,6 +242,360 @@ int PATH_RESOLVER_ResolvePath(char *path, str_vector_t *sv, int_vector_t *gv, re
     err = ExpandPath(resolved, unresolved, &state);
 
     return err;
+}
+
+
+/*********************************************************************//**
+**
+** PATH_RESOLVER_ValidatePath
+**
+** This function attempts to validate the reference list textually without needing the DM elements to
+** have been registered by a USP Service
+** This function is intended to be called to validate subscription paths, Boot! Parameter paths and Bulk Data Collection parameter paths
+**
+** \param   path - Data model path to validate
+** \param   notify_type - Type of notification that the path refers to
+**                        NOTE: If the path is supposed to represent parameters, then use kSubNotifyType_ValueChange
+**
+** \return  USP_ERR_OK if the path looks valid
+**          USP_ERR_INVALID_ARGUMENTS if the path looks invalid
+**
+**************************************************************************/
+int PATH_RESOLVER_ValidatePath(char *path, subs_notify_t notify_type)
+{
+    int i;
+    int err;
+    str_vector_t path_segments;
+    char *last_segment;
+    int len;
+    char *p;
+    char buf[MAX_DM_PATH];
+    bool inside_brackets;
+
+    // Exit if no path setup yet (empty path).
+    // NOTE: This is not an error as it could occur if this function is called when NotifType is set before ReferenceList is set
+    STR_VECTOR_Init(&path_segments);
+    if (*path == '\0')
+    {
+        err = USP_ERR_OK;
+        goto exit;
+    }
+
+    // Exit if path is just to 'Device.' This is only supported for OperationComplete and USP Events
+    if (strcmp(path, "Device.")==0)
+    {
+        switch(notify_type)
+        {
+            case kSubNotifyType_None:    // NOTE: 'None' could occur if this function is called when ReferenceList is set before NotifType
+                err = USP_ERR_OK;
+                break;
+
+            default:
+            case kSubNotifyType_OperationComplete:
+            case kSubNotifyType_Event:
+            case kSubNotifyType_ValueChange:
+                USP_ERR_SetMessage("%s: ReferenceList '%s' is not supported for NotifType=%s", __FUNCTION__, path, TEXT_UTILS_EnumToString(notify_type, notify_types, NUM_ELEM(notify_types)) );
+                err = USP_ERR_RESOURCES_EXCEEDED;
+                break;
+
+            case kSubNotifyType_ObjectCreation:
+            case kSubNotifyType_ObjectDeletion:
+                USP_ERR_SetMessage("%s: Path (%s) is not a multi-instance object", __FUNCTION__, path);
+                err = USP_ERR_NOT_A_TABLE;
+                break;
+        }
+
+        goto exit;
+    }
+
+    // Exit if the path does not start with "Device."
+    #define DEVICE_ROOT_STR "Device."
+    if (strncmp(path, DEVICE_ROOT_STR, sizeof(DEVICE_ROOT_STR)-1) != 0)
+    {
+        USP_ERR_SetMessage("%s: Expression does not start in 'Device.' (path='%s')", __FUNCTION__, path);
+        err = USP_ERR_INVALID_PATH;
+        goto exit;
+    }
+
+    // Exit if path contains an empty path segment
+    if (strstr(path, "..") != NULL)
+    {
+        USP_ERR_SetMessage("%s: ReferenceList '%s' contains empty path segment '..'", __FUNCTION__, path);
+        err = USP_ERR_INVALID_PATH_SYNTAX;
+        goto exit;
+    }
+
+    // Exit if the path contains whitespace either side of any '.' path separator
+    p = path;
+    while (*p != '\0')
+    {
+        if (p[0] == '.')
+        {
+            if ((p[-1] == ' ') || (p[-1] == '\t') || (p[1] == ' ') || (p[1] == '\t'))
+            {
+                USP_ERR_SetMessage("%s: ReferenceList '%s' contains whitespace where it shouldn't", __FUNCTION__, path);
+                err = USP_ERR_INVALID_PATH_SYNTAX;
+                goto exit;
+            }
+        }
+        p++;
+    }
+
+    // Workaround a problem that the inside of a search expression could contain '.', and this causes TEXT_UTILS_SplitString() to go wrong
+    // We replace '.' within '[' and ']' with a different character
+    // NOTE: This workaround is suitable, because we don't validate within a search expression
+    USP_STRNCPY(buf, path, sizeof(buf));
+    p = buf;
+    inside_brackets = false;
+    while (*p != '\0')
+    {
+        if (*p == '[')
+        {
+            inside_brackets = true;
+        }
+        else if (*p == ']')
+        {
+            inside_brackets = false;
+        }
+        else if ((*p == '.') && (inside_brackets == true))
+        {
+            *p = 'X';
+        }
+        p++;
+    }
+
+    // Split the string into path segments
+    TEXT_UTILS_SplitString(buf, &path_segments, ".");
+    USP_ASSERT(path_segments.num_entries != 0);    // This shouldn't occur, as we already tested that the string wasn't empty
+
+    // Ensure the last segment ends correctly, removing any trailing '!' or '()'
+    last_segment = path_segments.vector[ path_segments.num_entries-1 ];
+    len = strlen(last_segment);
+
+    switch(notify_type)
+    {
+        case kSubNotifyType_OperationComplete:
+            // OperationComplete subscriptions must end in '()'
+            if (strcmp(&last_segment[len-2], "()") != 0)
+            {
+                USP_ERR_SetMessage("%s: ReferenceList '%s' should end in '()' for NotifType=OperationComplete", __FUNCTION__, path);
+                err = USP_ERR_INVALID_PATH;
+                goto exit;
+            }
+
+            // Remove the trailing '()'
+            last_segment[len-2] = '\0';
+            break;
+
+        case kSubNotifyType_Event:
+            // USP Event subscriptions must end in '!'
+            if (last_segment[len-1] != '!')
+            {
+                USP_ERR_SetMessage("%s: ReferenceList '%s' should end in '!' for NotifType=Event", __FUNCTION__, path);
+                err = USP_ERR_INVALID_PATH;
+                goto exit;
+            }
+
+            // Remove the trailing '!'
+            last_segment[len-1] = '\0';
+            break;
+
+        case kSubNotifyType_ValueChange:
+            // These subscriptions must not end in '()' or '!'
+            if ((strcmp(&last_segment[len-2], "()") == 0) || (last_segment[len-1] == '!'))
+            {
+                USP_ERR_SetMessage("%s: Path '%s' is not a parameter or object partial path", __FUNCTION__, path);
+                err = USP_ERR_INVALID_PATH;
+                goto exit;
+            }
+            break;
+
+        case kSubNotifyType_ObjectCreation:
+        case kSubNotifyType_ObjectDeletion:
+            // These subscriptions must not end in '()' or '!'
+            if ((strcmp(&last_segment[len-2], "()") == 0) || (last_segment[len-1] == '!'))
+            {
+                USP_ERR_SetMessage("%s: Path '%s' is not an object", __FUNCTION__, path);
+                err = USP_ERR_NOT_A_TABLE;
+                goto exit;
+            }
+            break;
+
+        case kSubNotifyType_None:
+            // Remove any trailing '()' or '!' to allow ReferenceList to refer to USP commands or events before NotifType is set
+            if (strcmp(&last_segment[len-2], "()") == 0)
+            {
+                last_segment[len-2] = '\0';
+            }
+            else if (last_segment[len-1] == '!')
+            {
+                // Remove the trailing '!'
+                last_segment[len-1] = '\0';
+            }
+            break;
+
+        default:
+            // Validation of path ending not required
+            break;
+    }
+
+
+    // Iterate over all path segments after the first ('Device'), exiting if any look invalid
+    for (i=1; i < path_segments.num_entries; i++)
+    {
+        err = ValidatePathSegment(i, path_segments.vector[i], notify_type, path);
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
+    }
+
+    // If the code gets here, then all path segments looked OK
+    err = USP_ERR_OK;
+
+exit:
+    STR_VECTOR_Destroy(&path_segments);
+    return err;
+}
+
+/*********************************************************************//**
+**
+** ValidatePathSegment
+**
+** This function attempts to validate a segment of a path in a subscription reference list
+** (A segment is the text in between each '.' separating each segment) and can be either
+**    - wildcard
+**    - search expression
+**    - instance number
+**    - name of an parameter/object (possibly ending in reference follow '+')
+** NOTE: Not all of these segment types are supported for all notify types
+**
+** \param   path_segment_index - Position of this path segment within the path eg. [0] == "Device"
+** \param   segment - pointer to string containing the segment to check
+**                    NOTE: This string may be truncated by the checking code in the course of checking
+** \param   notify_type - Type of notification that the path refers to
+** \param   path - path which the segment is part of (used for error reporting)
+**
+** \return  USP_ERR_OK if the segment looks valid
+**          USP_ERR_INVALID_ARGUMENTS if the segment looks invalid
+**
+**************************************************************************/
+int ValidatePathSegment(int path_segment_index, char *segment, subs_notify_t notify_type, char *path)
+{
+    int i;
+    int len;
+    char c;
+
+    // Exit if segment is empty. NOTE: TEXT_UTILS_SplitString() should have ensured that this doesn't happen
+    len = strlen(segment);
+    if (len == 0)
+    {
+        USP_ERR_SetMessage("%s: Reference List '%s' contains '..'", __FUNCTION__, path);
+        return USP_ERR_INVALID_PATH;
+    }
+
+    // Exit if segment is a wildcard
+    if (strcmp(segment, "*")==0)
+    {
+        // Wildcards aren't allowed immediately after "Device."
+        if (path_segment_index == 1)
+        {
+            USP_ERR_SetMessage("%s: Path (%s) is not a multi-instance object", __FUNCTION__, path);
+            return USP_ERR_NOT_A_TABLE;
+        }
+
+        return USP_ERR_OK;
+    }
+
+    // Exit if segment is a search expression
+    if (segment[0] == '[')
+    {
+        // Search expressions aren't currently supported for USP Events or OperationComplete notifications
+        // This is because the Broker cannot set this subscription on the USP Service because we cannot be sure that the
+        // USP Service supports search expressions
+        if ((notify_type == kSubNotifyType_OperationComplete) || (notify_type == kSubNotifyType_Event))
+        {
+            USP_ERR_SetMessage("%s: Search expressions in '%s' are not supported for NotifType=%s", __FUNCTION__, path, TEXT_UTILS_EnumToString(notify_type, notify_types, NUM_ELEM(notify_types)) );
+            return USP_ERR_RESOURCES_EXCEEDED;
+        }
+
+        // Exit if search expression is not terminated correctly
+        if (segment[len-1] != ']')
+        {
+            USP_ERR_SetMessage("%s: Search expression in '%s' is not terminated correctly", __FUNCTION__, path);
+            return USP_ERR_INVALID_PATH_SYNTAX;
+        }
+
+        // Search expressions aren't allowed immediately after "Device."
+        if (path_segment_index == 1)
+        {
+            USP_ERR_SetMessage("%s: Path (%s) is not a multi-instance object", __FUNCTION__, path);
+            return USP_ERR_NOT_A_TABLE;
+        }
+
+        return USP_ERR_OK;
+    }
+
+    // Exit if segment is an instance number
+    if (IS_NUMERIC(segment[0]))
+    {
+        // Instance numbers aren't allowed immediately after "Device."
+        if (path_segment_index == 1)
+        {
+            USP_ERR_SetMessage("%s: Path (%s) is not a multi-instance object", __FUNCTION__, path);
+            return USP_ERR_NOT_A_TABLE;
+        }
+
+        // Exit if the rest of the segment is not also numeric (which it needs to be for an instance number)
+        for (i=1; i<len; i++)
+        {
+            c = segment[i];
+            if (IS_NUMERIC(c) == false)
+            {
+                USP_ERR_SetMessage("%s: Instance number '%s' contains invalid characters in ReferenceList '%s'", __FUNCTION__, segment, path);
+                return USP_ERR_INVALID_PATH;
+            }
+        }
+
+        return USP_ERR_OK;
+    }
+
+    // Truncate string if it is a reference follow, removing the trailing '+',
+    // in order to make the path segment into just the name of a parameter
+    if (segment[len-1] == '+')
+    {
+        segment[len-1] = '\0';
+        len--;
+
+        // Exit if path segment contained only '+'
+        if (len == 0)
+        {
+            USP_ERR_SetMessage("%s: ReferenceList '%s' contains reference follow '+' without preceding parameter name", __FUNCTION__, path);
+            return USP_ERR_INVALID_PATH_SYNTAX;
+        }
+
+        // Reference following is not supported for USP Events or OperationComplete notifications
+        // This is because the Broker cannot set the subscription on the USP Service because reference following is always implemented only by the Broker
+        if ((notify_type == kSubNotifyType_OperationComplete) || (notify_type == kSubNotifyType_Event))
+        {
+            USP_ERR_SetMessage("%s: Reference following in '%s' is not supported for NotifType=%s", __FUNCTION__, path, TEXT_UTILS_EnumToString(notify_type, notify_types, NUM_ELEM(notify_types)) );
+            return USP_ERR_RESOURCES_EXCEEDED;
+        }
+    }
+
+    // Iterate over all characters in the path segment, checking them for validity
+    // NOTE: If the code gets here, the path segment can only be the name portion of a DM element
+    for (i=0; i<len; i++)
+    {
+        c = segment[i];
+        if ((IS_ALPHA_NUMERIC(c) == false) && (c != '-') && (c != '_'))
+        {
+            USP_ERR_SetMessage("%s: Unexpected character '%c' in ReferenceList '%s'", __FUNCTION__, c, path);
+            return USP_ERR_INVALID_PATH;
+        }
+    }
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -2246,3 +2601,96 @@ void DestroySearchParam(search_param_t *sp)
     GROUP_GET_VECTOR_Destroy(&sp->ggv);
     INT_VECTOR_Destroy(&sp->key_types);
 }
+
+//------------------------------------------------------------------------------------------
+// Code to test the PATH_RESOLVER_ValidatePath() function
+#if 0
+typedef struct
+{
+    char *path;
+    subs_notify_t notify_type;
+    int expected_err;
+} validate_path_test_case_t;
+
+
+validate_path_test_case_t validate_path_test_cases[] =
+{
+
+    {"",                                                                kSubNotifyType_ValueChange,         USP_ERR_OK },
+    {"Device.",                                                         kSubNotifyType_OperationComplete,   USP_ERR_RESOURCES_EXCEEDED },
+    {"Device.",                                                         kSubNotifyType_Event,               USP_ERR_RESOURCES_EXCEEDED },
+    {"Device.",                                                         kSubNotifyType_None,                USP_ERR_OK },
+    {"Device.",                                                         kSubNotifyType_ValueChange,         USP_ERR_RESOURCES_EXCEEDED },
+    {"Device.",                                                         kSubNotifyType_ObjectCreation,      USP_ERR_NOT_A_TABLE },
+    {"Device.",                                                         kSubNotifyType_ObjectDeletion,      USP_ERR_NOT_A_TABLE },
+    {"NotDevice.",                                                      kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH },
+    {"Device.Reboot",                                                   kSubNotifyType_OperationComplete,   USP_ERR_INVALID_PATH },
+    {"Device.Reboot(",                                                  kSubNotifyType_OperationComplete,   USP_ERR_INVALID_PATH },
+    {"Device.Reboot)",                                                  kSubNotifyType_OperationComplete,   USP_ERR_INVALID_PATH },
+    {"Device.Reboot()",                                                 kSubNotifyType_OperationComplete,   USP_ERR_OK },
+    {"Device.Boot",                                                     kSubNotifyType_Event,               USP_ERR_INVALID_PATH },
+    {"Device.Boot!",                                                    kSubNotifyType_Event,               USP_ERR_OK },
+    {"Device.Boot!",                                                    kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH },
+    {"Device.Reboot()",                                                 kSubNotifyType_ObjectCreation,      USP_ERR_NOT_A_TABLE },
+    {"Device.LocalAgent.Subscription.*.Enable",                         kSubNotifyType_ValueChange,         USP_ERR_OK },
+    {"Device.LocalAgent.TransferComplete!",                             kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH },
+    {"Device.DeviceInfo.FirmwareImage.*.Download()",                    kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH },
+    {"Device.LocalAgent.Subscription.[Enable==\"true\"].Enable",        kSubNotifyType_ValueChange,         USP_ERR_OK },
+    {"Device.LocalAgent.Subscription.[Enable==\"true\".Enable",         kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.DeviceInfo.FirmwareImage.[Status==\"Available\"].Download()", kSubNotifyType_OperationComplete,USP_ERR_RESOURCES_EXCEEDED },
+    {"Device.BulkData.Profile.[Enable==\"true\"].Push!",                kSubNotifyType_Event,               USP_ERR_RESOURCES_EXCEEDED },
+    {"Device.LocalAgent.Subscription.ParamB+.Event!",                   kSubNotifyType_Event,               USP_ERR_RESOURCES_EXCEEDED },
+    {"Device.DeviceInfo.ActiveFirmwareImage+.Download()",               kSubNotifyType_OperationComplete,   USP_ERR_RESOURCES_EXCEEDED },
+    {"Device.BulkData.Profile.12X.Push!",                               kSubNotifyType_Event,               USP_ERR_INVALID_PATH },
+    {"Device.BulkData.Profile.132.Push!",                               kSubNotifyType_Event,               USP_ERR_OK },
+    {"Device.BulkData.Profile.1Enable",                                 kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH },
+    {"Device.DeviceInfo.ActiveFirmwareImage+.Name",                     kSubNotifyType_ValueChange,         USP_ERR_OK },
+    {"Device.LocalAgent.Subscription.*.+.Enable",                       kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.DeviceInfo.ActiveFirmwareImage+Name",                      kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH },
+    {"Device.DeviceInfo.ActiveFirmwareImage.+NameB",                    kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH },
+    {"Device.BulkData.Profile.132.Push$!",                              kSubNotifyType_Event,               USP_ERR_INVALID_PATH },
+    {"Device.DeviceInfo.ActiveFirmwareImage",                           kSubNotifyType_ValueChange,         USP_ERR_OK },
+    {"Device.STOMP.Connection.1.X_ARRS-COM_EnableEncryption",           kSubNotifyType_ValueChange,         USP_ERR_OK },
+    {"Device.BulkData.Profile.1.X_ARRS-COM_FailureCount.Connect",       kSubNotifyType_ValueChange,         USP_ERR_OK },
+    {"Device.BulkData.Profile.*X_ARRS-COM_FailureCount.Connect",        kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH },
+    {"Device.DeviceInfo..ActiveFirmwareImage",                          kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device*",                                                         kSubNotifyType_ObjectCreation,      USP_ERR_INVALID_PATH },
+    {"Device.*.",                                                       kSubNotifyType_ObjectCreation,      USP_ERR_NOT_A_TABLE },
+    {"Device.1.",                                                       kSubNotifyType_ObjectCreation,      USP_ERR_NOT_A_TABLE },
+    {"Device.[ParamA==\"MyValue\"].ParamA",                             kSubNotifyType_ValueChange,         USP_ERR_NOT_A_TABLE },
+    {"Device. LocalAgent.Subscription.9.Enable",                        kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.LocalAgent.Subscription .8.Enable",                        kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.\tLocalAgent.Subscription.*.Enable",                       kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.LocalAgent.Subscription\t.*.Enable",                       kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.LocalAgent.Subscription.[ID==\"boot\"].",                  kSubNotifyType_ObjectCreation,      USP_ERR_OK },
+    {"Device.Reboot()",                                                 kSubNotifyType_None,                USP_ERR_OK },
+    {"Device.Boot!",                                                    kSubNotifyType_None,                USP_ERR_OK },
+    {"Device.Obj.[ObjB.ParamC==\"1\"].ParamA",                          kSubNotifyType_ValueChange,         USP_ERR_OK },
+    {"Device.Obj.[ObjB.ParamC+.ParamD==\"1\"].ParamA",                  kSubNotifyType_ValueChange,         USP_ERR_OK },
+
+};
+
+
+void TestValidatePath(void)
+{
+    int i;
+    int err;
+    validate_path_test_case_t *test;
+    int count = 0;
+
+    for (i=0; i < NUM_ELEM(validate_path_test_cases); i++)
+    {
+        test = &validate_path_test_cases[i];
+        printf("[%d] Testing '%s' (notify_type=%s)\n", i, test->path, TEXT_UTILS_EnumToString(test->notify_type, notify_types, NUM_ELEM(notify_types)) );
+        err = PATH_RESOLVER_ValidatePath(test->path, test->notify_type);
+        if (err != test->expected_err)
+        {
+            printf("ERROR: [%d] Test case result for '%s' is %d (expected %d)\n", i, test->path, err, test->expected_err);
+            count++;
+        }
+    }
+
+    printf("Failure count = %d\n", count);
+}
+#endif
+

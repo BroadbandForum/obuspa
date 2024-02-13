@@ -43,6 +43,7 @@
 
 #include <limits.h>
 
+#include "usp_api.h"
 #include "str_vector.h"
 
 // Enumeration determining what we are attempting to resolve with the path expression
@@ -84,6 +85,7 @@ typedef enum
 // API
 int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int depth, combined_role_t *combined_role, unsigned flags);
 int PATH_RESOLVER_ResolvePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int depth, combined_role_t *combined_role, unsigned flags);
+int PATH_RESOLVER_ValidatePath(char *path, subs_notify_t notify_type);
 
 
 

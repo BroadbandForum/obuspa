@@ -4044,9 +4044,9 @@ bool IsValidUspServicePath(char *path)
     p = path;
     while (*p != '\0')
     {
-        if ((IS_ALPHA_NUMERIC(*p) == false) && (*p != '.'))
+        if ((IS_ALPHA_NUMERIC(*p) == false) && (*p != '-') && (*p != '_') && (*p != '.'))
         {
-            USP_ERR_SetMessage("%s: Requested path '%s' is invalid. It must not contain '{i}'", __FUNCTION__, path);
+            USP_ERR_SetMessage("%s: Requested path '%s' is invalid. (e.g. It must not contain '{i}')", __FUNCTION__, path);
             return false;
         }
         p++;

@@ -569,6 +569,7 @@ void PrintUsage(char *prog_name)
 #endif
     printf("--command (-c)    Sends a CLI command to the running USP Agent and prints the response\n");
     printf("                  To get a list of all CLI commands use '-c help'\n");
+    printf("--plugin (-x)     Specifies the path to a shared object vendor layer plug-in\n");
     printf("\n");
 }
 
