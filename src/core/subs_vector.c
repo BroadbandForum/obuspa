@@ -164,6 +164,7 @@ void SUBS_VECTOR_DestroySubscriber(subs_t *sub)
 
     STR_VECTOR_Destroy(&sub->path_expressions);
     INT_VECTOR_Destroy(&sub->handler_group_ids);
+    INT_VECTOR_Destroy(&sub->device_group_ids);
     KV_VECTOR_Destroy(&sub->last_values);
     STR_VECTOR_Destroy(&sub->cur_watch_objs);
     STR_VECTOR_Destroy(&sub->last_watch_objs);

@@ -1523,6 +1523,11 @@ Usp__Msg *DM_EXEC_SendRequestAndWaitForResponse(char *endpoint_id, Usp__Msg *req
                     FreeDmExecMessageArguments(&msg);
                 }
             }
+            else
+            {
+                // If the message was handled by IsMatchingMsgId(), then we can free the message arguments
+                FreeDmExecMessageArguments(&msg);
+            }
         }
 
         cur_time = time(NULL);

@@ -124,6 +124,12 @@ static dm_node_t *root_internal_node;
 // Map containing all data model nodes, indexed by squashed hash value
 dm_node_t *dm_node_map[MAX_NODE_MAP_BUCKETS] = { 0 };
 
+//------------------------------------------------------------------------------
+// Convenience variables to prevent the proliferation of the string 'Device.' everywhere
+#define DM_ROOT "Device."
+char *dm_root = DM_ROOT;
+int dm_root_len = sizeof(DM_ROOT)-1;
+
 //--------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void SerializeNativeValue(dm_req_t *req, dm_node_t *node, char *buf, int len);
@@ -5144,10 +5150,10 @@ int RegisterDefaultControllerTrust(void)
     // Currently, it is important that the first role registered is full access, as all controllers
     // inherit the first role in this table, and we currently want all controllers to have full access
     err |= USP_DM_RegisterRoleName(ROLE_FULL_ACCESS, "Full Access");
-    err |= USP_DM_AddControllerTrustPermission(ROLE_FULL_ACCESS, "Device.", PERMIT_ALL);
+    err |= USP_DM_AddControllerTrustPermission(ROLE_FULL_ACCESS, dm_root, PERMIT_ALL);
 
     err |= USP_DM_RegisterRoleName(ROLE_UNTRUSTED,  "Untrusted");
-    err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, "Device.", PERMIT_NONE);
+    err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, dm_root, PERMIT_NONE);
     err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, "Device.DeviceInfo.", PERMIT_GET | PERMIT_OBJ_INFO);
     err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, "Device.LocalAgent.ControllerTrust.RequestChallenge()", PERMIT_OPER);
     err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, "Device.LocalAgent.ControllerTrust.ChallengeResponse()", PERMIT_OPER);

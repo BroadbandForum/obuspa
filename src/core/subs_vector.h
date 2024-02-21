@@ -63,6 +63,8 @@ typedef struct
                                         // Set to NON_GROUPED if the path_expression is not being handled by the vendor layer
                                         // This vector has the same indexes as the path_expressions vector
                                         // For internal services, the handle is set to the group_id of the subscription path, if the path is being handled by the vendor layer
+
+    int_vector_t device_group_ids;      // Vector containing the group_ids of all data model provider components that have had a subscription set on them for 'Device.'
     subs_notify_t notify_type;          // Device.LocalAgent.Subscription.{i}.NotifType
     time_t expiry_time;                 // Time at which this subscription should be stopped and removed from the DB
     bool persistent;                    // Whether the subscription should be persisted across reboots

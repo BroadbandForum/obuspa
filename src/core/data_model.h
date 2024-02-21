@@ -242,6 +242,11 @@ extern bool is_executing_within_dm_init;
 extern char *reboot_cause_path;
 
 //------------------------------------------------------------------------------
+// Convenience variables to prevent the proliferation of the string 'Device.' everywhere
+extern char *dm_root;
+extern int dm_root_len;
+
+//------------------------------------------------------------------------------
 // Defines for bits in flag variable returned by DATA_MODEL_GetPathProperties()
 #define PP_EXISTS_IN_SCHEMA               0x00000001   // Object/Parameter exists in the schema
 #define PP_IS_OBJECT                      0x00000002   // Path represents an object (eg single or multi-instance, qualified or unqualified)

@@ -53,6 +53,7 @@ void INT_VECTOR_Init(int_vector_t *iv);
 void INT_VECTOR_Create(int_vector_t *iv, int num_entries, int initial_value);
 void INT_VECTOR_Add(int_vector_t *iv, int number);
 int  INT_VECTOR_Find(int_vector_t *iv, int number);
+void INT_VECTOR_Remove(int_vector_t *iv, int number);
 void INT_VECTOR_Destroy(int_vector_t *iv);
 
 #endif

@@ -190,11 +190,15 @@ bool DoesSubscriptionMatchEvent(subs_t *subs, char *event_name);
 bool HasControllerGotNotificationPermission(int cont_instance, char *path, unsigned short mask);
 void RefreshInstancesForObjLifetimeSubscriptions(void);
 void StartSubscription(subs_t *sub);
-void StartSubscriptionInVendorLayer(subs_t *sub);
-void StopSubscriptionInVendorLayer(subs_t *sub);
 subs_t *FindSubsByInstance(int instance);
 char *ExtractNotificationEventArg(Usp__Notify__Event *event, char *arg_name);
 
+#ifndef REMOVE_USP_BROKER
+void StartSubscriptionInVendorLayer(subs_t *sub, int group_id);
+void StartVendorLayerDeviceDotSubs(subs_t *sub, int group_id);
+void StartVendorLayerDeviceDotSubsForGroup(subs_t *sub, int group_id);
+void StopSubscriptionInVendorLayer(subs_t *sub);
+#endif
 #ifndef REMOVE_DEVICE_BOOT_EVENT
 void SeedLastValueChangeValues(void);
 void ProcessAllBootSubscriptions(void);
@@ -988,12 +992,15 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance)
 ** \param   path - data model path for subscription to match
 ** \param   group_id - ID representing the USP Service that owns the path. This is used to mark the path as being satisfied by the USP Service
 **
-** \return  true if the subscription matched and was marked as being satisfied by the vendor layer, false otherwise
+** \return  true if the subscription matched and is now marked as being satisfied by the vendor layer
+**          false if the subscription did not match and should be deleted on the USP Service
+**
 **
 **************************************************************************/
 bool DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(int broker_instance, subs_notify_t notify_type, char *path, int group_id)
 {
     int i;
+    int index;
     subs_t *sub;
 
     // Exit if expected instance did not exist in the Broker's subscription table
@@ -1008,6 +1015,30 @@ bool DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(int broker_instance, subs_notify_t 
     {
         return false;
     }
+
+    // Handle subscriptions to 'Device.'
+    if (strcmp(path, dm_root)==0)
+    {
+        // Exit if this subscription does not contain 'Device.'
+        index = STR_VECTOR_Find(&sub->path_expressions, dm_root);
+        if (index == INVALID)
+        {
+            return false;
+        }
+
+        // Exit if we've already set a subscription to 'Device.' on this USP Service (for this subscription's notify type)
+        // This could be the case if we're performing the registration sequence for an additional register from the USP Service
+        index = INT_VECTOR_Find(&sub->device_group_ids, group_id);
+        if (index != INVALID)
+        {
+            return true;
+        }
+
+        // Mark this path as being satisfied by the vendor layer
+        INT_VECTOR_Add(&sub->device_group_ids, group_id);
+        return true;
+    }
+
 
     // Iterate over all paths for this subscription, finding the first matching path that is not already satisfied by a vendor layer subscription
     for (i=0; i < sub->path_expressions.num_entries; i++)
@@ -1038,15 +1069,8 @@ bool DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(int broker_instance, subs_notify_t 
 **************************************************************************/
 void DEVICE_SUBSCRIPTION_StartAllVendorLayerSubsForGroup(int group_id)
 {
-    int i, j;
+    int i;
     subs_t *sub;
-    int err;
-    char *path;
-    int subs_group_id;
-    dm_subscribe_cb_t subscribe_hook;
-
-    subscribe_hook = group_vendor_hooks[group_id].subscribe_cb;
-    USP_ASSERT(subscribe_hook != NULL);
 
     // Iterate over all enabled subscriptions, starting vendor layer subscriptions for all paths that
     // are owned by the USP Service, that haven't already been started
@@ -1055,39 +1079,7 @@ void DEVICE_SUBSCRIPTION_StartAllVendorLayerSubsForGroup(int group_id)
         sub = &subscriptions.vector[i];
         if (sub->enable)
         {
-            // Iterate over all paths for this subscription
-            for (j=0; j < sub->path_expressions.num_entries; j++)
-            {
-                if (sub->handler_group_ids.vector[j] == NON_GROUPED)
-                {
-                    path = sub->path_expressions.vector[j];
-
-                    // Skip this path if it cannot be subscribed to in the vendor layer
-                    subs_group_id = USP_BROKER_IsPathVendorSubscribable(sub->notify_type, path, NULL);
-                    if (subs_group_id == NON_GROUPED)
-                    {
-                        continue;
-                    }
-
-                    // Skip this path if is not owned by the specified USP Service
-                    if (subs_group_id != group_id)
-                    {
-                        continue;
-                    }
-
-                    // Attempt to subscribe to path for the specified notification
-                    // NOTE: If this is not successful, then we fallback to the polled mechanism to provide this subscription
-                    err = subscribe_hook(sub->instance, subs_group_id, sub->notify_type, path, sub->persistent);
-                    if (err != USP_ERR_OK)
-                    {
-                        USP_LOG_Warning("%s: Subscribe vendor hook failed for %s (%s). Falling back to polled", __FUNCTION__, path, NOTIFY_TYPE_STR(sub->notify_type));
-                        continue;
-                    }
-
-                    // Mark this path as being satisfied by the vendor layer
-                    sub->handler_group_ids.vector[j] = group_id;
-                }
-            }
+            StartSubscriptionInVendorLayer(sub, group_id);
         }
     }
 }
@@ -1125,8 +1117,12 @@ void DEVICE_SUBSCRIPTION_FreeAllVendorLayerSubsForGroup(int group_id)
                     sub->handler_group_ids.vector[j] = NON_GROUPED;
                 }
             }
+
+            // Mark the subscription as not being provided by the vendor layer (if the subscription was for 'Device.')
+            INT_VECTOR_Remove(&sub->device_group_ids, group_id);
         }
     }
+
 }
 
 /*********************************************************************//**
@@ -1155,13 +1151,25 @@ int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance,
     sub = FindSubsByInstance(broker_instance);
     USP_ASSERT(sub != NULL);                    // Since the data structures in the caller (USP Broker) should always be aligned with the data structures here
 
-    // Find the path in the ReferenceList
-    index = STR_VECTOR_Find(&sub->path_expressions, path);
-    USP_ASSERT(index != INVALID);               // Since the data structures in the caller (USP Broker) should always be aligned with the data structures here
+    if (strcmp(path, dm_root) == 0)
+    {
+        // Case of unsubscribing from 'Device.'
+        // Find the group_id in the list of USP Services subscribed to 'Device.' for this subscription, and remove it
+        index = INT_VECTOR_Find(&sub->device_group_ids, group_id);
+        USP_ASSERT(index != INVALID);  // Because this function is only called if a subscription had already been successfully set on the USP Service for 'Device.'
+        INT_VECTOR_Remove(&sub->device_group_ids, group_id);
+    }
+    else
+    {
+        // Case of unsubscribing from any path other than 'Device.'
+        // Find the path in the ReferenceList
+        index = STR_VECTOR_Find(&sub->path_expressions, path);
+        USP_ASSERT(index != INVALID);               // Since the data structures in the caller (USP Broker) should always be aligned with the data structures here
 
-    // Mark the path as not in use by the vendor layer
-    USP_ASSERT(sub->handler_group_ids.num_entries > index);
-    sub->handler_group_ids.vector[index] = NON_GROUPED;
+        // Mark the path as not in use by the vendor layer
+        USP_ASSERT(sub->handler_group_ids.num_entries > index);
+        sub->handler_group_ids.vector[index] = NON_GROUPED;
+    }
 
     // Exit if the unsubscribe vendor hook failed
     unsubscribe_hook = group_vendor_hooks[group_id].unsubscribe_cb;
@@ -1179,7 +1187,7 @@ int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance,
 **
 ** DEVICE_SUBSCRIPTION_IsMatch
 **
-** Determines whether the specified subscription table entry contains a subscription the the specified path (and notification type)
+** Determines whether the specified subscription table entry contains a subscription for the specified path (and notification type)
 ** This function is called to determine whether to pass through a notification from the USP Service
 ** in the case of the notification being received before the registration sequence has been completed with the USP Service
 ** Typically this function is called to match Device.Boot! event notifications
@@ -1220,6 +1228,7 @@ bool DEVICE_SUBSCRIPTION_IsMatch(int broker_instance, subs_notify_t notify_type,
     for (i=0; i < sub->path_expressions.num_entries; i++)
     {
         // Exit if the notification path matches that defined by the path specification in the subscription (ie wildcards and partial paths - including Device.)
+        // NOTE: This code handles subscriptions to 'Device.'
         path_spec = sub->path_expressions.vector[i];
         if (TEXT_UTILS_IsPathMatch(path, path_spec))
         {
@@ -1270,6 +1279,9 @@ int ProcessSubscriptionAdded(int instance)
     // Initialise the structure representing this subscription
     memset(&sub, 0, sizeof(sub));
     sub.instance = instance;
+    STR_VECTOR_Init(&sub.path_expressions);
+    INT_VECTOR_Init(&sub.handler_group_ids);
+    INT_VECTOR_Init(&sub.device_group_ids);
     KV_VECTOR_Init(&sub.last_values);
     STR_VECTOR_Init(&sub.cur_watch_objs);
     STR_VECTOR_Init(&sub.last_watch_objs);
@@ -1404,9 +1416,15 @@ exit:
 **************************************************************************/
 void StartSubscription(subs_t *sub)
 {
+    // Exit if the subscription is not enabled, or the paths or notify type have not been set yet
+    if ((sub->enable == false) || (sub->notify_type == kSubNotifyType_None) || (sub->path_expressions.num_entries == 0))
+    {
+        return;
+    }
+
 #ifndef REMOVE_USP_BROKER
     // Call the subscribe vendor hook for all paths in the subscription which can be satisfied by the vendor layer
-    StartSubscriptionInVendorLayer(sub);
+    StartSubscriptionInVendorLayer(sub, INVALID);
 #endif
 
     // Get the initial value of all parameters, if this is a value change subscription
@@ -1441,11 +1459,13 @@ void StartSubscription(subs_t *sub)
 ** Starts subscriptions on all paths which the vendor layer can satisfy on the specified subscription
 **
 ** \param   sub - pointer to structure representing an instance in Device.LocalAgent.Subscription table
+** \param   group_id - ID representing the USP Service that we want to start vendor layer subscriptions for
+**                     or INVALID, if we want to start vendor layer subscriptions on all USP Services referenced by this subscription
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-void StartSubscriptionInVendorLayer(subs_t *sub)
+void StartSubscriptionInVendorLayer(subs_t *sub, int group_id)
 {
     int i;
     int err;
@@ -1453,12 +1473,25 @@ void StartSubscriptionInVendorLayer(subs_t *sub)
     int subs_group_id;
     dm_subscribe_cb_t subscribe_hook;
 
-    USP_ASSERT(sub->path_expressions.num_entries == sub->handler_group_ids.num_entries);
+    // Exit if this subscription's notify type has not been setup yet
+    // NOTE: This could happen if the path was set before the notify type. Nothing can be done in this case.
+    // When notify_type is eventually set, this function will be called again
+    if (sub->notify_type == kSubNotifyType_None)
+    {
+        return;
+    }
 
     // Iterate over all paths split from the ReferenceList (there may be multiple comma separated paths)
+    USP_ASSERT(sub->path_expressions.num_entries == sub->handler_group_ids.num_entries);
     for (i=0; i < sub->path_expressions.num_entries; i++)
     {
+        // Handle 'Device.' subscriptions here
         path = sub->path_expressions.vector[i];
+        if (strcmp(path, dm_root)==0)
+        {
+            StartVendorLayerDeviceDotSubs(sub, group_id);
+            continue;
+        }
 
         // Skip this path if it is already delegated to a USP Service
         if (sub->handler_group_ids.vector[i] != NON_GROUPED)
@@ -1473,6 +1506,12 @@ void StartSubscriptionInVendorLayer(subs_t *sub)
             continue;
         }
 
+        // Skip this path if it is not owned by the specified USP Service (if applicable)
+        if ((group_id != INVALID) && (group_id != subs_group_id))
+        {
+            continue;
+        }
+
         // Skip if the data model provider component does not yet have a subscribe vendor hook registered
         // In this case the subscription will be started when the GSDM response has been received from the USP Service as part of syncing the subscriptions
         subscribe_hook = group_vendor_hooks[subs_group_id].subscribe_cb;
@@ -1482,17 +1521,105 @@ void StartSubscriptionInVendorLayer(subs_t *sub)
         }
 
         // Attempt to subscribe to path for the specified notification
-        // NOTE: If this is not successful, then we fallback to the polled mechanism to provide this subscription
+        // NOTE: If this is not successful, then for value change and object creation/deletion, we fallback to the polled mechanism
+        // to provide this subscription. For USP events and operation complete, there is no fallback, and we will not receive any
+        // notifications from this subscription for the specified path if the subscribe vendor hook fails
         err = subscribe_hook(sub->instance, subs_group_id, sub->notify_type, path, sub->persistent);
         if (err != USP_ERR_OK)
         {
-            USP_LOG_Warning("%s: Subscribe vendor hook failed for %s (%s). Falling back to polled", __FUNCTION__, path, NOTIFY_TYPE_STR(sub->notify_type));
+            USP_LOG_Warning("%s: Subscribe vendor hook failed for %s (%s)", __FUNCTION__, path, NOTIFY_TYPE_STR(sub->notify_type));
             continue;
         }
 
         // If the code gets here, then the vendor layer subscription was successful, so mark this path as being provided by the vendor layer subscription
         sub->handler_group_ids.vector[i] = subs_group_id;
     }
+}
+
+/*********************************************************************//**
+**
+** StartVendorLayerDeviceDotSubs
+**
+** Starts a vendor layer subscription on 'Device.' for either USP Events or OperationComplete notifications (if not already started)
+**
+** \param   sub - subscription that has a ReferenceList of 'Device.'
+** \param   group_id - ID representing the USP Service that we want to start vendor layer subscriptions for
+**                     or INVALID, if we want to start vendor layer subscriptions on all USP Services referenced by this subscription
+**
+** \return  None
+**
+**************************************************************************/
+void StartVendorLayerDeviceDotSubs(subs_t *sub, int group_id)
+{
+    int i;
+    int_vector_t group_ids_in_use;
+
+    USP_ASSERT((sub->notify_type == kSubNotifyType_Event) || (sub->notify_type == kSubNotifyType_OperationComplete));
+
+    // Exit if group_id represents just a single USP Service
+    if (group_id != INVALID)
+    {
+        StartVendorLayerDeviceDotSubsForGroup(sub, group_id);
+        return;
+    }
+
+    // If the code gets here, then we need to set the subscription on all USP Services that have registered data model paths
+    USP_BROKER_GetAllRegisteredGroupIds(&group_ids_in_use);
+    for (i=0; i < group_ids_in_use.num_entries; i++)
+    {
+        group_id = group_ids_in_use.vector[i];
+        StartVendorLayerDeviceDotSubsForGroup(sub, group_id);
+    }
+
+    INT_VECTOR_Destroy(&group_ids_in_use);
+}
+
+/*********************************************************************//**
+**
+** StartVendorLayerDeviceDotSubsForGroup
+**
+** Starts a vendor layer subscription on 'Device.' for a single USP Service
+**
+** \param   sub - subscription that has a ReferenceList of 'Device.'
+** \param   group_id - ID representing the USP Service that we want to start vendor layer subscriptions for
+**
+** \return  None
+**
+**************************************************************************/
+void StartVendorLayerDeviceDotSubsForGroup(subs_t *sub, int group_id)
+{
+    int index;
+    int err;
+    dm_subscribe_cb_t subscribe_hook;
+
+    USP_ASSERT(group_id != INVALID);
+
+    // Exit if the subscription has already been set for this USP Service
+    index = INT_VECTOR_Find(&sub->device_group_ids, group_id);
+    if (index != INVALID)
+    {
+        return;
+    }
+
+    // Exit if the data model provider component does not yet have a subscribe vendor hook registered
+    // In this case the subscription will be started when the GSDM response has been received from the USP Service as part of syncing the subscriptions
+    subscribe_hook = group_vendor_hooks[group_id].subscribe_cb;
+    if (subscribe_hook == NULL)
+    {
+        return;
+    }
+
+    // Exit if unable to subscribe to 'Device.' on the specified USP Service
+    // NOTE: If this is not successful, then there is no fallback. We will not receive any notifications for the specified path
+    err = subscribe_hook(sub->instance, group_id, sub->notify_type, dm_root, sub->persistent);
+    if (err != USP_ERR_OK)
+    {
+        USP_LOG_Error("%s: Vendor layer failed to subscribe to 'Device.' for %s", __FUNCTION__, NOTIFY_TYPE_STR(sub->notify_type));
+        return;
+    }
+
+    // Mark this USP Service as having a subscription to 'Device.' for the specified notification type
+    INT_VECTOR_Add(&sub->device_group_ids, group_id);
 }
 
 /*********************************************************************//**
@@ -1519,6 +1646,14 @@ void StopSubscriptionInVendorLayer(subs_t *sub)
     // Iterate over all paths split from the ReferenceList (there may be multiple comma separated paths)
     for (i=0; i < sub->path_expressions.num_entries; i++)
     {
+        // Skip 'Device.' subscriptions, they will be handled later in the function
+        // NOTE: This test is not strictly necessary, as a 'Device.' subscription should never be marked as being provided by the vendor layer in handler_group_ids
+        path = sub->path_expressions.vector[i];
+        if (strcmp(path, dm_root)==0)
+        {
+            continue;
+        }
+
         // Skip if this path was not subscribed in the vendor layer
         group_id = sub->handler_group_ids.vector[i];
         if (group_id == NON_GROUPED)
@@ -1526,25 +1661,46 @@ void StopSubscriptionInVendorLayer(subs_t *sub)
             continue;
         }
 
-        // Skip if the data model provider component does not have an unsubscribe vendor hook registered
+        // Skip if the USP Service does not have an unsubscribe vendor hook registered
         unsubscribe_hook = group_vendor_hooks[group_id].unsubscribe_cb;
         if (unsubscribe_hook == NULL)
         {
             continue;
         }
 
-        // Unsubscribe from the path in the vendor layer
-        path = sub->path_expressions.vector[i];
+        // Unsubscribe from the path on the USP Service
         err = unsubscribe_hook(sub->instance, group_id, sub->notify_type, path);
         if (err != USP_ERR_OK)
         {
             // NOTE: If this is not successful, we assume this is because the vendor layer subscription has already been deleted due to some other reason outside of our control
-            USP_LOG_Error("%s: Unsubscribe vendor hook failed for %s (%s)", __FUNCTION__, path, NOTIFY_TYPE_STR(sub->notify_type));
+            USP_LOG_Error("%s: Unsubscribe vendor hook failed for '%s' (%s)", __FUNCTION__, path, NOTIFY_TYPE_STR(sub->notify_type));
         }
 
         // Mark this path as not being provided by the vendor layer subscription
         sub->handler_group_ids.vector[i] = NON_GROUPED;
     }
+
+    // Iterate over all USP Services which have a subscription to 'Device.', unsubscribing them
+    for (i=0; i < sub->device_group_ids.num_entries; i++)
+    {
+        group_id = sub->device_group_ids.vector[i];
+        USP_ASSERT((group_id >= 0) && (group_id < MAX_VENDOR_PARAM_GROUPS));
+
+        // Determine the unsubscribe vendor hook to call
+        unsubscribe_hook = group_vendor_hooks[group_id].unsubscribe_cb;
+        USP_ASSERT(unsubscribe_hook != NULL);       // Since the code cannot get here unless a subscribe vendor hook was setup. And if you setup a subscribe vendor hook using USP_REGISTER_SubscriptionVendorHooks(), then you must provide a matching unsubscribe vendor hook
+
+        // Unsubscribe from the path on the USP Service
+        err = unsubscribe_hook(sub->instance, group_id, sub->notify_type, dm_root);
+        if (err != USP_ERR_OK)
+        {
+            // NOTE: If this is not successful, we assume this is because the vendor layer subscription has already been deleted due to some other reason outside of our control
+            USP_LOG_Error("%s: Unsubscribe vendor hook failed for '%s' (%s)", __FUNCTION__, dm_root, NOTIFY_TYPE_STR(sub->notify_type));
+        }
+    }
+
+    // Mark that 'Device.' is not being provided by vendor layer subscriptions anymore
+    INT_VECTOR_Destroy(&sub->device_group_ids);
 }
 #endif
 
@@ -1732,7 +1888,7 @@ int NotifyChange_NotifyType(dm_req_t *req, char *value)
     }
 
 #ifndef REMOVE_USP_BROKER
-    // Stop the linked subscriptions on the USP Services before setting the new value
+    // Stop any vendor layer subscriptions that are using the old value of notify type
     StopSubscriptionInVendorLayer(sub);
 #endif
 
@@ -1792,7 +1948,7 @@ int NotifyChange_SubsRefList(dm_req_t *req, char *value)
     USP_ASSERT(sub != NULL);
 
 #ifndef REMOVE_USP_BROKER
-    // Delete all subscriptions on USP Services that relate to this subscription
+    // Delete all subscriptions on USP Services that relate to the old ReferenceList
     if (sub->enable)
     {
         StopSubscriptionInVendorLayer(sub);
@@ -1809,10 +1965,9 @@ int NotifyChange_SubsRefList(dm_req_t *req, char *value)
     INT_VECTOR_Create(&sub->handler_group_ids, sub->path_expressions.num_entries, NON_GROUPED);
 
 #ifndef REMOVE_USP_BROKER
-    // Start all subscriptions on USP Services that relate to this subscription
     if (sub->enable)
     {
-        StartSubscriptionInVendorLayer(sub);
+        StartSubscription(sub);
     }
 #endif
 
@@ -2206,7 +2361,7 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
     int err = USP_ERR_OK;       // Default return code
     str_vector_t path_expressions;
     char *path;
-    int i;
+    int i, j;
 
 #ifdef USE_LEGACY_PATH_VALIDATION
     combined_role_t combined_role;
@@ -2260,13 +2415,24 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
     {
         path = path_expressions.vector[i];
 
+        // Exit if the ReferenceList contains duplicate paths
+        for (j=0; j<path_expressions.num_entries; j++)
+        {
+            if ((j != i) && (strcmp(path, path_expressions.vector[j])==0))
+            {
+                USP_ERR_SetMessage("%s: Path '%s' is duplicated in ReferenceList '%s'", __FUNCTION__, path, ref_list);
+                err = USP_ERR_INVALID_PATH;
+                goto exit;
+            }
+        }
+
 #ifdef USE_LEGACY_PATH_VALIDATION
         // The legacy path validation code actually resolves the path to determine whether it is valid
 
-        // When running as a pure USP Agent, "Device." is supported. This code block just avoids resolving the path on Device.
+        // When running as a pure USP Agent, 'Device.' is supported. This code block just avoids resolving the path on Device.
         if ((op == kResolveOp_SubsOper) || (op == kResolveOp_SubsEvent))
         {
-            if (strcmp(path, "Device.")==0)
+            if (strcmp(path, dm_root)==0)
             {
                 err = USP_ERR_OK;
                 goto exit;
@@ -3203,9 +3369,9 @@ bool DoesSubscriptionSendNotification(subs_t *sub, char *event_name)
 {
     bool send_notification;
 
-    if (STR_VECTOR_Find(&sub->path_expressions, "Device.") == INVALID)
+    if (STR_VECTOR_Find(&sub->path_expressions, dm_root) == INVALID)
     {
-        // Normal case (not a subscription on "Device.") - Resolve the subscription path and see if any of the resolved paths match
+        // Normal case (not a subscription on 'Device.') - Resolve the subscription path and see if any of the resolved paths match
         send_notification = DoesSubscriptionMatchEvent(sub, event_name);
     }
     else

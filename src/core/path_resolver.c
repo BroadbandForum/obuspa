@@ -153,10 +153,9 @@ int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *
     int len;
 
     // Exit if the path does not begin with "Device."
-    #define DEVICE_ROOT_STR "Device."
-    if (strncmp(path, DEVICE_ROOT_STR, sizeof(DEVICE_ROOT_STR)-1) != 0)
+    if (strncmp(path, dm_root, dm_root_len) != 0)
     {
-        USP_ERR_SetMessage("%s: Expression does not start in '%s' (path='%s')", __FUNCTION__, DEVICE_ROOT_STR, path);
+        USP_ERR_SetMessage("%s: Expression does not start in '%s' (path='%s')", __FUNCTION__, dm_root, path);
         return USP_ERR_INVALID_PATH;
     }
 
@@ -282,17 +281,17 @@ int PATH_RESOLVER_ValidatePath(char *path, subs_notify_t notify_type)
     }
 
     // Exit if path is just to 'Device.' This is only supported for OperationComplete and USP Events
-    if (strcmp(path, "Device.")==0)
+    if (strcmp(path, dm_root)==0)
     {
         switch(notify_type)
         {
+            case kSubNotifyType_OperationComplete:
+            case kSubNotifyType_Event:
             case kSubNotifyType_None:    // NOTE: 'None' could occur if this function is called when ReferenceList is set before NotifType
                 err = USP_ERR_OK;
                 break;
 
             default:
-            case kSubNotifyType_OperationComplete:
-            case kSubNotifyType_Event:
             case kSubNotifyType_ValueChange:
                 USP_ERR_SetMessage("%s: ReferenceList '%s' is not supported for NotifType=%s", __FUNCTION__, path, TEXT_UTILS_EnumToString(notify_type, notify_types, NUM_ELEM(notify_types)) );
                 err = USP_ERR_RESOURCES_EXCEEDED;
@@ -309,8 +308,7 @@ int PATH_RESOLVER_ValidatePath(char *path, subs_notify_t notify_type)
     }
 
     // Exit if the path does not start with "Device."
-    #define DEVICE_ROOT_STR "Device."
-    if (strncmp(path, DEVICE_ROOT_STR, sizeof(DEVICE_ROOT_STR)-1) != 0)
+    if (strncmp(path, dm_root, dm_root_len) != 0)
     {
         USP_ERR_SetMessage("%s: Expression does not start in 'Device.' (path='%s')", __FUNCTION__, path);
         err = USP_ERR_INVALID_PATH;
@@ -2617,8 +2615,8 @@ validate_path_test_case_t validate_path_test_cases[] =
 {
 
     {"",                                                                kSubNotifyType_ValueChange,         USP_ERR_OK },
-    {"Device.",                                                         kSubNotifyType_OperationComplete,   USP_ERR_RESOURCES_EXCEEDED },
-    {"Device.",                                                         kSubNotifyType_Event,               USP_ERR_RESOURCES_EXCEEDED },
+    {"Device.",                                                         kSubNotifyType_OperationComplete,   USP_ERR_OK },
+    {"Device.",                                                         kSubNotifyType_Event,               USP_ERR_OK },
     {"Device.",                                                         kSubNotifyType_None,                USP_ERR_OK },
     {"Device.",                                                         kSubNotifyType_ValueChange,         USP_ERR_RESOURCES_EXCEEDED },
     {"Device.",                                                         kSubNotifyType_ObjectCreation,      USP_ERR_NOT_A_TABLE },

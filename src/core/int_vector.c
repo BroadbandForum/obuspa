@@ -143,6 +143,49 @@ int INT_VECTOR_Find(int_vector_t *iv, int number)
 
 /*********************************************************************//**
 **
+** INT_VECTOR_Remove
+**
+** Removes all occurrences of the specified number from the vector (if any exist)
+**
+** \param   iv - pointer to structure to search in
+** \param   number - integer to remove
+**
+** \return  None
+**
+**************************************************************************/
+void INT_VECTOR_Remove(int_vector_t *iv, int number)
+{
+    int i;
+    int count;
+
+    // Iterate over all entries in the vector
+    count = 0;
+    for (i=0; i < iv->num_entries; i++)
+    {
+        if (iv->vector[i] != number)
+        {
+            // Copy down the entries after any that were removed
+            if (i != count)
+            {
+                iv->vector[count] = iv->vector[i];
+            }
+            count++;
+        }
+    }
+
+    // Store the new number of entries in the vector
+    iv->num_entries = count;
+
+    // Ensure that vector is freed, if it is now empty
+    if (count == 0)
+    {
+        USP_SAFE_FREE(iv->vector);
+    }
+
+}
+
+/*********************************************************************//**
+**
 ** INT_VECTOR_Destroy
 **
 ** Deinitialises the integer vector

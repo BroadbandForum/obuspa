@@ -965,6 +965,34 @@ int USP_BROKER_GetUspServiceInstance(char *endpoint_id, unsigned flags)
 
 /*********************************************************************//**
 **
+** USP_BROKER_GetAllRegisteredGroupIds
+**
+** Returns a list of all group_ids of USP Services which have registered a data model path
+**
+** \param   iv - pointer to int vector in which to return all group_ids currently registered
+**
+** \return  None
+**
+**************************************************************************/
+void USP_BROKER_GetAllRegisteredGroupIds(int_vector_t *iv)
+{
+    int i;
+    usp_service_t *us;
+
+    // Iterate over all USP services adding those that have registered data model elements to the list
+    INT_VECTOR_Init(iv);
+    for (i=0; i<MAX_USP_SERVICES; i++)
+    {
+        us = &usp_services[i];
+        if ((us->instance != INVALID) && (us->registered_paths.num_entries > 0))
+        {
+            INT_VECTOR_Add(iv, us->group_id);
+        }
+    }
+}
+
+/*********************************************************************//**
+**
 ** USP_BROKER_GetNotifyDestForEndpoint
 **
 ** Determines a destination MTP to send a USP Record to based on the endpoint to send it to
@@ -1291,6 +1319,28 @@ int DeRegisterUspServicePath(usp_service_t *us, char *path)
             }
         }
         smap = next_smap;
+    }
+
+    // If this is the last path to be deregistered from the USP Service, then unsubscribe all 'Device.' subscriptions
+    if (us->registered_paths.num_entries == 1)
+    {
+        USP_ASSERT(index == 0);
+
+        smap = (subs_map_t *) us->subs_map.head;
+        while (smap != NULL)
+        {
+            next_smap = (subs_map_t *) smap->link.next;     // Save off the next pointer, as ths entry may get deleted by DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs()
+
+            if (strcmp(smap->path, dm_root)==0)
+            {
+                err = DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(us->group_id, smap->broker_instance, smap->service_instance, smap->path);
+                if (err != USP_ERR_OK)
+                {
+                    return err;
+                }
+            }
+            smap = next_smap;
+        }
     }
 
     // Send an OperationComplete indicating failure for all currently active USP Commands which are children of the path being deregistered
@@ -2382,9 +2432,10 @@ void ProcessGetSubsResponse_ResolvedPathResult(usp_service_t *us, Usp__GetResp__
         return;
     }
 
-    // Exit if the path is not owned by this USP Service.
+    // Exit if the path is not owned by this USP Service, and so should not be set on this USP Service
+    // (except subscriptions to 'Device.', which are set on all USP Services)
     // We delete the subscription in this case, because the path exists in the data model, but is not owned by this USP Service
-    if (subs_group_id != us->group_id)
+    if ((subs_group_id != us->group_id) && (strcmp(path, dm_root) != 0))
     {
         STR_VECTOR_Add(subs_to_delete, res->resolved_path);
         return;
@@ -3682,8 +3733,7 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
     len = strlen(path);
 
     // Exit if the path does not begin with "Device."
-    #define DM_ROOT "Device."
-    if (strncmp(path, DM_ROOT, sizeof(DM_ROOT)-1) != 0)
+    if (strncmp(path, dm_root, dm_root_len) != 0)
     {
         USP_LOG_Error("%s: Object path to register is invalid (%s)", __FUNCTION__, path);
         return;
@@ -4017,15 +4067,14 @@ bool IsValidUspServicePath(char *path)
     char *p;
 
     // Exit if the path does not start with 'Device.'
-    #define DM_ROOT "Device."
-    if (strncmp(path, DM_ROOT, sizeof(DM_ROOT)-1) != 0)
+    if (strncmp(path, dm_root, dm_root_len) != 0)
     {
         USP_ERR_SetMessage("%s: Requested path '%s' does not start 'Device.'", __FUNCTION__, path);
         return false;
     }
 
     // Exit if the path is for a data model element directly under Device., which has not been handled earlier as a special exception
-    p = strchr(&path[sizeof(DM_ROOT)-1], '.');
+    p = strchr(&path[dm_root_len], '.');
     if (p == NULL)
     {
         USP_ERR_SetMessage("%s: %s is not one of the data model elements directly under Device. that are supported for registration", __FUNCTION__, path);

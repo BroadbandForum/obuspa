@@ -1621,6 +1621,7 @@ int Get_WebsockInterfaces(dm_req_t *req, char *buf, int len)
     err = DATA_MODEL_GetInstances("Device.IP.Interface.", &iv);
     if (err != USP_ERR_OK)
     {
+        err = USP_ERR_OK;  // Handle this error gracefully, since it could occur if Device.IP.Interface has not been implemented yet
         goto exit;
     }
 

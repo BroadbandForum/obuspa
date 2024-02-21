@@ -1150,6 +1150,8 @@ int ResetFactoryParametersFromFile(char *file)
     }
 
     // Iterate over all lines in the file
+    // NOTE: Errors are logged, but ultimately ignored. This allows the factory reset file to contain values for parameters which
+    // do not exist in the supported data model of the USP Agent
     result = fgets(buf, sizeof(buf), fp);
     while (result != NULL)
     {
@@ -1158,7 +1160,7 @@ int ResetFactoryParametersFromFile(char *file)
         if (err != USP_ERR_OK)
         {
             USP_LOG_Error("%s: Syntax error in %s at line %d", __FUNCTION__, file, line_number);
-            goto exit;
+            goto next_line;
         }
 
         // Set the parameter (if the line was not blank or a comment)
@@ -1168,10 +1170,11 @@ int ResetFactoryParametersFromFile(char *file)
             if (err != USP_ERR_OK)
             {
                 USP_LOG_Error("%s: Failed to set parameter at line %d of %s", __FUNCTION__, line_number, file);
-                goto exit;
+                goto next_line;
             }
         }
 
+next_line:
         // Get the next line
         line_number++;
         result = fgets(buf, sizeof(buf), fp);
@@ -1180,7 +1183,6 @@ int ResetFactoryParametersFromFile(char *file)
     // If the code gets here, then all parameters in the file have been set successfully
     err = USP_ERR_OK;
 
-exit:
     fclose(fp);
     return err;
 }

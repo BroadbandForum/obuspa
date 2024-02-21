@@ -52,7 +52,7 @@
 #define MAX_DM_VALUE_LEN (4096)     // Maximum number of characters in a data model parameter value
 #define MAX_DM_SHORT_VALUE_LEN (MAX_DM_PATH) // Maximum number of characters in an (expected to be) short data model parameter value
 #define MAX_ENDPOINT_ID_LEN (256)   // Maximum number of characters in an Endpoint ID
-#define MAX_MSG_ID_LEN (256)        // MAximum number of characters in a USP message ID allocated by this Agent
+#define MAX_MSG_ID_LEN (256)        // Maximum number of characters in a USP message ID allocated by this Agent
 #define MAX_PATH_SEGMENTS (32)      // Maximum number of segments (eg "Device, "LocalAgent") in a path. Does not include instance numbers.
 #define MAX_COMPOUND_KEY_PARAMS 4   // Maximum number of parameters in a compound unique key
 #define MAX_CONTROLLERS 5           // Maximum number of controllers which may be present in the DB (Device.LocalAgent.Controller.{i})
@@ -83,6 +83,11 @@
 // This is not used to size any arrays, just used as a security measure to prevent rogue controllers crashing
 // the agent process with out of memory
 #define MAX_USP_MSG_LEN (64*1024)
+
+// Maximum number of bytes allowed in a UDS MTP frame payload
+// This limits the UDS payload length as a security measure to prevent rogue controllers crashing the agent process by consuming too much memory
+// UDS could be receiving a large response to a USP message so the default is quite large (1 megabyte)
+#define MAX_UDS_FRAME_PAYLOAD_LEN (1024*1024)
 
 // Period of time (in seconds) between polling values that have value change notification enabled on them
 #define VALUE_CHANGE_POLL_PERIOD  (15)

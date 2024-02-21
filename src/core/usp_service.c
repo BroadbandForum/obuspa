@@ -1613,8 +1613,7 @@ int ProcessUspService_GetSupportedDMResponse(Usp__Msg *usp, kv_vector_t *kv)
             if ((sor->supported_obj_path != NULL) && (*sor->supported_obj_path != '\0'))
             {
                 // Exit if the path does not begin with "Device."
-                #define DM_ROOT "Device."
-                if (strncmp(sor->supported_obj_path, DM_ROOT, sizeof(DM_ROOT)-1) != 0)
+                if (strncmp(sor->supported_obj_path, dm_root, dm_root_len) != 0)
                 {
                     USP_ERR_SetMessage("%s: Response contains invalid data model path '%s'", __FUNCTION__, path);
                     return USP_ERR_INTERNAL_ERROR;
@@ -1725,7 +1724,7 @@ int ProcessUspService_GetInstancesResponse(Usp__Msg *resp, str_vector_t *sv)
                 path = ci->instantiated_obj_path;
                 if ((path != NULL) && (*path != '\0'))
                 {
-                    if (strncmp(path, DM_ROOT, sizeof(DM_ROOT)-1) != 0)
+                    if (strncmp(path, dm_root, dm_root_len) != 0)
                     {
                         USP_ERR_SetMessage("%s: Response contains invalid data model path '%s'", __FUNCTION__, path);
                         STR_VECTOR_Destroy(sv);

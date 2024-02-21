@@ -69,6 +69,7 @@
 #define DONT_RETRY false
 #define RETRY_LATER true
 #define HANDSHAKE_TIMEOUT 30
+#define TLV_HEADER_SIZE 5
 
 //------------------------------------------------------------------------------
 // one of these for each instantiated UDS server
@@ -144,6 +145,7 @@ static unsigned uds_conn_id_counter = 1;
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void ProcessUdsFrame(uds_connection_t *uc);
+void ProcessUdsRecord(uds_connection_t *uc, uds_frame_t frame_type, unsigned char *record, unsigned record_length);
 uds_connection_t *FindFreeUdsConnection(void);
 uds_server_t *FindFreeUdsServer(void);
 uds_server_t *FindUdsServerByInstanceId(int instance);
@@ -1568,12 +1570,22 @@ void ReadUdsFrames(uds_connection_t *uc)
         {
             // convert from the byte stream using correct endian
             uc->payload_length = CONVERT_4_BYTES(uc->length_bytes);
-            if(uc->payload_length == 0)
+            if(uc->payload_length < TLV_HEADER_SIZE)
             {
+                // The minimum valid frame payload length is at least one record which contains a type (1 byte) and a length (4 bytes)
                 USP_LOG_Error("%s: Failed to parse incoming UDS Frame, as TLV is missing", __FUNCTION__);
-                SendUdsErrorFrame(uc,"Failed to parse incoming UDS Frame, as TLV is missing");
+                CloseUdsConnection(uc, RETRY_LATER);
                 return;
             }
+
+            if (uc->payload_length > MAX_UDS_FRAME_PAYLOAD_LEN)
+            {
+                // If a frame contains more than MAX_UDS_PAYLOAD_LEN of data then ignore it to limit memory usage
+                USP_LOG_Error("%s: Incoming UDS frame is too large (%u bytes)", __FUNCTION__, uc->payload_length);
+                CloseUdsConnection(uc, RETRY_LATER);
+                return;
+            }
+
             uc->rx_buf =  USP_MALLOC(uc->payload_length);
         }
     }
@@ -1593,6 +1605,13 @@ void ReadUdsFrames(uds_connection_t *uc)
         if (uc->payload_bytes_rxed == uc->payload_length)
         {
             ProcessUdsFrame(uc);
+
+            // reset xxxBytesReceived to start parsing the next frame
+            uc->hdr_bytes_rxed = 0;
+            uc->len_bytes_rxed = 0;
+            uc->payload_bytes_rxed = 0;
+            USP_FREE(uc->rx_buf);
+            uc->rx_buf = NULL;
         }
     }
 }
@@ -1611,27 +1630,64 @@ void ReadUdsFrames(uds_connection_t *uc)
 void ProcessUdsFrame(uds_connection_t *uc)
 {
     uds_frame_t frame_type;
-    int endpoint_len;
     int record_length;
-    mtp_conn_t mtp_conn;
+
+    // R-UDS.6 - A Frame sent across a UNIX domain socket that is being used as an MTP MUST have a Header field and one or more TLV fields.
+    // Iterate through all the TLV fields in the payload processing them individually
+    int record_offset = 0;
+
+    // There must be at least TLV_HEADER_SIZE (5 bytes) following the current UDS record start offset to process the TLV field
+    while ((record_offset + TLV_HEADER_SIZE) < uc->payload_length)
+    {
+       frame_type = uc->rx_buf[record_offset];
+       record_length = CONVERT_4_BYTES((&uc->rx_buf[record_offset+1]));
+
+       if (record_length < 0)
+       {
+           USP_LOG_Error("%s: Failed to parse incoming USP record length", __FUNCTION__);
+           SendUdsErrorFrame(uc,"Failed to parse incoming USP record");
+           return;
+       }
+
+       // If the TLV UDS record payload crosses the end of the UDS frame payload buffer then this is a malformed frame
+       if ((record_offset + record_length + TLV_HEADER_SIZE) > uc->payload_length)
+       {
+           // R-UDS.23 UDS client or server must send error frame if incoming UDS Frame containing USP record cannot be parsed
+           // R-UDS.24 UDS client or server must send error frame if it cannot parse incoming UDS Frame
+           USP_LOG_Error("%s: Failed to parse incoming USP record", __FUNCTION__);
+           SendUdsErrorFrame(uc,"Failed to parse incoming USP record");
+           return;
+       }
+       ProcessUdsRecord(uc, frame_type, &uc->rx_buf[record_offset + TLV_HEADER_SIZE], record_length);
+       // increment offset to point to next TLV entry 1 byte (Type) + 4 bytes (Len) + Record length
+       record_offset += (TLV_HEADER_SIZE + record_length);
+    }
+}
+
+/*********************************************************************//**
+**
+** ProcessUdsRecord
+**
+** Private internal function to process a raw UDS record extracted from a UDS frame
+**
+** \param   uc - UDS connection which received some data
+** \param   frame_type - The type of record (handshake, error or USP record)
+** \param   record - Pointer to the start of the record
+** \param   record_length - The length of the record
+**
+** \return  None
+**
+**************************************************************************/
+void ProcessUdsRecord(uds_connection_t *uc, uds_frame_t frame_type, unsigned char *record, unsigned record_length)
+{
+    char buf[128];
+    unsigned len;
+    char *err_msg = NULL;
     bool drop_connection = false;
     char time_buf[MAX_ISO8601_LEN];
     char *validate_endpoint = NULL;
-    char *err_msg = NULL;
-    unsigned len;
-    char buf[128];
+    mtp_conn_t mtp_conn;
 
-    // Exit if the payload is not large enough to contain (type + 4 byte length)
-    if (uc->payload_length < 5)
-    {
-        // R-UDS.23 UDS client or server must send error frame if incoming UDS Frame containing USP record cannot be parsed
-        // R-UDS.24 UDS client or server must send error frame if it cannot parse incoming UDS Frame
-        USP_LOG_Error("%s: Failed to parse incoming UDS Frame, it is not large enough (%u bytes) to contain a TLV", __FUNCTION__, uc->payload_length);
-        SendUdsErrorFrame(uc,"Failed to parse incoming UDS Frame, as it is not large enough to contain a TLV");
-        goto exit;
-    }
-
-    frame_type = uc->rx_buf[0];
     switch(frame_type)
     {
         case kUdsFrameType_Handshake:
@@ -1642,8 +1698,7 @@ void ProcessUdsFrame(uds_connection_t *uc)
                 break;
             }
 
-            endpoint_len = CONVERT_4_BYTES((&uc->rx_buf[1]));
-            if(endpoint_len == 0)
+            if(record_length == 0)
             {
                 // R-UDS.21 : UDS client or server must send error frame if it cannot parse handshake frame
                 err_msg = "Invalid EndpointID, Failed to process Handshake Frame";
@@ -1653,9 +1708,9 @@ void ProcessUdsFrame(uds_connection_t *uc)
             }
 
             //get the endpointID for validation
-            validate_endpoint = USP_MALLOC(endpoint_len+1);   // Plus 1 to include NULL terminator
-            memcpy(validate_endpoint, &uc->rx_buf[5], endpoint_len);
-            validate_endpoint[endpoint_len] = '\0';
+            validate_endpoint = USP_MALLOC(record_length+1);   // Plus 1 to include NULL terminator
+            memcpy(validate_endpoint, record, record_length);
+            validate_endpoint[record_length] = '\0';
 
             //check for endpointID validity
             err_msg = ValidateUdsEndpointID(validate_endpoint, uc->path_type);
@@ -1701,9 +1756,9 @@ void ProcessUdsFrame(uds_connection_t *uc)
 
         case kUdsFrameType_Error:
             // R-UDS.25 : USP record with type error received. Close the uds socket connection
-            len = 1 + CONVERT_4_BYTES((&uc->rx_buf[1]));  // Plus 1 to include null terminator
-            len = MIN(len, sizeof(buf));
-            USP_STRNCPY(buf, (char *)&uc->rx_buf[5], len);
+            len = MIN(record_length, (sizeof(buf)-1));
+            USP_STRNCPY(buf, (char*)record, len);
+            buf[len] = '\0'; // NULL terminate the error string
             USP_LOG_Error("Received UDS ERROR from endpoint_id=%s on %s", EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
             USP_LOG_Error("UDS ERROR is '%s'", buf);
             drop_connection = true;
@@ -1716,14 +1771,6 @@ void ProcessUdsFrame(uds_connection_t *uc)
                 USP_LOG_Warning("%s: Ignoring USP frame received before handshake completed", __FUNCTION__);
                 break;
             }
-            record_length = CONVERT_4_BYTES((&uc->rx_buf[1]));
-            if(record_length == 0 || (record_length != uc->payload_length-5))
-            {
-                // R-UDS.23 UDS client or server must send error frame if incoming UDS Frame containing USP record cannot be parsed
-                USP_LOG_Error("%s: Failed to parse incoming USP record", __FUNCTION__);
-                SendUdsErrorFrame(uc,"Failed to parse incoming USP record");
-                break;
-            }
 
             iso8601_cur_time(time_buf, sizeof(time_buf));
             USP_LOG_Info("USP Record received at time %s, from endpoint_id=%s over UDS (%s)", time_buf, EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
@@ -1733,7 +1780,7 @@ void ProcessUdsFrame(uds_connection_t *uc)
             mtp_conn.protocol = kMtpProtocol_UDS;
             mtp_conn.uds.conn_id = uc->conn_id;
             mtp_conn.uds.path_type = uc->path_type;
-            DM_EXEC_PostUspRecord(&uc->rx_buf[5], uc->payload_length-5, EndpointIdForLog(uc), ROLE_UDS, &mtp_conn);
+            DM_EXEC_PostUspRecord(record, record_length, EndpointIdForLog(uc), ROLE_UDS, &mtp_conn);
             break;
 
 
@@ -1744,13 +1791,6 @@ void ProcessUdsFrame(uds_connection_t *uc)
             break;
     }
 
-exit:
-    // reset xxxBytesReceived to take us back to the start of the next message
-    uc->hdr_bytes_rxed = 0;
-    uc->len_bytes_rxed = 0;
-    uc->payload_bytes_rxed = 0;
-    USP_FREE(uc->rx_buf);
-    uc->rx_buf = NULL;
 
     if (drop_connection)
     {
@@ -1907,7 +1947,7 @@ void SendUdsFrames(uds_connection_t *uc)
         // if we sent all the data then free the buffer.
         // The next record in the queue will be popped on the next iteration
         // If the UDS frame sent was of Error Type, close the connection if the error was encountered after successful handshake.
-        // Close the uds connection, If the UDS fame sent was for usp disconnect record.
+        // Close the uds connection, If the UDS frame sent was for usp disconnect record.
         if(((uc->tx_buf_type == kUdsFrameType_Error) && (uc->endpoint_id != NULL)) || uc->is_disconnect_record)
         {
             CloseUdsConnection(uc, RETRY_LATER);
