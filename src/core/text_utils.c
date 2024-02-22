@@ -39,10 +39,15 @@
  *
  */
 
+#include "vendor_defs.h"   // For REMOVE_DEVICE_SECURITY
+
+#ifndef REMOVE_DEVICE_SECURITY
+#include <openssl/evp.h>
+#endif
+
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>  // For strcasecmp
-#include <openssl/evp.h>
 
 #include "common_defs.h"
 #include "str_vector.h"
@@ -458,6 +463,7 @@ int TEXT_UTILS_StringToBinary(char *str, unsigned char *buf, int len, int *bytes
     return USP_ERR_OK;
 }
 
+#ifndef REMOVE_DEVICE_SECURITY
 /*********************************************************************//**
 **
 ** TEXT_UTILS_Base64StringToBinary
@@ -476,7 +482,7 @@ int TEXT_UTILS_StringToBinary(char *str, unsigned char *buf, int len, int *bytes
 **************************************************************************/
 int TEXT_UTILS_Base64StringToBinary(char *str, unsigned char *buf, int len, int *bytes_written)
 {
-    int err;
+    int err = USP_ERR_OK;
     int original_len;
     char *stripped = NULL;
     int stripped_len;
@@ -513,6 +519,7 @@ exit:
     USP_SAFE_FREE(stripped);
     return err;
 }
+#endif
 
 /*********************************************************************//**
 **

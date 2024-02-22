@@ -41,11 +41,14 @@
 #ifndef USP_API_H
 #define USP_API_H
 
+#include "vendor_defs.h"  // For MAX_DM_INSTANCE_ORDER and REMOVE_DEVICE_SECURITY
+
 #include <time.h>
-#include <openssl/ssl.h>
 #include <stdbool.h>
 
-#include "vendor_defs.h"  // For MAX_DM_INSTANCE_ORDER
+#ifndef REMOVE_DEVICE_SECURITY
+#include <openssl/ssl.h>
+#endif
 
 //-----------------------------------------------------------------------------------------
 // Magic values used to denote invalid
@@ -355,9 +358,12 @@ typedef int (*get_agent_cert_cb_t)(agent_cert_info_t *info);
 typedef int (*get_hardware_version_cb_t)(char *buf, int len);
 typedef int (*dm_vendor_get_mtp_username_cb_t)(int instance, char *buf, int len);
 typedef int (*dm_vendor_get_mtp_password_cb_t)(int instance, char *buf, int len);
-typedef int (*load_agent_cert_cb_t)(SSL_CTX *ctx);
 typedef void (*log_message_cb_t)(const char *buf);
 typedef void (*modify_firmware_updated_cb_t)(bool *is_firmware_updated);
+
+#ifndef REMOVE_DEVICE_SECURITY
+typedef int (*load_agent_cert_cb_t)(SSL_CTX *ctx);
+#endif
 
 //-------------------------------------------------------------------------
 // Typedef for structure containing core vendor hook callbacks
@@ -388,7 +394,9 @@ typedef struct
 
     dm_vendor_get_mtp_username_cb_t         get_mtp_username_cb;
     dm_vendor_get_mtp_password_cb_t         get_mtp_password_cb;
+#ifndef REMOVE_DEVICE_SECURITY
     load_agent_cert_cb_t                    load_agent_cert_cb;
+#endif
     log_message_cb_t                        log_message_cb;
     modify_firmware_updated_cb_t            modify_firmware_updated_cb;
 

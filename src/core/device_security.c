@@ -38,7 +38,9 @@
  * Implements the Device.LocalAgent.Certificate and the Device.Security data model object
  *
  */
+#include "vendor_defs.h"
 
+#ifndef REMOVE_DEVICE_SECURITY
 #include <time.h>
 #include <string.h>
 
@@ -3005,4 +3007,6 @@ int Operate_GetFingerprint(dm_req_t *req, char *command_key, kv_vector_t *input_
 
     return USP_ERR_OK;
 }
+
+#endif // REMOVE_DEVICE_SECURITY
 

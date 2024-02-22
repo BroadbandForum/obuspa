@@ -42,9 +42,12 @@
 #ifndef DEVICE_H
 #define DEVICE_H
 
-#include <openssl/ssl.h>
+#include "vendor_defs.h"  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2 and REMOVE_DEVICE_SECURITY
 
-#include "vendor_defs.h"  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
+#ifndef REMOVE_DEVICE_SECURITY
+#include <openssl/ssl.h>
+#endif
+
 #include "kv_vector.h"
 #include "usp_api.h"
 #include "subs_vector.h"
@@ -190,10 +193,6 @@ typedef struct
 } mtp_conn_t;
 
 //------------------------------------------------------------------------------
-// Typedef for SSL verify callback
-typedef int ssl_verify_callback_t(int preverify_ok, X509_STORE_CTX *x509_ctx);
-
-//------------------------------------------------------------------------------
 // Data model components API
 #ifndef REMOVE_DEVICE_TIME
 int DEVICE_TIME_Init(void);
@@ -267,6 +266,11 @@ void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, 
 void DEVICE_SUBSCRIPTION_SendPeriodicEvent(int cont_instance);
 void DEVICE_SUBSCRIPTION_NotifyControllerDeleted(int cont_instance);
 void DEVICE_SUBSCRIPTION_Dump(void);
+
+#ifndef REMOVE_DEVICE_SECURITY
+// Typedef for SSL verify callback
+typedef int ssl_verify_callback_t(int preverify_ok, X509_STORE_CTX *x509_ctx);
+
 int DEVICE_SECURITY_Init(void);
 int DEVICE_SECURITY_Start(void);
 void DEVICE_SECURITY_Stop(void);
@@ -280,6 +284,8 @@ int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x5
 int DEVICE_SECURITY_NoSaveTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
 int DEVICE_SECURITY_AddCertHostnameValidation(SSL* ssl, const char* name, size_t length);
 int DEVICE_SECURITY_AddCertHostnameValidationCtx(SSL_CTX* ssl_ctx, const char* name, size_t length);
+#endif
+
 int DEVICE_CTRUST_Init(void);
 int DEVICE_CTRUST_Start(void);
 void DEVICE_CTRUST_Stop(void);

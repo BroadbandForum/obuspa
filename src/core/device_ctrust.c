@@ -117,6 +117,7 @@ typedef struct
 static int num_credentials = 0;
 static credential_t *credentials = NULL;
 
+#ifndef REMOVE_DEVICE_SECURITY
 //------------------------------------------------------------------------------
 // Variable containing the count of request challenge messages
 unsigned request_challenge_count = 0;
@@ -179,6 +180,7 @@ static challenge_table_t *challenge_table = NULL;
 
 #define DEFAULT_REQUEST_EXPIRATION 900 // in seconds
 
+#endif // REMOVE_DEVICE_SECURITY
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void AddInternalRolePermission(role_t *role, unsigned order, char *path, unsigned permission_bitmask);
@@ -223,6 +225,7 @@ int Get_CredentialRole(dm_req_t *req, char *buf, int len);
 int Get_CredentialCertificate(dm_req_t *req, char *buf, int len);
 int Get_CredentialNumEntries(dm_req_t *req, char *buf, int len);
 
+#ifndef REMOVE_DEVICE_SECURITY
 int InitChallengeTable();
 void DestroyControllerChallenge(controller_challenge_t *controller_challenge);
 int FindAvailableControllerChallenge(char *controller_endpoint_id, char *challenge_ref, controller_challenge_t **cci);
@@ -234,6 +237,7 @@ int Validate_ChallengeType(dm_req_t *req, char *value);
 int Validate_ChallengeValueType(dm_req_t *req, char *value);
 int Validate_ChallengeInstructionType(dm_req_t *req, char *value);
 int ControllerTrustChallengeResponse(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
+#endif
 
 /*********************************************************************//**
 **
@@ -258,7 +262,9 @@ int DEVICE_CTRUST_Init(void)
         roles[i].instance = INVALID;
     }
 
+#ifndef REMOVE_DEVICE_SECURITY
     memset(controller_challenges, 0, sizeof(controller_challenges));
+#endif
 
     // Create a timer which will be used to apply all modified permissions to the data model, after processing a USP Message
     SYNC_TIMER_Add(ApplyModifiedPermissions, 0, END_OF_TIME);
@@ -310,6 +316,7 @@ int DEVICE_CTRUST_Init(void)
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_CREDENTIAL_ROOT, cred_unique_keys, NUM_ELEM(cred_unique_keys));
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CTRUST_ROOT ".CredentialNumberOfEntries", Get_CredentialNumEntries, DM_UINT);
 
+#ifndef REMOVE_DEVICE_SECURITY
     // Device.LocalAgent.ControllerTrust.Challenge.{i}
     err |= USP_REGISTER_Object(DEVICE_CHALLENGE_ROOT, NULL, NULL, NULL, NULL, NULL, NULL);
     err |= USP_REGISTER_DBParam_Alias(DEVICE_CHALLENGE_ROOT ".Alias", NULL);
@@ -336,7 +343,7 @@ int DEVICE_CTRUST_Init(void)
     err |= USP_REGISTER_OperationArguments(DEVICE_CTRUST_ROOT ".ChallengeResponse()",
                         challenge_response_input_args, NUM_ELEM(challenge_response_input_args),
                         NULL, 0);
-
+#endif
     // Exit if any errors occurred
     if (err != USP_ERR_OK)
     {
@@ -394,12 +401,14 @@ int DEVICE_CTRUST_Start(void)
         ApplyAllPermissionsForRole(role);
     }
 
+#ifndef REMOVE_DEVICE_SECURITY
     // Init array associated with RequestChallenge/ChallengeResponse
     err = InitChallengeTable();
     if (err != USP_ERR_OK)
     {
         goto exit;
     }
+#endif
 
 exit:
     INT_VECTOR_Destroy(&iv);
@@ -421,7 +430,6 @@ void DEVICE_CTRUST_Stop(void)
 {
     int i;
     role_t *role;
-    controller_challenge_t *cc;
 
     // Free all roles and their associated permissions
     for (i=0; i<NUM_ELEM(roles); i++)
@@ -433,6 +441,10 @@ void DEVICE_CTRUST_Stop(void)
     // Free all credentials
     USP_SAFE_FREE(credentials);
 
+#ifndef REMOVE_DEVICE_SECURITY
+{
+    controller_challenge_t *cc;
+
     // Free all controller challenges
     for (i=0; i<NUM_ELEM(controller_challenges); i++)
     {
@@ -442,6 +454,9 @@ void DEVICE_CTRUST_Stop(void)
 
     // Free challenge_table
     USP_SAFE_FREE(challenge_table);
+}
+#endif
+
 }
 
 /*********************************************************************//**
@@ -2138,6 +2153,7 @@ credential_t *FindCredentialByCertInstance(int cert_instance)
     return NULL;
 }
 
+#ifndef REMOVE_DEVICE_SECURITY
 /*********************************************************************//**
 **
 ** InitChallengeTable
@@ -2768,4 +2784,4 @@ int ControllerTrustChallengeResponse(dm_req_t *req, char *command_key, kv_vector
 exit:
     return err;
 }
-
+#endif // REMOVE_DEVICE_SECURITY

@@ -49,8 +49,10 @@
 // NOTE: The USP_LOG_XXX API functions that are vendor callable have been moved to usp_api.h
 void USP_LOG_Init(void);
 int USP_LOG_SetFile(const char *file);
-void USP_LOG_ErrorSSL(const char *func_name, const char *failure_string, int ret, int err);
 
+#ifndef REMOVE_DEVICE_SECURITY
+void USP_LOG_ErrorSSL(const char *func_name, const char *failure_string, int ret, int err);
+#endif
 //------------------------------------------------------------------------------------
 // Exported global variables
 extern bool enable_protocol_trace;

@@ -114,8 +114,10 @@ static struct option long_options[] =
     {"prototrace", no_argument,       NULL, 'p'},    // Enables logging of the protocol trace
     {"command",    no_argument,       NULL, 'c'},    // The rest of the command line is a command to invoke on the active USP Agent.
                                                      // Using this option turns this executable into just a CLI for the active USP Agent.
+#ifndef REMOVE_DEVICE_SECURITY
     {"authcert",   required_argument, NULL, 'a'},    // Specifies the location of a file containing the client certificate to use authenticating this device
     {"truststore", required_argument, NULL, 't'},    // Specifies the location of a file containing the trust store certificates to use
+#endif
     {"resetfile",  required_argument, NULL, 'r'},    // Specifies the location of a text file containing factory reset parameters
     {"interface",  required_argument, NULL, 'i'},    // Specifies the networking interface to use for communications
     {"cli",        required_argument, NULL, 's'},    // Specifies the Unix domain socket file to use for CLI communications
@@ -226,6 +228,8 @@ int main(int argc, char *argv[])
                 enable_protocol_trace = true;
                 break;
 
+#ifndef REMOVE_DEVICE_SECURITY
+
             case 'a':
                 // Set the location of the client certificate file to use
                 auth_cert_file = optarg;
@@ -235,7 +239,7 @@ int main(int argc, char *argv[])
                 // Set the location of the file containing trust store certificates
                 usp_trust_store_file = optarg;
                 break;
-
+#endif
             case 'r':
                 // Set the location of the text file containing the factory reset parameters
                 factory_reset_text_file = optarg;
@@ -556,8 +560,10 @@ void PrintUsage(char *prog_name)
     printf("--verbose (-v)    Sets the debug verbosity log level: 0=Off, 1=Error(default), 2=Warning, 3=Info\n");
     printf("--prototrace (-p) Enables trace logging of the USP protocol messages\n");
     printf("--cli (-s)        Sets the path of the Unix domain socket file used for CLI communications\n");
+#ifndef REMOVE_DEVICE_SECURITY
     printf("--authcert (-a)   Sets the path of the PEM formatted file containing a client certificate and private key to authenticate this device with\n");
     printf("--truststore (-t) Sets the path of the PEM formatted file containing trust store certificates\n");
+#endif
     printf("--resetfile (-r)  Sets the path of the text file containing factory reset parameters\n");
     printf("--interface (-i)  Sets the name of the networking interface to use for USP communication\n");
     printf("--meminfo (-m)    Collects and prints information useful to debugging memory leaks\n");

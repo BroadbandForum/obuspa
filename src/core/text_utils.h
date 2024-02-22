@@ -41,6 +41,7 @@
 #ifndef TEXT_UTILS_H
 #define TEXT_UTILS_H
 
+#include "vendor_defs.h"  // For REMOVE_DEVICE_SECURITY
 #include "str_vector.h"
 #include "nu_ipaddr.h"
 #include "data_model.h"  // for dm_hash_t
@@ -70,7 +71,6 @@ int TEXT_UTILS_StringToEnum(char *str, const enum_entry_t *enums, int num_enums)
 char *TEXT_UTILS_EnumToString(int value, const enum_entry_t *enums, int num_enums);
 int TEXT_UTILS_StringToDateTime(char *str, time_t *value);
 int TEXT_UTILS_StringToBinary(char *str, unsigned char *buf, int len, int *bytes_written);
-int TEXT_UTILS_Base64StringToBinary(char *str, unsigned char *buf, int len, int *bytes_written);
 int TEXT_UTILS_StringToIpAddr(char *str, nu_ipaddr_t *ip_addr);
 char *TEXT_UTILS_SplitPath(char *path, char *buf, int len);
 bool TEXT_UTILS_IsPathMatch(char *path, char *path_spec);
@@ -94,4 +94,7 @@ int TEXT_UTILS_CountConsecutiveDigits(char *p);
 char *TEXT_UTILS_StrDupWithTrailingDot(char *path);
 int TEXT_UTILS_KeyValueFromString(char *buf, char **key, char **value);
 
+#ifndef REMOVE_DEVICE_SECURITY
+int TEXT_UTILS_Base64StringToBinary(char *str, unsigned char *buf, int len, int *bytes_written);
+#endif
 #endif

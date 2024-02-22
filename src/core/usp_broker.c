@@ -126,7 +126,7 @@ typedef struct
     double_linked_list_t msg_map;   // vector mapping the message ID of a request passed thru to this USP service, back to the originating controller which sent the request
 } usp_service_t;
 
-static usp_service_t usp_services[MAX_USP_SERVICES] = {0};
+static usp_service_t usp_services[MAX_USP_SERVICES] = {{0}};
 
 
 //------------------------------------------------------------------------------

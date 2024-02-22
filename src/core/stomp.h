@@ -41,6 +41,8 @@
 #ifndef STOMP_H
 #define STOMP_H
 
+#ifndef DISABLE_STOMP
+
 #include <time.h>
 #include <openssl/bio.h>
 
@@ -100,5 +102,7 @@ void STOMP_GetDestinationFromServer(int instance, char *buf, int len);
 #define PURGE_QUEUED_MESSAGES true
 #define DONT_PURGE_QUEUED_MESSAGES false
 
-#endif
+#endif // DISABLE_STOMP
+
+#endif // STOMP_H
 

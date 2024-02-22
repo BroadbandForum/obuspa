@@ -197,7 +197,10 @@ int DATA_MODEL_Init(void)
     is_executing_within_dm_init = true;
     err = USP_ERR_OK;
     err |= DEVICE_LOCAL_AGENT_Init();
+#ifndef REMOVE_DEVICE_SECURITY
     err |= DEVICE_SECURITY_Init();
+#endif
+
 #ifndef REMOVE_DEVICE_TIME
     err |= DEVICE_TIME_Init();
 #endif
@@ -347,7 +350,9 @@ int DATA_MODEL_Start(void)
 
     // Load trust store and client certs into USP Agent's cache
     // NOTE: This call does not leave any dynamic allocations owned by SSL (which is necessary, since libwebsockets is going to re-initialise SSL)
+#ifndef REMOVE_DEVICE_SECURITY
     err |= DEVICE_SECURITY_Start();
+#endif
 
 #ifdef ENABLE_WEBSOCKETS
     // IMPORTANT: libwebsockets re-initialises libssl here, then loads the trust store and client cert from USP Agent's cache
@@ -436,7 +441,9 @@ void DATA_MODEL_Stop(void)
     DEVICE_BULKDATA_Stop();
 #endif
     DEVICE_CTRUST_Stop();
+#ifndef REMOVE_DEVICE_SECURITY
     DEVICE_SECURITY_Stop();
+#endif
     DEVICE_LOCAL_AGENT_Stop();
 
 #ifndef REMOVE_USP_BROKER

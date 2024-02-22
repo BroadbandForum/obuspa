@@ -303,6 +303,7 @@ void USP_LOG_HexBuffer(const char *title, const unsigned char *buf, int len)
     }
 }
 
+#ifndef REMOVE_DEVICE_SECURITY
 /*********************************************************************//**
 **
 ** USP_LOG_ErrorSSL
@@ -330,6 +331,7 @@ void USP_LOG_ErrorSSL(const char *func_name, const char *failure_string, int ret
     USP_LOG_Warning("%s: %s: SSL ret=%d, error=%d, errno=%d (%s), ssl err=%s",
               func_name, failure_string, ret, err, errno, str, ssl_str);
 }
+#endif
 
 /*********************************************************************//**
 **

@@ -135,6 +135,7 @@
 //#define REMOVE_DEVICE_FACTORY_RESET      // Removes Device.FactoryReset() from the core data model
 //#define REMOVE_DEVICE_SCHEDULE_TIMER     // Removes Device.ScheduleTimer() from the core data model
 //#define REMOVE_DEVICE_BOOT_EVENT         // Removes Device.Boot! from the core data model
+//#define REMOVE_DEVICE_SECURITY           // Removes Device.Security, Device.LocalAgent.Certificate and ControllerTrust Challenge/Response mechanism
 //#define REMOVE_SELF_TEST_DIAG_EXAMPLE    // Removes Self Test diagnostics example code
 
 //#define DONT_SORT_GET_INSTANCES          // Disables the sorting of data model paths returned in a GetInstancesResponse. Useful for slow devices supporting large data models.
@@ -239,8 +240,12 @@
 
 #define MAX_CTRUST_ROLES    8  // Maximum number of roles that can be present in Device.LocalAgent.ControllerTrust.Role.{i}
 
-
-
-
-
+//-----------------------------------------------------------------------------------------
+// Tests for incompatible build defines
+#ifdef REMOVE_DEVICE_SECURITY
+#if !defined(DISABLE_STOMP) || defined(ENABLE_COAP) || defined(ENABLE_MQTT) || defined(ENABLE_WEBSOCKETS) || !defined(REMOVE_DEVICE_BULKDATA)
+#error "If REMOVE_DEVICE_SECURITY is defined, then STOMP, CoAP, MQTT, WebSockets and Bulk Data Collection must be disabled"
 #endif
+#endif
+
+#endif // VENDOR_DEFS_H

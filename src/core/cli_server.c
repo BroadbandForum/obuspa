@@ -685,7 +685,9 @@ int ExecuteCli_Help(char *arg1, char *arg2, char *usage)
 int ExecuteCli_Version(char *arg1, char *arg2, char *usage)
 {
     SendCliResponse("Agent Version=%s\n", AGENT_SOFTWARE_VERSION);
+#ifndef REMOVE_DEVICE_SECURITY
     SendCliResponse("OpenSSL Version=%s\n", OPENSSL_VERSION_TEXT);
+#endif
     SendCliResponse("Sqlite Version=%s\n", SQLITE_VERSION);
 #ifndef REMOVE_DEVICE_BULKDATA
     SendCliResponse("Curl Version=%s\n", curl_version());

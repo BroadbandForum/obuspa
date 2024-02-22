@@ -419,6 +419,7 @@ int DM_ACCESS_ValidateBool(dm_req_t *req, char *value)
     return err;
 }
 
+#ifndef REMOVE_DEVICE_SECURITY
 /*********************************************************************//**
 **
 ** DM_ACCESS_ValidateBase64
@@ -447,6 +448,7 @@ int DM_ACCESS_ValidateBase64(dm_req_t *req, char *value)
 
     return USP_ERR_OK;
 }
+#endif
 
 /*********************************************************************//**
 **
