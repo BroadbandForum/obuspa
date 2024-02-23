@@ -1857,7 +1857,9 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             all_mtp_exited |= UDS_EXITED;
             #endif
 
+            #ifndef REMOVE_DEVICE_BULKDATA
             all_mtp_exited |= BDC_EXITED;
+            #endif
 
             if (cumulative_mtp_threads_exited == all_mtp_exited)
             {
