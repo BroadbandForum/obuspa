@@ -39,6 +39,12 @@
  *
  */
 
+#include "vendor_defs.h"   // For REMOVE_DEVICE_SECURITY
+
+#ifndef REMOVE_DEVICE_SECURITY
+#include <openssl/err.h>
+#endif
+
 #include <stdio.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -47,7 +53,6 @@
 #include <syslog.h>
 #include <unistd.h>
 #include <dlfcn.h>
-#include <openssl/err.h>
 
 #ifdef HAVE_EXECINFO_H
 #include <execinfo.h>

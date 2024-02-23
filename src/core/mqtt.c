@@ -40,6 +40,7 @@
  * Called from the ProtocolHandler to implement the MQTT protocol
  *
  */
+#ifdef ENABLE_MQTT
 #include "mqtt.h"
 #include "common_defs.h"
 #include "dllist.h"
@@ -59,8 +60,6 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
-
-#ifdef ENABLE_MQTT
 
 #include <mosquitto.h>
 

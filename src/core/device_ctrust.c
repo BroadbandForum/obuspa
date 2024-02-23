@@ -39,15 +39,19 @@
  *
  */
 
+#include "vendor_defs.h"  // for REMOVE_DEVICE_SECURITY
+
 #include <time.h>
 #include <string.h>
 
+#ifndef REMOVE_DEVICE_SECURITY
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <openssl/safestack.h>
+#endif
 
 #include "common_defs.h"
 #include "msg_handler.h"

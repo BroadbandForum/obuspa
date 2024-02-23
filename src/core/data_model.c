@@ -1239,7 +1239,7 @@ int DATA_MODEL_DeleteInstance(char *path, unsigned flags)
 ** \param   path - path of the object or parameter to get the permissions of
 ** \param   combined_role - role used to access this path. If set to INTERNAL_ROLE, then full permissions are always returned
 ** \param   perm - pointer to variable in which to return permission bitmask
-** \param   flags - bitmask of options controling execution (eg DONT_LOG_ERRORS)
+** \param   flags - bitmask of options controlling execution (eg DONT_LOG_ERRORS)
 **
 ** \return  USP_ERR_OK if successful
 **
