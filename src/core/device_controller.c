@@ -60,6 +60,7 @@
 #include "usp_record.h"
 #include "subs_retry.h"
 #include "usp_broker.h"
+#include "os_utils.h"
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_defs.h"
@@ -95,6 +96,14 @@ static const char device_cont_root[] = DEVICE_CONT_ROOT;
 //------------------------------------------------------------------------------
 // Time at which next periodic notification should fire
 static time_t first_periodic_notification_time = END_OF_TIME;
+
+//------------------------------------------------------------------------------------
+// Mutex used to protect access to can_all_mtp_start variable
+static pthread_mutex_t can_mtp_connect_mutex;
+
+//------------------------------------------------------------------------------
+// Variable used to determine whether MTP client connections for STOMP, CoAP, MQTT and Websockets are allowed to connect
+static volatile bool can_mtp_connect = false;
 
 //------------------------------------------------------------------------------
 // Structure representing entries in the Device.LocalAgent.Controller.{i}.MTP.{i} table
@@ -227,6 +236,13 @@ int ValidateMtpResourceAvailable(mtp_protocol_t protocol, int cont_inst, int mtp
 int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp, mtp_conn_t *dest);
 int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_conn_t *mtpc, time_t expiry_time);
 int CopyNotifyDestForEndpoint(char *endpoint_id, mtp_protocol_t protocol, Usp__Header__MsgType usp_msg_type, mtp_conn_t *dest);
+void StartAllMtpClients(void);
+void PollCanMtpConnect(int id);
+bool UpdateCanMtpConnect(void);
+void StartAllWebsocketClients(void);
+void StartAllCoAPClients(void);
+void AllowConnectOnAllMtpClients(void);
+void UpdateNextPeriodicTime(void);
 
 #ifndef DISABLE_STOMP
 int Notify_ControllerMtpStompReference(dm_req_t *req, char *value);
@@ -393,6 +409,13 @@ int DEVICE_CONTROLLER_Init(void)
     if (err != USP_ERR_OK)
     {
         return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if unable to create mutex protecting access to the 'can_all_mtp_connect' flag
+    err = OS_UTILS_InitMutex(&can_mtp_connect_mutex);
+    if (err != USP_ERR_OK)
+    {
+        return err;
     }
 
     // If the code gets here, then registration was successful
@@ -1522,6 +1545,321 @@ char *DEVICE_CONTROLLER_FindFirstControllerEndpoint(void)
     return endpoint_id;
 }
 #endif
+
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_CanMtpConnect
+**
+** Called from an MTP thread to determine whether the MTP can start connecting
+**
+** \param   None
+**
+** \return  true if the MTP can start. flase if the MTP should not start connecting
+**
+**************************************************************************/
+bool DEVICE_CONTROLLER_CanMtpConnect(void)
+{
+    bool allowed;       // Intermediate variable to contain saved copy of can_all_mtp_start, within the mutex protection
+
+    OS_UTILS_LockMutex(&can_mtp_connect_mutex);
+    allowed = can_mtp_connect;
+    OS_UTILS_UnlockMutex(&can_mtp_connect_mutex);
+
+    return allowed;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_StartAllMtpClients
+**
+** Starts all MTP clients (in a state of either being allowed to connect, or held off in a retrying state)
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_CONTROLLER_StartAllMtpClients(void)
+{
+    bool allowed;
+    time_t next_time;
+
+    // Determine whether the MTPs can be allowed to connect
+    // NOTE: They might not be allowed to connect because we're waiting for NTP time or some critical USP Service to register
+    allowed = UpdateCanMtpConnect();
+
+    // Start all MTP clients. They will either connect (if can_connect==true) or they will be held in a retrying state (if can_connect==false)
+    StartAllMtpClients();
+
+    // If allowed to connect, then we assume that NTP time has been obtained, so allow Periodic! timers to start
+    // and MTP servers to start
+    if (allowed)
+    {
+        UpdateNextPeriodicTime();
+        DEVICE_MTP_StartMtpServers();
+    }
+
+    // If not allowed to connect, then start a sync timer to periodically determine when they can connect
+    if (allowed == false)
+    {
+        #define CAN_MTP_CONNECT_POLL_ID 0
+        #define CAN_MTP_CONNECT_POLL_INTERVAL 10
+        next_time = time(NULL) + CAN_MTP_CONNECT_POLL_INTERVAL;
+        SYNC_TIMER_Add(PollCanMtpConnect, CAN_MTP_CONNECT_POLL_ID, next_time);
+    }
+}
+
+/*********************************************************************//**
+**
+** StartAllMtpClients
+**
+** Starts all STOMP, CoAP, MQTT and Websockets clients
+** NOTE: Ultimately the clients may go straight to a retrying state (instead of connecting) if 'can_mtp_connect' is false
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void StartAllMtpClients(void)
+{
+#ifndef DISABLE_STOMP
+    DEVICE_STOMP_StartAllConnections();
+#endif
+
+#ifdef ENABLE_COAP
+    StartAllCoAPClients();
+#endif
+
+#ifdef ENABLE_MQTT
+    DEVICE_MQTT_StartAllClients();
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+    StartAllWebsocketClients();
+#endif
+}
+
+#ifdef ENABLE_COAP
+/*********************************************************************//**
+**
+** StartAllCoAPClients
+**
+** Called to start all enabled CoAP clients in the Controller MTP table
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void StartAllCoAPClients(void)
+{
+    int i;
+    int j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Iterate over all controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        // Iterate over all MTP slots for this controller
+        cont = &controllers[i];
+        if ((cont->instance != INVALID) && (cont->enable))
+        {
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->enable) && (mtp->protocol == kMtpProtocol_CoAP))
+                {
+                    COAP_CLIENT_Start(cont->instance, mtp->instance, cont->endpoint_id);
+                    // NOTE: Intentionally ignoring error, as there's nothing we can do, and we'd like to continue starting any other CoAP clients
+                }
+            }
+        }
+    }
+}
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+/*********************************************************************//**
+**
+** StartAllWebsocketClients
+**
+** Called to start all enabled Websocket clients in the Controller MTP table
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void StartAllWebsocketClients(void)
+{
+    int i;
+    int j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+
+    // Iterate over all controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        // Iterate over all MTP slots for this controller
+        cont = &controllers[i];
+        if ((cont->instance != INVALID) && (cont->enable))
+        {
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->enable) && (mtp->protocol == kMtpProtocol_WebSockets))
+                {
+                    WSCLIENT_StartClient(cont->instance, mtp->instance, cont->endpoint_id, &mtp->websock);
+                    // NOTE: Intentionally ignoring error, as there's nothing we can do, and we'd like to continue starting any other CoAP clients
+                }
+            }
+        }
+    }
+}
+#endif
+
+/*********************************************************************//**
+**
+** PollCanMtpConnect
+**
+** Periodically called at startup to determine whether the MTP clients (STOMP, CoAP, MQTT, Websockets)
+** are allowed to start connecting to the USP Controllers. If so, then allow them to.
+**
+** \param   id - unused
+**
+** \return  None
+**
+**************************************************************************/
+void PollCanMtpConnect(int id)
+{
+    bool allowed;
+    time_t next_time;
+
+    allowed = UpdateCanMtpConnect();
+
+    // Exit if allowed to connect
+    if (allowed)
+    {
+        // Release all MTPs waiting to connect in a retrying state
+        AllowConnectOnAllMtpClients();
+
+        // Start all MTP servers (Websockets and CoAP)
+        DEVICE_MTP_StartMtpServers();
+
+        // Allow Periodic! events to be sent
+        UpdateNextPeriodicTime();
+
+        // Remove the sync timer
+        SYNC_TIMER_Remove(PollCanMtpConnect, CAN_MTP_CONNECT_POLL_ID);
+        return;
+    }
+
+    // If still not allowed to connect, schedule this function to be called again in the future
+    next_time = time(NULL) + CAN_MTP_CONNECT_POLL_INTERVAL;
+    SYNC_TIMER_Reload(PollCanMtpConnect, CAN_MTP_CONNECT_POLL_ID, next_time);
+}
+
+/*********************************************************************//**
+**
+** AllowConnectOnAllMtpClients
+**
+** Called to release the MTP clients from their holding state of retrying, so that they can then connect
+** NOTE: They may not have been allowed to connect because NTP time may not have been obtained, or because a critical USP Service had not been registered
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void AllowConnectOnAllMtpClients(void)
+{
+#ifndef DISABLE_STOMP
+    STOMP_AllowConnect();
+#endif
+
+#ifdef ENABLE_COAP
+    COAP_CLIENT_AllowConnect();
+#endif
+
+#ifdef ENABLE_MQTT
+    MQTT_AllowConnect();
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+    WSCLIENT_AllowConnect();
+#endif
+}
+
+/*********************************************************************//**
+**
+** UpdateCanMtpConnect
+**
+** Updates the 'can_mtp_connect' variable, which determines whether the MTPs are allowed to connect or whether they must be held in a retrying state
+**
+** \param   None
+**
+** \return  true if the MTPs are allowed to connect, false otherwise
+**
+**************************************************************************/
+bool UpdateCanMtpConnect(void)
+{
+    bool allowed;
+    can_mtp_connect_cb_t  can_mtp_connect_cb;
+
+    // Determine whether the vendor hook allows the MTPs to start
+    can_mtp_connect_cb = vendor_hook_callbacks.can_mtp_connect_cb;
+    if (can_mtp_connect_cb != NULL)
+    {
+        allowed = can_mtp_connect_cb();
+    }
+    else
+    {
+        // Default (if no vendor hook is registered) is to immediately start all MTP clients connecting
+        allowed = true;
+    }
+
+    // Save off whether connection is allowed
+    OS_UTILS_LockMutex(&can_mtp_connect_mutex);
+    can_mtp_connect = allowed;
+    OS_UTILS_UnlockMutex(&can_mtp_connect_mutex);
+
+    return allowed;
+}
+
+/*********************************************************************//**
+**
+** UpdateNextPeriodicTime
+**
+** Updates the periodic time for all controllers, then updates the sync timer for the next Periodic! event to be sent
+** This function is called after we believe that NTP time has been obtained
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void UpdateNextPeriodicTime(void)
+{
+    int i;
+    controller_t *cont;
+    time_t cur_time;
+
+    // Iterate over all controllers, recalculating the next time their Periodic! event should fire
+    cur_time = time(NULL);
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if ((cont->instance != INVALID) && (cont->enable))
+        {
+            cont->next_time_to_fire = CalcNextPeriodicTime(cur_time, cont->periodic_base, cont->periodic_interval);
+        }
+    }
+
+    // Update the time at which the next periodic notification should fire
+    UpdateFirstPeriodicNotificationTime();
+}
 
 /*********************************************************************//**
 **
@@ -3980,16 +4318,6 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     {
         return err;
     }
-
-    // Start a CoAP client to this controller (if required)
-    if ((mtp->protocol == kMtpProtocol_CoAP) && (mtp->enable) && (cont->enable))
-    {
-        err = COAP_CLIENT_Start(cont->instance, mtp_instance, cont->endpoint_id);
-        if (err != USP_ERR_OK)
-        {
-            goto exit;
-        }
-    }
 #endif
 
 #ifdef ENABLE_MQTT
@@ -4074,12 +4402,6 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     if (err != USP_ERR_OK)
     {
         return err;
-    }
-
-    // Start a WebSocket client to connect to this controller (if required)
-    if ((mtp->protocol == kMtpProtocol_WebSockets) && (mtp->enable) && (cont->enable))
-    {
-        WSCLIENT_StartClient(cont->instance, mtp_instance, cont->endpoint_id, &mtp->websock);
     }
 #endif
 
@@ -4769,6 +5091,15 @@ void UpdateFirstPeriodicNotificationTime(void)
     int i;
     controller_t *cont;
     time_t first = END_OF_TIME;
+    bool allowed;
+
+    // Exit, if not allowed to connect yet. The sync timer will be left unchanged (scheduled to fire at END_OF_TIME)
+    // This is done to prevent Periodic! being queued when NTP time is obtained (the huge jump forward in time causes the sync timer to fire immediately)
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        return;
+    }
 
     // Iterate over all controllers
     for (i=0; i<MAX_CONTROLLERS; i++)

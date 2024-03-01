@@ -66,6 +66,7 @@ void WSCLIENT_Destroy(void);
 int WSCLIENT_Start(void);
 void WSCLIENT_StartClient(int cont_instance, int mtp_instance, char *cont_endpoint_id, wsclient_config_t *config);
 void WSCLIENT_StopClient(int cont_instance, int mtp_instance);
+void WSCLIENT_AllowConnect(void);
 void WSCLIENT_ActivateScheduledActions(void);
 void WSCLIENT_QueueBinaryMessage(mtp_send_item_t *msi, int cont_instance, int mtp_instance, time_t expiry_time);
 unsigned WSCLIENT_GetRetryCount(int cont_instance, int mtp_instance);

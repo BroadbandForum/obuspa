@@ -116,7 +116,7 @@ typedef struct
     mqtt_subscription_t response_subscription; // Contains subscription for agent's topic
                                                // NOTE: The topic in here may be NULL if not set by either Device.LocalAgent.MTP.{i}.ResponseTopicConfigured or present in the CONNACK
     int retry_count;
-    time_t retry_time;
+    time_t retry_time;                         // Absolute time at which to start reconnecting (when in a retrying state)
     time_t last_status_change;
     mqtt_failure_t failure_code;
 
@@ -729,7 +729,7 @@ mtp_status_t MQTT_GetMtpStatus(int instance)
             break;
 
         case kMqttState_ErrorRetrying:
-            status = kMtpStatus_Error;
+            status = kMtpStatus_Down;
             break;
 
         case kMqttState_Idle:
@@ -1261,12 +1261,6 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
                             USP_LOG_Debug("%s: Retrying connection", __FUNCTION__);
                             EnableMqttClient(client);
                         }
-                        else
-                        {
-                            time_t diff = client->retry_time - cur_time;
-                            USP_LOG_Debug("%s: Waiting for time to retry: remaining time: %lds retry_time: %ld time: %ld",
-                                    __FUNCTION__, (long int)diff, (long int)client->retry_time, (long int)cur_time);
-                        }
                     }
                     break;
 
@@ -1496,6 +1490,51 @@ exit:
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);
     return USP_ERR_OK;
 }
+
+/*********************************************************************//**
+**
+** MQTT_AllowConnect
+**
+** Called to start all client connections which were not allowed to connect before
+** and were being held in an indefinite retrying state
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void MQTT_AllowConnect(void)
+{
+    int i;
+    mqtt_client_t *client;
+
+    OS_UTILS_LockMutex(&mqtt_access_mutex);
+
+    // Exit if MTP thread has exited
+    if (is_mqtt_mtp_thread_exited)
+    {
+        OS_UTILS_UnlockMutex(&mqtt_access_mutex);
+        return;
+    }
+
+    // Iterate over all MQTT connections, releasing all that were not allowed to connect before from the retrying state
+    // by timing out the retrying state. This will then cause them to attempt to connect
+    for (i=0; i<MAX_MQTT_CLIENTS; i++)
+    {
+        client = &mqtt_clients[i];
+        if ((client->conn_params.instance != INVALID) && (client->state == kMqttState_ErrorRetrying))
+        {
+            client->retry_time = time(NULL);
+        }
+    }
+
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
+
+    // Cause the MTP thread to wakeup from select() and start connecting
+    // We do this outside of the mutex lock to avoid an unnecessary task switch
+    MTP_EXEC_MqttWakeup();
+}
+
 
 /*********************************************************************//**
 **
@@ -1835,6 +1874,7 @@ void InitSubscription(mqtt_subscription_t *sub)
 int EnableMqttClient(mqtt_client_t* client)
 {
     mqtt_subscription_t *resp_sub;
+    bool allowed;
 
     // Clear state variables that get reset each connection attempt
     // Note: Do not clear state variables that need to persist through retry
@@ -1854,6 +1894,15 @@ int EnableMqttClient(mqtt_client_t* client)
     resp_sub->qos = kMqttQos_Default;
     resp_sub->enabled = true;
     resp_sub->topic = USP_STRDUP(client->conn_params.response_topic);
+
+    // Exit, putting the client into an immediate retrying state, if it's not allowed to start connecting yet
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        client->state = kMqttState_ErrorRetrying;
+        client->retry_time = END_OF_TIME;
+        return USP_ERR_OK;
+    }
 
     int err = EnableMosquitto(client);
     if (err != USP_ERR_OK)

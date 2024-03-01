@@ -229,6 +229,8 @@ int DEVICE_CONTROLLER_GetSubsRetryParams(char *endpoint_id, unsigned *min_wait_i
 void DEVICE_CONTROLLER_QueueMqttConnectRecord(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic);
 void DEVICE_CONTROLLER_QueueStompConnectRecord(int stomp_instance, char *agent_queue);
 void DEVICE_CONTROLLER_NotifyStompConnDeleted(int stomp_instance);
+bool DEVICE_CONTROLLER_CanMtpConnect(void);
+void DEVICE_CONTROLLER_StartAllMtpClients(void);
 int DEVICE_MTP_Init(void);
 int DEVICE_MTP_Start(void);
 void DEVICE_MTP_Stop(void);
@@ -322,6 +324,7 @@ mqtt_qos_t DEVICE_MTP_GetAgentMqttPublishQos(int instance);
 int DEVICE_MQTT_CountEnabledConnections(void);
 int DEVICE_MTP_GetMqttReference(char *path, int *mqtt_connection_instance);
 int DEVICE_MTP_GetUdsReference(char *path, int *uds_connection_instance);
+void DEVICE_MTP_StartMtpServers(void);
 void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance);
 void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance);
 int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value);

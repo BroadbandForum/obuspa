@@ -70,7 +70,7 @@
 #endif
 
 //------------------------------------------------------------------------------
-// Uncomment the following define to gain turn on extra debug which helps with debugging issues related to object
+// Uncomment the following define to turn on extra debug which helps with debugging issues related to object
 // creation/deletion notifications not being sent
 //#define DEBUG_OBJECT_NOTIFICATIONS
 

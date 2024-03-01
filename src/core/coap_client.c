@@ -379,6 +379,49 @@ void COAP_CLIENT_Stop(int cont_instance, int mtp_instance)
 
 /*********************************************************************//**
 **
+** COAP_CLIENT_AllowConnect
+**
+** Called to start all client connections which were not allowed to connect before
+** and were being held in an indefinite retrying state
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void COAP_CLIENT_AllowConnect(void)
+{
+    int i;
+    coap_client_t *cc;
+
+    COAP_LockMutex();
+
+    // Exit if MTP thread has exited
+    if (is_coap_mtp_thread_exited)
+    {
+        COAP_UnlockMutex();
+        return;
+    }
+
+    // Iterate over all CoAP client connections, releasing all that were not allowed to connect before from the retrying state
+    // by timing out the retrying state. This will then cause them to attempt to connect
+    for (i=0; i<MAX_COAP_CLIENTS; i++)
+    {
+        cc = &coap_clients[i];
+        if ((cc->cont_instance != INVALID) && (cc->reconnect_time != INVALID_TIME))
+        {
+            cc->reconnect_time = time(NULL);
+        }
+    }
+
+    COAP_UnlockMutex();
+
+    // Cause the MTP thread to wakeup from select() and start connecting
+    // We do this outside of the mutex lock to avoid an unnecessary task switch
+    MTP_EXEC_CoapWakeup();
+}
+/*********************************************************************//**
+**
 ** COAP_CLIENT_UpdateAllSockSet
 **
 ** Updates the set of all COAP socket fds to read/write from
@@ -920,6 +963,7 @@ void StartSendingCoapUspRecord(coap_client_t *cc, unsigned flags)
     coap_send_item_t *csi;
     nu_ipaddr_t csi_peer_addr;
     bool prefer_ipv6;
+    bool allowed;
 
     // Drop the current queued USP Record (if required)
     if (flags & SEND_NEXT)
@@ -955,6 +999,15 @@ void StartSendingCoapUspRecord(coap_client_t *cc, unsigned flags)
     if ((flags & RETRY_CURRENT) == 0)
     {
         MSG_HANDLER_LogMessageToSend(&csi->item, kMtpProtocol_CoAP, csi->host, NULL);
+    }
+
+    // Exit, putting the client into an immediate retrying state, if it's not allowed to start connecting yet
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        #define CAN_MTP_CONNECT_RETRY_TIME  7*24*60*60   // One week in seconds
+        cc->reconnect_time = time(NULL) + CAN_MTP_CONNECT_RETRY_TIME;
+        return;
     }
 
     // Attempt to interpret the host as an IP literal address (ie no DNS lookup required)

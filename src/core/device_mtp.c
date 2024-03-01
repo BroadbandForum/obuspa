@@ -557,6 +557,177 @@ void DEVICE_MTP_NotifyStompConnDeleted(int stomp_instance)
 }
 #endif
 
+#ifdef ENABLE_MQTT
+/******************************************************************//**
+**
+** DEVICE_MTP_GetAgentMqttResponseTopic
+**
+** Gets the name of the MQTT queue to use for this agent on a particular MQTT client connection
+**
+** \param   instance - instance number of MQTT Clients Connection in the Device.MQTT.Client.{i} table
+**
+** \return  pointer to queue name, or NULL if unable to resolve the MQTT connection
+**
+**************************************************************************/
+char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance)
+{
+    int i;
+    agent_mtp_t *mtp;
+
+    // Iterate over all agent MTPs, finding the first one that matches the specified MQTT client
+    for (i=0; i<MAX_AGENT_MTPS; i++)
+    {
+        mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->enable == true) &&
+            (mtp->mqtt_connection_instance == instance) && (mtp->protocol == kMtpProtocol_MQTT) &&
+            (mtp->mqtt_agent_topic[0] != '\0'))
+        {
+            return mtp->mqtt_agent_topic;
+        }
+    }
+
+    // If the code gets here, then no match has been found
+    return NULL;
+}
+
+/******************************************************************//**
+**
+** DEVICE_MTP_GetAgentMqttPublishQos
+**
+** Gets the QoS for the MQTT PUBLISH message for this agent on a particular agent's MTP
+**
+** \param   instance - instance number of agent's MTP in the Device.LocalAgent.MTP.{i} table
+**
+** \return  configured QoS value, or kMqttQos_Default if unable to resolve the MTP
+**
+**************************************************************************/
+mqtt_qos_t DEVICE_MTP_GetAgentMqttPublishQos(int instance)
+{
+    int i;
+
+    // Iterate over all agent MTPs, finding the first one that matches the specified MQTT client
+    for (i = 0; i < MAX_AGENT_MTPS; i++)
+    {
+        agent_mtp_t *mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->enable == true) &&
+            (mtp->mqtt_connection_instance == instance) && (mtp->protocol == kMtpProtocol_MQTT))
+        {
+            return mtp->mqtt_publish_qos;
+        }
+    }
+
+    // If the code gets here, then no match has been found
+    return kMqttQos_Default;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_MTP_ValidateMqttReference
+**
+** Validates Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Reference
+** and       Device.LocalAgent.MTP.{i}.MQTT.Reference
+** by checking that it refers to a valid reference in the Device.MQTT.Client table
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value)
+{
+    int err;
+    int mqtt_connection_instance;
+
+    // Exit if the MQTT Reference refers to nothing. This can occur if a MQTT client being referred to is deleted.
+    if (*value == '\0')
+    {
+        return USP_ERR_OK;
+    }
+
+    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", &mqtt_connection_instance);
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_MTP_GetMqttReference
+**
+** Gets the instance number in the MQTT client table by dereferencing the specified path
+** NOTE: If the path is invalid, or the instance does not exist, then INVALID is
+**       returned for the instance number, along with an error
+**
+** \param   path - path of parameter which contains the reference
+** \param   mqtt_connection_instance - pointer to variable in which to return the instance number in the MQTT client table
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DEVICE_MTP_GetMqttReference(char *path, int *mqtt_connection_instance)
+{
+    int err;
+    char value[MAX_DM_PATH];
+
+    // Set default return value
+    *mqtt_connection_instance = INVALID;
+
+    // Exit if unable to get the reference to the entry in the MQTT client table
+    // NOTE: This will return the default of an empty string if not present in the DB
+    err = DATA_MODEL_GetParameterValue(path, value, sizeof(value), 0);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if the reference has not been setup yet
+    if (*value == '\0')
+    {
+        *mqtt_connection_instance = INVALID;
+        return USP_ERR_OK;
+    }
+
+    // Exit if unable to determine MQTT client table reference
+    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", mqtt_connection_instance);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_MTP_NotifyMqttConnDeleted
+**
+** Called when a MQTT client is deleted
+** This code unpicks all references to the MQTT client existing in the LocalAgent MTP table
+**
+** \param   mqtt_instance - instance in Device.MQTT.Client which has been deleted
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance)
+{
+    int i;
+    agent_mtp_t *mtp;
+    char path[MAX_DM_PATH];
+
+    // Iterate over all agent MTPs, clearing out all references to the deleted MQTT client
+    for (i=0; i<MAX_AGENT_MTPS; i++)
+    {
+        mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
+        {
+            USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.MTP.%d.MQTT.Reference", mtp->instance);
+            DATA_MODEL_SetParameterValue(path, "", 0);
+        }
+    }
+}
+#endif
+
 #ifdef ENABLE_UDS
 /*********************************************************************//**
 **
@@ -605,6 +776,50 @@ int DEVICE_MTP_GetUdsReference(char *path, int *uds_connection_instance)
     return USP_ERR_OK;
 }
 #endif
+
+/*********************************************************************//**
+**
+** DEVICE_MTP_StartMtpServers
+**
+** This function is called to start the Websocket and CoAP servers once they are allowed to accept connections
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_MTP_StartMtpServers(void)
+{
+    int i;
+    agent_mtp_t *mtp;
+
+    // Iterate over all agent MTPs, starting all enabled MTP servers
+    for (i=0; i<MAX_AGENT_MTPS; i++)
+    {
+        mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->enable))
+        {
+            switch(mtp->protocol)
+            {
+#ifdef ENABLE_WEBSOCKETS
+                case kMtpProtocol_WebSockets:
+                    WSSERVER_EnableServer(&mtp->websock);
+                    WSSERVER_ActivateScheduledActions();
+                    break;
+#endif
+
+#ifdef ENABLE_COAP
+                case kMtpProtocol_CoAP:
+                    ControlCoapServer(mtp, COAP_SERVER_Start);
+                    break;
+#endif
+                default:
+                    // STOMP and MQTT do not have servers in the USP Agent, and the UDS servers are not intended to be started by this function (since they are always allowed to accept connections)
+                    break;
+            }
+        }
+    }
+}
 
 /*********************************************************************//**
 **
@@ -951,28 +1166,19 @@ int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value)
 
 #ifdef ENABLE_WEBSOCKETS
         case kMtpProtocol_WebSockets:
-{
             // Enable or disable the Websocket server based on the new value
-            int err;
             if (val_bool)
             {
                 // Websocket server has been enabled
                 mtp->enable = val_bool;
-                err = WSSERVER_EnableServer(&mtp->websock);
+                WSSERVER_EnableServer(&mtp->websock);
             }
             else
             {
                 // Websocket server has been disabled
-                err = WSSERVER_DisableServer();
+                WSSERVER_DisableServer();
                 mtp->enable = val_bool;
             }
-
-            // Exit if an error occurred when starting or stopping the CoAPserver
-            if (err != USP_ERR_OK)
-            {
-                return err;
-            }
-}
             break;
 #endif
         default:
@@ -1041,11 +1247,7 @@ int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value)
     // If the existing protocol is Websockets, stop its server
     if (mtp->protocol == kMtpProtocol_WebSockets)
     {
-        int err = WSSERVER_DisableServer();
-        if (err != USP_ERR_OK)
-        {
-            return err;
-        }
+        WSSERVER_DisableServer();
     }
 #endif
 
@@ -1084,11 +1286,7 @@ int NotifyChange_AgentMtpProtocol(dm_req_t *req, char *value)
     // If the new protocol is Websockets, start its server
     if (new_protocol == kMtpProtocol_WebSockets)
     {
-        int err = WSSERVER_EnableServer(&mtp->websock);
-        if (err != USP_ERR_OK)
-        {
-            return err;
-        }
+        WSSERVER_EnableServer(&mtp->websock);
     }
 #endif
 
@@ -1246,6 +1444,7 @@ int NotifyChange_AgentMtpCoAPEncryption(dm_req_t *req, char *value)
 ** Starts or stops the specified CoAP server on all specified network interfaces
 **
 ** \param   mtp - pointer to structure containing the CoAP server config settings
+** \param   control_coapserver - Function to call - either COAP_SERVER_Start or COAP_SERVER_Stop
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -1982,11 +2181,7 @@ int ProcessAgentMtpAdded(int instance)
     // Start the Websockets server (if required)
     if ((mtp->enable) && (mtp->protocol == kMtpProtocol_WebSockets))
     {
-        err = WSSERVER_EnableServer(&mtp->websock);
-        if (err != USP_ERR_OK)
-        {
-            goto exit;
-        }
+        WSSERVER_EnableServer(&mtp->websock);
     }
 
     WSSERVER_ActivateScheduledActions();
@@ -2158,175 +2353,6 @@ int Get_MqttResponseTopicDiscovered(dm_req_t *req, char *buf, int len)
     return MQTT_GetAgentResponseTopicDiscovered(mtp->mqtt_connection_instance, buf, len);
 }
 
-/******************************************************************//**
-**
-** DEVICE_MTP_GetAgentMqttResponseTopic
-**
-** Gets the name of the MQTT queue to use for this agent on a particular MQTT client connection
-**
-** \param   instance - instance number of MQTT Clients Connection in the Device.MQTT.Client.{i} table
-**
-** \return  pointer to queue name, or NULL if unable to resolve the MQTT connection
-**
-**************************************************************************/
-char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance)
-{
-    int i;
-    agent_mtp_t *mtp;
-
-    // Iterate over all agent MTPs, finding the first one that matches the specified MQTT client
-    for (i=0; i<MAX_AGENT_MTPS; i++)
-    {
-        mtp = &agent_mtps[i];
-        if ((mtp->instance != INVALID) && (mtp->enable == true) &&
-            (mtp->mqtt_connection_instance == instance) && (mtp->protocol == kMtpProtocol_MQTT) &&
-            (mtp->mqtt_agent_topic[0] != '\0'))
-        {
-            return mtp->mqtt_agent_topic;
-        }
-    }
-
-    // If the code gets here, then no match has been found
-    return NULL;
-}
-
-/******************************************************************//**
-**
-** DEVICE_MTP_GetAgentMqttPublishQos
-**
-** Gets the QoS for the MQTT PUBLISH message for this agent on a particular agent's MTP
-**
-** \param   instance - instance number of agent's MTP in the Device.LocalAgent.MTP.{i} table
-**
-** \return  configured QoS value, or kMqttQos_Default if unable to resolve the MTP
-**
-**************************************************************************/
-mqtt_qos_t DEVICE_MTP_GetAgentMqttPublishQos(int instance)
-{
-    int i;
-
-    // Iterate over all agent MTPs, finding the first one that matches the specified MQTT client
-    for (i = 0; i < MAX_AGENT_MTPS; i++)
-    {
-        agent_mtp_t *mtp = &agent_mtps[i];
-        if ((mtp->instance != INVALID) && (mtp->enable == true) &&
-            (mtp->mqtt_connection_instance == instance) && (mtp->protocol == kMtpProtocol_MQTT))
-        {
-            return mtp->mqtt_publish_qos;
-        }
-    }
-
-    // If the code gets here, then no match has been found
-    return kMqttQos_Default;
-}
-
-/*********************************************************************//**
-**
-** DEVICE_MTP_ValidateMqttReference
-**
-** Validates Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Reference
-** and       Device.LocalAgent.MTP.{i}.MQTT.Reference
-** by checking that it refers to a valid reference in the Device.MQTT.Client table
-**
-** \param   req - pointer to structure identifying the parameter
-** \param   value - value that the controller would like to set the parameter to
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value)
-{
-    int err;
-    int mqtt_connection_instance;
-
-    // Exit if the MQTT Reference refers to nothing. This can occur if a MQTT client being referred to is deleted.
-    if (*value == '\0')
-    {
-        return USP_ERR_OK;
-    }
-
-    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", &mqtt_connection_instance);
-
-    return err;
-}
-
-/*********************************************************************//**
-**
-** DEVICE_MTP_GetMqttReference
-**
-** Gets the instance number in the MQTT client table by dereferencing the specified path
-** NOTE: If the path is invalid, or the instance does not exist, then INVALID is
-**       returned for the instance number, along with an error
-**
-** \param   path - path of parameter which contains the reference
-** \param   mqtt_connection_instance - pointer to variable in which to return the instance number in the MQTT client table
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int DEVICE_MTP_GetMqttReference(char *path, int *mqtt_connection_instance)
-{
-    int err;
-    char value[MAX_DM_PATH];
-
-    // Set default return value
-    *mqtt_connection_instance = INVALID;
-
-    // Exit if unable to get the reference to the entry in the MQTT client table
-    // NOTE: This will return the default of an empty string if not present in the DB
-    err = DATA_MODEL_GetParameterValue(path, value, sizeof(value), 0);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    // Exit if the reference has not been setup yet
-    if (*value == '\0')
-    {
-        *mqtt_connection_instance = INVALID;
-        return USP_ERR_OK;
-    }
-
-    // Exit if unable to determine MQTT client table reference
-    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", mqtt_connection_instance);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
-** DEVICE_MTP_NotifyMqttConnDeleted
-**
-** Called when a MQTT client is deleted
-** This code unpicks all references to the MQTT client existing in the LocalAgent MTP table
-**
-** \param   mqtt_instance - instance in Device.MQTT.Client which has been deleted
-**
-** \return  None
-**
-**************************************************************************/
-void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance)
-{
-    int i;
-    agent_mtp_t *mtp;
-    char path[MAX_DM_PATH];
-
-    // Iterate over all agent MTPs, clearing out all references to the deleted MQTT client
-    for (i=0; i<MAX_AGENT_MTPS; i++)
-    {
-        mtp = &agent_mtps[i];
-        if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
-        {
-            USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.MTP.%d.MQTT.Reference", mtp->instance);
-            DATA_MODEL_SetParameterValue(path, "", 0);
-        }
-    }
-}
-
 /*********************************************************************//**
 **
 ** NotifyChange_AgentMtpMqttReference
@@ -2446,7 +2472,8 @@ int Validate_AgentMtpMQTTPublishQoS(dm_req_t *req, char *value)
 }
 
 /*********************************************************************//**
-**** NotifyChange_AgentMtpMQTTPublishQoS
+**
+** NotifyChange_AgentMtpMQTTPublishQoS
 **
 ** Function called when Device.LocalAgent.MTP.{i}.MQTT.PublishQoS is modified
 **

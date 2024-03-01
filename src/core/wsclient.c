@@ -183,6 +183,7 @@ typedef enum
     kWsclientMsgType_StartClient,
     kWsclientMsgType_StopClient,
     kWsclientMsgType_ActivateScheduledActions,
+    kWsclientMsgType_AllowConnect,
     kWsclientMsgType_QueueUspRecord
 } wsclient_msg_type_t;
 
@@ -231,6 +232,7 @@ void ServiceWsclientMessageQueue(void);
 void HandleWsclient_StartClient(start_client_msg_t *scm);
 void HandleWsclient_ConnParamsChanged(wsclient_t *wc, start_client_msg_t *scm);
 void HandleWsclient_StopClient(stop_client_msg_t *tcm);
+void HandleWsclient_AllowConnect(void);
 void AttemptWsclientConnect(wsclient_t *wc);
 void HandleWsclient_QueueUspRecord(queue_client_usp_record_msg_t *qur);
 void ServiceWsclientSendQueue(void);
@@ -523,6 +525,45 @@ void WSCLIENT_StopClient(int cont_instance, int mtp_instance)
 
 /*********************************************************************//**
 **
+** WSCLIENT_AllowConnect
+**
+** Called to start all client connections which were not allowed to connect before
+** and were being held in an indefinite retrying state
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void WSCLIENT_AllowConnect(void)
+{
+    wsclient_msg_t *msg;
+
+    // Exit if MTP thread has exited
+    if (is_wsclient_mtp_thread_exited)
+    {
+        return;
+    }
+
+    // Setup the message to post to the websock thread
+    msg = USP_MALLOC(sizeof(wsclient_msg_t));
+    memset(msg, 0, sizeof(wsclient_msg_t));
+    msg->msg_type = kWsclientMsgType_AllowConnect;
+
+    // Add the message to the end of the message queue
+    OS_UTILS_LockMutex(&wsc_access_mutex);
+    DLLIST_LinkToTail(&wsclient_msg_queue, msg);
+
+    // Cause the libwebsocket poll() to exit and then read this message
+    if (wsc_ctx != NULL)
+    {
+        lws_cancel_service(wsc_ctx);
+    }
+    OS_UTILS_UnlockMutex(&wsc_access_mutex);
+}
+
+/*********************************************************************//**
+**
 ** WSCLIENT_ActivateScheduledActions
 **
 ** Activates all scheduled actions. If a reconnect or close is scheduled, all USP messages
@@ -715,7 +756,7 @@ void *WSCLIENT_Main(void *args)
         ServiceWsclientMessageQueue();
         ServiceWsclientSendQueue();
 
-        // Exit this thread, if an exit is scheduled and all responses have been sent
+        // Exit this thread, if an exit is scheduled and all responses have been sent or all connections are currently disconned ted anyway
         if (mtp_exit_scheduled == kScheduledAction_Activated)
         {
             if (AreAllWsclientResponsesSent())
@@ -787,6 +828,10 @@ void ServiceWsclientMessageQueue(void)
         case kWsclientMsgType_StopClient:
             tcm = &msg->inner.stop_client_msg;
             HandleWsclient_StopClient(tcm);
+            break;
+
+        case kWsclientMsgType_AllowConnect:
+            HandleWsclient_AllowConnect();
             break;
 
         case kWsclientMsgType_ActivateScheduledActions:
@@ -927,6 +972,35 @@ void HandleWsclient_StopClient(stop_client_msg_t *tcm)
         default:
             TERMINATE_BAD_CASE(wc->state);
             break;
+    }
+}
+
+/*********************************************************************//**
+**
+** HandleWsclient_AllowConnect
+**
+** Processes a kWsclientMsgType_AllowConnect message, by starting all client connections which were not
+** allowed to connect before and were being held in an indefinite retrying state
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void HandleWsclient_AllowConnect(void)
+{
+    int i;
+    wsclient_t *wc;
+
+    // Iterate over all Websocket clients, attempting to connect all that were not allowed to connect before
+    for (i=0; i<NUM_ELEM(wsclients); i++)
+    {
+        wc = &wsclients[i];
+        if (wc->state == kWebsockState_Retrying)
+        {
+            lws_sul_cancel(&wc->retry_timer);
+            AttemptWsclientConnect(wc);
+        }
     }
 }
 
@@ -1126,6 +1200,7 @@ void AttemptWsclientConnect(wsclient_t *wc)
     char *interface = "any";
     char wan_addr[NU_IPADDRSTRLEN];     // scope of wan_addr[] needs to exist until call to lws_client_connect_via_info()
     struct lws *handle;
+    bool allowed;
 
     // Check that structure is not part of a linked list owned by libwebsockets anymore
     AssertRetryCallbackNotInUse(&wc->retry_timer);
@@ -1143,6 +1218,18 @@ void AttemptWsclientConnect(wsclient_t *wc)
     info.ssl_connection = (wc->enable_encryption) ? LCCSCF_USE_SSL : 0;
     info.protocol = WEBSOCKET_PROTOCOL_STR;
     info.opaque_user_data = wc;
+
+    // Exit, putting the client into an immediate retrying state, if it's not allowed to start connecting yet
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        wc->state = kWebsockState_Retrying;
+        AssertRetryCallbackNotInUse(&wc->retry_timer);  // Check that structure is not part of a linked list owned by libwebsockets anymore
+
+        #define CAN_MTP_CONNECT_RETRY_TIME  7*24*60*60   // One week in seconds
+        lws_sul_schedule(wsc_ctx, 0, &wc->retry_timer, HandleWscEvent_RetryTimer, CAN_MTP_CONNECT_RETRY_TIME*LWS_US_PER_SEC);
+        return;
+    }
 
 #ifdef CONNECT_ONLY_OVER_WAN_INTERFACE
 {
@@ -2346,7 +2433,7 @@ void RemoveExpiredWsclientMessages(wsclient_t *wc)
 **
 ** AreAllWsclientResponsesSent
 **
-** Determines whether all webcocket USP Record queues are empty
+** Determines whether all webcocket USP Record queues are empty, or the client is already disconnected
 ** This function determines whether the websocket client thread can exit due to a scheduled exit (caused by reboot, factory reset or '-c stop')
 **
 ** \param   None
@@ -2359,11 +2446,13 @@ bool AreAllWsclientResponsesSent(void)
     int i;
     wsclient_t *wc;
 
-    // Iterate over all websock clients, exiting if any of them still have USP Records to send
+    // Iterate over all websock clients, exiting if any of them are connected and still have USP Records to send
+    // NOTE: If the websock client is not connected, then we do not wait for it to connect and send all it's queued USP receords,
+    // as we don't know when/if this will happen and we don't want to hold up the exit unnecessarily
     for (i=0; i<NUM_ELEM(wsclients); i++)
     {
         wc = &wsclients[i];
-        if ((wc->state != kWebsockState_Idle) && (wc->usp_record_send_queue.head != NULL))
+        if ((wc->state == kWebsockState_Running) && (wc->usp_record_send_queue.head != NULL))
         {
             return false;
         }
@@ -2411,6 +2500,7 @@ void PurgeWsclientMessageQueue(void)
 
             default:
             case kWsclientMsgType_StopClient:
+            case kWsclientMsgType_AllowConnect:
             case kWsclientMsgType_ActivateScheduledActions:
                 // Nothing to free in these messages
                 break;

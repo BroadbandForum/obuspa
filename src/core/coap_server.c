@@ -305,6 +305,14 @@ int COAP_SERVER_Start(int instance, char *interface, coap_config_t *config)
     coap_server_t *cs;
     coap_server_session_t *css;
     int err = USP_ERR_OK;
+    bool allowed;
+
+    // Exit if the server is not allowed to be enabled/disabled yet
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        return USP_ERR_OK;
+    }
 
     COAP_LockMutex();
 
@@ -381,6 +389,14 @@ int COAP_SERVER_Stop(int instance, char *interface, coap_config_t *unused)
     int i;
     coap_server_t *cs;
     coap_server_session_t *css;
+    bool allowed;
+
+    // Exit if the server is not allowed to be enabled/disabled yet
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        return USP_ERR_OK;
+    }
 
     USP_LOG_Info("%s: Stopping CoAP server [%d]", __FUNCTION__, instance);
 

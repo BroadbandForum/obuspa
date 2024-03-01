@@ -157,5 +157,6 @@ void MQTT_DestroyConnParams(mqtt_conn_params_t* params);
 void MQTT_SubscriptionReplace(mqtt_subscription_t *dest, mqtt_subscription_t *src);
 void MQTT_SubscriptionDestroy(mqtt_subscription_t *sub);
 int MQTT_GetAgentResponseTopicDiscovered(int instance, char *buf, int len);
+void MQTT_AllowConnect(void);
 
 #endif

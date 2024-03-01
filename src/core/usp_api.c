@@ -250,6 +250,47 @@ exit:
     return err;
 }
 
+
+/*********************************************************************//**
+**
+** USP_DM_IsRegistered
+**
+** Determines whether the specified data model schema path is registered in the supported data model
+** The path should use either the '{i}' or '*' notation instead of instance numbers. Any instance numbers in the path are treated as '{i}'
+** IMPORTANT:  This function checks for presence in the supported data model, not the instantiated data model.
+**
+** \param   path - supported data model path of the data model element
+**
+** \return  true if the specified data model element exists in the supported data model, false otherwise
+**
+**************************************************************************/
+bool USP_DM_IsRegistered(char *path)
+{
+    dm_node_t *node;
+
+    // Exit if this function has invalid arguments
+    if (path == NULL)
+    {
+        USP_ERR_SetMessage("%s: Invalid argument (path is NULL)", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if this function is not being called from the data model thread
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, PRINT_WARNING)==false)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exiit if the path does not exist in the data model
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+    if (node == NULL)
+    {
+        return false;
+    }
+
+    return true;
+}
+
 /*********************************************************************//**
 **
 ** USP_DM_InformDataModelEvent

@@ -487,26 +487,8 @@ int MAIN_Start(char *db_file, bool enable_mem_info)
         return err;
     }
 
-#ifndef DISABLE_STOMP
-    // Start the STOMP connections. This must be done here, before other parts of the data model that require stomp connections
-    // to queue messages (eg object creation/deletion notifications)
-    err = DEVICE_STOMP_StartAllConnections();
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-#endif
-
-#ifdef ENABLE_MQTT
-    // Start the MQTT connections. This must be done here, before other parts of the data model that require MQTT clients
-    // to queue messages (eg object creation/deletion notifications)
-    err = DEVICE_MQTT_StartAllClients();
-    if (err != USP_ERR_OK)
-    {
-
-        return err;
-    }
-#endif
+    // Start all MTP connections
+    DEVICE_CONTROLLER_StartAllMtpClients();
 
     return USP_ERR_OK;
 }

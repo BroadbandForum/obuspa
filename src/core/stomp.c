@@ -692,6 +692,50 @@ exit:
 
 /*********************************************************************//**
 **
+** STOMP_AllowConnect
+**
+** Called to start all client connections which were not allowed to connect before
+** and were being held in an indefinite retrying state
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void STOMP_AllowConnect(void)
+{
+    int i;
+    stomp_connection_t *sc;
+
+    OS_UTILS_LockMutex(&stomp_access_mutex);
+
+    // Exit if MTP thread has exited
+    if (is_stomp_mtp_thread_exited)
+    {
+        OS_UTILS_UnlockMutex(&stomp_access_mutex);
+        return;
+    }
+
+    // Iterate over all STOMP connections, releasing all that were not allowed to connect before from the retrying state
+    // by timing out the retrying state. This will then cause them to attempt to connect
+    for (i=0; i<MAX_STOMP_CONNECTIONS; i++)
+    {
+        sc = &stomp_connections[i];
+        if ((sc->instance != INVALID) && (sc->state == kStompState_Retrying))
+        {
+            sc->retry_time = time(NULL);
+        }
+    }
+
+    OS_UTILS_UnlockMutex(&stomp_access_mutex);
+
+    // Cause the MTP thread to wakeup from select() and start connecting
+    // We do this outside of the mutex lock to avoid an unnecessary task switch
+    MTP_EXEC_StompWakeup();
+}
+
+/*********************************************************************//**
+**
 ** STOMP_EnableConnection
 **
 ** TCP Connects to the specified STOMP connection
@@ -1247,9 +1291,20 @@ void StartStompConnection(stomp_connection_t *sc)
     nu_ipaddr_t local_mgmt_addr;
     stomp_failure_t stomp_err = kStompFailure_OtherError;
     char *mgmt_interface = "any";   // Used only for debug purposes
+    bool allowed;
 
     // Copy across the next connection parameters to use into the working state
     CopyStompConnParamsFromNext(sc);
+
+    // Exit, putting the connection into an immediate retrying state, if it's not allowed to start connecting yet
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        InitStompConnection(sc);
+        sc->state = kStompState_Retrying;
+        sc->retry_time = END_OF_TIME;
+        return;
+    }
 
 #ifdef CONNECT_ONLY_OVER_WAN_INTERFACE
     mgmt_interface = nu_macaddr_wan_ifname();

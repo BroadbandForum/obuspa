@@ -360,6 +360,7 @@ typedef int (*dm_vendor_get_mtp_username_cb_t)(int instance, char *buf, int len)
 typedef int (*dm_vendor_get_mtp_password_cb_t)(int instance, char *buf, int len);
 typedef void (*log_message_cb_t)(const char *buf);
 typedef void (*modify_firmware_updated_cb_t)(bool *is_firmware_updated);
+typedef bool (*can_mtp_connect_cb_t)(void);
 
 #ifndef REMOVE_DEVICE_SECURITY
 typedef int (*load_agent_cert_cb_t)(SSL_CTX *ctx);
@@ -399,6 +400,7 @@ typedef struct
 #endif
     log_message_cb_t                        log_message_cb;
     modify_firmware_updated_cb_t            modify_firmware_updated_cb;
+    can_mtp_connect_cb_t                    can_mtp_connect_cb;
 
 } vendor_hook_cb_t;
 
@@ -465,6 +467,7 @@ int USP_DM_GetInstances(char *path, int *vector, int max_entries, int *num_entri
 int USP_DM_RegisterRoleName(int role_instance, char *name);
 int USP_DM_AddControllerTrustPermission(int role_instance, char *path, unsigned short permission_bitmask);
 int USP_DM_InformDataModelEvent(char *event_name, kv_vector_t *output_args);
+bool USP_DM_IsRegistered(char *path);
 
 //------------------------------------------------------------------------------
 // Functions that may be called from a thread other than the data model thread to signal that some event occurred

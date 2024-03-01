@@ -108,7 +108,7 @@ unsigned RETRY_WAIT_Calculate(unsigned retry_count, double m, double k)
     unsigned wait_time;
     int random_value;
 
-    // Limit maximum retry period
+    // Limit maximum retry count
     if (retry_count > 10)
     {
         retry_count = 10;

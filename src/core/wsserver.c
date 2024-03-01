@@ -240,19 +240,26 @@ int WSSERVER_Start(void)
 ** \param   config - pointer to structure containing configuration parameters
 **                   NOTE: Ownership of strings within the config parameters stay with the caller
 **
-** \return  USP_ERR_OK if successful
+** \return  None
 **
 **************************************************************************/
-int WSSERVER_EnableServer(wsserv_config_t *config)
+void WSSERVER_EnableServer(wsserv_config_t *config)
 {
     int i;
     wsconn_t *wc;
-    int err = USP_ERR_OK;
+    bool allowed;
 
     // Exit if websocket server MTP has shutdown
     if (is_wsserv_mtp_shutdown)
     {
-        return USP_ERR_OK;
+        return;
+    }
+
+    // Exit if the websocket server is not allowed to be enabled/disabled yet
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        return;
     }
 
     OS_UTILS_LockMutex(&wss_access_mutex);
@@ -286,8 +293,6 @@ int WSSERVER_EnableServer(wsserv_config_t *config)
 
 exit:
     OS_UTILS_UnlockMutex(&wss_access_mutex);
-
-    return err;
 }
 
 /*********************************************************************//**
@@ -298,15 +303,24 @@ exit:
 **
 ** \param   None
 **
-** \return  USP_ERR_OK if successful
+** \return  None
 **
 **************************************************************************/
-int WSSERVER_DisableServer(void)
+void WSSERVER_DisableServer(void)
 {
+    bool allowed;
+
     // Exit if websocket server MTP has shutdown
     if (is_wsserv_mtp_shutdown)
     {
-        return USP_ERR_OK;
+        return;
+    }
+
+    // Exit if the websocket server is not allowed to be enabled/disabled yet
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        return;
     }
 
     OS_UTILS_LockMutex(&wss_access_mutex);
@@ -320,8 +334,6 @@ int WSSERVER_DisableServer(void)
     // NOTE: Nothing to do if already stopped
 
     OS_UTILS_UnlockMutex(&wss_access_mutex);
-
-    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -339,9 +351,17 @@ int WSSERVER_DisableServer(void)
 void WSSERVER_ActivateScheduledActions(void)
 {
     bool wake_thread = false;
+    bool allowed;
 
     // Exit if websocket server MTP has shutdown
     if (is_wsserv_mtp_shutdown)
+    {
+        return;
+    }
+
+    // Exit if the websocket server is not allowed to be enabled/disabled yet
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
     {
         return;
     }
