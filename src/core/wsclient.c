@@ -42,6 +42,7 @@
 #ifdef ENABLE_WEBSOCKETS
 #include <libwebsockets.h>
 #include <unistd.h>
+#include <limits.h>
 
 #include "common_defs.h"
 #include "dllist.h"
@@ -237,7 +238,6 @@ void AttemptWsclientConnect(wsclient_t *wc);
 void HandleWsclient_QueueUspRecord(queue_client_usp_record_msg_t *qur);
 void ServiceWsclientSendQueue(void);
 int HandleAllWscEvents(struct lws *handle, enum lws_callback_reasons event, void *per_session_data, void *event_args, size_t event_args_len);
-int AddWsclientUspExtension(struct lws *handle, unsigned char **ppHeaders, int headers_len);
 int ValidateReceivedWsclientSubProtocol(struct lws *handle);
 int HandleWscEvent_LoadCerts(SSL_CTX *ssl_ctx);
 int HandleWscEvent_VerifyCerts(struct lws *handle, SSL *ssl, int preverify_ok, X509_STORE_CTX *x509_ctx);
@@ -1201,16 +1201,25 @@ void AttemptWsclientConnect(wsclient_t *wc)
     char wan_addr[NU_IPADDRSTRLEN];     // scope of wan_addr[] needs to exist until call to lws_client_connect_via_info()
     struct lws *handle;
     bool allowed;
+    char percent_encoded_path[PATH_MAX];
+    char percent_encoded_eid[PATH_MAX];
+    char uri_path[PATH_MAX];
 
     // Check that structure is not part of a linked list owned by libwebsockets anymore
     AssertRetryCallbackNotInUse(&wc->retry_timer);
     memset(&wc->retry_timer, 0, sizeof(wc->retry_timer));
 
+    // Form the URI path to use
+    #define UNRESERVED_SAFE_CHARS "-._~"
+    TEXT_UTILS_PercentEncodeString(wc->path, percent_encoded_path, sizeof(percent_encoded_path), UNRESERVED_SAFE_CHARS, 0);
+    TEXT_UTILS_PercentEncodeString(DEVICE_LOCAL_AGENT_GetEndpointID(), percent_encoded_eid, sizeof(percent_encoded_eid), UNRESERVED_SAFE_CHARS, 0);
+    USP_SNPRINTF(uri_path, sizeof(uri_path), "%s?eid=%s", percent_encoded_path, percent_encoded_eid);
+
     // Initialize connection parameters passed to libwebsockets
     memset(&info, 0, sizeof(info));
     info.context = wsc_ctx;
     info.port = wc->port;
-    info.path = wc->path;
+    info.path = uri_path;
     info.address = wc->host;
     info.host = wc->host;       // Needed for TLS
     info.origin = wc->host;     // Needed for TLS
@@ -1449,11 +1458,6 @@ int HandleAllWscEvents(struct lws *handle, enum lws_callback_reasons event, void
             tr_event("WS client: LWS_CALLBACK_CLIENT_CONNECTION_ERROR");
             result = HandleWscEvent_Error(handle, event_args);
             break;
-
-        case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER:
-            tr_event("WS client: LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER");
-            result = AddWsclientUspExtension(handle, (unsigned char **)event_args, event_args_len);
-		    break;
 
         case LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH:
             tr_event("WS client: LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH");
@@ -2213,45 +2217,6 @@ void ScheduleWsclientRetry(wsclient_t *wc)
 
     // Schedule the retry callback at the reconnection time
     lws_sul_schedule(wsc_ctx, 0, &wc->retry_timer, HandleWscEvent_RetryTimer, wait_time*LWS_US_PER_SEC);
-}
-
-/*********************************************************************//**
-**
-** AddWsclientUspExtension
-**
-** Called from the LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER event
-** to add the 'Sec-WebSocket-Extensions' header with the 'bbf-usp-protocol' WebSocket Extension
-**
-** \param   handle - libwebsockets handle identifying the connection with activity on it
-** \param   ppHeaders - pointer to variable containing a pointer to a buffer containing the headers
-** \param   headers_len - total size of the libwebsockets buffer containing the headers
-**
-** \return  0 if successful, -1 to close the connection and retry
-**
-**************************************************************************/
-int AddWsclientUspExtension(struct lws *handle, unsigned char **ppHeaders, int headers_len)
-{
-    unsigned char *pHeadersEnd;
-    char buf[128];
-    int len;
-    int err;
-    wsclient_t *wc;
-
-    wc = lws_get_opaque_user_data(handle);
-    USP_ASSERT(wc != NULL);
-
-    // If unable to add the header, then return an error, which will cause the connection to be retried
-    pHeadersEnd = (*ppHeaders) + headers_len;
-    len = USP_SNPRINTF(buf, sizeof(buf), "bbf-usp-protocol; eid=\"%s\"", DEVICE_LOCAL_AGENT_GetEndpointID());
-    err = lws_add_http_header_by_token(handle, WSI_TOKEN_EXTENSIONS, (unsigned char *)buf, len, ppHeaders, pHeadersEnd);
-    if (err != 0)
-    {
-        USP_LOG_Error("%s: lws_add_http_header_by_token() returned %d", __FUNCTION__, err);
-        wc->close_reason = kWebSockCloseReason_InternalError;
-        return -1;
-    }
-
-    return 0;
 }
 
 /*********************************************************************//**

@@ -67,6 +67,8 @@ typedef struct
                             // If the search path resolves to an object or param which there is no permission for,
                             // then a error will be generated (or the path forgivingly ignored in the case of a get)
     unsigned flags;         // flags controlling resolving of the path eg GET_ALL_INSTANCES
+    bool is_search_path;    // Set if the path that has been parsed so far contains a search path (ie wildcard or search expression)
+                            // This flag is used to differentiate between whether to ignore a resolved path, or generate an error, in the case of instances not existing in the resolved path (R.GET-0)
 } resolver_state_t;
 
 // Structure containing unique key search variables
@@ -237,6 +239,7 @@ int PATH_RESOLVER_ResolvePath(char *path, str_vector_t *sv, int_vector_t *gv, re
     state.depth = depth;
     state.combined_role = combined_role;
     state.flags = flags;
+    state.is_search_path = false;
 
     err = ExpandPath(resolved, unresolved, &state);
 
@@ -633,6 +636,7 @@ int ExpandPath(char *resolved, char *unresolved, resolver_state_t *state)
         if (c == '*')
         {
             resolved[len] = '\0';
+            state->is_search_path = true;
             err = ExpandWildcard(resolved, &unresolved[1], state);
             return err;
         }
@@ -648,6 +652,7 @@ int ExpandPath(char *resolved, char *unresolved, resolver_state_t *state)
         // If hit a unique key address, handle it (and rest of unresolved), then exit
         if (c == '[')
         {
+            state->is_search_path = true;
             resolved[len] = '\0';
             err = ResolveUniqueKey(resolved, &unresolved[1], state);
             return err;
@@ -839,6 +844,11 @@ int ExpandWildcard(char *resolved, char *unresolved, resolver_state_t *state)
     err = DATA_MODEL_GetInstances(resolved, &iv);
     if (err != USP_ERR_OK)
     {
+        // According to R.GET-0, if the path contains a search path (eg wildcard), it acts as a filter, and should not generate an error if instance numbers do not exist
+        if ((state->op == kResolveOp_Get) && (err == USP_ERR_OBJECT_DOES_NOT_EXIST))
+        {
+            err = USP_ERR_OK;
+        }
         goto exit;
     }
 
@@ -1490,6 +1500,11 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     err = DATA_MODEL_GetInstances(resolved, &instances);
     if (err != USP_ERR_OK)
     {
+        // According to R.GET-0, if the path contains a search path (eg unique key), it acts as a filter, and should not generate an error if instance numbers do not exist
+        if ((state->op == kResolveOp_Get) && (err == USP_ERR_OBJECT_DOES_NOT_EXIST))
+        {
+            err = USP_ERR_OK;
+        }
         goto exit;
     }
 
@@ -2488,6 +2503,21 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
     switch(state->op)
     {
         case kResolveOp_Get:
+            // Exit if the instance numbers do not exit, deciding whether this should be ignored or generate an error
+            if ((property_flags & PP_INSTANCE_NUMBERS_EXIST)==0)
+            {
+                // If the path didn't contain a search path, then according to R-GET.0, it should return an error
+                if (state->is_search_path == false)
+                {
+                    USP_ERR_SetMessage("%s: Invalid instance numbers in path %s", __FUNCTION__, path);
+                    return USP_ERR_INVALID_PATH;
+                }
+
+                // Otherwise, the path did contain a search path, so gracefully ignore this resolved path
+                return USP_ERR_OK;
+            }
+            break;
+
         case kResolveOp_Del:
         case kResolveOp_SubsValChange:
         case kResolveOp_SubsAdd:
@@ -2495,8 +2525,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         case kResolveOp_SubsOper:
         case kResolveOp_SubsEvent:
         case kResolveOp_GetBulkData:
-            // It is not an error for instance numbers to not be instantiated for a get parameter value
-            // or a delete or a subscription reference list
+            // It is not an error for instance numbers to not be instantiated for a delete or a subscription reference list
             // Both are forgiving, so just exit here, without adding the path to the vector
             if ((property_flags & PP_INSTANCE_NUMBERS_EXIST)==0)
             {

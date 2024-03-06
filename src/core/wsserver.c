@@ -104,7 +104,7 @@ typedef struct
     bool send_ping;         // Set if the next LWS_CALLBACK_SERVER_WRITEABLE event should send a ping frame (rather than servicing the USP record send queue)
     int ping_count;         // Number of websocket ping frames sent without corresponding pong responses
 
-    char peer[64];          // Name of peer, either endpoint_id (if available in Sec-WebSocket-Extensions) or an IP address.
+    char peer[MAX_ENDPOINT_ID_LEN]; // Name of peer, either endpoint_id (if available in Sec-WebSocket-Extensions) or an IP address.
     bool is_peer_an_eid;    // Set if the above peer string is an endpoint_id. False if it is an IP address.
 
 } wsconn_t;
@@ -978,7 +978,6 @@ int HandleAllWssEvents(struct lws *handle, enum lws_callback_reasons event, void
             result = ValidateReceivedWsservProtocolExtension(handle);
             break;
 
-
         case LWS_CALLBACK_ADD_HEADERS:
             tr_event("WS server: LWS_CALLBACK_ADD_HEADERS");
             args = (struct lws_process_html_args *)event_args;
@@ -1207,9 +1206,7 @@ int HandleWssEvent_VerifyCerts(struct lws *handle, SSL *ssl, int preverify_ok, X
 ** ValidateReceivedWsservProtocolExtension
 **
 ** Called from the LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION event
-** to validate that the endpoint specified in the Sec-WebSocket-Extensions header
-** is not already connected to the agent's websocket client or already connected
-** via another websocket client connection to this server
+** to validate that the Sec-WebSocket-Protocol header is present
 **
 ** \param   handle - libwebsockets handle identifying the connection with activity on it
 **
@@ -1220,8 +1217,6 @@ int ValidateReceivedWsservProtocolExtension(struct lws *handle)
 {
     int num_bytes;
     char buf[256];
-    char *endpoint_id;
-    wsconn_t *wc;
 
     // Exit if Sec-WebSocket-Protocol header is present, but too large for the buffer. In this case we just ignore the header.
     num_bytes = lws_hdr_copy(handle, buf, sizeof(buf)-1, WSI_TOKEN_PROTOCOL);
@@ -1245,65 +1240,6 @@ int ValidateReceivedWsservProtocolExtension(struct lws *handle)
         USP_LOG_Error("%s: Client specified incorrect websocket subprotocol in handshake request (got '%s', expected '%s')", __FUNCTION__, buf, WEBSOCKET_PROTOCOL_STR);
         return -1;
     }
-
-    //---------------------------------------
-    // Exit if Sec-WebSocket-Extensions header is present, but too large for the buffer. In this case we just ignore the header.
-    // NOTE: If the header is not present, then this call returns num_bytes=0
-    num_bytes = lws_hdr_copy(handle, buf, sizeof(buf)-1, WSI_TOKEN_EXTENSIONS);
-    if (num_bytes == -1)
-    {
-        USP_LOG_Error("%s: lws_hdr_copy(Sec-WebSocket-Extensions) failed (%d)", __FUNCTION__, num_bytes);
-        return 0;
-    }
-
-    // Exit if the client did not provide a Sec-WebSocket-Extensions header in its response
-    // NOTE: This is not an error
-    if ((num_bytes == 0) || (buf[0] == '\0'))
-    {
-        return 0;
-    }
-
-    // Exit if unable to parse the endpoint ID. NOTE: This is not an error
-    #define EID_SEPARATOR  "eid="
-    endpoint_id = strstr(buf, EID_SEPARATOR);
-    if (endpoint_id == NULL)
-    {
-        return 0;
-    }
-    endpoint_id += sizeof(EID_SEPARATOR)-1;   // Skip the separator to point to the endpoint_id
-
-    // Strip whitespace and speech marks
-    endpoint_id = TEXT_UTILS_TrimDelimitedBuffer(endpoint_id, "\"\"");
-
-    // Exit if endpoint_id is empty. NOTE: This is not an error
-    if (*endpoint_id == '\0')
-    {
-        return 0;
-    }
-
-    // Exit if already connected to this controller via the agent's websocket client. Abort the connection to the websocket server
-    if (WSCLIENT_IsEndpointConnected(endpoint_id))
-    {
-        USP_LOG_Error("%s: Not permitting controller eid='%s' to connect. Already connected via agent's websocket client", __FUNCTION__, endpoint_id);
-        return -1;
-    }
-
-    // Exit if already connected to this controller via another websocket client connection to this server
-    wc = FindWsConnectionByEndpointId(endpoint_id);
-    if (wc != NULL)
-    {
-        USP_LOG_Error("%s: Not permitting controller eid='%s' to connect. Already connected via agent's websocket server", __FUNCTION__, endpoint_id);
-        return -1;
-    }
-
-    // Save the endpoint_id
-    wc = lws_get_opaque_user_data(handle);
-    USP_ASSERT(wc != NULL);
-    USP_STRNCPY(wc->peer, endpoint_id, sizeof(wc->peer));
-    wc->is_peer_an_eid = true;
-
-    // NOTE: No need to validate the Sec-WebSocket-Protocol header provided by the client in the session initiation request
-    // libwebsockets ensures that the list of websocket sub-protocols provided in the header contains the sub-protocol that we support
 
     return 0;
 }
@@ -1364,30 +1300,58 @@ int AddWsservUspExtension(struct lws *handle, char **ppHeaders, int headers_len)
 **************************************************************************/
 int HandleWssEvent_Established(struct lws *handle)
 {
-    int hdr_len;
-    char buf[256];
-    char *path;
+    int len;
+    char rxed_path[PATH_MAX];
+    char *expected_path;
     wsconn_t *wc;
+    wsconn_t *other_wc;
+    char endpoint_id[MAX_ENDPOINT_ID_LEN];
 
     wc = lws_get_opaque_user_data(handle);
     USP_ASSERT(wc != NULL);
 
     // Exit if unable to get the path from the websocket URL that the controller was connecting to
-    hdr_len = lws_hdr_copy(handle, buf, sizeof(buf), WSI_TOKEN_GET_URI);
-    if (hdr_len == -1)
+    len = lws_hdr_copy(handle, rxed_path, sizeof(rxed_path), WSI_TOKEN_GET_URI);
+    if (len == -1)
     {
         USP_LOG_Error("%s: lws_hdr_copy() returned an error. Closing connection.", __FUNCTION__)
         return -1;
     }
 
     // Calculate the path which we are listening on - an empty config path should be treated the same as '/'
-    path = (wsserv.cur_config.path[0] == '\0') ? "/" : wsserv.cur_config.path;
+    expected_path = (wsserv.cur_config.path[0] == '\0') ? "/" : wsserv.cur_config.path;
 
     // Exit if the controller was trying to connect to the wrong URL path
-    if (strcmp(buf, path) != 0)
+    if (strcmp(rxed_path, expected_path) != 0)
     {
-        USP_LOG_Error("%s: Controller was trying to connect to path '%s', but agent is listening on '%s'. Closing Connection.", __FUNCTION__, buf, path);
+        USP_LOG_Error("%s: Controller was trying to connect to path '%s', but agent is listening on '%s'. Closing Connection.", __FUNCTION__, rxed_path, expected_path);
         return -1;
+    }
+
+    // Extract Endpoint ID from URI query string after the path
+    // NOTE: It is not an error if the client does not provide an endpoint ID
+    #define EID_KEY  "eid="
+    len = lws_get_urlarg_by_name_safe(handle, EID_KEY, endpoint_id, sizeof(endpoint_id));
+    if (len != -1)
+    {
+        // Exit if already connected to this controller via the agent's websocket client. Abort the connection to the websocket server
+        if (WSCLIENT_IsEndpointConnected(endpoint_id))
+        {
+            USP_LOG_Error("%s: Not permitting controller eid='%s' to connect. Already connected via agent's websocket client", __FUNCTION__, endpoint_id);
+            return -1;
+        }
+
+        // Exit if already connected to this controller via another websocket client connection to this server
+        other_wc = FindWsConnectionByEndpointId(endpoint_id);
+        if (other_wc != NULL)
+        {
+            USP_LOG_Error("%s: Not permitting controller eid='%s' to connect. Already connected via agent's websocket server", __FUNCTION__, endpoint_id);
+            return -1;
+        }
+
+        // Save the endpoint_id
+        USP_STRNCPY(wc->peer, endpoint_id, sizeof(wc->peer));
+        wc->is_peer_an_eid = true;
     }
 
     USP_LOG_Info("%s: Accepted connection from %s", __FUNCTION__, wc->peer);
