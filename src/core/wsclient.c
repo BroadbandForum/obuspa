@@ -1201,7 +1201,6 @@ void AttemptWsclientConnect(wsclient_t *wc)
     char wan_addr[NU_IPADDRSTRLEN];     // scope of wan_addr[] needs to exist until call to lws_client_connect_via_info()
     struct lws *handle;
     bool allowed;
-    char percent_encoded_path[PATH_MAX];
     char percent_encoded_eid[PATH_MAX];
     char uri_path[PATH_MAX];
 
@@ -1211,9 +1210,8 @@ void AttemptWsclientConnect(wsclient_t *wc)
 
     // Form the URI path to use
     #define UNRESERVED_SAFE_CHARS "-._~"
-    TEXT_UTILS_PercentEncodeString(wc->path, percent_encoded_path, sizeof(percent_encoded_path), UNRESERVED_SAFE_CHARS, 0);
     TEXT_UTILS_PercentEncodeString(DEVICE_LOCAL_AGENT_GetEndpointID(), percent_encoded_eid, sizeof(percent_encoded_eid), UNRESERVED_SAFE_CHARS, 0);
-    USP_SNPRINTF(uri_path, sizeof(uri_path), "%s?eid=%s", percent_encoded_path, percent_encoded_eid);
+    USP_SNPRINTF(uri_path, sizeof(uri_path), "%s?eid=%s", wc->path, percent_encoded_eid);
 
     // Initialize connection parameters passed to libwebsockets
     memset(&info, 0, sizeof(info));

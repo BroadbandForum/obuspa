@@ -1121,7 +1121,14 @@ int ValidateUspMsgType(Usp__Header__MsgType msg_type, char *endpoint_id, mtp_con
         case USP__HEADER__MSG_TYPE__GET_INSTANCES_RESP:
         case USP__HEADER__MSG_TYPE__GET_SUPPORTED_PROTO_RESP:
             // According to R-MTP.5, all received USP Error and USP Response messages should be ignored
-            USP_ERR_SetMessage("%s: Cannot handle USP message type %s. Ignoring", __FUNCTION__, TEXT_UTILS_EnumToString(msg_type, usp_msg_types, NUM_ELEM(usp_msg_types)) );
+            if (mtpc->protocol == kMtpProtocol_UDS)
+            {
+                USP_ERR_SetMessage("%s: Cannot handle USP message type %s on %s. Ignoring", __FUNCTION__, TEXT_UTILS_EnumToString(msg_type, usp_msg_types, NUM_ELEM(usp_msg_types)), UDS_PathTypeToString(mtpc->uds.path_type));
+            }
+            else
+            {
+                USP_ERR_SetMessage("%s: Cannot handle USP message type %s. Ignoring", __FUNCTION__, TEXT_UTILS_EnumToString(msg_type, usp_msg_types, NUM_ELEM(usp_msg_types)) );
+            }
             return USP_ERR_PERMISSION_DENIED;
             break;
 
@@ -1138,7 +1145,14 @@ int ValidateUspMsgType(Usp__Header__MsgType msg_type, char *endpoint_id, mtp_con
         case USP__HEADER__MSG_TYPE__DEREGISTER:
             // Since the sender shouldn't send these messages, or sent them on the wrong UDS MTP,
             // according to R-MTP.5, a USP Error message should be sent in response to an erroneous USP Request message
-            USP_ERR_SetMessage("%s: Cannot handle USP message type %s. Sending back Error response", __FUNCTION__, TEXT_UTILS_EnumToString(msg_type, usp_msg_types, NUM_ELEM(usp_msg_types)) );
+            if (mtpc->protocol == kMtpProtocol_UDS)
+            {
+                USP_ERR_SetMessage("%s: Cannot handle USP message type %s on %s. Sending back Error response", __FUNCTION__, TEXT_UTILS_EnumToString(msg_type, usp_msg_types, NUM_ELEM(usp_msg_types)), UDS_PathTypeToString(mtpc->uds.path_type) );
+            }
+            else
+            {
+                USP_ERR_SetMessage("%s: Cannot handle USP message type %s. Sending back Error response", __FUNCTION__, TEXT_UTILS_EnumToString(msg_type, usp_msg_types, NUM_ELEM(usp_msg_types)) );
+            }
             MSG_HANDLER_QueueErrorMessage(USP_ERR_REQUEST_DENIED, endpoint_id, mtpc, msg_id);
             return USP_ERR_REQUEST_DENIED;
             break;
