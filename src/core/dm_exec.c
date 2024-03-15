@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2023, Broadband Forum
- * Copyright (C) 2016-2023  CommScope, Inc
+ * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  * Copyright (C) 2022, Snom Technology GmbH
  *
@@ -125,7 +125,6 @@ typedef enum
     kDmExecMsg_EventComplete,      // Sent from a thread to signal that an event has occurred
     kDmExecMsg_ObjAdded,           // Sent from a thread to signal that an object has been added by the vendor
     kDmExecMsg_ObjDeleted,         // Sent from a thread to signal that an object has been deleted by the vendor
-    kDmExecMsg_ValueChanged,       // Sent from a thread to signal that the value of a parameter (that was subscribed to via the subscribe vendor hook) has changed
     kDmExecMsg_ProcessUspRecord,   // Sent from the MTP thread with a USP Record to process
     kDmExecMsg_StompHandshakeComplete, // Sent from the MTP thread to notify the controller trust role to use for all controllers connected to the specified stomp connection
     kDmExecMsg_MtpThreadExited,    // Sent to signal that the MTP thread has exited as requested by a scheduled exit
@@ -220,13 +219,6 @@ typedef struct
     char *path;
 } obj_deleted_msg_t;
 
-// Parameter value changed in data model message
-typedef struct
-{
-    char *path;
-    char *value;
-} value_changed_msg_t;
-
 // Call the provided callback from the data model thread
 typedef struct
 {
@@ -276,7 +268,6 @@ typedef struct
         oper_status_msg_t oper_status;
         obj_added_msg_t obj_added;
         obj_deleted_msg_t obj_deleted;
-        value_changed_msg_t value_changed;
         do_work_msg_t do_work;
         process_usp_record_msg_t usp_record;
         stomp_complete_msg_t stomp_complete;
@@ -398,7 +389,7 @@ void DM_EXEC_Destroy(void)
 ** \param   instance - instance number of operation in Device.LocalAgent.Request table
 ** \param   err_code - error code of the operation (USP_ERR_OK indicates success)
 ** \param   err_msg - error message if the operation failed, or NULL if operation was successful
-** \param   output_args - results of the completed operation (if successful)
+** \param   output_args - results of the completed operation (if successful). NULL indicates no output arguments.
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -459,7 +450,7 @@ int USP_SIGNAL_OperationComplete(int instance, int err_code, char *err_msg, kv_v
 **       the core agent error message buffer
 **
 ** \param   event_name - name of the event
-** \param   output_args - arguments for the event
+** \param   output_args - arguments for the event. NULL indicates no output arguments.
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -652,60 +643,6 @@ int USP_SIGNAL_ObjectDeleted(char *path)
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         USP_LOG_Error("%s: Unable to send kDmExecMsg_ObjDeleted (path=%s)", __FUNCTION__, path);
-        FreeDmExecMessageArguments(&msg);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
-** USP_SIGNAL_ValueChanged
-**
-** Signals to USP core that the value of a parameter that was subscribed to (via subscribe vendor hook), has changed
-** This function may be called from any vendor thread
-**
-** \param   path - path of parameter whose value has changed
-** \param   value - changed value of the parameter
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int USP_SIGNAL_ValueChanged(char *path, char *value)
-{
-    dm_exec_msg_t  msg;
-    value_changed_msg_t *vcm;
-    int bytes_sent;
-
-    // Exit if this function has been called with invalid parameters
-    if ((path == NULL) || (value == NULL))
-    {
-        USP_LOG_Error("%s: path and value arguments must point to a string", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Exit if message queue is not setup yet
-    if (main_mq_tx_socket == -1)
-    {
-        USP_LOG_Error("%s is being called before data model has been initialised", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Form message
-    memset(&msg, 0, sizeof(msg));
-    msg.type = kDmExecMsg_ValueChanged;
-    vcm = &msg.params.value_changed;
-    vcm->path = USP_STRDUP(path);
-    vcm->value = USP_STRDUP(value);
-
-    // Send the message - blocks if queue is full, unless calling from the data model thread (in which case discards the message)
-    bytes_sent = send(main_mq_tx_socket, &msg, sizeof(msg), BLOCK_UNLESS_DM_THREAD);
-    if (bytes_sent != sizeof(msg))
-    {
-        char buf[USP_ERR_MAXLEN];
-        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
-        USP_LOG_Error("%s: Unable to send kDmExecMsg_ValueChanged (path=%s, value=%s)", __FUNCTION__, path, value);
         FreeDmExecMessageArguments(&msg);
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -1717,7 +1654,6 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
     oper_status_msg_t *osm;
     obj_added_msg_t *oam;
     obj_deleted_msg_t *odm;
-    value_changed_msg_t *vcm;
     do_work_msg_t *dwm;
     process_usp_record_msg_t *pur;
     mtp_thread_exited_msg_t *tem;
@@ -1819,11 +1755,6 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         case kDmExecMsg_ObjDeleted:
             odm = &msg.params.obj_deleted;
             DATA_MODEL_NotifyInstanceDeleted(odm->path);
-            break;
-
-        case kDmExecMsg_ValueChanged:
-            vcm = &msg.params.value_changed;
-            DEVICE_SUBSCRIPTION_NotifyValueChanged(vcm->path, vcm->value);
             break;
 
         case kDmExecMsg_DoWork:
@@ -2090,11 +2021,6 @@ void FreeDmExecMessageArguments(dm_exec_msg_t *msg)
 
         case kDmExecMsg_ObjDeleted:
             USP_FREE(msg->params.obj_deleted.path);
-            break;
-
-        case kDmExecMsg_ValueChanged:
-            USP_FREE(msg->params.value_changed.path);
-            USP_FREE(msg->params.value_changed.value);
             break;
 
         case kDmExecMsg_MtpThreadExited:

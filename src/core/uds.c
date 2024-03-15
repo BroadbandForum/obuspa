@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2023, Broadband Forum
- * Copyright (C) 2023  CommScope, Inc
+ * Copyright (C) 2023-2024, Broadband Forum
+ * Copyright (C) 2023-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -62,7 +62,7 @@
 #include "os_utils.h"
 #include "iso8601.h"
 
-
+//------------------------------------------------------------------------------
 // R-UDS.5 - When a UNIX domain socket connection is closed or fails to be established, the USP Endpoint acting as a client MUST attempt to re-establish
 // the UNIX domain socket within a random amount of time between 1 and 5 seconds
 #define MIN_RETRY_INTERVAL 1

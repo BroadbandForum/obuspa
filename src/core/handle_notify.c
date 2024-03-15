@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -250,7 +250,7 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_ObjectDeletion(char *obj_path, char *subsc
 **
 ** Creates an Operation Complete (Success) Notify message for the specified controller endpoint
 **
-** \param   output_args - key-value vector containing the output arguments of the completed operation
+** \param   output_args - key-value vector containing the output arguments of the completed operation. NULL indicates no output arguments.
 ** \param   command - path to operation in the data model
 ** \param   command_key - pointer to string used by controller to identify the operation in a notification
 ** \param   subscription_id - identifier string which was set by the controller to identify this notification (Device.LocalAgent.Subscription.{i}.ID)
@@ -361,7 +361,7 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_OperCompleteFailure(int err_code, char *er
 ** Creates an Event Notify message for the specified controller endpoint
 **
 ** \param   event_name - full path of the event in the data model
-** \param   param_values - list of parameters and their associated values
+** \param   output_args - list of output arguments and their associated values.  NULL indicates no output arguments.
 ** \param   subscription_id - identifier string which was set by the controller to identify this notification (Device.LocalAgent.Subscription.{i}.ID)
 ** \param   send_resp - Set to true if we require the controller to send a response (otherwise we keep retrying)
 **                      The value of this parameter was set by the controller (in Device.LocalAgent.Subscription.{i}.NotifRetry)
@@ -369,7 +369,7 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_OperCompleteFailure(int err_code, char *er
 ** \return  Pointer to message created
 **
 **************************************************************************/
-Usp__Msg *MSG_HANDLER_CreateNotifyReq_Event(char *event_name, kv_vector_t *param_values, char *subscription_id, bool send_resp)
+Usp__Msg *MSG_HANDLER_CreateNotifyReq_Event(char *event_name, kv_vector_t *output_args, char *subscription_id, bool send_resp)
 {
     char msg_id[MAX_MSG_ID_LEN];
     Usp__Msg *req;
@@ -397,8 +397,16 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_Event(char *event_name, kv_vector_t *param
     event->obj_path = USP_STRDUP(buf);
     event->event_name = USP_STRDUP(name);
 
+    // Exit if there are no output arguments to add
+    if (output_args == NULL)
+    {
+        event->n_params = 0;
+        event->params = NULL;
+        return req;
+    }
+
     // Allocate param map array
-    num_entries = param_values->num_entries;
+    num_entries = output_args->num_entries;
     event->n_params = num_entries;
     event->params = USP_MALLOC(num_entries*sizeof(void *));
 
@@ -410,7 +418,7 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_Event(char *event_name, kv_vector_t *param
         usp__notify__event__params_entry__init(entry);
 
         // Copy the param values into the param map entry
-        kv = &param_values->vector[i];
+        kv = &output_args->vector[i];
         entry->key = USP_STRDUP(kv->key);
         entry->value = USP_STRDUP(kv->value);
 

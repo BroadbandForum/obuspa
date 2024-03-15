@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2023, Broadband Forum
- * Copyright (C) 2023  CommScope, Inc
+ * Copyright (C) 2023-2024, Broadband Forum
+ * Copyright (C) 2023-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -57,6 +57,10 @@
 #include "path_resolver.h"  // For FULL_DEPTH
 
 #ifndef REMOVE_USP_BROKER
+
+//------------------------------------------------------------------------------
+// Time to wait for a response from a USP Service
+#define RESPONSE_TIMEOUT  30
 
 //------------------------------------------------------------------------------
 // Location of the Device.USPService.USPService table within the data model
@@ -163,8 +167,6 @@ int Broker_GroupGet(int group_id, kv_vector_t *kvv);
 int Broker_GroupSet(int group_id, kv_vector_t *params, unsigned *param_types, int *failure_index);
 int Broker_GroupAdd(int group_id, char *path, int *instance);
 int Broker_GroupDelete(int group_id, char *path);
-int Broker_GroupSubscribe(int instance, int group_id, subs_notify_t type, char *path, bool persistent);
-int Broker_GroupUnsubscribe(int instance, int group_id, subs_notify_t type, char *path);
 int Broker_MultiDelete(int group_id, bool allow_partial, char **paths, int num_paths, int *failure_index);
 int Broker_CreateObj(int group_id, char *path, group_add_param_t *params, int num_params, int *instance, kv_vector_t *unique_keys);
 int Broker_SyncOperate(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
@@ -1074,6 +1076,149 @@ mtp_conn_t *USP_BROKER_GetNotifyDestForEndpoint(char *endpoint_id, Usp__Header__
 
 /*********************************************************************//**
 **
+** USP_BROKER_GroupSubscribe
+**
+** Subscribe vendor hook for parameters owned by the USP service
+** This function performs a USP Add request on the USP Service's subscription table
+** Then it waits for a USP Add Response and parses it, to return whether the subscription was successfully registered
+**
+** \param   broker_instance - Instance number of the subscription in the Broker's Device.LocalAgent.Subscription.{i}
+** \param   group_id - group ID of the USP service
+** \param   notify_type - type of subscription to register
+** \param   path - path of the data model element to subscribe to
+** \param   persistent - specifies whether the subscription should be persisted on the USP service
+**                       NOTE: In general, it does not matter if the subscription is not persisted on the USP service, as the Broker
+**                             will add at during the registration sequence. However for some subscriptions eg Device.Boot!, it may
+**                             be necessary for them to be persisted on the USP Service, in order that the subscription exists at the time the event is generated (ie at startup)
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int USP_BROKER_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notify_type, char *path, bool persistent)
+{
+    int err;
+    Usp__Msg *req;
+    Usp__Msg *resp;
+    usp_service_t *us;
+    int service_instance;  // Instance of the subscription in the USP Service's Device.LocalAgent.Subscription.{i}
+    char subscription_id[MAX_DM_SHORT_VALUE_LEN];
+    char *persistent_str = (persistent) ? "true" : "false";
+    static unsigned id_count = 1;
+    char *obj_path = "Device.LocalAgent.Subscription.";
+    group_add_param_t params[] = {
+                           // Name,  value,  is_required, err_code, err_msg
+                           {"NotifType", TEXT_UTILS_EnumToString(notify_type, notify_types, NUM_ELEM(notify_types)), true, USP_ERR_OK, NULL },
+                           {"ReferenceList", path, true, USP_ERR_OK, NULL },
+                           {"ID", subscription_id, true, USP_ERR_OK, NULL },
+                           {"Persistent", persistent_str, true, USP_ERR_OK, NULL },
+                           {"TimeToLive", "0", true, USP_ERR_OK, NULL },
+                           {"NotifRetry", "false", true, USP_ERR_OK, NULL },
+                           {"NotifExpiration", "0", true, USP_ERR_OK, NULL },
+                           {"Enable", "true", true, USP_ERR_OK, NULL }
+                         };
+    char msg_id[MAX_MSG_ID_LEN];
+
+    // Find USP Service associated with the group_id
+    us = FindUspServiceByGroupId(group_id);
+    USP_ASSERT(us != NULL);
+
+    // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
+    if (us->controller_mtp.protocol == kMtpProtocol_None)
+    {
+        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Connection dropped", __FUNCTION__, us->endpoint_id);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Form the value of the subscription ID
+    USP_SNPRINTF(subscription_id, sizeof(subscription_id), "%d-%d-%x-%s", broker_instance, id_count, (unsigned) time(NULL), broker_unique_str);
+    id_count++;
+
+    // Form the USP Add Request message, ensuring that the path contains a trailing dot
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_AddReq(msg_id, obj_path, params, NUM_ELEM(params));
+
+    // Send the request and wait for a response
+    // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
+    resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp,
+                                                 USP__HEADER__MSG_TYPE__ADD_RESP,
+                                                 RESPONSE_TIMEOUT);
+
+    // Exit if timed out waiting for a response
+    if (resp == NULL)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Process the add response, saving it's details in the subscription mapping table, if successful
+    err = ProcessAddResponse(resp, obj_path, &service_instance, NULL, NULL, 0);
+    if (err == USP_ERR_OK)
+    {
+        SubsMap_Add(&us->subs_map, service_instance, path, subscription_id, broker_instance);
+    }
+
+    // Free the add response, since we've finished with it
+    usp__msg__free_unpacked(resp, pbuf_allocator);
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_GroupUnsubscribe
+**
+** Unsubscribe vendor hook for parameters owned by the USP service
+** This function performs a USP Delete request on the USP Service's subscription table
+** Then it waits for a USP Delete Response and parses it, to return whether the subscription was successfully deregistered
+**
+** \param   broker_instance - Instance number of the subscription in the Broker's Device.LocalAgent.Subscription.{i}
+** \param   group_id - group ID of the USP service
+** \param   notify_type - type of subscription to deregister (UNUSED)
+** \param   path - path of the data model element to unsubscribe from
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int USP_BROKER_GroupUnsubscribe(int broker_instance, int group_id, subs_notify_t notify_type, char *path)
+{
+    int err;
+    usp_service_t *us;
+    subs_map_t *smap;
+    char obj_path[MAX_DM_PATH];
+    str_vector_t paths;
+    char *single_path;
+
+    // Kepp compiler happy with unused argument
+    (void)notify_type;
+
+    // Find USP Service associated with the group_id
+    us = FindUspServiceByGroupId(group_id);
+    USP_ASSERT(us != NULL);
+
+    // Exit if this path was never subscribed to
+    smap = SubsMap_FindByBrokerInstanceAndPath(&us->subs_map, broker_instance, path);
+    if (smap == NULL)
+    {
+        USP_ERR_SetMessage("%s: Not subscribed to path %s", __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Form a statically allocated string vector containing a single instance
+    USP_SNPRINTF(obj_path, sizeof(obj_path), "Device.LocalAgent.Subscription.%d.", smap->service_instance);
+    paths.num_entries = 1;
+    paths.vector = &single_path;
+    single_path = obj_path;
+
+    // Send the Delete request and process the Delete response
+    err = UspService_DeleteInstances(us, false, &paths, NULL);
+
+    // Remove from the subscription mapping table
+    SubsMap_Remove(&us->subs_map, smap);
+
+    return err;
+}
+
+/*********************************************************************//**
+**
 ** USP_BROKER_AttemptPassthru
 **
 ** If the USP Message is a request, then route it to the relevant USP Service, if it can be satisfied by a single USP Service
@@ -1529,7 +1674,6 @@ void ApplyPermissionsToUspService(usp_service_t *us)
 void RegisterBrokerVendorHooks(usp_service_t *us)
 {
     USP_REGISTER_GroupVendorHooks(us->group_id, Broker_GroupGet, Broker_GroupSet, Broker_GroupAdd, Broker_GroupDelete);
-    USP_REGISTER_SubscriptionVendorHooks(us->group_id, Broker_GroupSubscribe, Broker_GroupUnsubscribe);
     USP_REGISTER_MultiDeleteVendorHook(us->group_id, Broker_MultiDelete);
     USP_REGISTER_CreateObjectVendorHook(us->group_id, Broker_CreateObj);
 }
@@ -1549,7 +1693,6 @@ void RegisterBrokerVendorHooks(usp_service_t *us)
 void DeregisterBrokerVendorHooks(usp_service_t *us)
 {
     USP_REGISTER_GroupVendorHooks(us->group_id, NULL, NULL, NULL, NULL);
-    USP_REGISTER_SubscriptionVendorHooks(us->group_id, NULL, NULL);
     USP_REGISTER_MultiDeleteVendorHook(us->group_id, NULL);
     USP_REGISTER_CreateObjectVendorHook(us->group_id, NULL);
 }
@@ -1593,7 +1736,6 @@ int Broker_GroupGet(int group_id, kv_vector_t *kvv)
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
-    #define RESPONSE_TIMEOUT  30
     resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp,
                                                  USP__HEADER__MSG_TYPE__GET_RESP,
                                                  RESPONSE_TIMEOUT);
@@ -2049,149 +2191,6 @@ int Broker_RefreshInstances(int group_id, char *path, int *expiry_period)
         #define BROKER_INSTANCE_CACHE_EXPIRY_PERIOD -1       // in seconds
         *expiry_period = BROKER_INSTANCE_CACHE_EXPIRY_PERIOD;
     }
-
-    return err;
-}
-
-/*********************************************************************//**
-**
-** Broker_GroupSubscribe
-**
-** Subscribe vendor hook for parameters owned by the USP service
-** This function performs a USP Add request on the USP Service's subscription table
-** Then it waits for a USP Add Response and parses it, to return whether the subscription was successfully registered
-**
-** \param   broker_instance - Instance number of the subscription in the Broker's Device.LocalAgent.Subscription.{i}
-** \param   group_id - group ID of the USP service
-** \param   notify_type - type of subscription to register
-** \param   path - path of the data model element to subscribe to
-** \param   persistent - specifies whether the subscription should be persisted on the USP service
-**                       NOTE: In general, it does not matter if the subscription is not persisted on the USP service, as the Broker
-**                             will add at during the registration sequence. However for some subscriptions eg Device.Boot!, it may
-**                             be necessary for them to be persisted on the USP Service, in order that the subscription exists at the time the event is generated (ie at startup)
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int Broker_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notify_type, char *path, bool persistent)
-{
-    int err;
-    Usp__Msg *req;
-    Usp__Msg *resp;
-    usp_service_t *us;
-    int service_instance;  // Instance of the subscription in the USP Service's Device.LocalAgent.Subscription.{i}
-    char subscription_id[MAX_DM_SHORT_VALUE_LEN];
-    char *persistent_str = (persistent) ? "true" : "false";
-    static unsigned id_count = 1;
-    char *obj_path = "Device.LocalAgent.Subscription.";
-    group_add_param_t params[] = {
-                           // Name,  value,  is_required, err_code, err_msg
-                           {"NotifType", TEXT_UTILS_EnumToString(notify_type, notify_types, NUM_ELEM(notify_types)), true, USP_ERR_OK, NULL },
-                           {"ReferenceList", path, true, USP_ERR_OK, NULL },
-                           {"ID", subscription_id, true, USP_ERR_OK, NULL },
-                           {"Persistent", persistent_str, true, USP_ERR_OK, NULL },
-                           {"TimeToLive", "0", true, USP_ERR_OK, NULL },
-                           {"NotifRetry", "false", true, USP_ERR_OK, NULL },
-                           {"NotifExpiration", "0", true, USP_ERR_OK, NULL },
-                           {"Enable", "true", true, USP_ERR_OK, NULL }
-                         };
-    char msg_id[MAX_MSG_ID_LEN];
-
-    // Find USP Service associated with the group_id
-    us = FindUspServiceByGroupId(group_id);
-    USP_ASSERT(us != NULL);
-
-    // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
-    if (us->controller_mtp.protocol == kMtpProtocol_None)
-    {
-        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Connection dropped", __FUNCTION__, us->endpoint_id);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Form the value of the subscription ID
-    USP_SNPRINTF(subscription_id, sizeof(subscription_id), "%d-%d-%x-%s", broker_instance, id_count, (unsigned) time(NULL), broker_unique_str);
-    id_count++;
-
-    // Form the USP Add Request message, ensuring that the path contains a trailing dot
-    CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    req = MSG_UTILS_Create_AddReq(msg_id, obj_path, params, NUM_ELEM(params));
-
-    // Send the request and wait for a response
-    // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
-    resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp,
-                                                 USP__HEADER__MSG_TYPE__ADD_RESP,
-                                                 RESPONSE_TIMEOUT);
-
-    // Exit if timed out waiting for a response
-    if (resp == NULL)
-    {
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Process the add response, saving it's details in the subscription mapping table, if successful
-    err = ProcessAddResponse(resp, obj_path, &service_instance, NULL, NULL, 0);
-    if (err == USP_ERR_OK)
-    {
-        SubsMap_Add(&us->subs_map, service_instance, path, subscription_id, broker_instance);
-    }
-
-    // Free the add response, since we've finished with it
-    usp__msg__free_unpacked(resp, pbuf_allocator);
-
-    return err;
-}
-
-/*********************************************************************//**
-**
-** Broker_GroupUnsubscribe
-**
-** Unsubscribe vendor hook for parameters owned by the USP service
-** This function performs a USP Delete request on the USP Service's subscription table
-** Then it waits for a USP Delete Response and parses it, to return whether the subscription was successfully deregistered
-**
-** \param   broker_instance - Instance number of the subscription in the Broker's Device.LocalAgent.Subscription.{i}
-** \param   group_id - group ID of the USP service
-** \param   notify_type - type of subscription to deregister (UNUSED)
-** \param   path - path of the data model element to unsubscribe from
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int Broker_GroupUnsubscribe(int broker_instance, int group_id, subs_notify_t notify_type, char *path)
-{
-    int err;
-    usp_service_t *us;
-    subs_map_t *smap;
-    char obj_path[MAX_DM_PATH];
-    str_vector_t paths;
-    char *single_path;
-
-    // Kepp compiler happy with unused argument
-    (void)notify_type;
-
-    // Find USP Service associated with the group_id
-    us = FindUspServiceByGroupId(group_id);
-    USP_ASSERT(us != NULL);
-
-    // Exit if this path was never subscribed to
-    smap = SubsMap_FindByBrokerInstanceAndPath(&us->subs_map, broker_instance, path);
-    if (smap == NULL)
-    {
-        USP_ERR_SetMessage("%s: Not subscribed to path %s", __FUNCTION__, path);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Form a statically allocated string vector containing a single instance
-    USP_SNPRINTF(obj_path, sizeof(obj_path), "Device.LocalAgent.Subscription.%d.", smap->service_instance);
-    paths.num_entries = 1;
-    paths.vector = &single_path;
-    single_path = obj_path;
-
-    // Send the Delete request and process the Delete response
-    err = UspService_DeleteInstances(us, false, &paths, NULL);
-
-    // Remove from the subscription mapping table
-    SubsMap_Remove(&us->subs_map, smap);
 
     return err;
 }

@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2022, Broadband Forum
+ * Copyright (C) 2022-2024, Broadband Forum
  * Copyright (C) 2022, Snom Technology GmbH
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,7 +31,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
-
 /**
  * \file usp_record.c
  *

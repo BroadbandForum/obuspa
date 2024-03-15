@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2023, Broadband Forum
- * Copyright (C) 2017-2023  CommScope, Inc
+ * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2017-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -190,7 +190,7 @@ int DEVICE_REQUEST_Add(char *path, char *command_key, int *instance)
 ** \param   instance - instance number of operation in Device.LocalAgent.Request table
 ** \param   err_code - error code of the operation (USP_ERR_OK indicates success)
 ** \param   err_msg - error message if the operation failed, or NULL if operation was successful
-** \param   output_args - results of the completed operation (if successful)
+** \param   output_args - results of the completed operation (if successful). NULL indicates no output arguments.
 **
 ** \return  None - This code must handle any errors
 **

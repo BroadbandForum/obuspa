@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2022  CommScope, Inc
+ * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -425,7 +425,7 @@ void DEVICE_SUBSCRIPTION_Update(int id)
 ** \param   command_key - pointer to string used by controller to identify the operation in a notification
 ** \param   err_code - error code of the operation (USP_ERR_OK indicates success)
 ** \param   err_msg - error message if the operation failed
-** \param   output_args - results of the completed operation (if successful)
+** \param   output_args - results of the completed operation (if successful). NULL indicates no output arguments.
 **
 ** \return  None
 **
@@ -458,7 +458,7 @@ void DEVICE_SUBSCRIPTION_ProcessAllOperationCompleteSubscriptions(char *command,
 ** Handles an event completing, sending it out to all subscribers
 **
 ** \param   event_name - name of the event
-** \param   output_args - arguments associated with of the event
+** \param   output_args - arguments associated with of the event. NULL indicates no output arguments.
 **
 ** \return  None - This code must handle any errors
 **
@@ -641,53 +641,6 @@ void DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(char *obj_path, subs_notify_t not
         default:
             TERMINATE_BAD_CASE(notify_type);
             break;
-    }
-}
-
-/*********************************************************************//**
-**
-** DEVICE_SUBSCRIPTION_NotifyValueChanged
-**
-** Called to notify this module that the value of a parameter has changed
-** NOTE: Since this function should only ever be called for parameters that have been subscribed to using the subscribe vendor hook,
-**       it only needs to find the corresponding subscriptions in Device.LocalAgent.Subscription to emit notifications from
-**
-** \param   path - path to parameter whose value has changed
-** \param   value - changed value of the parameter
-**
-** \return  None
-**
-**************************************************************************/
-void DEVICE_SUBSCRIPTION_NotifyValueChanged(char *path, char *value)
-{
-    int i, j;
-    subs_t *sub;
-    int group_id;
-
-    // Iterate over all enabled subscriptions, processing each value change subscription that matches
-    // (there may be more than one controller which has subscribed to this notification)
-    for (i=0; i < subscriptions.num_entries; i++)
-    {
-        sub = &subscriptions.vector[i];
-        if ((sub->enable) && (sub->notify_type == kSubNotifyType_ValueChange))
-        {
-            // Iterate over all paths affected by this subscription,
-            // sending a notification for those that are handled by a vendor subscription and whose path matches
-            for (j=0; j < sub->path_expressions.num_entries; j++)
-            {
-                group_id = sub->handler_group_ids.vector[j];
-                if (group_id != NON_GROUPED)
-                {
-                    if (TEXT_UTILS_IsPathMatch(path, sub->path_expressions.vector[j]))
-                    {
-                        if (HasControllerGotNotificationPermission(sub->cont_instance, path, PERMIT_SUBS_VAL_CHANGE))
-                        {
-                            SendValueChangeNotify(sub, path, value);
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -1144,7 +1097,6 @@ int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance,
 {
     subs_t *sub;
     int index;
-    dm_unsubscribe_cb_t unsubscribe_hook;
     int err;
 
     // Find the subscription here in the USP Broker matching the specified instance
@@ -1171,10 +1123,8 @@ int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance,
         sub->handler_group_ids.vector[index] = NON_GROUPED;
     }
 
-    // Exit if the unsubscribe vendor hook failed
-    unsubscribe_hook = group_vendor_hooks[group_id].unsubscribe_cb;
-    USP_ASSERT(unsubscribe_hook != NULL);
-    err = unsubscribe_hook(broker_instance, group_id, sub->notify_type, path);
+    // Exit if failed to unsubscribe
+    err = USP_BROKER_GroupUnsubscribe(broker_instance, group_id, sub->notify_type, path);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -1471,7 +1421,6 @@ void StartSubscriptionInVendorLayer(subs_t *sub, int group_id)
     int err;
     char *path;
     int subs_group_id;
-    dm_subscribe_cb_t subscribe_hook;
 
     // Exit if this subscription's notify type has not been setup yet
     // NOTE: This could happen if the path was set before the notify type. Nothing can be done in this case.
@@ -1512,19 +1461,11 @@ void StartSubscriptionInVendorLayer(subs_t *sub, int group_id)
             continue;
         }
 
-        // Skip if the data model provider component does not yet have a subscribe vendor hook registered
-        // In this case the subscription will be started when the GSDM response has been received from the USP Service as part of syncing the subscriptions
-        subscribe_hook = group_vendor_hooks[subs_group_id].subscribe_cb;
-        if (subscribe_hook == NULL)
-        {
-            continue;
-        }
-
         // Attempt to subscribe to path for the specified notification
         // NOTE: If this is not successful, then for value change and object creation/deletion, we fallback to the polled mechanism
         // to provide this subscription. For USP events and operation complete, there is no fallback, and we will not receive any
         // notifications from this subscription for the specified path if the subscribe vendor hook fails
-        err = subscribe_hook(sub->instance, subs_group_id, sub->notify_type, path, sub->persistent);
+        err = USP_BROKER_GroupSubscribe(sub->instance, subs_group_id, sub->notify_type, path, sub->persistent);
         if (err != USP_ERR_OK)
         {
             USP_LOG_Warning("%s: Subscribe vendor hook failed for %s (%s)", __FUNCTION__, path, NOTIFY_TYPE_STR(sub->notify_type));
@@ -1590,7 +1531,6 @@ void StartVendorLayerDeviceDotSubsForGroup(subs_t *sub, int group_id)
 {
     int index;
     int err;
-    dm_subscribe_cb_t subscribe_hook;
 
     USP_ASSERT(group_id != INVALID);
 
@@ -1601,17 +1541,9 @@ void StartVendorLayerDeviceDotSubsForGroup(subs_t *sub, int group_id)
         return;
     }
 
-    // Exit if the data model provider component does not yet have a subscribe vendor hook registered
-    // In this case the subscription will be started when the GSDM response has been received from the USP Service as part of syncing the subscriptions
-    subscribe_hook = group_vendor_hooks[group_id].subscribe_cb;
-    if (subscribe_hook == NULL)
-    {
-        return;
-    }
-
     // Exit if unable to subscribe to 'Device.' on the specified USP Service
     // NOTE: If this is not successful, then there is no fallback. We will not receive any notifications for the specified path
-    err = subscribe_hook(sub->instance, group_id, sub->notify_type, dm_root, sub->persistent);
+    err = USP_BROKER_GroupSubscribe(sub->instance, group_id, sub->notify_type, dm_root, sub->persistent);
     if (err != USP_ERR_OK)
     {
         USP_LOG_Error("%s: Vendor layer failed to subscribe to 'Device.' for %s", __FUNCTION__, NOTIFY_TYPE_STR(sub->notify_type));
@@ -1639,7 +1571,6 @@ void StopSubscriptionInVendorLayer(subs_t *sub)
     int err;
     char *path;
     int group_id;
-    dm_unsubscribe_cb_t unsubscribe_hook;
 
     USP_ASSERT(sub->path_expressions.num_entries == sub->handler_group_ids.num_entries);
 
@@ -1661,15 +1592,8 @@ void StopSubscriptionInVendorLayer(subs_t *sub)
             continue;
         }
 
-        // Skip if the USP Service does not have an unsubscribe vendor hook registered
-        unsubscribe_hook = group_vendor_hooks[group_id].unsubscribe_cb;
-        if (unsubscribe_hook == NULL)
-        {
-            continue;
-        }
-
         // Unsubscribe from the path on the USP Service
-        err = unsubscribe_hook(sub->instance, group_id, sub->notify_type, path);
+        err = USP_BROKER_GroupUnsubscribe(sub->instance, group_id, sub->notify_type, path);
         if (err != USP_ERR_OK)
         {
             // NOTE: If this is not successful, we assume this is because the vendor layer subscription has already been deleted due to some other reason outside of our control
@@ -1686,12 +1610,8 @@ void StopSubscriptionInVendorLayer(subs_t *sub)
         group_id = sub->device_group_ids.vector[i];
         USP_ASSERT((group_id >= 0) && (group_id < MAX_VENDOR_PARAM_GROUPS));
 
-        // Determine the unsubscribe vendor hook to call
-        unsubscribe_hook = group_vendor_hooks[group_id].unsubscribe_cb;
-        USP_ASSERT(unsubscribe_hook != NULL);       // Since the code cannot get here unless a subscribe vendor hook was setup. And if you setup a subscribe vendor hook using USP_REGISTER_SubscriptionVendorHooks(), then you must provide a matching unsubscribe vendor hook
-
         // Unsubscribe from the path on the USP Service
-        err = unsubscribe_hook(sub->instance, group_id, sub->notify_type, dm_root);
+        err = USP_BROKER_GroupUnsubscribe(sub->instance, group_id, sub->notify_type, dm_root);
         if (err != USP_ERR_OK)
         {
             // NOTE: If this is not successful, we assume this is because the vendor layer subscription has already been deleted due to some other reason outside of our control
@@ -3211,7 +3131,7 @@ char *SerializeToJSONObject(kv_vector_t *param_values)
 ** \param   command_key - pointer to string used by controller to identify the operation in a notification
 ** \param   err_code - error code of the operation (USP_ERR_OK indicates success)
 ** \param   err_msg - error message if the operation failed
-** \param   output_args - results of the completed operation (if successful)
+** \param   output_args - results of the completed operation (if successful). NULL indicates no output arguments.
 **
 ** \return  None
 **

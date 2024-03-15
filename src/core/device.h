@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2022  CommScope, Inc
+ * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
  * Redistribution and use in source and binary forms, with or without
@@ -262,7 +262,6 @@ void DEVICE_SUBSCRIPTION_ProcessAllOperationCompleteSubscriptions(char *command,
 void DEVICE_SUBSCRIPTION_ResolveObjectCreationPaths(void);
 void DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths(void);
 void DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(char *obj_path, subs_notify_t notify_type);
-void DEVICE_SUBSCRIPTION_NotifyValueChanged(char *path, char *value);
 void DEVICE_SUBSCRIPTION_ProcessAllObjectLifeEventSubscriptions(void);
 void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, kv_vector_t *output_args);
 void DEVICE_SUBSCRIPTION_SendPeriodicEvent(int cont_instance);

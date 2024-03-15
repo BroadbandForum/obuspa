@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2021-2022, Broadband Forum
- * Copyright (C) 2021  CommScope, Inc
+ * Copyright (C) 2021-2024, Broadband Forum
+ * Copyright (C) 2021-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -45,7 +45,6 @@
 #include "usp-msg.pb-c.h"
 #include "device.h"             // for mtp_conn_t
 #include "mtp_exec.h"           // for mtp_status_t
-
 
 //------------------------------------------------------------------------------
 // Structure containing configuration parameters for the agent's websocket server

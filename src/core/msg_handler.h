@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,8 +52,8 @@
 
 //--------------------------------------------------------------------
 // Agent supported protocol versions
-#define AGENT_SUPPORTED_PROTOCOL_VERSIONS "1.0,1.1,1.2"
-#define AGENT_CURRENT_PROTOCOL_VERSION    "1.2"
+#define AGENT_SUPPORTED_PROTOCOL_VERSIONS "1.0,1.1,1.2,1.3"
+#define AGENT_CURRENT_PROTOCOL_VERSION    "1.3"
 
 //------------------------------------------------------------------------------
 // Convenience structure used to avoid passing lots of arguments down the callstack
@@ -138,7 +138,7 @@ Usp__Msg *MSG_HANDLER_CreateNotifyReq_OperCompleteSuccess(kv_vector_t *output_ar
                                                           char *subscription_id, bool send_resp);
 Usp__Msg *MSG_HANDLER_CreateNotifyReq_OperCompleteFailure(int err_code, char *err_msg, char *command, char *command_key,
                                                           char *subscription_id, bool send_resp);
-Usp__Msg *MSG_HANDLER_CreateNotifyReq_Event(char *event_name, kv_vector_t *param_values, char *subscription_id, bool send_resp);
+Usp__Msg *MSG_HANDLER_CreateNotifyReq_Event(char *event_name, kv_vector_t *output_args, char *subscription_id, bool send_resp);
 Usp__Msg *MSG_HANDLER_CreateNotifyReq_OnBoard(char* oui, char* product_class, char* serial_number, bool send_resp);
 char *MSG_HANDLER_CalcNotifyMsgId(subs_notify_t notify_type, char *msg_id, int len);
 
