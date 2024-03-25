@@ -257,6 +257,15 @@ void UpdateTimeout(int timeout, socket_set_t *set)
     int period_sec;
     int period_usec;
 
+    // Timeout should not be negative, however it might be if a calculation has unexpectedly overflowed eg when running on a 32 bit platform
+    // If select() is called with a negative timeout, this causes the MTP thread to exit when select() returns an error
+    // We prevent this situation by logging the error, and replacing with a timeout of 1 second
+    if (timeout < 0)
+    {
+        USP_LOG_Warning("%s called with incorrect timeout (%d). Replacing with a 1 second timeout", __FUNCTION__, timeout);
+        timeout = 1000;
+    }
+
     // Update the timeout for activity on any socket
     // Convert period from ms into seconds and us
     period_sec = timeout/1000;

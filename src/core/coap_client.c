@@ -436,7 +436,7 @@ void COAP_CLIENT_UpdateAllSockSet(socket_set_t *set)
     int i;
     coap_client_t *cc;
     time_t cur_time;
-    int timeout;        // timeout in milliseconds
+    int timeout;  // in seconds
 
     cur_time = time(NULL);
     #define CALC_TIMEOUT(res, t) res = t - cur_time; if (res < 0) { res = 0; }
@@ -1005,7 +1005,6 @@ void StartSendingCoapUspRecord(coap_client_t *cc, unsigned flags)
     allowed = DEVICE_CONTROLLER_CanMtpConnect();
     if (allowed == false)
     {
-        #define CAN_MTP_CONNECT_RETRY_TIME  7*24*60*60   // One week in seconds
         cc->reconnect_time = time(NULL) + CAN_MTP_CONNECT_RETRY_TIME;
         return;
     }

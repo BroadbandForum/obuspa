@@ -1302,7 +1302,7 @@ void StartStompConnection(stomp_connection_t *sc)
     {
         InitStompConnection(sc);
         sc->state = kStompState_Retrying;
-        sc->retry_time = END_OF_TIME;
+        sc->retry_time = time(NULL) + CAN_MTP_CONNECT_RETRY_TIME;
         return;
     }
 

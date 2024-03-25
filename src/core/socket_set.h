@@ -49,6 +49,12 @@
 #define MAX_SOCKET_TIMEOUT (MAX_SOCKET_TIMEOUT_SECONDS*SECONDS)
 
 //------------------------------------------------------------------------------
+// Maximum time to hold off connecting in the case of the can_mtp_connect vendor hook
+// indicating that the USP Agent should not attempt to connect
+// NOTE: This time in milliseconds (ie *1000)  must fit into a 32 bit signed integer without overflow on 32 bit platforms
+#define CAN_MTP_CONNECT_RETRY_TIME  7*24*60*60   // One week in seconds
+
+//------------------------------------------------------------------------------
 // Socket set structure
 typedef struct
 {

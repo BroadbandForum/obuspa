@@ -1200,8 +1200,7 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
         return;
     }
 
-    // Set a default timeout of 500ms
-    // Makes sure we ping once per second.
+    // Set a default timeout of 1 second
     SOCKET_SET_UpdateTimeout(1*SECONDS, set);
 
     // Iterate over all mqtt clients currently enabled
@@ -1900,7 +1899,7 @@ int EnableMqttClient(mqtt_client_t* client)
     if (allowed == false)
     {
         client->state = kMqttState_ErrorRetrying;
-        client->retry_time = END_OF_TIME;
+        client->retry_time = time(NULL) + CAN_MTP_CONNECT_RETRY_TIME;
         return USP_ERR_OK;
     }
 

@@ -1232,8 +1232,6 @@ void AttemptWsclientConnect(wsclient_t *wc)
     {
         wc->state = kWebsockState_Retrying;
         AssertRetryCallbackNotInUse(&wc->retry_timer);  // Check that structure is not part of a linked list owned by libwebsockets anymore
-
-        #define CAN_MTP_CONNECT_RETRY_TIME  7*24*60*60   // One week in seconds
         lws_sul_schedule(wsc_ctx, 0, &wc->retry_timer, HandleWscEvent_RetryTimer, CAN_MTP_CONNECT_RETRY_TIME*LWS_US_PER_SEC);
         return;
     }
