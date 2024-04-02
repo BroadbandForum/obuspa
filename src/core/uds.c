@@ -85,7 +85,7 @@ typedef struct
 } uds_server_t;
 
 // Array of listening servers
-static uds_server_t uds_servers[MAX_UDS_SOCKETS];
+static uds_server_t uds_servers[MAX_UDS_SERVERS];
 
 //------------------------------------------------------------------------------
 // Payload to send in UDS queue
@@ -127,7 +127,7 @@ typedef struct
 } uds_connection_t;
 
 // Array of connections
-static uds_connection_t uds_connections[MAX_USP_SERVICES];
+static uds_connection_t uds_connections[MAX_UDS_SERVERS*MAX_USP_SERVICES];
 
 //------------------------------------------------------------------------------
 // Sync bytes identifying the start of a UDS frame

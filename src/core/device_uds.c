@@ -67,7 +67,7 @@ static const char device_uds_conn_root[] = DEVICE_UDS_CONN_ROOT;
 
 //------------------------------------------------------------------------------
 // Cache of the parameters in the Device.UnixDomainSockets table
-static uds_conn_params_t uds_conn_params[MAX_UDS_SOCKETS];
+static uds_conn_params_t uds_conn_params[MAX_UDS_SERVERS];
 
 //------------------------------------------------------------------------------
 // Table used to convert from an enumeration of a UDS mode to a textual representation

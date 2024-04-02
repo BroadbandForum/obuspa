@@ -59,8 +59,8 @@
 #define MAX_CONTROLLER_MTPS 3       // Maximum number of MTPs that a controller may have in the DB (Device.LocalAgent.Controller.{i}.MTP.{i})
 #define MAX_AGENT_MTPS (MAX_CONTROLLERS)  // Maximum number of MTPs that an agent may have in the DB (Device.LocalAgent.MTP.{i})
 #define MAX_STOMP_CONNECTIONS (MAX_CONTROLLERS)  // Maximum number of STOMP connections that an agent may have in the DB (Device.STOMP.Connection.{i})
-#define MAX_USP_SERVICES 5          // Maximum number of USP services which can connect, when acting as a broker
-#define MAX_UDS_SOCKETS 2           // Maximum number of UDS sockets that an agent may have in the DB (Device.UnixDomainSockets.UnixDomainSocket.{i})
+#define MAX_USP_SERVICES 10          // Maximum number of USP services which can connect, when acting as a broker
+#define MAX_UDS_SERVERS 2           // Maximum number of UDS sockets that an agent may have in the DB (Device.UnixDomainSockets.UnixDomainSocket.{i})
 
 #define MAX_COAP_CONNECTIONS (MAX_CONTROLLERS)  // Maximum number of CoAP connections that an agent may have in the DB (Device.LocalAgent.Controller.{i}.MTP.{i}.CoAP)
 #define MAX_COAP_SERVERS 5          // Maximum number of interfaces which an agent listens for CoAP messages on
