@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2020, Broadband Forum
- * Copyright (C) 2020  CommScope, Inc
+ * Copyright (C) 2020-2024, Broadband Forum
+ * Copyright (C) 2020-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -243,6 +243,7 @@ void GROUP_GET_VECTOR_ConvertToKeyValueVector(group_get_vector_t *ggv, kv_vector
         {
             // Intentionally ignoring errors that occurred whilst getting the value by returning an empty string if they occur
             pair->value = USP_STRDUP("");
+            USP_ASSERT(gge->value == NULL);   // If this is not NULL, a memory leak could occur
         }
 
         USP_SAFE_FREE(gge->err_msg);
@@ -274,7 +275,7 @@ void GROUP_GET_VECTOR_GetValues(group_get_vector_t *ggv)
     int_vector_t *iv;
 
 #ifdef GET_GROUPED_PARAMETERS_INDIVIDUALLY
-    // Get each parameter in the list individually, stopping at the first required parameter which fails
+    // Get each parameter in the list individually
     GetParametersIndividually(ggv);
     return;
 #endif
@@ -346,6 +347,7 @@ void GetParameterGroup(int group_id, group_get_vector_t *ggv, int_vector_t *iv)
     int err;
     group_get_entry_t *gge;
     char *usp_err_msg;
+    int empty_count;
 
     // Exit if there is no callback defined for this group
     get_group_cb = group_vendor_hooks[group_id].get_group_cb;
@@ -412,6 +414,8 @@ void GetParameterGroup(int group_id, group_get_vector_t *ggv, int_vector_t *iv)
 
     // Move all parameter values obtained to the group get vector
     // NOTE: Ownership of the value string transfers from the params vector to the group get vector
+    usp_err_msg = USP_ERR_GetMessage();
+    empty_count = 0;
     for (i=0; i < iv->num_entries; i++)
     {
         kv = &params.vector[i];
@@ -424,9 +428,18 @@ void GetParameterGroup(int group_id, group_get_vector_t *ggv, int_vector_t *iv)
         }
         else
         {
-            USP_SNPRINTF(err_msg, sizeof(err_msg), "%s: Get group callback did not provide a value for param %s", __FUNCTION__, gge->path);
+            // If this is the first parameter with no value, and an error message has been set, then use the error message
+            if ((usp_err_msg[0] != '\0') && (empty_count == 0))
+            {
+                USP_SNPRINTF(err_msg, sizeof(err_msg), "%s", usp_err_msg);
+            }
+            else
+            {
+                USP_SNPRINTF(err_msg, sizeof(err_msg), "%s: Get group callback did not provide a value for param %s", __FUNCTION__, gge->path);
+            }
             gge->err_code = USP_ERR_INTERNAL_ERROR;
             gge->err_msg = USP_STRDUP(err_msg);
+            empty_count++;
         }
     }
 

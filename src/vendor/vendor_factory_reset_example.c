@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2020, Broadband Forum
- * Copyright (C) 2016-2020  CommScope, Inc
+ * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -101,6 +101,7 @@ static const kv_pair_t factory_reset_parameters[] =
 ** NOTE: The factory reset database can alternatively be specified using the FACTORY_RESET_FILE define
 **
 ** \param   kvv - pointer to key value vector structure in which to return the factory reset parameter settings
+**                NOTE: This vector should be added to, especially if this function is implemented in a plug-in
 **                NOTE: ownership of the key-value vector passes to the caller. The caller will free this vector when finished with it.
 **
 ** \return  USP_ERR_OK if successful
@@ -113,7 +114,6 @@ int VENDOR_GetFactoryResetParams(kv_vector_t *kvv)
 
     // Add all fixed parameter values to the returned vector
     #define NUM_ELEM(x) (sizeof((x)) / sizeof((x)[0]))
-    USP_ARG_Init(kvv);
     for (i=0; i<NUM_ELEM(factory_reset_parameters); i++)
     {
         kv = (kv_pair_t *) &factory_reset_parameters[i];

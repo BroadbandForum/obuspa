@@ -1,8 +1,8 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2019-2024, Broadband Forum
  * Copyright (C) 2020, BT PLC
- * Copyright (C) 2020-2022  CommScope, Inc
+ * Copyright (C) 2020-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,6 +40,7 @@
  * Called from the ProtocolHandler to implement the MQTT protocol
  *
  */
+#ifdef ENABLE_MQTT
 #include "mqtt.h"
 #include "common_defs.h"
 #include "dllist.h"
@@ -59,8 +60,6 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
-
-#ifdef ENABLE_MQTT
 
 #include <mosquitto.h>
 
@@ -117,11 +116,11 @@ typedef struct
     mqtt_subscription_t response_subscription; // Contains subscription for agent's topic
                                                // NOTE: The topic in here may be NULL if not set by either Device.LocalAgent.MTP.{i}.ResponseTopicConfigured or present in the CONNACK
     int retry_count;
-    time_t retry_time;
+    time_t retry_time;                         // Absolute time at which to start reconnecting (when in a retrying state)
     time_t last_status_change;
     mqtt_failure_t failure_code;
 
-    ctrust_role_t role;
+    int role_instance;     // role granted by the CA cert in the chain of trust with the MQTT broker (instance in Device.LocalAgent.ControllerTrust.Role.{i})
 
     // Scheduler
     mqtt_conn_params_t next_params;
@@ -305,6 +304,8 @@ void MQTT_Destroy(void)
 {
     int i;
 
+    OS_UTILS_LockMutex(&mqtt_access_mutex);  // Ensure that the data model is held off accessing this module's data structures until after we have destroyed them
+
     mqtt_client_t* client = NULL;
     for (i = 0; i < MAX_MQTT_CLIENTS; i++)
     {
@@ -315,6 +316,10 @@ void MQTT_Destroy(void)
     memset(mqtt_clients, 0, sizeof(mqtt_clients));
     mosquitto_lib_cleanup();
 
+    // Prevent the data model from making any other changes to the MTP thread
+    is_mqtt_mtp_thread_exited = true;
+
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
 }
 
 /*********************************************************************//**
@@ -724,7 +729,7 @@ mtp_status_t MQTT_GetMtpStatus(int instance)
             break;
 
         case kMqttState_ErrorRetrying:
-            status = kMtpStatus_Error;
+            status = kMtpStatus_Down;
             break;
 
         case kMqttState_Idle:
@@ -1195,8 +1200,7 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
         return;
     }
 
-    // Set a default timeout of 500ms
-    // Makes sure we ping once per second.
+    // Set a default timeout of 1 second
     SOCKET_SET_UpdateTimeout(1*SECONDS, set);
 
     // Iterate over all mqtt clients currently enabled
@@ -1255,12 +1259,6 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
                         {
                             USP_LOG_Debug("%s: Retrying connection", __FUNCTION__);
                             EnableMqttClient(client);
-                        }
-                        else
-                        {
-                            time_t diff = client->retry_time - cur_time;
-                            USP_LOG_Debug("%s: Waiting for time to retry: remaining time: %lds retry_time: %ld time: %ld",
-                                    __FUNCTION__, (long int)diff, (long int)client->retry_time, (long int)cur_time);
                         }
                     }
                     break;
@@ -1494,6 +1492,51 @@ exit:
 
 /*********************************************************************//**
 **
+** MQTT_AllowConnect
+**
+** Called to start all client connections which were not allowed to connect before
+** and were being held in an indefinite retrying state
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void MQTT_AllowConnect(void)
+{
+    int i;
+    mqtt_client_t *client;
+
+    OS_UTILS_LockMutex(&mqtt_access_mutex);
+
+    // Exit if MTP thread has exited
+    if (is_mqtt_mtp_thread_exited)
+    {
+        OS_UTILS_UnlockMutex(&mqtt_access_mutex);
+        return;
+    }
+
+    // Iterate over all MQTT connections, releasing all that were not allowed to connect before from the retrying state
+    // by timing out the retrying state. This will then cause them to attempt to connect
+    for (i=0; i<MAX_MQTT_CLIENTS; i++)
+    {
+        client = &mqtt_clients[i];
+        if ((client->conn_params.instance != INVALID) && (client->state == kMqttState_ErrorRetrying))
+        {
+            client->retry_time = time(NULL);
+        }
+    }
+
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
+
+    // Cause the MTP thread to wakeup from select() and start connecting
+    // We do this outside of the mutex lock to avoid an unnecessary task switch
+    MTP_EXEC_MqttWakeup();
+}
+
+
+/*********************************************************************//**
+**
 ** HandleMqttReconnect
 **
 ** Called to perform a scheduled reconnect, when all queued messages have been sent
@@ -1609,7 +1652,7 @@ void InitClient(mqtt_client_t *client, int index)
 
     client->state = kMqttState_Idle;
     client->mosq = NULL;
-    client->role = ROLE_DEFAULT;
+    client->role_instance = ROLE_DEFAULT;
     client->schedule_reconnect = kScheduledAction_Off;
     client->schedule_close = kScheduledAction_Off;
     client->cert_chain = NULL;
@@ -1830,6 +1873,7 @@ void InitSubscription(mqtt_subscription_t *sub)
 int EnableMqttClient(mqtt_client_t* client)
 {
     mqtt_subscription_t *resp_sub;
+    bool allowed;
 
     // Clear state variables that get reset each connection attempt
     // Note: Do not clear state variables that need to persist through retry
@@ -1849,6 +1893,15 @@ int EnableMqttClient(mqtt_client_t* client)
     resp_sub->qos = kMqttQos_Default;
     resp_sub->enabled = true;
     resp_sub->topic = USP_STRDUP(client->conn_params.response_topic);
+
+    // Exit, putting the client into an immediate retrying state, if it's not allowed to start connecting yet
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        client->state = kMqttState_ErrorRetrying;
+        client->retry_time = time(NULL) + CAN_MTP_CONNECT_RETRY_TIME;
+        return USP_ERR_OK;
+    }
 
     int err = EnableMosquitto(client);
     if (err != USP_ERR_OK)
@@ -2012,7 +2065,7 @@ void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, cha
     mqtt_send_item_t *send_item;
     mtp_content_type_t type;
 
-    // Iterate over USP Records in the queue, removing all stale connect and USP disconnect records
+    // Iterate over USP Records in the queue, removing all stale connect and disconnect records to the specified controller
     // A USP connect or USP disconnect record may still be in the queue if the connection failed before the record was fully sent
     cur_msg = (mqtt_send_item_t *) client->usp_record_send_queue.head;
     while (cur_msg != NULL)
@@ -2020,9 +2073,9 @@ void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, cha
         // Save pointer to next message, as we may remove the current message
         next_msg = (mqtt_send_item_t *) cur_msg->link.next;
 
-        // Remove current message if it is a USP connect or USP disconnect record
+        // Remove current message if it is a USP connect or USP disconnect record for the controller
         type = cur_msg->item.content_type;
-        if (IsUspConnectOrDisconnectRecord(type))
+        if (IsUspConnectOrDisconnectRecord(type) && (strcmp(cur_msg->topic, controller_topic)==0))
         {
             DLLIST_Unlink(&client->usp_record_send_queue, cur_msg);
             USP_SAFE_FREE(cur_msg->item.pbuf);
@@ -2339,7 +2392,7 @@ void ConnectCallback(struct mosquitto *mosq, void *userdata, int result)
     {
         if (client->cert_chain != NULL)
         {
-            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role);
+            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role_instance);
             if (err != USP_ERR_OK)
             {
                 USP_LOG_Error("%s: Failed to get the controller trust with err: %d", __FUNCTION__, err);
@@ -2416,7 +2469,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
     {
         if (client->cert_chain != NULL)
         {
-            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role);
+            int err = DEVICE_SECURITY_GetControllerTrust(client->cert_chain, &client->role_instance);
             if (err != USP_ERR_OK)
             {
                 USP_LOG_Error("%s: Failed to get the controller trust with err: %d", __FUNCTION__, err);
@@ -2822,7 +2875,7 @@ void SubscribeToAll(mqtt_client_t *client)
     // Let the DM know we're ready for sending messages and instruct it to send a USP Connect record
     // NOTE: client->response_subscription.topic will contain either the value configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured
     //       or the value received in the CONNACK (for MQTTv5)
-    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->conn_params.version, client->response_subscription.topic, client->role);
+    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->conn_params.version, client->response_subscription.topic, client->role_instance);
 }
 
 /*********************************************************************//**
@@ -3341,7 +3394,7 @@ void MessageV5Callback(struct mosquitto *mosq, void *userdata, const struct mosq
             if (mosquitto_property_read_string(props, RESPONSE_TOPIC,
                     &response_info_ptr, false) == NULL)
             {
-                USP_LOG_Debug("%s: Failed to read response topic in message info: \"%s\"\n", __FUNCTION__, response_info_ptr);
+                USP_LOG_Warning("%s: No response topic in received MQTT Message", __FUNCTION__);
             }
 
             ReceiveMqttMessage(client, message, response_info_ptr);
@@ -3378,17 +3431,17 @@ exit:
 **************************************************************************/
 void ReceiveMqttMessage(mqtt_client_t *client, const struct mosquitto_message *message, char *response_topic)
 {
-    mtp_reply_to_t mrt = {0};
-    mrt.protocol = kMtpProtocol_MQTT;
-    mrt.mqtt_instance = client->conn_params.instance;
+    mtp_conn_t mtpc = {0};
+    mtpc.protocol = kMtpProtocol_MQTT;
+    mtpc.mqtt.instance = client->conn_params.instance;
     if (response_topic != NULL)
     {
-        mrt.is_reply_to_specified = true;
-        mrt.mqtt_topic = response_topic;
+        mtpc.is_reply_to_specified = true;
+        mtpc.mqtt.topic = response_topic;
     }
 
     // Message may not be valid USP
-    DM_EXEC_PostUspRecord(message->payload, message->payloadlen, client->role, &mrt);
+    DM_EXEC_PostUspRecord(message->payload, message->payloadlen, UNKNOWN_ENDPOINT_ID, client->role_instance, &mtpc);
 }
 
 /*********************************************************************//**
