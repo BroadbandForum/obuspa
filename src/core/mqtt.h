@@ -1,8 +1,8 @@
 /*
  *
- * Copyright (C) 2019-2022, Broadband Forum
+ * Copyright (C) 2019-2024, Broadband Forum
  * Copyright (C) 2020-2021, BT PLC
- * Copyright (C) 2021-2022  CommScope, Inc
+ * Copyright (C) 2021-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -157,5 +157,6 @@ void MQTT_DestroyConnParams(mqtt_conn_params_t* params);
 void MQTT_SubscriptionReplace(mqtt_subscription_t *dest, mqtt_subscription_t *src);
 void MQTT_SubscriptionDestroy(mqtt_subscription_t *sub);
 int MQTT_GetAgentResponseTopicDiscovered(int instance, char *buf, int len);
+void MQTT_AllowConnect(void);
 
 #endif

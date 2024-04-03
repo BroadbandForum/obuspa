@@ -1,5 +1,38 @@
 # Release History
 
+## Release 8.0.0
+  * USP Services Support
+    * USP Broker functionality
+    * USP Service functionality
+    * Unix Domain Socket MTP
+    * Register and Deregister messages
+  * Dynamic roles and permissions
+  * CMake build support
+  * Get requests
+    * Requests for concrete data model paths that are not instantiated now return an error, instead of an empty response [R-GET.0]
+    * Under certain circumstances it was possible for an object's parameters to be spread across more than one resolved_path_result in the Get Response
+  * WebSockets MTP
+    * EndpointID is now indicated in the query component of the WebSocket request URI [R-WS.10b]
+    * When using WebSockets MTP, the ping failure count was not being reset after reconnect. Under certain circumstances this led to unnecessary reconnects.
+  * Integrator enhancements
+    * New vendor hooks
+      * can_mtp_connect_cb - allows the vendor layer to delay connection to a Controller ACS until critical device functionality is running (for example NTP time synchronized)
+      * modify_firmware_updated_cb - allows the vendor layer to modify the FirmwareUpdated argument being passed in the Boot! event. This can be used to override the default calculation for this argument, if it does not catch all cases of the firmware being updated.
+    * New USP API functions
+      * USP_PROCESS_DoWork - allows the vendor layer to perform work in the context of the data model thread (for example calling USP_DM_SetParameterValue)
+      * USP_REGISTER_AsyncOperation_MaxConcurrency - used to prevent concurrent processing of duplicate asynchronous USP commands
+
+
+  * Bug Fixes
+    * The default value for Device.LocalAgent.MTP.{i}.Protocol has been made dependent on which MTPs are configured in the build options
+    * In protocol buffer traces, 64 bit numeric values were being printed incorrectly on 32 bit CPU architectures
+    * A minor error in mqtt_factory_reset_example.txt has been addressed (GH#78)
+    * After a reboot which interrupted the action of multiple asynchronous USP commands, it was possible for some commands to not be restarted, when it was intended that they were
+    * Under certain circumstances, object creation notifications could have been sent at start up before the Boot! notification
+    * A cause of error due to changes in the instantiated data model during the processing of USP requests has been prevented
+    * Non UTF-8 characters in JSON formatted text containing parameter values are now converted to the Unicode replacement character (U+FFFD)
+    * A subscription's ReferenceList is now immutable after being set
+
 ## Release 7.0.0
 
   * Bug Fixes

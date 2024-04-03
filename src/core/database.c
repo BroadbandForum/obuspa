@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2021, Broadband Forum
- * Copyright (C) 2016-2021  CommScope, Inc
+ * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -335,13 +335,14 @@ void DATABASE_PerformFactoryReset_ControllerInitiated(void)
         }
     }
 
+#ifndef REMOVE_DEVICE_BOOT_EVENT
     // Finally set the reboot cause to "RemoteFactoryReset"
     err = DATA_MODEL_SetParameterInDatabase(reboot_cause_path, "RemoteFactoryReset");
     if (err != USP_ERR_OK)
     {
         return;
     }
-
+#endif
     // NOTE: No need to close this database, as it will be closed by DM_EXEC_Destroy()
 }
 
@@ -937,6 +938,7 @@ int OpenUspDatabase(char *db_file)
     if (err != SQLITE_OK)
     {
         USP_ERR_SQL(db_handle,"sqlite3_open");
+        USP_LOG_Error("%s: Failed to open USP database (%s). Specify using -f, if you want a different path", __FUNCTION__, db_file);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -1083,7 +1085,14 @@ int ResetFactoryParameters(void)
     err = VENDOR_GetFactoryResetParams(&params);
     if (err != USP_ERR_OK)
     {
-        return err;
+        goto exit;
+    }
+
+    // Exit if unable to add all plugin factory reset parameters
+    err = PLUGIN_GetFactoryResetParams(&params);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
     }
 
     USP_LOG_Info("%s: Setting factory reset parameters", __FUNCTION__);
@@ -1141,6 +1150,8 @@ int ResetFactoryParametersFromFile(char *file)
     }
 
     // Iterate over all lines in the file
+    // NOTE: Errors are logged, but ultimately ignored. This allows the factory reset file to contain values for parameters which
+    // do not exist in the supported data model of the USP Agent
     result = fgets(buf, sizeof(buf), fp);
     while (result != NULL)
     {
@@ -1149,7 +1160,7 @@ int ResetFactoryParametersFromFile(char *file)
         if (err != USP_ERR_OK)
         {
             USP_LOG_Error("%s: Syntax error in %s at line %d", __FUNCTION__, file, line_number);
-            goto exit;
+            goto next_line;
         }
 
         // Set the parameter (if the line was not blank or a comment)
@@ -1159,10 +1170,11 @@ int ResetFactoryParametersFromFile(char *file)
             if (err != USP_ERR_OK)
             {
                 USP_LOG_Error("%s: Failed to set parameter at line %d of %s", __FUNCTION__, line_number, file);
-                goto exit;
+                goto next_line;
             }
         }
 
+next_line:
         // Get the next line
         line_number++;
         result = fgets(buf, sizeof(buf), fp);
@@ -1171,7 +1183,6 @@ int ResetFactoryParametersFromFile(char *file)
     // If the code gets here, then all parameters in the file have been set successfully
     err = USP_ERR_OK;
 
-exit:
     fclose(fp);
     return err;
 }
@@ -1263,7 +1274,7 @@ int CalcPathMigrationHashes(void)
 
         // Exit if unable to obtain the hash of the legacy parameter
         // NOTE: The legacy parameter does not have to be present in the data model
-        err = DM_PRIV_CalcHashFromPath(pm->old_path, NULL, &old_hash);
+        err = DM_PRIV_CalcHashFromPath(pm->old_path, NULL, &old_hash, 0);
         if (err != USP_ERR_OK)
         {
             USP_LOG_Error("%s: Legacy schema path '%s' incorrect in paths_to_migrate[%d] (%s)", __FUNCTION__, pm->old_path, i, USP_ERR_GetMessage());
@@ -1273,7 +1284,7 @@ int CalcPathMigrationHashes(void)
 
         // Exit if unable to obtain the hash of the new parameter
         // NOTE: This also checks that the new parameter is present in the data model
-        node = DM_PRIV_GetNodeFromPath(pm->new_path, NULL, NULL);
+        node = DM_PRIV_GetNodeFromPath(pm->new_path, NULL, NULL, 0);
         if (node == NULL)
         {
             USP_LOG_Error("%s: new schema path '%s' in paths_to_migrate[%d] is not present in the data model", __FUNCTION__, pm->new_path, i);

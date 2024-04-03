@@ -54,6 +54,8 @@ $ sudo make install
 * `--disable-mqtt` - Removes MQTT MTP
 * `--disable-websockets` - Removes WebSockets MTP
 * `--disable-stomp` - Removes STOMP MTP
+* `--disable-uds` - Removes UDS MTP
+* `--disable-bulkdata` - Removes Bulk Data Collection
 
 #### Using CMake tool
 ```

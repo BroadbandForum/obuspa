@@ -1,7 +1,7 @@
 /*
  *
- * Copyright (C) 2019, Broadband Forum
- * Copyright (C) 2016-2019  CommScope, Inc
+ * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -60,6 +60,10 @@ int CLI_SERVER_ExecuteCliCommand(char *command);
 //------------------------------------------------------------------------------------
 // Client API
 int CLI_CLIENT_ExecCommand(int argc, char *argv[], char *db_file);
+
+//------------------------------------------------------------------------------------
+// Filename path to the Unix domain socket used by CLI commands
+extern char *cli_uds_file;
 
 //------------------------------------------------------------------------------------
 extern bool dump_to_cli;   // If set, dump logging messages are sent back to the CLI client rather than their normal destination

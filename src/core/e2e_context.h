@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2022, Broadband Forum
+ * Copyright (C) 2022-2024, Broadband Forum
  * Copyright (C) 2022, Snom Technology GmbH
  *
  * Redistribution and use in source and binary forms, with or without
@@ -53,8 +53,8 @@
 
 // Utility functions
 int E2E_CONTEXT_QueueUspSessionRecord(usp_send_item_t *usi, char *endpoint_id, char *usp_msg_id,
-                                      mtp_reply_to_t *mrt, time_t expiry_time);
-int E2E_CONTEXT_HandleUspRecord(UspRecord__Record *rec, ctrust_role_t role, mtp_reply_to_t *mrt);
+                                      mtp_conn_t *mtpc, time_t expiry_time);
+int E2E_CONTEXT_HandleUspRecord(UspRecord__Record *rec, int role_instance, mtp_conn_t *mtpc);
 char *E2E_CONTEXT_SarStateToString(int state);
 char *E2E_CONTEXT_E2eSessionEventToString(int event);
 char *E2E_CONTEXT_E2eSessionStatusToString(int status);
