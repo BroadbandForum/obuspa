@@ -155,6 +155,7 @@ int ProcessGetResponse(Usp__Msg *resp, kv_vector_t *kvv);
 int ProcessGetInstancesResponse(Usp__Msg *resp, usp_service_t *us, bool within_vendor_hook);
 Usp__Msg *CreateRegisterResp(char *msg_id);
 void AddRegisterResp_RegisteredPathResult(Usp__RegisterResp *reg_resp, char *requested_path, int err_code);
+int CompareGsdm_SupportedObj(const void *entry1, const void *entry2);
 bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *ror, usp_service_t *us);
 void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult *sor, int group_id);
 unsigned CalcParamType(Usp__GetSupportedDMResp__ParamValueType value_type);
@@ -3694,6 +3695,9 @@ bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *r
         return false;
     }
 
+    // Ensure the supported objects are in hierarchical order. This is necessary because parent DM elements must be registered before child DM elements
+    qsort(ror->supported_objs, ror->n_supported_objs, sizeof(Usp__GetSupportedDMResp__SupportedObjectResult *), CompareGsdm_SupportedObj);
+
     // Iterate over all supported objects, registering them into the data model
     for (i=0; i < ror->n_supported_objs; i++)
     {
@@ -3705,9 +3709,33 @@ bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *r
 
 /*********************************************************************//**
 **
+** CompareGsdm_SupportedObj
+**
+** Used by qsort to compare two entries in the ror->supported_objs[] array
+** The entries need to be sorted so that parent objects appear before child objects in the array
+**
+** \param   entry1 - pointer to first entry in the ror->supported_objs[] array
+** \param   entry2 - pointer to second entry in the ror->supported_objs[] array
+**
+** \return  None
+**
+**************************************************************************/
+int CompareGsdm_SupportedObj(const void *entry1, const void *entry2)
+{
+    Usp__GetSupportedDMResp__SupportedObjectResult *p1;
+    Usp__GetSupportedDMResp__SupportedObjectResult *p2;
+
+    p1 = *((Usp__GetSupportedDMResp__SupportedObjectResult **) entry1);
+    p2 = *((Usp__GetSupportedDMResp__SupportedObjectResult **) entry2);
+
+    return strcmp(p1->supported_obj_path, p2->supported_obj_path);
+}
+
+/*********************************************************************//**
+**
 ** ProcessGsdm_SupportedObject
 **
-** Parses the specified SupportedObjectResult, registering the data model elements found into the USP Boker's data model
+** Parses the specified SupportedObjectResult, registering the data model elements found into the USP Broker's data model
 **
 ** \param   sor - pointer to result object to parse
 ** \param   group_id - group_id of the USP Service
