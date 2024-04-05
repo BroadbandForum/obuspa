@@ -153,6 +153,7 @@ void CalcBrokerMessageId(char *msg_id, int len);
 bool IsValidUspServicePath(char *path);
 int ProcessGetResponse(Usp__Msg *resp, kv_vector_t *kvv);
 int ProcessGetInstancesResponse(Usp__Msg *resp, usp_service_t *us, bool within_vendor_hook);
+int CompareGetInstances_CurInst(const void *entry1, const void *entry2);
 Usp__Msg *CreateRegisterResp(char *msg_id);
 void AddRegisterResp_RegisteredPathResult(Usp__RegisterResp *reg_resp, char *requested_path, int err_code);
 int CompareGsdm_SupportedObj(const void *entry1, const void *entry2);
@@ -2780,7 +2781,7 @@ int ProcessGetResponse(Usp__Msg *resp, kv_vector_t *kvv)
         }
 
         // Fill in the parameter value in the returned key-value vector
-        // NOTE: If we received a value for a parameter which we didn't request, then just inore it. The group get caller will detect any missing parameter values
+        // NOTE: If we received a value for a parameter which we didn't request, then just ignore it. The group get caller will detect any missing parameter values
         KV_VECTOR_ReplaceWithHint(kvv, rpr->requested_path, rpe->value, i);
     }
 
@@ -3574,6 +3575,9 @@ int ProcessGetInstancesResponse(Usp__Msg *resp, usp_service_t *us, bool within_v
             return rpr->err_code;
         }
 
+        // Ensure the instances are in hierarchical order. This is necessary because DM_INST_VECTOR_RefreshInstance() requires parent instances to be registered before child instances
+        qsort(rpr->curr_insts, rpr->n_curr_insts, sizeof(Usp__GetInstancesResp__CurrInstance *), CompareGetInstances_CurInst);
+
         // Iterate over all current instance objects
         for (j=0; j < rpr->n_curr_insts; j++)
         {
@@ -3605,6 +3609,30 @@ int ProcessGetInstancesResponse(Usp__Msg *resp, usp_service_t *us, bool within_v
     }
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** CompareGetInstances_CurInst
+**
+** Used by qsort to compare two entries in the rpr->curr_insts[] array
+** The entries need to be sorted so that parent object instances appear before child object instances in the array
+**
+** \param   entry1 - pointer to first entry in the rpr->curr_insts[] array
+** \param   entry2 - pointer to second entry in the rpr->curr_insts[] array
+**
+** \return  None
+**
+**************************************************************************/
+int CompareGetInstances_CurInst(const void *entry1, const void *entry2)
+{
+    Usp__GetInstancesResp__CurrInstance *p1;
+    Usp__GetInstancesResp__CurrInstance *p2;
+
+    p1 = *((Usp__GetInstancesResp__CurrInstance **) entry1);
+    p2 = *((Usp__GetInstancesResp__CurrInstance **) entry2);
+
+    return strcmp(p1->instantiated_obj_path, p2->instantiated_obj_path);
 }
 
 /*********************************************************************//**
