@@ -1477,6 +1477,48 @@ int USP_REGISTER_GroupVendorHooks(int group_id, dm_get_group_cb_t get_group_cb, 
 
 /*********************************************************************//**
 **
+** USP_REGISTER_SubscriptionVendorHooks
+**
+** Registers the subscribe and unsubscribe vendor hooks for a group
+**
+** \param   group_id - identifier of the data model provider component which is to be accessed via these callbacks
+** \param   subscribe_cb - callback called to register a subscription provided by the vendor layer
+** \param   unsubscribe_cb - callback called to deregister a subscription provided by the vendor layer
+**
+** \return  USP_ERR_OK if successful
+**          USP_ERR_INTERNAL_ERROR if any other error occurred
+**
+**************************************************************************/
+int USP_REGISTER_SubscriptionVendorHooks(int group_id, dm_subscribe_cb_t subscribe_cb, dm_unsubscribe_cb_t unsubscribe_cb)
+{
+    group_vendor_hook_t *gvh;
+
+    // Exit if group_id is out of range
+    if ((group_id == NON_GROUPED) || (group_id < 0) || (group_id >= MAX_VENDOR_PARAM_GROUPS))
+    {
+        USP_ERR_SetMessage("%s: Invalid Group ID (%d). Expected a value between 0 and %d", __FUNCTION__, group_id, MAX_VENDOR_PARAM_GROUPS-1);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if trying to register a subscribe vendor hook without a matching unsubscribe vendor hook (and vice versa)
+    // NOTE: It is valid to use NULL for both vendor hooks, to de-register the vendor hooks
+    if ( ((subscribe_cb != NULL) && (unsubscribe_cb == NULL)) ||
+         ((subscribe_cb == NULL) && (unsubscribe_cb != NULL)) )
+    {
+        USP_ERR_SetMessage("%s: Both subscribe and unsubscribe vendor hooks must have a registered callback", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Save the vendor hooks
+    gvh = &group_vendor_hooks[group_id];
+    gvh->subscribe_cb = subscribe_cb;
+    gvh->unsubscribe_cb = unsubscribe_cb;
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** USP_REGISTER_MultiDeleteVendorHook
 **
 ** Registers the multi_delete vendor hook for a group

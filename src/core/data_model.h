@@ -225,6 +225,8 @@ typedef struct
     dm_set_group_cb_t set_group_cb;
     dm_add_group_cb_t add_group_cb;
     dm_del_group_cb_t del_group_cb;
+    dm_subscribe_cb_t subscribe_cb;
+    dm_unsubscribe_cb_t unsubscribe_cb;
     dm_create_obj_cb_t  create_obj_cb;
     dm_multi_del_cb_t   multi_del_cb;
 } group_vendor_hook_t;
