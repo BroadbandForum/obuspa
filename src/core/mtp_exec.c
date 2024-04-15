@@ -75,6 +75,15 @@
 // Enumeration that is set when a USP Agent stop has been scheduled (for when connections have finished sending and receiving messages)
 scheduled_action_t mtp_exit_scheduled = kScheduledAction_Off;
 
+//------------------------------------------------------------------------------
+// Flag set if any MTP has a reconnect/disconnect/resubscribe action signalled.
+// Whilst this flag is not strictly necessary (as each MTP contains reconnect/disconnect/resubscribe flags), it's use prevents the
+// data model thread from having to wait on the MTP thread's mutex under normal conditions (ie when a reconnect/disconnect/resubscribe
+// is not scheduled). This is advantageous because the MTP thread may be blocked for a while performing a connect, and we don't want
+// that to hold up the data model thread when none of the MTPs actually need to reconnect/disconnect/resubscribe.
+// NOTE: This flag is only accessed from the data model thread.
+bool mtp_reconnect_scheduled = false;
+
 #ifndef DISABLE_STOMP
 //------------------------------------------------------------------------------
 // Unix domain socket pair used to implement a wakeup message queue
@@ -425,19 +434,28 @@ void MTP_EXEC_ActivateScheduledActions(void)
 #endif
     }
 
-    // Activate all scheduled reconnects, if signalled
+    // Activate all scheduled reconnects, if any were signalled
+    if (mtp_reconnect_scheduled)
+    {
 #ifndef DISABLE_STOMP
-    STOMP_ActivateScheduledActions();
+        STOMP_ActivateScheduledActions();
 #endif
 #ifdef ENABLE_MQTT
-    MQTT_ActivateScheduledActions();
+        MQTT_ActivateScheduledActions();
 #endif
 #ifdef ENABLE_WEBSOCKETS
-    WSCLIENT_ActivateScheduledActions();
-    WSSERVER_ActivateScheduledActions();
+        WSSERVER_ActivateScheduledActions();
 #endif
 #ifdef ENABLE_UDS
-    UDS_ActivateScheduledActions();
+        UDS_ActivateScheduledActions();
+#endif
+        mtp_reconnect_scheduled = false;
+    }
+
+#ifdef ENABLE_WEBSOCKETS
+    // NOTE: It's not possible to use the mtp_reconnect_scheduled flag with WSCLIENT, because kScheduledAction_Signalled is set
+    // in the wsclient thread and mtp_reconnect_scheduled is modified only by the data model thread
+    WSCLIENT_ActivateScheduledActions();
 #endif
 }
 

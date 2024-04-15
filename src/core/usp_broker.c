@@ -153,8 +153,10 @@ void CalcBrokerMessageId(char *msg_id, int len);
 bool IsValidUspServicePath(char *path);
 int ProcessGetResponse(Usp__Msg *resp, kv_vector_t *kvv);
 int ProcessGetInstancesResponse(Usp__Msg *resp, usp_service_t *us, bool within_vendor_hook);
+int CompareGetInstances_CurInst(const void *entry1, const void *entry2);
 Usp__Msg *CreateRegisterResp(char *msg_id);
 void AddRegisterResp_RegisteredPathResult(Usp__RegisterResp *reg_resp, char *requested_path, int err_code);
+int CompareGsdm_SupportedObj(const void *entry1, const void *entry2);
 bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *ror, usp_service_t *us);
 void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult *sor, int group_id);
 unsigned CalcParamType(Usp__GetSupportedDMResp__ParamValueType value_type);
@@ -2783,7 +2785,7 @@ int ProcessGetResponse(Usp__Msg *resp, kv_vector_t *kvv)
         }
 
         // Fill in the parameter value in the returned key-value vector
-        // NOTE: If we received a value for a parameter which we didn't request, then just inore it. The group get caller will detect any missing parameter values
+        // NOTE: If we received a value for a parameter which we didn't request, then just ignore it. The group get caller will detect any missing parameter values
         KV_VECTOR_ReplaceWithHint(kvv, rpr->requested_path, rpe->value, i);
     }
 
@@ -3577,6 +3579,9 @@ int ProcessGetInstancesResponse(Usp__Msg *resp, usp_service_t *us, bool within_v
             return rpr->err_code;
         }
 
+        // Ensure the instances are in hierarchical order. This is necessary because DM_INST_VECTOR_RefreshInstance() requires parent instances to be registered before child instances
+        qsort(rpr->curr_insts, rpr->n_curr_insts, sizeof(Usp__GetInstancesResp__CurrInstance *), CompareGetInstances_CurInst);
+
         // Iterate over all current instance objects
         for (j=0; j < rpr->n_curr_insts; j++)
         {
@@ -3608,6 +3613,30 @@ int ProcessGetInstancesResponse(Usp__Msg *resp, usp_service_t *us, bool within_v
     }
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** CompareGetInstances_CurInst
+**
+** Used by qsort to compare two entries in the rpr->curr_insts[] array
+** The entries need to be sorted so that parent object instances appear before child object instances in the array
+**
+** \param   entry1 - pointer to first entry in the rpr->curr_insts[] array
+** \param   entry2 - pointer to second entry in the rpr->curr_insts[] array
+**
+** \return  None
+**
+**************************************************************************/
+int CompareGetInstances_CurInst(const void *entry1, const void *entry2)
+{
+    Usp__GetInstancesResp__CurrInstance *p1;
+    Usp__GetInstancesResp__CurrInstance *p2;
+
+    p1 = *((Usp__GetInstancesResp__CurrInstance **) entry1);
+    p2 = *((Usp__GetInstancesResp__CurrInstance **) entry2);
+
+    return strcmp(p1->instantiated_obj_path, p2->instantiated_obj_path);
 }
 
 /*********************************************************************//**
@@ -3698,6 +3727,9 @@ bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *r
         return false;
     }
 
+    // Ensure the supported objects are in hierarchical order. This is necessary because parent DM elements must be registered before child DM elements
+    qsort(ror->supported_objs, ror->n_supported_objs, sizeof(Usp__GetSupportedDMResp__SupportedObjectResult *), CompareGsdm_SupportedObj);
+
     // Iterate over all supported objects, registering them into the data model
     for (i=0; i < ror->n_supported_objs; i++)
     {
@@ -3709,9 +3741,33 @@ bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *r
 
 /*********************************************************************//**
 **
+** CompareGsdm_SupportedObj
+**
+** Used by qsort to compare two entries in the ror->supported_objs[] array
+** The entries need to be sorted so that parent objects appear before child objects in the array
+**
+** \param   entry1 - pointer to first entry in the ror->supported_objs[] array
+** \param   entry2 - pointer to second entry in the ror->supported_objs[] array
+**
+** \return  None
+**
+**************************************************************************/
+int CompareGsdm_SupportedObj(const void *entry1, const void *entry2)
+{
+    Usp__GetSupportedDMResp__SupportedObjectResult *p1;
+    Usp__GetSupportedDMResp__SupportedObjectResult *p2;
+
+    p1 = *((Usp__GetSupportedDMResp__SupportedObjectResult **) entry1);
+    p2 = *((Usp__GetSupportedDMResp__SupportedObjectResult **) entry2);
+
+    return strcmp(p1->supported_obj_path, p2->supported_obj_path);
+}
+
+/*********************************************************************//**
+**
 ** ProcessGsdm_SupportedObject
 **
-** Parses the specified SupportedObjectResult, registering the data model elements found into the USP Boker's data model
+** Parses the specified SupportedObjectResult, registering the data model elements found into the USP Broker's data model
 **
 ** \param   sor - pointer to result object to parse
 ** \param   group_id - group_id of the USP Service

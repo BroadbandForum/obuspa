@@ -290,6 +290,7 @@ void WSSERVER_EnableServer(wsserv_config_t *config)
     // Otherwise, save the new config and schedule a restart
     CopyWssConfig(&wsserv.new_config, config);
     wsserv.schedule_restart = kScheduledAction_Signalled;
+    mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls WSSERVER_ActivateScheduledActions()
 
 exit:
     OS_UTILS_UnlockMutex(&wss_access_mutex);
@@ -329,6 +330,7 @@ void WSSERVER_DisableServer(void)
     {
         // If currently running, then we need to wait for all messages to be sent before stopping
         wsserv.schedule_stop = kScheduledAction_Signalled;
+        mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls WSSERVER_ActivateScheduledActions()
     }
 
     // NOTE: Nothing to do if already stopped

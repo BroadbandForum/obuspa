@@ -484,6 +484,7 @@ int MQTT_DisableClient(int instance)
 
     // Schedule the disable to occur after it has been activated, and all queued messages sent out
     client->schedule_close = kScheduledAction_Signalled;
+    mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls MQTT_ActivateScheduledActions()
     err = USP_ERR_OK;
 
 exit:
@@ -614,6 +615,7 @@ exit:
 void MQTT_ScheduleReconnect(mqtt_conn_params_t *mqtt_params)
 {
     mqtt_client_t *client = NULL;
+
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
     if (is_mqtt_mtp_thread_exited)
@@ -634,6 +636,7 @@ void MQTT_ScheduleReconnect(mqtt_conn_params_t *mqtt_params)
     client->next_params.instance = client->conn_params.instance;
 
     client->schedule_reconnect = kScheduledAction_Signalled;
+    mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls MQTT_ActivateScheduledActions()
 
 exit:
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);

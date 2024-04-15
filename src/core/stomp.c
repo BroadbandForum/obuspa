@@ -785,7 +785,11 @@ int STOMP_EnableConnection(stomp_conn_params_t *sp, char *stomp_queue)
     sc->retry_count = 0;
     sc->failure_code = kStompFailure_None;
 
-    StartStompConnection(sc);
+    // Put the connection into an immediate retrying state, so that the STOMP thread can perform the actual connection
+    // We don't attempt to perform the connection here, as trying to connect can block for upto STOMP_HANDSHAKE_TIMEOUT if the STOMP broker does not respond
+    CopyStompConnParamsFromNext(sc);
+    sc->state = kStompState_Retrying;
+    sc->retry_time = time(NULL);
     err = USP_ERR_OK;
 
 exit:
@@ -931,6 +935,7 @@ void STOMP_ScheduleReconnect(stomp_conn_params_t *sp, char *stomp_queue)
     // Signal a reconnect (which overrides any scheduled resubscribe)
     sc->schedule_reconnect = kScheduledAction_Signalled;
     sc->schedule_resubscribe = kScheduledAction_Off;
+    mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls STOMP_ActivateScheduledActions()
 
     // No need to perform a resubscribe, if we're reconnecting anyway
     // NOTE: The resubscribe flags could have been set if the agent queue was changed in the same USP set transaction as the other STOMP parameters
@@ -1046,6 +1051,7 @@ void STOMP_ScheduleResubscribe(int instance, char *stomp_queue)
         if ((sc->subscribe_dest == NULL) && (sc->schedule_reconnect == kScheduledAction_Off))
         {
             sc->schedule_resubscribe = kScheduledAction_Signalled;
+            mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls STOMP_ActivateScheduledActions()
         }
     }
 
@@ -1310,10 +1316,6 @@ void StartStompConnection(stomp_connection_t *sc)
     mgmt_interface = nu_macaddr_wan_ifname();
 #endif
 
-    USP_LOG_Info("Attempting to connect to host=%s (port=%d, %s) from interface=%s", sc->host, sc->port,
-                    (sc->enable_encryption) ? "encrypted" : "unencrypted",
-                    mgmt_interface);
-
     // Initialise state
     InitStompConnection(sc);
 
@@ -1347,6 +1349,11 @@ void StartStompConnection(stomp_connection_t *sc)
         stomp_err = kStompFailure_ServerDNS;
         goto exit;
     }
+
+    USP_LOG_Info("Attempting to connect to host=%s (ipaddr=%s, port=%d, %s) from interface=%s",
+                    sc->host, nu_ipaddr_str(&dst, buf, sizeof(buf)), sc->port,
+                    (sc->enable_encryption) ? "encrypted" : "unencrypted",
+                    mgmt_interface);
 
     // Exit if unable to make a socket address structure to contact the STOMP server
     err = nu_ipaddr_to_sockaddr(&dst, sc->port, &saddr, &saddr_len);
@@ -2248,7 +2255,6 @@ int TransmitStompMessage(stomp_connection_t *sc)
             sc->failure_code = kStompFailure_None;  // The reason this is set here is that we don't want to change the previous Connection.{i}.Status until it becomes successful
             sc->last_status_change = time(NULL);
             sc->retry_count = 0;        // Since successful, reset the retry count
-
             // Notify the data model of the role to use for controllers connected to this STOMP connection
             // This will also unblock the Boot! event, subscriptions, and restarting of operations
             agent_queue = (sc->subscribe_dest != NULL) ? sc->subscribe_dest : sc->provisionned_queue;

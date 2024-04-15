@@ -149,6 +149,7 @@ typedef enum
 //------------------------------------------------------------------------------
 // Global Variables
 extern scheduled_action_t mtp_exit_scheduled;
+extern bool mtp_reconnect_scheduled;
 extern bool is_coap_mtp_thread_exited;
 extern bool is_stomp_mtp_thread_exited;
 extern bool is_mqtt_mtp_thread_exited;

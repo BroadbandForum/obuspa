@@ -667,6 +667,7 @@ void UDS_ScheduleReconnect(uds_conn_params_t *ucp)
         us->next_conn_params.path_type = ucp->path_type;
         us->next_conn_params.mode = ucp->mode;
         us->schedule_reconnect = kScheduledAction_Signalled;
+        mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls UDS_ActivateScheduledActions()
         goto exit;
     }
 
@@ -682,6 +683,7 @@ void UDS_ScheduleReconnect(uds_conn_params_t *ucp)
         uc->next_conn_params.path_type = ucp->path_type;
         uc->next_conn_params.mode = ucp->mode;
         uc->schedule_reconnect = kScheduledAction_Signalled;
+        mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls UDS_ActivateScheduledActions()
         goto exit;
     }
 
