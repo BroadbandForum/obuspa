@@ -2104,6 +2104,7 @@ int GetChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *node
     err = DM_INST_VECTOR_GetInstances(node, inst, &iv);
     if (err != USP_ERR_OK)
     {
+        err = USP_ERR_OK;   // Since this function is called when resolving partial paths for 'get' style requests, errors translate into no instances found        err = USP_ERR_OK;   // Since this function is called when resolving partial paths for 'get' style requests, errors translate into no instances found
         goto exit;
     }
 

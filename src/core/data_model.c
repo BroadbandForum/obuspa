@@ -5160,11 +5160,11 @@ int RegisterDefaultControllerTrust(void)
 {
     int err = USP_ERR_OK;
 
-    // Currently, it is important that the first role registered is full access, as all controllers
-    // inherit the first role in this table, and we currently want all controllers to have full access
+    // Register 'Full Access' role
     err |= USP_DM_RegisterRoleName(ROLE_FULL_ACCESS, "Full Access");
     err |= USP_DM_AddControllerTrustPermission(ROLE_FULL_ACCESS, dm_root, PERMIT_ALL);
 
+    // Register 'Untrusted' role
     err |= USP_DM_RegisterRoleName(ROLE_UNTRUSTED,  "Untrusted");
     err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, dm_root, PERMIT_NONE);
     err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, "Device.DeviceInfo.", PERMIT_GET | PERMIT_OBJ_INFO);

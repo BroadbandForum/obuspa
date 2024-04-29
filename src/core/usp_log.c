@@ -386,7 +386,7 @@ void USP_LOG_String(log_level_t log_level, log_type_t log_type, char *str)
 ** USP_LOG_Printf
 **
 ** Logs the specified message
-** This function deals with the varargs aspects of the message before calling LogMessage()
+** This function deals with the varargs aspects of the message before calling USP_LOG_Puts()
 **
 ** \param   log_level - severity level of the log
 ** \param   log_type - type of information which the message contains
