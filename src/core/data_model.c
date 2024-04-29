@@ -1819,6 +1819,12 @@ unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role
         case kDMNodeType_VendorParam_ReadOnly:
             flags |= PP_IS_PARAMETER;
             USP_ASSERT(is_qualified_instance == true);     // If it's a parameter then path must be a qualified instance, otherwise DM_PRIV_GetNodeFromPath() would have returned NULL
+
+            // Determine if this parameter should be ignored by value change subscriptions
+            if (node->registered.param_info.type_flags & DM_VALUE_CHANGE_WILL_IGNORE)
+            {
+                flags |= PP_VALUE_CHANGE_WILL_IGNORE;
+            }
             break;
 
         case kDMNodeType_SyncOperation:

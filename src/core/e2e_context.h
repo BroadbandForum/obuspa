@@ -2,6 +2,7 @@
  *
  * Copyright (C) 2022-2024, Broadband Forum
  * Copyright (C) 2022, Snom Technology GmbH
+ * Copyright (C) 2023  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions

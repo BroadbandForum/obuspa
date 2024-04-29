@@ -59,7 +59,7 @@ typedef enum
     kResolveOp_Instances, // Resolves fully qualified objects that exist
 
     // The following operations are similar to their conterparts above, other than they check different permission bits
-    kResolveOp_SubsValChange, // Resolves the ReferenceList of a value change subscription. Forgiving of errors.
+    kResolveOp_SubsValChange, // Resolves the ReferenceList of a value change subscription. Forgiving of errors and does not include VALUE_CHANGE_WILL_IGNORE parameters
     kResolveOp_SubsAdd, // Resolves the ReferenceList of an object creation subscription
     kResolveOp_SubsDel, // Resolves the ReferenceList of an object deletion subscription
     kResolveOp_SubsOper,// Resolves the ReferenceList of an operation complete subscription

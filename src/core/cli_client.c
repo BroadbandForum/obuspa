@@ -171,7 +171,7 @@ int HandleCliCommandRemotely(char *cmd_buf)
     sa.sun_family = AF_UNIX;
     USP_STRNCPY(sa.sun_path, cli_uds_file, sizeof(sa.sun_path));
 
-    // Exit if unable to bind the socket to the unix domain file
+    // Exit if unable to connect the socket to the unix domain file
     err = connect(sock, (struct sockaddr *) &sa, sizeof(struct sockaddr_un));
     if (err == -1)
     {

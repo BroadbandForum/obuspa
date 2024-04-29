@@ -416,6 +416,7 @@ typedef struct
 #define DM_HEXBIN       0x00000080      // Hex encoded binary (string)
 #define DM_DECIMAL      0x00000100      // 64 bit floating point number (double)
 #define DM_LONG         0x00000200      // 64 bit signed integer (long long)
+#define DM_VALUE_CHANGE_WILL_IGNORE  0x00000400 // Do not emit value change notifications for this parameter
 
 //-------------------------------------------------------------------------
 // Functions to register the data model

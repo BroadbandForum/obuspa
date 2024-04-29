@@ -194,20 +194,36 @@ int CLI_SERVER_Init(void)
     int err;
     struct sockaddr_un sa;
 
-    // Exit if unable to remove the unix domain socket from the filing system
-    err = remove(cli_uds_file);
-    if ((err == -1) && (errno != ENOENT))
-    {
-        USP_ERR_ERRNO("remove", errno);
-        USP_LOG_Error("%s: Unable to remove the Unix domain socket file %s", __FUNCTION__, cli_uds_file);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
     // Exit if unable to create a socket to listen for CLI commands on
     sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock == -1)
     {
         USP_ERR_ERRNO("socket", errno);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Fill in sockaddr structure
+    memset(&sa, 0, sizeof(sa));
+    sa.sun_family = AF_UNIX;
+    USP_STRNCPY(sa.sun_path, cli_uds_file, sizeof(sa.sun_path));
+
+    // Exit if able to connect the socket to the unix domain file
+    // In this case the CLI server is already running in another process, so don't attempt to start this one
+    err = connect(sock, (struct sockaddr *) &sa, sizeof(struct sockaddr_un));
+    if (err == 0)
+    {
+        USP_LOG_Error("%s: CLI server already running in another process. Aborting", __FUNCTION__);
+        close(sock);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Since we have determined that nothing else is providing the CLI server, we're free to create ours
+    // Exit if unable to remove the unix domain socket from the filing system (this is necessary to do, otherwise the bind fails)
+    err = remove(cli_uds_file);
+    if ((err == -1) && (errno != ENOENT))
+    {
+        USP_ERR_ERRNO("remove", errno);
+        USP_LOG_Error("%s: Unable to remove the Unix domain socket file %s", __FUNCTION__, cli_uds_file);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -219,11 +235,6 @@ int CLI_SERVER_Init(void)
         close(sock);
         return USP_ERR_INTERNAL_ERROR;
     }
-
-    // Fill in sockaddr structure
-    memset(&sa, 0, sizeof(sa));
-    sa.sun_family = AF_UNIX;
-    USP_STRNCPY(sa.sun_path, cli_uds_file, sizeof(sa.sun_path));
 
     // Exit if unable to bind the socket to the unix domain file
     err = bind(sock, (struct sockaddr *) &sa, sizeof(struct sockaddr_un));

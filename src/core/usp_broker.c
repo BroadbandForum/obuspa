@@ -3838,6 +3838,12 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
 
         // Register the parameter into the data model
         type_flags = CalcParamType(sp->value_type);
+
+        if (sp->value_change == USP__GET_SUPPORTED_DMRESP__VALUE_CHANGE_TYPE__VALUE_CHANGE_WILL_IGNORE)
+        {
+            type_flags |= DM_VALUE_CHANGE_WILL_IGNORE;
+        }
+
         if (sp->access == USP__GET_SUPPORTED_DMRESP__PARAM_ACCESS_TYPE__PARAM_READ_ONLY)
         {
             err = USP_REGISTER_GroupedVendorParam_ReadOnly(group_id, path, type_flags);
@@ -5317,7 +5323,7 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
         return false;
     }
 
-    // Determine if the subscription_id of the received notification matches any that we are expecting
+    // Exit if the subscription_id of the received notification does not match any that we are expecting
     smap = SubsMap_FindByUspServiceSubsId(&us->subs_map, notify->subscription_id, broker_instance);
     if (smap == NULL)
     {

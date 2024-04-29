@@ -616,11 +616,11 @@ void AddSupportedObjResult_SupportedParamResult(Usp__GetSupportedDMResp__Support
     sor->n_supported_params = new_num;
     sor->supported_params[new_num-1] = pr;
 
-    // Fill in the SupportedCommandResult object
+    // Fill in the SupportedParamst object
     pr->param_name = USP_STRDUP(node->name);
     pr->access = CalcDMSchemaParamAccess(is_read_allowed, is_write_allowed);
     pr->value_type = CalcDMSchemaParamType(node);
-    pr->value_change = USP__GET_SUPPORTED_DMRESP__VALUE_CHANGE_TYPE__VALUE_CHANGE_ALLOWED;  // Our implementation supports value change reporting on any parameter
+    pr->value_change = (node->registered.param_info.type_flags & DM_VALUE_CHANGE_WILL_IGNORE) ? USP__GET_SUPPORTED_DMRESP__VALUE_CHANGE_TYPE__VALUE_CHANGE_WILL_IGNORE : USP__GET_SUPPORTED_DMRESP__VALUE_CHANGE_TYPE__VALUE_CHANGE_ALLOWED;
 }
 
 /*********************************************************************//**

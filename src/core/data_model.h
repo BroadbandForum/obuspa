@@ -259,6 +259,7 @@ extern int dm_root_len;
 #define PP_IS_MULTI_INSTANCE_OBJECT       0x00000100   // Set if the path represents a multi-instance object
 #define PP_IS_SECURE_PARAM                0x00000200   // Set if the path represents a secure parameter
 #define PP_IS_WRITABLE                    0x00000400   // Set if the path represents a writable parameter
+#define PP_VALUE_CHANGE_WILL_IGNORE       0x00000800   // Set if the path represents a parameter that should be ignored by value change subscriptions
 
 //------------------------------------------------------------------------------
 // Convenience macros

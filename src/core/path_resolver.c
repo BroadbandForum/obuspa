@@ -805,7 +805,7 @@ void RefreshInstances_LifecycleSubscriptionEndingInPartialPath(char *path)
 ** ExpandWildcard
 **
 ** Expands the wildcard that exists inbetween 'resolved' and 'unresolved' parts of the path
-** then reurses to resolve the rest of the path
+** then recurses to resolve the rest of the path
 ** NOTE: This function is recursive
 **
 ** \param   resolved - pointer to buffer containing object that we need to search all instances of
@@ -1985,7 +1985,6 @@ int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *in
                     permission_bitmask = DM_PRIV_GetPermissions(child, state->combined_role);
                     if (state->op == kResolveOp_GetBulkData)
                     {
-                        USP_SNPRINTF(&path[path_len], MAX_DM_PATH-path_len, ".%s", child->name);
                         if (permission_bitmask & PERMIT_GET)
                         {
                             add_to_vector = true;
@@ -1998,13 +1997,21 @@ int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *in
                             return USP_ERR_PERMISSION_DENIED;
                         }
                     }
-
-                    // If permissions allow it, append the name of this parameter to the parent path and add to the vector
-                    // NOTE: If permissions don't allow it, then just forgivingly leave the path out of the vector
-                    if ( ((state->op == kResolveOp_Get) && (permission_bitmask & PERMIT_GET)) ||
-                         ((state->op == kResolveOp_SubsValChange) && (permission_bitmask & PERMIT_SUBS_VAL_CHANGE)) )
+                    else if (state->op == kResolveOp_SubsValChange)
                     {
-                        add_to_vector = true;
+                        // Only include parameters that are permitted and are not supposed to be ignored by value change
+                        if ((permission_bitmask & PERMIT_SUBS_VAL_CHANGE) &&
+                            ((child->registered.param_info.type_flags & DM_VALUE_CHANGE_WILL_IGNORE) == 0))
+                        {
+                            add_to_vector = true;
+                        }
+                    }
+                    else if (state->op == kResolveOp_Get)
+                    {
+                        if (permission_bitmask & PERMIT_GET)
+                        {
+                            add_to_vector = true;
+                        }
                     }
                 }
                 break;
@@ -2317,6 +2324,12 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
         default:
             TERMINATE_BAD_CASE(state->op);
             break;
+    }
+
+    // Exit if the parameter should be ignored by value change subscriptions
+    if ((state->op == kResolveOp_SubsValChange) && (property_flags & PP_VALUE_CHANGE_WILL_IGNORE))
+    {
+        return USP_ERR_OK;
     }
 
     // ===
