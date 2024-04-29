@@ -55,6 +55,7 @@
 #include "usp_broker.h"
 #include "proto_trace.h"
 #include "path_resolver.h"  // For FULL_DEPTH
+#include "cli.h"
 
 #ifndef REMOVE_USP_BROKER
 
@@ -1152,6 +1153,97 @@ bool USP_BROKER_AttemptPassthru(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mt
     }
 
     return false;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_AttemptDirectGetForCli
+**
+** This function sees if it's possible to perform a CLI initiated Get, without resolving the path on the Broker first
+** This is similar to performing a passthru optimization for CLI initiated Gets
+** NOTE: Only absolute paths, partial paths and wildcarded paths are supported by this function (Reference follow and search expressions are not)
+**
+** \param   path - path expression to get
+**
+** \return  true if the get has been handled here, false if the caller should perform path resolution and the get
+**
+**************************************************************************/
+bool USP_BROKER_AttemptDirectGetForCli(char *path)
+{
+    int i;
+    int err;
+    dm_node_t *node;
+    kv_vector_t kvv;
+    kv_pair_t kv;
+    Usp__Msg *req;
+    Usp__Msg *resp = NULL;
+    usp_service_t *us;
+    char msg_id[MAX_MSG_ID_LEN];
+
+    // Exit if this path does not exist in the data model, or is not an absolute, partial or wildcarded path
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+    if (node == NULL)
+    {
+        return false;
+    }
+
+    // Exit, if no USP Service associated with the group_id
+    us = FindUspServiceByGroupId(node->group_id);
+    if (us == NULL)
+    {
+        return false;
+    }
+
+    // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
+    if (us->controller_mtp.protocol == kMtpProtocol_None)
+    {
+        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Connection dropped", __FUNCTION__, us->endpoint_id);
+        return true;
+    }
+
+    // Form the USP Get Request message
+    kv.key = path;
+    kv.value = NULL;
+    kvv.vector = &kv;
+    kvv.num_entries = 1;
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_GetReq(msg_id, &kvv);
+
+    // Send the request and wait for a response
+    // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
+    #define CLI_GET_RESPONSE_TIMEOUT (3*60)        // 3 minutes
+    resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp,
+                                                 USP__HEADER__MSG_TYPE__GET_RESP,
+                                                 CLI_GET_RESPONSE_TIMEOUT);
+
+    // Exit if timed out waiting for a response
+    if (resp == NULL)
+    {
+        return true;
+    }
+
+    // Exit if unable to process the get response, retrieving the parameter values and putting them into the key-value-vector output argument
+    KV_VECTOR_Init(&kvv);
+    err = MSG_UTILS_ProcessUspService_GetResponse(resp, &kvv);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Print out the values of all parameters retrieved
+    for (i=0; i < kvv.num_entries; i++)
+    {
+        CLI_SERVER_SendResponse(kvv.vector[i].key);
+        CLI_SERVER_SendResponse(" => ");
+        CLI_SERVER_SendResponse(kvv.vector[i].value);
+        CLI_SERVER_SendResponse("\n");
+    }
+
+exit:
+    KV_VECTOR_Destroy(&kvv);
+    usp__msg__free_unpacked(resp, pbuf_allocator);
+
+    return true;
 }
 
 /*********************************************************************//**
