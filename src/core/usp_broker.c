@@ -163,6 +163,7 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
 unsigned CalcParamType(Usp__GetSupportedDMResp__ParamValueType value_type);
 usp_service_t *AddUspService(char *endpoint_id, mtp_conn_t *mtpc);
 bool IsPathAlreadyRegistered(char *requested_path);
+bool IsPathAlreadyRegisteredAsAParent(usp_service_t *us, char *registered_path);
 void FreeUspService(usp_service_t *us);
 void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths);
 void ApplyPermissionsToUspService(usp_service_t *us);
@@ -229,7 +230,7 @@ void RemoveDeRegisterResp_DeRegisteredPathResult(Usp__DeregisterResp *dreg_resp)
 void AddDeRegisterRespSuccess_Path(Usp__DeregisterResp__DeregisteredPathResult *dreg_path_result, char *path);
 int DeRegisterUspServicePath(usp_service_t *us, char *path);
 bool IsPathASpecialException(char *path, int group_id);
-int ShouldPathBeAddedToDataModel(char *path);
+int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path);
 void RegisterBrokerVendorHooks(usp_service_t *us);
 void DeregisterBrokerVendorHooks(usp_service_t *us);
 void AddTopLevelTableNodes(dm_node_t *parent, str_vector_t *sv);
@@ -531,7 +532,7 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
         rp = reg->reg_paths[i];
         USP_ASSERT((rp != NULL) && (rp->path != NULL));
 
-        err = ShouldPathBeAddedToDataModel(rp->path);
+        err = ShouldPathBeAddedToDataModel(us, rp->path);
         if (err == USP_ERR_OK)
         {
             // Path should be added to data model
@@ -1378,6 +1379,7 @@ void UpdateUspServiceMRT(usp_service_t *us, mtp_conn_t *mtpc)
 **************************************************************************/
 int DeRegisterUspServicePath(usp_service_t *us, char *path)
 {
+    int i;
     int index;
     subs_map_t *smap;
     subs_map_t *next_smap;
@@ -1387,6 +1389,9 @@ int DeRegisterUspServicePath(usp_service_t *us, char *path)
     bool is_child;
     char err_msg[128];
     int err;
+    int len;
+    char *rpath;
+    int rpath_len;
 
     // Exit if this endpoint did not register the specified path
     index = STR_VECTOR_Find(&us->registered_paths, path);
@@ -1467,6 +1472,20 @@ int DeRegisterUspServicePath(usp_service_t *us, char *path)
 
     // Remove the path from the list of paths that were registered as owned by the USP Service
     STR_VECTOR_RemoveByIndex(&us->registered_paths, index);
+
+    // Remove all children of this path from the registered path list
+    len = strlen(path);
+    for (i=0; i < us->registered_paths.num_entries; i++)
+    {
+        rpath = us->registered_paths.vector[i];
+        rpath_len = strlen(rpath);
+        if ((rpath_len > len) && (memcmp(rpath, path, len)==0))
+        {
+            USP_FREE(rpath);
+            us->registered_paths.vector[i] = NULL;
+        }
+    }
+    STR_VECTOR_RemoveUnusedEntries(&us->registered_paths);
 
     return USP_ERR_OK;
 }
@@ -1551,6 +1570,7 @@ void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths)
     if (paths->num_entries == 0)
     {
         // Sync the Broker's subscriptions with the USP Service now, because we're skipping the GSDM part of the registration sequence
+        // NOTE: No need to call UspService_RefreshInstances(), as the paths being registered are all special exception paths, which we know do not contain instance numbers
         SyncSubscriptions(us);
         return;
     }
@@ -1569,10 +1589,12 @@ void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths)
     // Register these paths owned by the USP Service into the data model as single instance objects
     // This is necessary to ensure that no other USP Services can register the same path
     // Whether the path is actually a single or multi-instance object will be discovered (and correctly set) when the GSDM response is processed
+    // NOTE: The path could already exist in the data model, if it had been registered as a parent of a child object previously
+    //       eg now registering Device.Parent and previously registered Device.Parent.Child
     for (i=0; i < paths->num_entries; i++)
     {
         path = paths->vector[i];
-        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_SingleInstance, 0);
+        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_SingleInstance, SUPPRESS_PRE_EXISTANCE_ERR);
         if (node != NULL)
         {
             info = &node->registered.object_info;
@@ -3879,6 +3901,8 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
     Usp__GetSupportedDMResp__SupportedEventResult *se;
     Usp__GetSupportedDMResp__SupportedCommandResult *sc;
     unsigned type_flags;
+    dm_node_type_t node_type;
+    dm_node_t *node;
 
     USP_STRNCPY(path, sor->supported_obj_path, sizeof(path));
     len = strlen(path);
@@ -3890,18 +3914,23 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
         return;
     }
 
-    // Register the object only if it is multi_instance
-    // (single instance objects are registered automatically when registering child params)
+    // Register the object
     if (sor->is_multi_instance)
     {
+        // MULTI-INSTANCE OBJECT
         // Exit if unable to register the object
         is_writable = (sor->access != USP__GET_SUPPORTED_DMRESP__OBJ_ACCESS_TYPE__OBJ_READ_ONLY);
-        err = DM_PRIV_RegisterGroupedObject(group_id, path, is_writable, OVERRIDE_LAST_TYPE);
-        if (err != USP_ERR_OK)
+
+        // Add this path to the data model
+        // NOTE: If the path is already present, then this just modifies its group_id
+        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_MultiInstance, OVERRIDE_LAST_TYPE);
+        if (node == NULL)
         {
             USP_LOG_Error("%s: Failed to register multi-instance object '%s'", __FUNCTION__, path);
             return;
         }
+        node->group_id = group_id;
+        node->registered.object_info.group_writable = is_writable;
 
         // Register a refresh instances vendor hook if this is a top level object
         // (i.e one that contains only one instance separator, at the end of the string
@@ -3918,6 +3947,18 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
             }
         }
     }
+    else
+    {
+        // SINGLE-INSTANCE OBJECT
+        // Add this path to the data model
+        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_SingleInstance, SUPPRESS_PRE_EXISTANCE_ERR);
+        if (node == NULL)
+        {
+            USP_LOG_Error("%s: Failed to register single-instance object '%s'", __FUNCTION__, path);
+            return;
+        }
+        node->group_id = group_id;
+    }
 
     //-----------------------------------------------------
     // Iterate over all child parameters, registering them
@@ -3928,27 +3969,27 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
         // Concatenate the parameter name to the end of the path
         USP_STRNCPY(&path[len], sp->param_name, sizeof(path)-len);
 
-        // Register the parameter into the data model
+        // Calculate flags
         type_flags = CalcParamType(sp->value_type);
-
         if (sp->value_change == USP__GET_SUPPORTED_DMRESP__VALUE_CHANGE_TYPE__VALUE_CHANGE_WILL_IGNORE)
         {
             type_flags |= DM_VALUE_CHANGE_WILL_IGNORE;
         }
 
-        if (sp->access == USP__GET_SUPPORTED_DMRESP__PARAM_ACCESS_TYPE__PARAM_READ_ONLY)
+        node_type = (sp->access == USP__GET_SUPPORTED_DMRESP__PARAM_ACCESS_TYPE__PARAM_READ_ONLY) ? kDMNodeType_VendorParam_ReadOnly : kDMNodeType_VendorParam_ReadWrite;
+
+        // Register the parameter into the data model
+        // NOTE: We do not use USP_REGISTER_GroupedVendorParam_ReadWrite() or USP_REGISTER_GroupedVendorParam_ReadOnly(),
+        // so that we can suppress pre-existance errors which could occur if a parent object is registered after it's child object
+        node = DM_PRIV_AddSchemaPath(path, node_type, SUPPRESS_PRE_EXISTANCE_ERR);
+        if (node == NULL)
         {
-            err = USP_REGISTER_GroupedVendorParam_ReadOnly(group_id, path, type_flags);
+            USP_LOG_Error("%s: Failed to register parameter '%s'", __FUNCTION__, path);
         }
         else
         {
-            err = USP_REGISTER_GroupedVendorParam_ReadWrite(group_id, path, type_flags);
-        }
-
-        // Log an error, if failed to register the parameter
-        if (err != USP_ERR_OK)
-        {
-            USP_LOG_Error("%s: Failed to register parameter '%s'", __FUNCTION__, path);
+            node->group_id = group_id;
+            node->registered.param_info.type_flags = type_flags;
         }
     }
 
@@ -4030,17 +4071,39 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
 **
 ** Determines whether a path, specified in the register message, should be added into the Broker's data model
 **
+** \param   us - USP Service that is attempting to register the path
 ** \param   path - path to data model element which USP Service wants to add to Broker's data model
 **
 ** \return  USP_ERR_OK if the path should be added to the Broker's data model,
 **          otherwise return an error code indicating why the paths shouldn't be added
 **
 **************************************************************************/
-int ShouldPathBeAddedToDataModel(char *path)
+int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path)
 {
     bool is_registered;
     bool is_exception;
     bool is_valid;
+    bool is_same_group_id;
+    dm_node_t *node;
+
+    // Exit if this path is the parent of one which has already been registered to this USP Service
+    // In which case, we allow the parent to be registered after the child, but only if the parent
+    // does not have any children owned by another USP Service or the internal data model
+    is_registered = IsPathAlreadyRegisteredAsAParent(us, path);
+    if (is_registered)
+    {
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+        USP_ASSERT(node != NULL);
+
+        is_same_group_id = DM_PRIV_AreAllChildrenGroupId(node, us->group_id);
+        if (is_same_group_id == false)
+        {
+            USP_ERR_SetMessage("%s: Requested path '%s' has some children owned by a different USP Service", __FUNCTION__, path);
+            return USP_ERR_REGISTER_FAILURE;
+        }
+
+        return USP_ERR_OK;
+    }
 
     // Exit if path is already registered, so should not be added.
     is_registered = IsPathAlreadyRegistered(path);
@@ -4069,13 +4132,57 @@ int ShouldPathBeAddedToDataModel(char *path)
 
 /*********************************************************************//**
 **
+** IsPathAlreadyRegisteredAsAParent
+**
+** Determines whether the specified path has already been registered as a parent of a path owned by the specified USP Service
+** and that the path doesn't have any children which are registered to any other USP Services
+** This deals with the case of Device.Parent being registered after Device.Parent.Child
+**
+** \param   us - USP Service that is attempting to register the path
+** \param   path - path of the data model object to register
+**
+** \return  true if the path has already been registered into the data model (as a parent of an object owned by this USP Service)
+**
+**************************************************************************/
+bool IsPathAlreadyRegisteredAsAParent(usp_service_t *us, char *path)
+{
+    int i;
+    int len;
+    char *rpath;
+    int rpath_len;
+
+    // Exit if the requested path does not end in a dot. This error will be handled later by IsValidUspServicePath()
+    // (We check this to prevent the code below from matching on a partial object name)
+    len = strlen(path);
+    if (path[len-1] != '.')
+    {
+        return false;
+    }
+
+    // Iterate over all paths registered by this USP Service, seeing if any already contain this path, as their parent
+    for (i=0; i < us->registered_paths.num_entries; i++)
+    {
+        rpath = us->registered_paths.vector[i];
+        rpath_len = strlen(rpath);
+        if ((rpath_len > len) && (memcmp(rpath, path, len)==0))
+        {
+            return true;
+        }
+    }
+
+    // If the code gets here, then no match was found
+    return false;
+}
+
+/*********************************************************************//**
+**
 ** IsPathAlreadyRegistered
 **
 ** Determines whether the specified path has been registered into the data model before
 **
 ** \param   requested_path - path of the data model object to register
 **
-** \return  true if the path has already been registsred into the data model
+** \return  true if the path has already been registered into the data model
 **
 **************************************************************************/
 bool IsPathAlreadyRegistered(char *requested_path)
