@@ -4290,6 +4290,60 @@ bool IsPathASpecialException(char *path, int group_id)
     }
 #endif
 
+    // Handle Device.LocalAgent.TransferComplete!
+    if (strcmp(path, "Device.LocalAgent.TransferComplete!")==0)
+    {
+        if (group_id != INVALID)
+        {
+            static char *transfer_complete_args[] = { "Command", "CommandKey", "Requestor",
+                                                      "TransferType", "Affected", "TransferURL",
+                                                      "StartTime", "CompleteTime", "FaultCode", "FaultString",
+                                                      "CheckSumAlgorithm", "CheckSum" };
+            USP_REGISTER_Event(path);
+            USP_REGISTER_GroupId(path, group_id);
+            USP_REGISTER_EventArguments(path, transfer_complete_args, NUM_ELEM(transfer_complete_args));
+        }
+        return true;
+    }
+
+#ifdef REMOVE_SELF_TEST_DIAG_EXAMPLE
+    // Handle Device.SelfTestDiagnostics()
+    if (strcmp(path, "Device.SelfTestDiagnostics()")==0)
+    {
+        if (group_id != INVALID)
+        {
+            static char *self_test_output_args[] ={ "Status", "Results" };
+
+            USP_REGISTER_AsyncOperation(path, Broker_AsyncOperate, NULL);
+            USP_REGISTER_GroupId(path, group_id);
+            USP_REGISTER_OperationArguments(path, NULL, 0, self_test_output_args, NUM_ELEM(self_test_output_args));
+        }
+        return true;
+    }
+#endif
+
+    // Handle Device.PacketCaptureDiagnostics()
+    if (strcmp(path, "Device.PacketCaptureDiagnostics()")==0)
+    {
+        if (group_id != INVALID)
+        {
+            static char *packet_capture_input_args[] = { "Interface", "Format", "Duration", "PacketCount",
+                                                         "ByteCount", "FileTarget", "FilterExpression",
+                                                         "Username", "Password" };
+            static char *packet_capture_output_args[] ={ "Status",
+                                                         "PacketCaptureResult.{i}.FileLocation",
+                                                         "PacketCaptureResult.{i}.StartTime",
+                                                         "PacketCaptureResult.{i}.EndTime",
+                                                         "PacketCaptureResult.{i}.Count" };
+
+            USP_REGISTER_AsyncOperation(path, Broker_AsyncOperate, NULL);
+            USP_REGISTER_GroupId(path, group_id);
+            USP_REGISTER_OperationArguments(path, packet_capture_input_args, NUM_ELEM(packet_capture_input_args),
+                                                  packet_capture_output_args, NUM_ELEM(packet_capture_output_args));
+        }
+        return true;
+    }
+
     // Handle Device.InterfaceStackNumberOfEntries
     if (strcmp(path, "Device.InterfaceStackNumberOfEntries")==0)
     {
