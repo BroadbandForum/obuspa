@@ -84,6 +84,10 @@
 #endif
 #endif
 
+#ifndef REMOVE_USP_BROKER
+#include "usp_broker.h"
+#endif
+
 #ifndef REMOVE_DEVICE_BULKDATA
 #include <curl/curl.h>
 #endif
@@ -736,6 +740,18 @@ int ExecuteCli_Get(char *arg1, char *arg2, char *usage)
     int_vector_t group_ids;
     group_get_vector_t ggv;
     group_get_entry_t *gge;
+
+#ifndef REMOVE_USP_BROKER
+{
+    // Attempt to send and process a single get request to a USP Service, avoiding costly path resolution by the Broker
+    bool is_handled;
+    is_handled = USP_BROKER_AttemptDirectGetForCli(arg1);
+    if (is_handled)
+    {
+        return USP_ERR_OK;
+    }
+}
+#endif
 
     // Exit if unable to get a list of all parameters referenced by the expression
     STR_VECTOR_Init(&params);

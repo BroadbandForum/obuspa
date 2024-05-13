@@ -1054,7 +1054,8 @@ int USP_REGISTER_Object_RefreshInstances(char *path, dm_refresh_instances_cb_t r
 **************************************************************************/
 int USP_REGISTER_GroupedObject(int group_id, char *path, bool is_writable)
 {
-    int err;
+    dm_node_t *node;
+    dm_object_info_t *info;
 
     // Exit if calling arguments are specified incorrectly
     if ((path == NULL) || (group_id >= MAX_VENDOR_PARAM_GROUPS))
@@ -1063,12 +1064,19 @@ int USP_REGISTER_GroupedObject(int group_id, char *path, bool is_writable)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Exit if unable to register the object
-    err = DM_PRIV_RegisterGroupedObject(group_id, path, is_writable, 0);
-    if (err != USP_ERR_OK)
+    // Add this path to the data model
+    node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_MultiInstance, 0);
+    if (node == NULL)
     {
-        return err;
+        return USP_ERR_INTERNAL_ERROR;
     }
+
+    // Save registered info into the data model
+    info = &node->registered.object_info;
+    memset(info, 0, sizeof(dm_object_info_t));
+    node->group_id = group_id;
+    info->group_writable = is_writable;
+    DM_INST_VECTOR_Init(&info->inst_vector);
 
     return USP_ERR_OK;
 }

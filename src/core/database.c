@@ -1302,7 +1302,7 @@ int CalcPathMigrationHashes(void)
 **
 ** Migrates all entries in the DB of the specified schema path to the new schema path
 **
-** \param   pm - pointer to entry in the paths_to_migrate[] array specifyting the migration information
+** \param   pm - pointer to entry in the paths_to_migrate[] array specifying the migration information
 **
 ** \return  USP_ERR_OK if successful
 **

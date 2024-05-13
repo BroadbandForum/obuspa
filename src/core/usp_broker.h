@@ -66,5 +66,6 @@ void USP_BROKER_GetAllRegisteredGroupIds(int_vector_t *iv);
 mtp_conn_t *USP_BROKER_GetNotifyDestForEndpoint(char *endpoint_id, Usp__Header__MsgType usp_msg_type);
 bool USP_BROKER_AttemptPassthru(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc, combined_role_t *combined_role, UspRecord__Record *rec);
 void USP_BROKER_HandleUspServiceDisconnect(char *endpoint_id, uds_path_t path_type);
+bool USP_BROKER_AttemptDirectGetForCli(char *path);
 
 #endif

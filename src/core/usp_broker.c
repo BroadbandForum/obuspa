@@ -55,6 +55,7 @@
 #include "usp_broker.h"
 #include "proto_trace.h"
 #include "path_resolver.h"  // For FULL_DEPTH
+#include "cli.h"
 
 #ifndef REMOVE_USP_BROKER
 
@@ -162,6 +163,7 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
 unsigned CalcParamType(Usp__GetSupportedDMResp__ParamValueType value_type);
 usp_service_t *AddUspService(char *endpoint_id, mtp_conn_t *mtpc);
 bool IsPathAlreadyRegistered(char *requested_path);
+bool IsPathAlreadyRegisteredAsAParent(usp_service_t *us, char *registered_path);
 void FreeUspService(usp_service_t *us);
 void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths);
 void ApplyPermissionsToUspService(usp_service_t *us);
@@ -228,7 +230,7 @@ void RemoveDeRegisterResp_DeRegisteredPathResult(Usp__DeregisterResp *dreg_resp)
 void AddDeRegisterRespSuccess_Path(Usp__DeregisterResp__DeregisteredPathResult *dreg_path_result, char *path);
 int DeRegisterUspServicePath(usp_service_t *us, char *path);
 bool IsPathASpecialException(char *path, int group_id);
-int ShouldPathBeAddedToDataModel(char *path);
+int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path);
 void RegisterBrokerVendorHooks(usp_service_t *us);
 void DeregisterBrokerVendorHooks(usp_service_t *us);
 void AddTopLevelTableNodes(dm_node_t *parent, str_vector_t *sv);
@@ -530,7 +532,7 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
         rp = reg->reg_paths[i];
         USP_ASSERT((rp != NULL) && (rp->path != NULL));
 
-        err = ShouldPathBeAddedToDataModel(rp->path);
+        err = ShouldPathBeAddedToDataModel(us, rp->path);
         if (err == USP_ERR_OK)
         {
             // Path should be added to data model
@@ -1156,6 +1158,97 @@ bool USP_BROKER_AttemptPassthru(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mt
 
 /*********************************************************************//**
 **
+** USP_BROKER_AttemptDirectGetForCli
+**
+** This function sees if it's possible to perform a CLI initiated Get, without resolving the path on the Broker first
+** This is similar to performing a passthru optimization for CLI initiated Gets
+** NOTE: Only absolute paths, partial paths and wildcarded paths are supported by this function (Reference follow and search expressions are not)
+**
+** \param   path - path expression to get
+**
+** \return  true if the get has been handled here, false if the caller should perform path resolution and the get
+**
+**************************************************************************/
+bool USP_BROKER_AttemptDirectGetForCli(char *path)
+{
+    int i;
+    int err;
+    dm_node_t *node;
+    kv_vector_t kvv;
+    kv_pair_t kv;
+    Usp__Msg *req;
+    Usp__Msg *resp = NULL;
+    usp_service_t *us;
+    char msg_id[MAX_MSG_ID_LEN];
+
+    // Exit if this path does not exist in the data model, or is not an absolute, partial or wildcarded path
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+    if (node == NULL)
+    {
+        return false;
+    }
+
+    // Exit, if no USP Service associated with the group_id
+    us = FindUspServiceByGroupId(node->group_id);
+    if (us == NULL)
+    {
+        return false;
+    }
+
+    // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
+    if (us->controller_mtp.protocol == kMtpProtocol_None)
+    {
+        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Connection dropped", __FUNCTION__, us->endpoint_id);
+        return true;
+    }
+
+    // Form the USP Get Request message
+    kv.key = path;
+    kv.value = NULL;
+    kvv.vector = &kv;
+    kvv.num_entries = 1;
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_GetReq(msg_id, &kvv);
+
+    // Send the request and wait for a response
+    // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
+    #define CLI_GET_RESPONSE_TIMEOUT (3*60)        // 3 minutes
+    resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp,
+                                                 USP__HEADER__MSG_TYPE__GET_RESP,
+                                                 CLI_GET_RESPONSE_TIMEOUT);
+
+    // Exit if timed out waiting for a response
+    if (resp == NULL)
+    {
+        return true;
+    }
+
+    // Exit if unable to process the get response, retrieving the parameter values and putting them into the key-value-vector output argument
+    KV_VECTOR_Init(&kvv);
+    err = MSG_UTILS_ProcessUspService_GetResponse(resp, &kvv);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Print out the values of all parameters retrieved
+    for (i=0; i < kvv.num_entries; i++)
+    {
+        CLI_SERVER_SendResponse(kvv.vector[i].key);
+        CLI_SERVER_SendResponse(" => ");
+        CLI_SERVER_SendResponse(kvv.vector[i].value);
+        CLI_SERVER_SendResponse("\n");
+    }
+
+exit:
+    KV_VECTOR_Destroy(&kvv);
+    usp__msg__free_unpacked(resp, pbuf_allocator);
+
+    return true;
+}
+
+/*********************************************************************//**
+**
 ** AddUspService
 **
 ** Called when a USP Service has connected and sent a register message
@@ -1286,6 +1379,7 @@ void UpdateUspServiceMRT(usp_service_t *us, mtp_conn_t *mtpc)
 **************************************************************************/
 int DeRegisterUspServicePath(usp_service_t *us, char *path)
 {
+    int i;
     int index;
     subs_map_t *smap;
     subs_map_t *next_smap;
@@ -1295,6 +1389,9 @@ int DeRegisterUspServicePath(usp_service_t *us, char *path)
     bool is_child;
     char err_msg[128];
     int err;
+    int len;
+    char *rpath;
+    int rpath_len;
 
     // Exit if this endpoint did not register the specified path
     index = STR_VECTOR_Find(&us->registered_paths, path);
@@ -1375,6 +1472,20 @@ int DeRegisterUspServicePath(usp_service_t *us, char *path)
 
     // Remove the path from the list of paths that were registered as owned by the USP Service
     STR_VECTOR_RemoveByIndex(&us->registered_paths, index);
+
+    // Remove all children of this path from the registered path list
+    len = strlen(path);
+    for (i=0; i < us->registered_paths.num_entries; i++)
+    {
+        rpath = us->registered_paths.vector[i];
+        rpath_len = strlen(rpath);
+        if ((rpath_len > len) && (memcmp(rpath, path, len)==0))
+        {
+            USP_FREE(rpath);
+            us->registered_paths.vector[i] = NULL;
+        }
+    }
+    STR_VECTOR_RemoveUnusedEntries(&us->registered_paths);
 
     return USP_ERR_OK;
 }
@@ -1459,6 +1570,7 @@ void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths)
     if (paths->num_entries == 0)
     {
         // Sync the Broker's subscriptions with the USP Service now, because we're skipping the GSDM part of the registration sequence
+        // NOTE: No need to call UspService_RefreshInstances(), as the paths being registered are all special exception paths, which we know do not contain instance numbers
         SyncSubscriptions(us);
         return;
     }
@@ -1477,10 +1589,12 @@ void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths)
     // Register these paths owned by the USP Service into the data model as single instance objects
     // This is necessary to ensure that no other USP Services can register the same path
     // Whether the path is actually a single or multi-instance object will be discovered (and correctly set) when the GSDM response is processed
+    // NOTE: The path could already exist in the data model, if it had been registered as a parent of a child object previously
+    //       eg now registering Device.Parent and previously registered Device.Parent.Child
     for (i=0; i < paths->num_entries; i++)
     {
         path = paths->vector[i];
-        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_SingleInstance, 0);
+        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_SingleInstance, SUPPRESS_PRE_EXISTANCE_ERR);
         if (node != NULL)
         {
             info = &node->registered.object_info;
@@ -3787,6 +3901,7 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
     Usp__GetSupportedDMResp__SupportedEventResult *se;
     Usp__GetSupportedDMResp__SupportedCommandResult *sc;
     unsigned type_flags;
+    dm_node_t *node;
 
     USP_STRNCPY(path, sor->supported_obj_path, sizeof(path));
     len = strlen(path);
@@ -3798,18 +3913,23 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
         return;
     }
 
-    // Register the object only if it is multi_instance
-    // (single instance objects are registered automatically when registering child params)
+    // Register the object
     if (sor->is_multi_instance)
     {
+        // MULTI-INSTANCE OBJECT
         // Exit if unable to register the object
         is_writable = (sor->access != USP__GET_SUPPORTED_DMRESP__OBJ_ACCESS_TYPE__OBJ_READ_ONLY);
-        err = DM_PRIV_RegisterGroupedObject(group_id, path, is_writable, OVERRIDE_LAST_TYPE);
-        if (err != USP_ERR_OK)
+
+        // Add this path to the data model
+        // NOTE: If the path is already present, then this just modifies its group_id
+        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_MultiInstance, OVERRIDE_LAST_TYPE);
+        if (node == NULL)
         {
             USP_LOG_Error("%s: Failed to register multi-instance object '%s'", __FUNCTION__, path);
             return;
         }
+        node->group_id = group_id;
+        node->registered.object_info.group_writable = is_writable;
 
         // Register a refresh instances vendor hook if this is a top level object
         // (i.e one that contains only one instance separator, at the end of the string
@@ -3826,6 +3946,18 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
             }
         }
     }
+    else
+    {
+        // SINGLE-INSTANCE OBJECT
+        // Add this path to the data model
+        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_SingleInstance, SUPPRESS_PRE_EXISTANCE_ERR);
+        if (node == NULL)
+        {
+            USP_LOG_Error("%s: Failed to register single-instance object '%s'", __FUNCTION__, path);
+            return;
+        }
+        node->group_id = group_id;
+    }
 
     //-----------------------------------------------------
     // Iterate over all child parameters, registering them
@@ -3835,6 +3967,13 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
 
         // Concatenate the parameter name to the end of the path
         USP_STRNCPY(&path[len], sp->param_name, sizeof(path)-len);
+
+        // Skip if this parameter has already been registered. This may be the case, if a child object is registered before a parent object
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+        if (node != NULL)
+        {
+            continue;
+        }
 
         // Register the parameter into the data model
         type_flags = CalcParamType(sp->value_type);
@@ -3869,6 +4008,13 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
         // Concatenate the event name to the end of the path
         USP_STRNCPY(&path[len], se->event_name, sizeof(path)-len);
 
+        // Skip if this event has already been registered. This may be the case, if a child object is registered before a parent object
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+        if (node != NULL)
+        {
+            continue;
+        }
+
         // Skip this event, if failed to register the event
         err = USP_REGISTER_Event(path);
         if (err != USP_ERR_OK)
@@ -3899,6 +4045,14 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
         // Concatenate the command name to the end of the path
         USP_STRNCPY(&path[len], sc->command_name, sizeof(path)-len);
 
+        // Skip if this command has already been registered. This may be the case, if a child object is registered before a parent object
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+        if (node != NULL)
+        {
+            continue;
+        }
+
+        // Register this command
         switch(sc->command_type)
         {
             case USP__GET_SUPPORTED_DMRESP__CMD_TYPE__CMD_SYNC:
@@ -3938,17 +4092,39 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
 **
 ** Determines whether a path, specified in the register message, should be added into the Broker's data model
 **
+** \param   us - USP Service that is attempting to register the path
 ** \param   path - path to data model element which USP Service wants to add to Broker's data model
 **
 ** \return  USP_ERR_OK if the path should be added to the Broker's data model,
 **          otherwise return an error code indicating why the paths shouldn't be added
 **
 **************************************************************************/
-int ShouldPathBeAddedToDataModel(char *path)
+int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path)
 {
     bool is_registered;
     bool is_exception;
     bool is_valid;
+    bool is_same_group_id;
+    dm_node_t *node;
+
+    // Exit if this path is the parent of one which has already been registered to this USP Service
+    // In which case, we allow the parent to be registered after the child, but only if the parent
+    // does not have any children owned by another USP Service or the internal data model
+    is_registered = IsPathAlreadyRegisteredAsAParent(us, path);
+    if (is_registered)
+    {
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+        USP_ASSERT(node != NULL);
+
+        is_same_group_id = DM_PRIV_AreAllChildrenGroupId(node, us->group_id);
+        if (is_same_group_id == false)
+        {
+            USP_ERR_SetMessage("%s: Requested path '%s' has some children owned by a different USP Service", __FUNCTION__, path);
+            return USP_ERR_REGISTER_FAILURE;
+        }
+
+        return USP_ERR_OK;
+    }
 
     // Exit if path is already registered, so should not be added.
     is_registered = IsPathAlreadyRegistered(path);
@@ -3977,13 +4153,57 @@ int ShouldPathBeAddedToDataModel(char *path)
 
 /*********************************************************************//**
 **
+** IsPathAlreadyRegisteredAsAParent
+**
+** Determines whether the specified path has already been registered as a parent of a path owned by the specified USP Service
+** and that the path doesn't have any children which are registered to any other USP Services
+** This deals with the case of Device.Parent being registered after Device.Parent.Child
+**
+** \param   us - USP Service that is attempting to register the path
+** \param   path - path of the data model object to register
+**
+** \return  true if the path has already been registered into the data model (as a parent of an object owned by this USP Service)
+**
+**************************************************************************/
+bool IsPathAlreadyRegisteredAsAParent(usp_service_t *us, char *path)
+{
+    int i;
+    int len;
+    char *rpath;
+    int rpath_len;
+
+    // Exit if the requested path does not end in a dot. This error will be handled later by IsValidUspServicePath()
+    // (We check this to prevent the code below from matching on a partial object name)
+    len = strlen(path);
+    if (path[len-1] != '.')
+    {
+        return false;
+    }
+
+    // Iterate over all paths registered by this USP Service, seeing if any already contain this path, as their parent
+    for (i=0; i < us->registered_paths.num_entries; i++)
+    {
+        rpath = us->registered_paths.vector[i];
+        rpath_len = strlen(rpath);
+        if ((rpath_len > len) && (memcmp(rpath, path, len)==0))
+        {
+            return true;
+        }
+    }
+
+    // If the code gets here, then no match was found
+    return false;
+}
+
+/*********************************************************************//**
+**
 ** IsPathAlreadyRegistered
 **
 ** Determines whether the specified path has been registered into the data model before
 **
 ** \param   requested_path - path of the data model object to register
 **
-** \return  true if the path has already been registsred into the data model
+** \return  true if the path has already been registered into the data model
 **
 **************************************************************************/
 bool IsPathAlreadyRegistered(char *requested_path)
@@ -4090,6 +4310,60 @@ bool IsPathASpecialException(char *path, int group_id)
         return true;
     }
 #endif
+
+    // Handle Device.LocalAgent.TransferComplete!
+    if (strcmp(path, "Device.LocalAgent.TransferComplete!")==0)
+    {
+        if (group_id != INVALID)
+        {
+            static char *transfer_complete_args[] = { "Command", "CommandKey", "Requestor",
+                                                      "TransferType", "Affected", "TransferURL",
+                                                      "StartTime", "CompleteTime", "FaultCode", "FaultString",
+                                                      "CheckSumAlgorithm", "CheckSum" };
+            USP_REGISTER_Event(path);
+            USP_REGISTER_GroupId(path, group_id);
+            USP_REGISTER_EventArguments(path, transfer_complete_args, NUM_ELEM(transfer_complete_args));
+        }
+        return true;
+    }
+
+#ifdef REMOVE_SELF_TEST_DIAG_EXAMPLE
+    // Handle Device.SelfTestDiagnostics()
+    if (strcmp(path, "Device.SelfTestDiagnostics()")==0)
+    {
+        if (group_id != INVALID)
+        {
+            static char *self_test_output_args[] ={ "Status", "Results" };
+
+            USP_REGISTER_AsyncOperation(path, Broker_AsyncOperate, NULL);
+            USP_REGISTER_GroupId(path, group_id);
+            USP_REGISTER_OperationArguments(path, NULL, 0, self_test_output_args, NUM_ELEM(self_test_output_args));
+        }
+        return true;
+    }
+#endif
+
+    // Handle Device.PacketCaptureDiagnostics()
+    if (strcmp(path, "Device.PacketCaptureDiagnostics()")==0)
+    {
+        if (group_id != INVALID)
+        {
+            static char *packet_capture_input_args[] = { "Interface", "Format", "Duration", "PacketCount",
+                                                         "ByteCount", "FileTarget", "FilterExpression",
+                                                         "Username", "Password" };
+            static char *packet_capture_output_args[] ={ "Status",
+                                                         "PacketCaptureResult.{i}.FileLocation",
+                                                         "PacketCaptureResult.{i}.StartTime",
+                                                         "PacketCaptureResult.{i}.EndTime",
+                                                         "PacketCaptureResult.{i}.Count" };
+
+            USP_REGISTER_AsyncOperation(path, Broker_AsyncOperate, NULL);
+            USP_REGISTER_GroupId(path, group_id);
+            USP_REGISTER_OperationArguments(path, packet_capture_input_args, NUM_ELEM(packet_capture_input_args),
+                                                  packet_capture_output_args, NUM_ELEM(packet_capture_output_args));
+        }
+        return true;
+    }
 
     // Handle Device.InterfaceStackNumberOfEntries
     if (strcmp(path, "Device.InterfaceStackNumberOfEntries")==0)

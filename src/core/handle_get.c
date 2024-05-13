@@ -260,26 +260,15 @@ void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *
         return;
     }
 
-    // If there was an error in getting any of the parameters associated with the path expression,
-    // then just add the first error, without any of the parameter values, for this path expression result
-    for (i=0; i < gi->num_entries; i++)
-    {
-        gge = &ggv->vector[gi->index + i];
-        if (gge->err_code != USP_ERR_OK)
-        {
-            (void)AddGetResp_ReqPathRes(resp, path_expr, gge->err_code, gge->err_msg);
-            return;
-        }
-    }
-
-    // If the code gets here, then the value of all parameters were retrieved successfully, so add their values to the result_params
+    // Add the values of all parameters that were retrieved successfully to the result_params
     req_path_result = AddGetResp_ReqPathRes(resp, path_expr, USP_ERR_OK, "");
     for (i=0; i < gi->num_entries; i++)
     {
         gge = &ggv->vector[gi->index + i];
-
-        // Simple format contains a resolved_path_result for every object (and sub object)
-        AddResolvedPathResult(req_path_result, gge->path, gge->value);
+        if (gge->err_code == USP_ERR_OK)
+        {
+            AddResolvedPathResult(req_path_result, gge->path, gge->value);
+        }
     }
 }
 

@@ -155,7 +155,6 @@ static double_linked_list_t usp_service_req_list = { NULL, NULL };
 Usp__Msg *CreateUspServiceRegisterReq(char *msg_id, char **paths, int num_paths);
 Usp__Msg *CreateUspServiceDeregisterReq(char *msg_id, char **paths, int num_paths);
 void CalcUspServiceMessageId(char *msg_id, int len);
-int ProcessUspService_GetResponse(Usp__Msg *resp, kv_vector_t *kvv);
 int ProcessUspService_SetResponse(Usp__Msg *resp);
 int ProcessUspService_AddResponse(Usp__Msg *resp, kv_vector_t *unique_keys, int *instance);
 int ProcessUspService_GetSupportedDMResponse(Usp__Msg *usp, kv_vector_t *sv);
@@ -571,7 +570,7 @@ bool USP_SERVICE_AsController_IsExpectedResponse(Usp__Msg *usp)
             switch (req->req->header->msg_type)
             {
                 case USP__HEADER__MSG_TYPE__GET:
-                    err = ProcessUspService_GetResponse(usp, req->get.params);
+                    err = MSG_UTILS_ProcessUspService_GetResponse(usp, req->get.params);
                     break;
 
                 case USP__HEADER__MSG_TYPE__SET:
@@ -1410,85 +1409,6 @@ exit:
 
     return err;
 }
-
-/*********************************************************************//**
-**
-** ProcessUspService_GetResponse
-**
-** Processes a Get Response that we have received from a USP Service.  This
-** function populates the returned kvv structure with all response parameters
-** found in the USP response message without performing any filtering.
-**
-** \param   resp - USP response message in protobuf-c structure
-** \param   kvv - key-value vector in which to return the parameter values
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-int ProcessUspService_GetResponse(Usp__Msg *resp, kv_vector_t *kvv)
-{
-    int i;
-    int objIndex;
-    int paramIndex;
-    int err = USP_ERR_OK;
-    Usp__GetResp *get;
-    Usp__GetResp__RequestedPathResult *rpr;
-    Usp__GetResp__ResolvedPathResult *res;
-    Usp__GetResp__ResolvedPathResult__ResultParamsEntry *rpe;
-    char path[MAX_DM_PATH];
-
-    // Exit if the Message body contained an Error response, or the response failed to validate
-    err = MSG_UTILS_ValidateUspResponse(resp, USP__RESPONSE__RESP_TYPE_GET_RESP, NULL);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    // Exit if get response is missing
-    get = resp->body->response->get_resp;
-    if (get == NULL)
-    {
-        USP_ERR_SetMessage("%s: Missing get response", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Iterate over all requested path results
-    USP_ASSERT((get->n_req_path_results==0) || (get->req_path_results != NULL));
-    for (i=0; i < get->n_req_path_results; i++)
-    {
-        rpr = get->req_path_results[i];
-        USP_ASSERT(rpr != NULL)
-
-        // Exit if we received an error for this path
-        if (rpr->err_code != USP_ERR_OK)
-        {
-            USP_ERR_SetMessage("Failed to get '%s' (err_msg=%s)", rpr->requested_path, rpr->err_msg);
-            KV_VECTOR_Destroy(kvv);
-            err = rpr->err_code;
-            goto exit;
-        }
-
-        // Iterate over all data model objects resolved for this path
-        for (objIndex = 0 ; objIndex < rpr->n_resolved_path_results ; objIndex++)
-        {
-             // Iterate over all data model parameters resolved for this object
-            res  = rpr->resolved_path_results[objIndex];
-            for (paramIndex = 0 ; paramIndex < res->n_result_params ; paramIndex++)
-            {
-                rpe = res->result_params[paramIndex];
-                USP_ASSERT((rpe != NULL) && (rpe->value != NULL));
-
-                // Add the full path and parameter value in the returned key-value vector
-                USP_SNPRINTF(path, MAX_DM_PATH, "%s%s", res->resolved_path, rpe->key);
-                KV_VECTOR_Add(kvv, path, rpe->value);
-            }
-        }
-    }
-
-exit:
-    return err;
-}
-
 
 /*********************************************************************//**
 **

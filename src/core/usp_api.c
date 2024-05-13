@@ -732,7 +732,7 @@ char *USP_CONVERT_UnixTimeToDateTime(time_t unix_time, char *buf, int len)
 **
 ** USP_DM_RegisterRoleName
 **
-** Sets the name of a role
+** Sets an entry in the Device.LocalAgent.ControllerTrust.Role.{i} table
 **
 ** \param   role_instance - Instance in Device.LocalAgent.ControllerTrust.Role.{i} to which we want to assign a name
 ** \param   name - name of the role
@@ -771,9 +771,9 @@ int USP_DM_RegisterRoleName(int role_instance, char *name)
 **
 ** USP_DM_AddControllerTrustPermission
 **
-** Adds additional permissions for the specified role and data model nodes
+** Adds an entry to the Device.LocalAgent.ControllerTrust.Rol.{i}.Permission.{i} table
 **
-** \param   role_instance - Instance in Device.LocalAgent.ControllerTrust.Role.{i} to which we want to assign a name
+** \param   role_instance - Instance in Device.LocalAgent.ControllerTrust.Role.{i} to which we want to add a permission
 ** \param   path - pointer to path expression specifying which data model nodes are modified
 **                 Currently this only supports partial paths, full paths and wildcards. Instance numbers in the path are not supported.
 ** \param   permission_bitmask - bitmask of permissions to apply to the data model nodes

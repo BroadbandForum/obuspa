@@ -3734,44 +3734,6 @@ int DM_PRIV_ReRegister_DBParam_Default(char *path, char *value)
 
 /*********************************************************************//**
 **
-** DM_PRIV_RegisterGroupedObject
-**
-** Registers an object which uses the group add and delete vendor hooks
-** NOTE: By definition, this means that this function registers only multi-instance (not single instance objects)
-**
-** \param   group_id - group_id to register for the object
-** \param   path - full data model path for the top-level multi-instance object
-** \param   is_writable - set if instances can be added/deleted, clear if instances are not controlled by USP controller
-** \param   flags - options to control execution of this function (eg SUPPRESS_PRE_EXISTANCE_ERR)
-**
-** \return  USP_ERR_OK if successful
-**          USP_ERR_INTERNAL_ERROR if any other error occurred
-**
-**************************************************************************/
-int DM_PRIV_RegisterGroupedObject(int group_id, char *path, bool is_writable, unsigned flags)
-{
-    dm_node_t *node;
-    dm_object_info_t *info;
-
-    // Add this path to the data model
-    node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_MultiInstance, flags);
-    if (node == NULL)
-    {
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Save registered info into the data model
-    info = &node->registered.object_info;
-    memset(info, 0, sizeof(dm_object_info_t));
-    node->group_id = group_id;
-    info->group_writable = is_writable;
-    DM_INST_VECTOR_Init(&info->inst_vector);
-
-    return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
 ** DM_PRIV_GetPermissions
 **
 ** Returns the permissions for the specified data model node, given the specified role
@@ -3910,6 +3872,47 @@ bool DM_PRIV_IsChildNodeOf(dm_node_t *node, dm_node_t *parent_node)
     }
 
     return false;
+}
+
+/*********************************************************************//**
+**
+** DM_PRIV_AreAllChildrenGroupId
+**
+** Recursively determines whether all child nodes have the specified group_id (ie are owned by the same data model provider component)
+** NOTE: This function intentionally does not check that the node itself has the specified group_id (as it is used for cases when this is not the case)
+**
+** \param   parent - data model node to check all children of
+** \param   group_id - group_id to check that all children match
+**
+** \return  true all child nodes match the specified group_id
+**
+**************************************************************************/
+bool DM_PRIV_AreAllChildrenGroupId(dm_node_t *parent, int group_id)
+{
+    dm_node_t *child;
+
+    // Iterate over list of children
+    child = (dm_node_t *) parent->child_nodes.head;
+    while (child != NULL)
+    {
+        // Exit if this child does not match the specified group_id
+        if (child->group_id != group_id)
+        {
+            return false;
+        }
+
+        // Exit if all children of this child do not match the specified group_id
+        if (DM_PRIV_AreAllChildrenGroupId(child, group_id) == false)
+        {
+            return false;
+        }
+
+        // Move to next sibling in the data model tree
+        child = (dm_node_t *) child->link.next;
+    }
+
+    // If the code gets here, then all children matched the specified group_id, or the node did not have any children
+    return true;
 }
 
 /*********************************************************************//**
@@ -4152,6 +4155,7 @@ dm_node_t *CreateNode(char *name, dm_node_type_t type, char *schema_path)
 
     // Default the group_id
     // NOTE: For objects which are non multi-instance, the group_id is effectively 'don't care' as non-table objects are not accessible via the grouped vendor hook APIs
+    // NOTE: For non multi-instance objects in a USP Broker owned by USP Services, the group_id is overridden later to ensure that all nodes underneath a registered DM object are the same group_id
     node->group_id = NON_GROUPED;
 
     // Add the node into the node map, addressable by schema path
@@ -5160,11 +5164,11 @@ int RegisterDefaultControllerTrust(void)
 {
     int err = USP_ERR_OK;
 
-    // Currently, it is important that the first role registered is full access, as all controllers
-    // inherit the first role in this table, and we currently want all controllers to have full access
+    // Register 'Full Access' role
     err |= USP_DM_RegisterRoleName(ROLE_FULL_ACCESS, "Full Access");
     err |= USP_DM_AddControllerTrustPermission(ROLE_FULL_ACCESS, dm_root, PERMIT_ALL);
 
+    // Register 'Untrusted' role
     err |= USP_DM_RegisterRoleName(ROLE_UNTRUSTED,  "Untrusted");
     err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, dm_root, PERMIT_NONE);
     err |= USP_DM_AddControllerTrustPermission(ROLE_UNTRUSTED, "Device.DeviceInfo.", PERMIT_GET | PERMIT_OBJ_INFO);
