@@ -1328,6 +1328,77 @@ void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance)
 }
 #endif
 
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_SetInheritedRole
+**
+** Sets the controller trust role to use for the specified controller
+**
+** \param   cont_instance - Instance of controller in Device.LocalAgent.Controller.{i}
+** \param   role_instance - Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_CONTROLLER_SetInheritedRole(int cont_instance, int role_instance)
+{
+    int i;
+    controller_t *cont;
+
+    // Iterate over all enabled controllers, setting the inherited role of the matching controller
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if ((cont->instance == cont_instance) && (cont->instance != INVALID))
+        {
+            cont->inherited_instance = role_instance;
+            break;
+        }
+    }
+}
+
+#ifdef ENABLE_WEBSOCKETS
+/*********************************************************************//**
+**
+** DEVICE_CONTROLLER_CountEnabledWebsockClientConnections
+**
+** Determines the number of websocket client connections to controllers
+**
+** \param   None
+**
+** \return  Count of the number of enabled websocket client connections to controllers
+**
+**************************************************************************/
+int DEVICE_CONTROLLER_CountEnabledWebsockClientConnections(void)
+{
+    int i;
+    int j;
+    controller_t *cont;
+    controller_mtp_t *mtp;
+    int count = 0;
+
+    // Iterate over all controllers
+    for (i=0; i<MAX_CONTROLLERS; i++)
+    {
+        cont = &controllers[i];
+        if (cont->instance != INVALID)
+        {
+            // Iterate over all MTP slots for this controller
+            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
+            {
+                mtp = &cont->mtps[j];
+                if ((mtp->instance != INVALID) && (mtp->enable) && (mtp->protocol == kMtpProtocol_WebSockets))
+                {
+                    count++;
+                }
+            }
+        }
+    }
+
+    return count;
+}
+#endif
+
 #if defined(ENABLE_UDS) && !(defined(REMOVE_USP_BROKER) && defined(REMOVE_USP_SERVICE))
 /*********************************************************************//**
 **
@@ -2389,9 +2460,7 @@ void PeriodicNotificationExec(int id)
     controller_t *cont;
     time_t cur_time;
 
-    // Exit if it's not yet time for any periodic notifications to fire
     cur_time = time(NULL);
-    USP_ASSERT(cur_time >= first_periodic_notification_time);
 
     // Iterate over all controllers
     for (i=0; i<MAX_CONTROLLERS; i++)
@@ -4318,6 +4387,16 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     {
         return err;
     }
+
+    // Start a CoAP client to this controller (if required)
+    if ((can_mtp_connect) && (mtp->protocol == kMtpProtocol_CoAP) && (mtp->enable) && (cont->enable))
+    {
+        err = COAP_CLIENT_Start(cont->instance, mtp_instance, cont->endpoint_id);
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
+    }
 #endif
 
 #ifdef ENABLE_MQTT
@@ -4402,6 +4481,12 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     if (err != USP_ERR_OK)
     {
         return err;
+    }
+
+    // Start a WebSocket client to connect to this controller (if required)
+    if ((can_mtp_connect) && (mtp->protocol == kMtpProtocol_WebSockets) && (mtp->enable) && (cont->enable))
+    {
+        WSCLIENT_StartClient(cont->instance, mtp_instance, cont->endpoint_id, &mtp->websock);
     }
 #endif
 

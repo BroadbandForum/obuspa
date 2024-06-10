@@ -3269,8 +3269,8 @@ exit:
 ** \param   path - Path of the parameter which failed to set (usually this is a full/schema path, rather than just a parameter name - it just depends on the source of the USP message)
 ** \param   err_code - reason for the parameter not being set
 ** \param   err_msg - textual reason for the parameter not being set
-** \param   params - arry of parameters that were attempted to be set
-** \param   num_params - number of parameters that
+** \param   params - array of parameters that were attempted to be set
+** \param   num_params - number of parameters that were attempted to be set
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -3508,7 +3508,7 @@ int SendOperateAndProcessResponse(int group_id, char *path, bool is_sync, char *
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Process the add response, determining if it was successful or not
+    // Process the operate response, determining if it was successful or not
     err = ProcessOperateResponse(resp, path, is_sync, output_args, is_complete);
 
     // Free the operate response, since we've finished with it

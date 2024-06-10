@@ -2302,8 +2302,6 @@ uds_connection_t *FindUdsClientByInstanceId(int instance)
     return NULL;
 }
 
-#endif // ENABLE_UDS
-
 /*********************************************************************//**
 **
 ** InitialiseUdsConnection
@@ -2386,3 +2384,5 @@ char *EndpointIdForLog(uds_connection_t *uc)
 {
     return (uc->endpoint_id == NULL) ? "UNKNOWN" : uc->endpoint_id;
 }
+
+#endif // ENABLE_UDS

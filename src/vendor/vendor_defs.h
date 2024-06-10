@@ -249,4 +249,10 @@
 #endif
 #endif
 
+#ifndef ENABLE_UDS
+#if !defined(REMOVE_USP_BROKER) || !defined(REMOVE_USP_SERVICE)
+#error "If UDS MTP is disabled, then REMOVE_USP_BROKER and REMOVE_USP_SERVICE must be defined"
+#endif
+#endif
+
 #endif // VENDOR_DEFS_H

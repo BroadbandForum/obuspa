@@ -126,10 +126,13 @@ typedef enum
     kDmExecMsg_ObjAdded,           // Sent from a thread to signal that an object has been added by the vendor
     kDmExecMsg_ObjDeleted,         // Sent from a thread to signal that an object has been deleted by the vendor
     kDmExecMsg_ProcessUspRecord,   // Sent from the MTP thread with a USP Record to process
-    kDmExecMsg_StompHandshakeComplete, // Sent from the MTP thread to notify the controller trust role to use for all controllers connected to the specified stomp connection
     kDmExecMsg_MtpThreadExited,    // Sent to signal that the MTP thread has exited as requested by a scheduled exit
     kDmExecMsg_BdcTransferResult,  // Sent to signal that the BDC thread has sent (or failed to send) a report
+    kDmExecMsg_StompHandshakeComplete, // Sent from the MTP thread to notify the controller trust role to use for all controllers connected to the specified stomp connection
     kDmExecMsg_MqttHandshakeComplete, // Sent from the MTP thread to notify the controller trust role to use for all controllers connected to the specified mqtt client
+#ifdef ENABLE_WEBSOCKETS
+    kDmExecMsg_WebsockHandshakeComplete, // Sent from the MTP thread to notify the controller trust role to use for all controllers connected to the specified websocket client
+#endif
     kDmExecMsg_DoWork,             // Sent from a thread to cause the data model thread to call the provided callback
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
     kDmExecMsg_E2eSessionEvent,    // Sent from a thread to signal an event related to the E2E Session Context has occurred.
@@ -192,6 +195,13 @@ typedef struct
     mqtt_protocolver_t version;
     char *agent_topic;
 } mqtt_complete_msg_t;
+
+// Notify controller trust role for the controller connected via websocket client
+typedef struct
+{
+    int cont_instance;
+    int role_instance;      // Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
+} websock_complete_msg_t;
 
 // Notify USP Service connections
 typedef struct
@@ -272,6 +282,7 @@ typedef struct
         process_usp_record_msg_t usp_record;
         stomp_complete_msg_t stomp_complete;
         mqtt_complete_msg_t mqtt_complete;
+        websock_complete_msg_t websock_complete;
         uds_complete_msg_t uds_complete;
         uds_disconnected_msg_t uds_disconnected;
         mgmt_ip_addr_msg_t mgmt_ip_addr;
@@ -873,6 +884,54 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t ver
     }
 }
 
+#ifdef ENABLE_WEBSOCKETS
+/*********************************************************************//**
+**
+** DM_EXEC_PostWebsockHandshakeComplete
+**
+** Posts the inherited role associated with a Websocket client connection, after the TLS handshake has completed
+** This message will unblock processing of Boot! event and subscriptions, which are held up until the controller
+** trust role associated with each controller is known (otherwise they would use the wrong role when getting data)
+** Note: Restarting of async operations are also held up, because we want them to occur after the Boot! event
+**
+** \param   cont_instance - instance number of controller to which the websocket is connected
+** \param   role_instance - Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
+**
+** \return  None
+**
+**************************************************************************/
+void DM_EXEC_PostWebsockHandshakeComplete(int cont_instance, int role_instance)
+{
+    dm_exec_msg_t  msg;
+    websock_complete_msg_t *wcm;
+    int bytes_sent;
+
+    // Exit if message queue is not setup yet
+    if (main_mq_tx_socket == -1)
+    {
+        USP_LOG_Error("%s is being called before data model has been initialised", __FUNCTION__);
+        return;
+    }
+
+    // Form message
+    memset(&msg, 0, sizeof(msg));
+    msg.type = kDmExecMsg_WebsockHandshakeComplete;
+    wcm = &msg.params.websock_complete;
+    wcm->cont_instance = cont_instance;
+    wcm->role_instance = role_instance;
+
+    // Send the message - does not block if the queue is full, discards the message instead
+    bytes_sent = send(main_mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
+    if (bytes_sent != sizeof(msg))
+    {
+        char buf[USP_ERR_MAXLEN];
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Failed to send kDmExecMsg_WebsockHandshakeComplete (cont_instance=%d)", __FUNCTION__, cont_instance);
+        FreeDmExecMessageArguments(&msg);
+        return;
+    }
+}
+#endif
 
 #ifdef ENABLE_UDS
 /*********************************************************************//**
@@ -1506,7 +1565,7 @@ void *DM_EXEC_Main(void *args)
         return NULL;
     }
 
-    // Determine whether we have to wait for a STOMP or MQTT connection, before enabling notifications
+    // Determine whether we have to wait for the connection, before enabling notifications
     // This is necessary because the contents of the Boot! event may be dependant on the permissions that the USP Controller has, and we'll only know this after connecting to it
 #ifndef DISABLE_STOMP
     enabled_connections += DEVICE_STOMP_CountEnabledConnections();
@@ -1516,7 +1575,11 @@ void *DM_EXEC_Main(void *args)
     enabled_connections += DEVICE_MQTT_CountEnabledConnections();
 #endif
 
-    // Enable notifications now, if we don't have to wait for a STOMP or MQTT connection before generating a Boot! notification
+#ifdef ENABLE_WEBSOCKETS
+    enabled_connections += DEVICE_CONTROLLER_CountEnabledWebsockClientConnections();
+#endif
+
+    // Enable notifications now, if we don't have to wait for the connection before generating a Boot! notification
     if (enabled_connections == 0)
     {
         DM_EXEC_EnableNotifications();
@@ -1702,6 +1765,17 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             mcm = &msg.params.mqtt_complete;
             DEVICE_CONTROLLER_QueueMqttConnectRecord(mcm->mqtt_instance, mcm->version, mcm->agent_topic);
             DEVICE_CONTROLLER_SetRolesFromMqtt(mcm->mqtt_instance, mcm->role_instance);
+            DM_EXEC_EnableNotifications();
+        }
+            break;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kDmExecMsg_WebsockHandshakeComplete:
+        {
+            websock_complete_msg_t *wcm;
+            wcm = &msg.params.websock_complete;
+            DEVICE_CONTROLLER_SetInheritedRole(wcm->cont_instance, wcm->role_instance);
             DM_EXEC_EnableNotifications();
         }
             break;
@@ -1975,6 +2049,12 @@ void FreeDmExecMessageArguments(dm_exec_msg_t *msg)
 #ifdef ENABLE_MQTT
         case kDmExecMsg_MqttHandshakeComplete:
             USP_SAFE_FREE(msg->params.mqtt_complete.agent_topic);
+            break;
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+        case kDmExecMsg_WebsockHandshakeComplete:
+            // Nothing to free for this message
             break;
 #endif
 

@@ -329,6 +329,11 @@ void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance);
 int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value);
 void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, int role_instance);
 char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance);
+void DEVICE_CONTROLLER_SetInheritedRole(int cont_instance, int role_instance);
+
+#ifdef ENABLE_WEBSOCKETS
+int DEVICE_CONTROLLER_CountEnabledWebsockClientConnections(void);
+#endif
 
 #ifndef REMOVE_USP_BROKER
 int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance);

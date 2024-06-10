@@ -1,5 +1,11 @@
 # OB-USP-AGENT Changelog since Release 8.0.0
 
+## 2024-06-10 v8.0.4
+### Fixed
+- Compiling without UDS fails [GH#110]
+- WebSocket client does not send Boot! event (regression introduced in v8.0)
+- WebSocket client not started after MTP dynamically added to controller table (regression introduced in v8.0)
+
 ## 2024-05-13 v8.0.3
 ### Added
 - USP Broker: CLI initiated gets have been optimized to pass through the path to the USP Service, when possible

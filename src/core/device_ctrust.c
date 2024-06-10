@@ -109,8 +109,8 @@ int_vector_t roles_to_update = { 0 };
 // Structure for Credential table
 typedef struct
 {
-    int instance;           // instance number in the credentials table Device.LocalAgent.ControlleTrust.Credential.{i}
-                            // NOTE: This instnace number is the same as cert_instance below.
+    int instance;           // instance number in the credentials table Device.LocalAgent.ControllerTrust.Credential.{i}
+                            // NOTE: This instance number is the same as cert_instance below.
                             //       This ensures that the credential table doesn't change every reboot if the order of populating certificates in the certificate table changes
 
     int role_instance;      // instance number of the role in Device.LocalAgent.ControllerTrust.Role.{i}

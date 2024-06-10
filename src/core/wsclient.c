@@ -1501,7 +1501,7 @@ int HandleAllWscEvents(struct lws *handle, enum lws_callback_reasons event, void
             break;
 
         default:
-            tr_event("WS client: event=%d", __FUNCTION__, event);
+            tr_event("WS client: event=%d", event);
             break;
     }
 
@@ -1600,7 +1600,7 @@ int HandleWscEvent_Error(struct lws *handle, char *err_msg)
     // Log the cause of connection failure
     wc = lws_get_opaque_user_data(handle);
     USP_ASSERT(wc != NULL);
-    USP_LOG_Error("%s: Error (%s) occurred on websocket connection to endpoint_id=%s (host=%s)", __FUNCTION__, err_msg, wc->cont_endpoint_id, wc->host);
+    USP_LOG_Error("%s: Error (%s) occurred on websocket connection to endpoint_id=%s (host=%s, port=%d)", __FUNCTION__, err_msg, wc->cont_endpoint_id, wc->host, wc->port);
 
     // Set the root cause of error, if none set yet
     if (wc->close_reason == kWebSockCloseReason_Unknown)
@@ -1832,6 +1832,9 @@ int HandleWscEvent_Connected(struct lws *handle)
         sk_X509_pop_free(wc->cert_chain, X509_free);
         wc->cert_chain = NULL;
     }
+
+    // Notify the data model that the Boot! event can now be generated (as we know which inherited role to use)
+    DM_EXEC_PostWebsockHandshakeComplete(wc->cont_instance, wc->role_instance);
 
     // Set a timer to expire when it is time to send the websocket PING frame
     lws_set_timer_usecs(handle, wc->keep_alive_interval * LWS_USEC_PER_SEC);

@@ -1,4 +1,4 @@
-// Copyright 2022 BroadBand Forum
+// Copyright 2022-2024 BroadBand Forum
 
 /*
  * Copyright (c) 2008-2015, Dave Benson and the protobuf-c authors.
