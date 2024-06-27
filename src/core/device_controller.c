@@ -1895,14 +1895,6 @@ bool UpdateCanMtpConnect(void)
     can_mtp_connect_cb_t  can_mtp_connect_cb;
     time_t time_now;
 
-    // Exit if the timeout on the criteria defined by can_mtp_connect has expired
-    time_now = OS_UTILS_TimeNow();
-    if (time_now >= pre_connect_timeout)
-    {
-        allowed = true;
-        goto exit;
-    }
-
     // Determine whether the vendor hook allows the MTPs to start
     can_mtp_connect_cb = vendor_hook_callbacks.can_mtp_connect_cb;
     if (can_mtp_connect_cb != NULL)
@@ -1915,7 +1907,17 @@ bool UpdateCanMtpConnect(void)
         allowed = true;
     }
 
-exit:
+    // Handle the case of timed out waiting for permission to connect
+    if (allowed == false)
+    {
+        time_now = OS_UTILS_TimeNow();
+        if (time_now >= pre_connect_timeout)
+        {
+            USP_LOG_Warning("%s: WARNING: Timed out waiting for permission to connect. Connecting anyway. Some criteria may not be met.", __FUNCTION__);
+            allowed = true;
+        }
+    }
+
     // Save off whether connection is allowed
     OS_UTILS_LockMutex(&can_mtp_connect_mutex);
     can_mtp_connect = allowed;
