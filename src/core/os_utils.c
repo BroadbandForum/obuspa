@@ -285,3 +285,30 @@ int OS_UTILS_CreateDirFromFilename(char *filename)
 
     return USP_ERR_OK;
 }
+
+/*********************************************************************//**
+**
+** OS_UTILS_TimeNow
+**
+** Returns the current time. Ideally using the monotonic clock which will not have discontinuities in it when NTP time is acquired
+**
+** \param   None
+**
+** \return  time in seconds since some fixed starting point
+**
+**************************************************************************/
+time_t OS_UTILS_TimeNow(void)
+{
+    int err;
+    struct timespec ts;
+
+    // Exit if able to get the monotonic clock time
+    err = clock_gettime(CLOCK_MONOTONIC, &ts);
+    if (err == 0)
+    {
+        return ts.tv_sec;
+    }
+
+    // Otherwise return the real time clock
+    return time(NULL);
+}

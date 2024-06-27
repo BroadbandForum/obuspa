@@ -105,6 +105,10 @@ static pthread_mutex_t can_mtp_connect_mutex;
 // Variable used to determine whether MTP client connections for STOMP, CoAP, MQTT and Websockets are allowed to connect
 static volatile bool can_mtp_connect = false;
 
+// Timeout for can_mtp_connect vendor hook
+static char pre_connect_timeout_param[] = "Device.LocalAgent.X_VANTIVA-COM_PreConnectTimeout";
+static time_t pre_connect_timeout = 0;
+
 //------------------------------------------------------------------------------
 // Structure representing entries in the Device.LocalAgent.Controller.{i}.MTP.{i} table
 typedef struct
@@ -398,6 +402,8 @@ int DEVICE_CONTROLLER_Init(void)
 #endif
 #endif
 
+    err |= USP_REGISTER_DBParam_ReadWrite(pre_connect_timeout_param, "60", NULL, NULL, DM_UINT);
+
     // Register unique keys for all tables
     char *cont_unique_keys[] = { "EndpointID" };
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_CONT_ROOT ".{i}", cont_unique_keys, NUM_ELEM(cont_unique_keys));
@@ -447,6 +453,15 @@ int DEVICE_CONTROLLER_Start(void)
     controller_mtp_t *mtp;
     char path[MAX_DM_PATH];
     int count;
+    unsigned timeout;
+
+    // Exit if unable to calculate the MTP connect timeout
+    err = DM_ACCESS_GetUnsigned(pre_connect_timeout_param, &timeout);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+    pre_connect_timeout = OS_UTILS_TimeNow() + timeout;
 
     // Exit if unable to get the object instance numbers present in the controllers table
     INT_VECTOR_Init(&iv);
@@ -1878,6 +1893,15 @@ bool UpdateCanMtpConnect(void)
 {
     bool allowed;
     can_mtp_connect_cb_t  can_mtp_connect_cb;
+    time_t time_now;
+
+    // Exit if the timeout on the criteria defined by can_mtp_connect has expired
+    time_now = OS_UTILS_TimeNow();
+    if (time_now >= pre_connect_timeout)
+    {
+        allowed = true;
+        goto exit;
+    }
 
     // Determine whether the vendor hook allows the MTPs to start
     can_mtp_connect_cb = vendor_hook_callbacks.can_mtp_connect_cb;
@@ -1891,6 +1915,7 @@ bool UpdateCanMtpConnect(void)
         allowed = true;
     }
 
+exit:
     // Save off whether connection is allowed
     OS_UTILS_LockMutex(&can_mtp_connect_mutex);
     can_mtp_connect = allowed;
