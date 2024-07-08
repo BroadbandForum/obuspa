@@ -194,9 +194,10 @@ typedef struct
 
     mqtt_protocolver_t version;
     char *agent_topic;
+    char *client_id;
 } mqtt_complete_msg_t;
 
-// Notify controller trust role for the controller connected via websocket client
+// Notify controller trust role for the controller connected vaia websocket client
 typedef struct
 {
     int cont_instance;
@@ -843,12 +844,13 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, i
 ** \param   mqtt_instance - instance number of connection in Device.MQTT.Client.{i}
 ** \param   version - MQTT version in use on the connection
 ** \param   agent_topic - MQTT topic that the agent actually subscribed to. This is put inside a USP Connect record to indicate to the Controller the topic on which the agent is listening
+** \param   client_id - MQTT client_id that the agent used or was assigned in the MQTTv5 CONNACK. This should be persistently stored in Device.MQTT.Client.{i}.ClientID
 ** \param   role_instance - Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, int role_instance)
+void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, char *client_id, int role_instance)
 {
     dm_exec_msg_t  msg;
     mqtt_complete_msg_t *mcm;
@@ -870,6 +872,7 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t ver
     mcm->mqtt_instance = mqtt_instance;
     mcm->version = version;
     mcm->agent_topic = USP_STRDUP(agent_topic);
+    mcm->client_id = USP_STRDUP(client_id);
     mcm->role_instance = role_instance;
 
     // Send the message - does not block if the queue is full, discards the message instead
@@ -1765,6 +1768,10 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             mcm = &msg.params.mqtt_complete;
             DEVICE_CONTROLLER_QueueMqttConnectRecord(mcm->mqtt_instance, mcm->version, mcm->agent_topic);
             DEVICE_CONTROLLER_SetRolesFromMqtt(mcm->mqtt_instance, mcm->role_instance);
+            if (mcm->version == kMqttProtocol_5_0)
+            {
+                DEVICE_MQTT_UpdateClientId(mcm->mqtt_instance, mcm->client_id);
+            }
             DM_EXEC_EnableNotifications();
         }
             break;
@@ -2049,6 +2056,7 @@ void FreeDmExecMessageArguments(dm_exec_msg_t *msg)
 #ifdef ENABLE_MQTT
         case kDmExecMsg_MqttHandshakeComplete:
             USP_SAFE_FREE(msg->params.mqtt_complete.agent_topic);
+            USP_SAFE_FREE(msg->params.mqtt_complete.client_id);
             break;
 #endif
 

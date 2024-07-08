@@ -1096,6 +1096,7 @@ void STOMP_UpdateRetryParams(int instance, stomp_retry_params_t *retry_params)
 
     // Copy across the connection parameters to use during a retry
     memcpy(&sc->retry, retry_params, sizeof(stomp_retry_params_t));
+    memcpy(&sc->next_conn_params.retry, retry_params, sizeof(stomp_retry_params_t));
 
 exit:
     OS_UTILS_UnlockMutex(&stomp_access_mutex);

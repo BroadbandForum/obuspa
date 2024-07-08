@@ -105,6 +105,10 @@ static pthread_mutex_t can_mtp_connect_mutex;
 // Variable used to determine whether MTP client connections for STOMP, CoAP, MQTT and Websockets are allowed to connect
 static volatile bool can_mtp_connect = false;
 
+// Timeout for can_mtp_connect vendor hook
+static char pre_connect_timeout_param[] = "Device.LocalAgent.X_VANTIVA-COM_PreConnectTimeout";
+static time_t pre_connect_timeout = 0;
+
 //------------------------------------------------------------------------------
 // Structure representing entries in the Device.LocalAgent.Controller.{i}.MTP.{i} table
 typedef struct
@@ -398,6 +402,8 @@ int DEVICE_CONTROLLER_Init(void)
 #endif
 #endif
 
+    err |= USP_REGISTER_DBParam_ReadWrite(pre_connect_timeout_param, "60", NULL, NULL, DM_UINT);
+
     // Register unique keys for all tables
     char *cont_unique_keys[] = { "EndpointID" };
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_CONT_ROOT ".{i}", cont_unique_keys, NUM_ELEM(cont_unique_keys));
@@ -447,6 +453,15 @@ int DEVICE_CONTROLLER_Start(void)
     controller_mtp_t *mtp;
     char path[MAX_DM_PATH];
     int count;
+    unsigned timeout;
+
+    // Exit if unable to calculate the MTP connect timeout
+    err = DM_ACCESS_GetUnsigned(pre_connect_timeout_param, &timeout);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+    pre_connect_timeout = OS_UTILS_TimeNow() + timeout;
 
     // Exit if unable to get the object instance numbers present in the controllers table
     INT_VECTOR_Init(&iv);
@@ -1095,7 +1110,7 @@ void DEVICE_CONTROLLER_QueueMqttConnectRecord(int mqtt_instance, mqtt_protocolve
                     {
                         mtp_send_item_t msi;
                         USPREC_MqttConnect_Create(cont->endpoint_id, version, agent_topic, &msi);
-                        MQTT_QueueBinaryMessage(&msi, mqtt_instance, mtp->mqtt_controller_topic);
+                        MQTT_QueueBinaryMessage(&msi, mqtt_instance, mtp->mqtt_controller_topic, END_OF_TIME);
                         // NOTE: No need to free any members of the msi structure, since ownership of the payload buffer has passed to MQTT MTP layer
                     }
                     else
@@ -1878,6 +1893,7 @@ bool UpdateCanMtpConnect(void)
 {
     bool allowed;
     can_mtp_connect_cb_t  can_mtp_connect_cb;
+    time_t time_now;
 
     // Determine whether the vendor hook allows the MTPs to start
     can_mtp_connect_cb = vendor_hook_callbacks.can_mtp_connect_cb;
@@ -1889,6 +1905,17 @@ bool UpdateCanMtpConnect(void)
     {
         // Default (if no vendor hook is registered) is to immediately start all MTP clients connecting
         allowed = true;
+    }
+
+    // Handle the case of timed out waiting for permission to connect
+    if (allowed == false)
+    {
+        time_now = OS_UTILS_TimeNow();
+        if (time_now >= pre_connect_timeout)
+        {
+            USP_LOG_Warning("%s: WARNING: Timed out waiting for permission to connect. Connecting anyway. Some criteria may not be met.", __FUNCTION__);
+            allowed = true;
+        }
     }
 
     // Save off whether connection is allowed
@@ -2252,7 +2279,7 @@ int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_m
 #ifdef ENABLE_MQTT
         case kMtpProtocol_MQTT:
         {
-            err = MQTT_QueueBinaryMessage(msi, mtpc->mqtt.instance, mtpc->mqtt.topic);
+            err = MQTT_QueueBinaryMessage(msi, mtpc->mqtt.instance, mtpc->mqtt.topic, expiry_time);
         }
             break;
 #endif

@@ -73,7 +73,7 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, char *originator, 
 void DM_EXEC_CopyMTPConnection(mtp_conn_t *dst, mtp_conn_t *src);
 void DM_EXEC_FreeMTPConnection(mtp_conn_t *mtpc);
 void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, int role_instance);
-void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, int role_instance);
+void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, char *client_id, int role_instance);
 #ifdef ENABLE_WEBSOCKETS
 void DM_EXEC_PostWebsockHandshakeComplete(int cont_instance, int role_instance);
 #endif

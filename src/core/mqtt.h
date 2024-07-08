@@ -74,6 +74,7 @@ typedef enum
     kMqttSubState_Unsubscribed = 0, // Not currently subscribed
     kMqttSubState_Subscribing,      // MQTT SUBSCRIBE message is being sent, waiting for SUBACK
     kMqttSubState_Subscribed,       // Subscribed (MQTT SUBACK has been received)
+    kMqttSubState_Failed,           // Attempted to subscribe, but SUBACK indicated that subscription failed
     kMqttSubState_Unsubscribing,    // MQTT UNSUBSCRIBE is being sent. When UNSUBACK is received, the subscription will move to the unsubscribed state
     kMqttSubState_Resubscribing,    // MQTT UNSUBSCRIBE is being sent. When UNSUBACK is received, a subscribe will be sent for the new topic.
                                     // Subscription stays in this state until SUBACK is received
@@ -125,7 +126,6 @@ typedef struct
     bool clean_session;
     bool clean_start;
     bool request_response_info;
-    bool request_problem_info;
     char* response_information;
 
     mqtt_retry_params_t retry;
@@ -139,8 +139,8 @@ int MQTT_Start(void);
 void MQTT_Stop(void);
 int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS]);
 int MQTT_DisableClient(int instance);
-int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *topic);
-void MQTT_ScheduleReconnect(mqtt_conn_params_t *mqtt_params);
+int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *topic, time_t expiry_time);
+void MQTT_UpdateConnectionParams(mqtt_conn_params_t *mqtt_params, bool schedule_reconnect);
 void MQTT_ActivateScheduledActions(void);
 mtp_status_t MQTT_GetMtpStatus(int instance);
 const char* MQTT_GetClientStatus(int instance);

@@ -57,6 +57,7 @@ int OS_UTILS_InitMutex(pthread_mutex_t *mutex);
 void OS_UTILS_LockMutex(pthread_mutex_t *mutex);
 void OS_UTILS_UnlockMutex(pthread_mutex_t *mutex);
 int OS_UTILS_CreateDirFromFilename(char *filename);
+time_t OS_UTILS_TimeNow(void);
 
 #endif
 

@@ -317,6 +317,7 @@ int DEVICE_MQTT_Start(void);
 void DEVICE_MQTT_Stop(void);
 int DEVICE_MQTT_StartAllClients(void);
 void DEVICE_MQTT_ScheduleReconnect(int instance);
+void DEVICE_MQTT_UpdateClientId(int instance, char *client_id);
 mtp_status_t DEVICE_MQTT_GetMtpStatus(int instance);
 char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance);
 mqtt_qos_t DEVICE_MTP_GetAgentMqttPublishQos(int instance);

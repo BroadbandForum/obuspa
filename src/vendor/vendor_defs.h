@@ -177,8 +177,9 @@
 // Key used to obfuscate (using XOR) all secure data model parameters stored in the USP Agent database (eg passwords)
 #define PASSWORD_OBFUSCATION_KEY  "$%^&*()@~#/,?"
 
-// Timeout (in seconds) when performing a connect to a STOMP broker
+// Timeout (in seconds) when performing a connect to a STOMP or MQTT broker
 #define STOMP_CONNECT_TIMEOUT 10
+#define MQTT_CONNECT_TIMEOUT 10
 
 // Number of seconds after a STOMP server heartbeat was expected, before retrying the connection
 #define STOMP_SERVER_HEARTBEAT_GRACE_PERIOD 10

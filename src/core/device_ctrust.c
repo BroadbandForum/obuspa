@@ -302,7 +302,6 @@ int DEVICE_CTRUST_Init(void)
 
     char *alias_unique_key[] = { "Alias" };
     char *perm_unique_keys[]  = { "Order" };
-    err |= USP_REGISTER_Object_UniqueKey(DEVICE_PERMISSION_ROOT, alias_unique_key, NUM_ELEM(alias_unique_key));
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_PERMISSION_ROOT, perm_unique_keys, NUM_ELEM(perm_unique_keys));
 
     // Device.LocalAgent.ControllerTrust.Credential.{i}

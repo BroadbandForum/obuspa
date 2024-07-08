@@ -46,6 +46,7 @@
 #include "data_model.h"
 #include "dm_access.h"
 #include "dm_inst_vector.h"
+#include "text_utils.h"
 
 //------------------------------------------------------------------------------
 // Structure containing vendor hook callback functions which are used by the core agent data model
@@ -933,10 +934,14 @@ int USP_REGISTER_Object(char *path, dm_validate_add_cb_t validate_add_cb, dm_add
 **************************************************************************/
 int USP_REGISTER_Object_UniqueKey(char *path, char **params, int num_params)
 {
-    int i;
+    int i, j, k;
     dm_node_t *node;
     dm_node_t *child;
     dm_unique_key_t unique_key;
+    dm_unique_key_vector_t *ukv;
+    dm_unique_key_t *uk;
+    char *existing_key;
+    int match_count;
 
     // Exit if calling arguments are specified incorrectly
     if ((path==NULL) || (params==NULL) || (num_params < 1) || (num_params > MAX_COMPOUND_KEY_PARAMS))
@@ -964,6 +969,19 @@ int USP_REGISTER_Object_UniqueKey(char *path, char **params, int num_params)
         return USP_ERR_INTERNAL_ERROR;
     }
 
+    // Exit if any of the parameters exist in the set of keys more than once (this is invalid)
+    for (i=0; i<num_params; i++)
+    {
+        for (j=i+1; j<num_params; j++)
+        {
+            if (strcmp(params[j], params[i])==0)
+            {
+                USP_LOG_Error("%s: Compound unique key for %s contains '%s' more than once in the key", __FUNCTION__, node->path, params[i]);
+                return USP_ERR_INTERNAL_ERROR;
+            }
+        }
+    }
+
     // Exit if any of the params making up the key are not registered with the data model or are an object
     memset(&unique_key, 0, sizeof(unique_key));
     for (i=0; i<num_params; i++)
@@ -982,6 +1000,42 @@ int USP_REGISTER_Object_UniqueKey(char *path, char **params, int num_params)
         }
 
         unique_key.param[i] = child->name; // Using child->name instead of strdup(params[i]) saves memory
+    }
+
+    // Determine if this key-set has already been registered
+    // Iterate over all existing key sets
+    ukv = &node->registered.object_info.unique_keys;
+    for (i=0; i < ukv->num_entries; i++)
+    {
+        uk = &ukv->vector[i];
+        match_count = 0;
+
+        // Iterate over each key in this existing key set
+        for (j=0; j<MAX_COMPOUND_KEY_PARAMS; j++)
+        {
+            existing_key = uk->param[j];
+            if (existing_key != NULL)
+            {
+                // Iterate over each key in the new key set, counting if it matches the key in the existing key set
+                for (k=0; k<num_params; k++)
+                {
+                    if (strcmp(params[k], existing_key)==0)
+                    {
+                        match_count++;
+                        break;      // If it matches, then no need to iterate over the rest of the keys, as we already know each param in the key-set is unique
+                    }
+                }
+            }
+        }
+
+        // Exit if this key-set (or a superset containing it) has already been registered
+        if (match_count == num_params)
+        {
+            char buf[256];
+            TEXT_UTILS_ListToString(params, num_params, buf, sizeof(buf));
+            USP_LOG_Error("%s: Already registered a compound key containing keys (%s) for %s", __FUNCTION__, buf, node->path);
+            return USP_ERR_INTERNAL_ERROR;
+        }
     }
 
     // Add this unique key to the data model

@@ -41,27 +41,28 @@
  *
  */
 #ifdef ENABLE_MQTT
-#include "mqtt.h"
-#include "common_defs.h"
-#include "dllist.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include "device.h"
-#include "dm_exec.h"
-#include "os_utils.h"
 #include <errno.h>
 #include <math.h>
-#include "retry_wait.h"
-#include "text_utils.h"
-#include "msg_handler.h"
-
+#include <fcntl.h>
 #include <openssl/ssl.h>
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
-
 #include <mosquitto.h>
+
+#include "mqtt.h"
+#include "common_defs.h"
+#include "dllist.h"
+#include "device.h"
+#include "dm_exec.h"
+#include "os_utils.h"
+#include "retry_wait.h"
+#include "text_utils.h"
+#include "msg_handler.h"
 
 // Defines for MQTT Property Values
 #define PUBLISH 0x30
@@ -115,6 +116,7 @@ typedef struct
     // From the broker
     mqtt_subscription_t response_subscription; // Contains subscription for agent's topic
                                                // NOTE: The topic in here may be NULL if not set by either Device.LocalAgent.MTP.{i}.ResponseTopicConfigured or present in the CONNACK
+    mqtt_subscription_t connack_subscriptions[MAX_MQTT_SUBSCRIPTIONS]; // Subscriptions indicated by the 'subscribe-topic' user property in the MQTTv5 CONNACK
     int retry_count;
     time_t retry_time;                         // Absolute time at which to start reconnecting (when in a retrying state)
     time_t last_status_change;
@@ -165,6 +167,7 @@ typedef struct
     char *topic;            // Name of the MQTT Topic to send to
     mqtt_qos_t qos;         // QOS to request when building PUBLISH message (obtained from mqtt_conn_params_t.publish_qos)
     int mid;                // MQTT message ID. This is filled in by libmosquitto, when we tell libmosquitto to send this message
+    time_t expiry_time;     // Time at which this USP record should be removed from the queue
 } mqtt_send_item_t;
 
 mqtt_client_t mqtt_clients[MAX_MQTT_CLIENTS];
@@ -182,7 +185,7 @@ void InitSubscription(mqtt_subscription_t *sub);
 int EnableMqttClient(mqtt_client_t* client);
 int EnableMosquitto(mqtt_client_t *client);
 void SetupCallbacks(mqtt_client_t *client);
-void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, char *controller_topic);
+void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, char *controller_topic, time_t expiry_time);
 int SendQueueHead(mqtt_client_t *client);
 void Connect(mqtt_client_t *client);
 int PerformMqttClientConnect(mqtt_client_t *client);
@@ -220,14 +223,19 @@ mqtt_subscription_t *FindMqttSubscriptionByInstance(mqtt_client_t *client, int s
 mqtt_subscription_t *FindSubscriptionByMid(mqtt_client_t *client, int mid, bool *is_agent_topic);
 mqtt_client_t *FindMqttClientByMosquitto(struct mosquitto *mosq);
 int AddUserProperties(mosquitto_property **props);
-int AddConnectProperties(mosquitto_property **props);
+int AddConnectProperties(mqtt_client_t *client, mosquitto_property **props);
 int ConvertToMosquittoVersion(mqtt_protocolver_t version, int* mosquitto_version);
-void PopClientUspQueue(mqtt_client_t *client);
 void CleanMqttClient(mqtt_client_t *client, bool is_reconnect);
 void HandleMqttClose(mqtt_client_t *client);
 void HandleMqttReconnect(mqtt_client_t *client);
 void HandleMqttReconnectAfterDisconnect(mqtt_client_t *client);
 void HandleMqttDisconnect(mqtt_client_t *client);
+void DisconnectIfAllSubscriptionsFailed(mqtt_client_t *client);
+bool IsMqttBrokerUp(mqtt_client_t *client);
+void RemoveMqttQueueItem(mqtt_client_t *client, mqtt_send_item_t *queued_msg);
+void RemoveExpiredMqttMessages(mqtt_client_t *client);
+void ParseSubscribeTopicsFromConnack(mqtt_client_t *client, mosquitto_property *prop);
+void AddConnackSubscription(mqtt_client_t *client, char *topic);
 
 //------------------------------------------------------------------------------------
 #define DEFINE_MQTT_TrustCertVerifyCallbackIndex(index) \
@@ -509,11 +517,12 @@ exit:
 **              the payload buffer is passed to this function, unless an error is returned.
 ** \param   instance - instance number for the client in Device.MQTT.Client.{i}
 ** \param   topic - controller's topic to publish the message on
+** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK on success, USP_ERR_XXX otherwise
 **
 **************************************************************************/
-int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char* topic)
+int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char* topic, time_t expiry_time)
 {
     int err = USP_ERR_GENERAL_FAILURE;
     USP_ASSERT(msi != NULL);
@@ -541,7 +550,7 @@ int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char* topic)
     // Exit if this is a connect record, adding it at the front of the queue
     if (msi->content_type == kMtpContentType_ConnectRecord)
     {
-        QueueUspConnectRecord_MQTT(client, msi, topic);
+        QueueUspConnectRecord_MQTT(client, msi, topic, expiry_time);
         err = USP_ERR_OK;
         goto exit;
     }
@@ -555,6 +564,8 @@ int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char* topic)
         err = USP_ERR_OK;
         goto exit;
     }
+
+    RemoveExpiredMqttMessages(client);
 
     mqtt_send_item_t *send_item;
     send_item = USP_MALLOC(sizeof(mqtt_send_item_t));
@@ -585,6 +596,7 @@ int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char* topic)
 
     send_item->mid = INVALID;
     send_item->qos = client->conn_params.publish_qos;
+    send_item->expiry_time = expiry_time;
 
     DLLIST_LinkToTail(&client->usp_record_send_queue, send_item);
     err = USP_ERR_OK;
@@ -602,17 +614,17 @@ exit:
 
 /*********************************************************************//**
 **
-** MQTT_ScheduleReconnect
+** MQTT_UpdateConnectionParams
 **
-** Signals that an MQTT reconnect occurs when all queued message have been sent
-** See comment header above definition of scheduled_action_t for an explanation of this and why
+** Update the parameters to use the next time that we reconnect, and possibly schedule a reconnect
 **
 ** \param   mqtt_params - pointer to data model parameters specifying the MQTT connection
+** \param   schedule_reconnect - Set if a reconnect should be scheduled (See comment header above definition of scheduled_action_t for an explanation of how scheduled actions work and why)
 **
 ** \return  None
 **
 **************************************************************************/
-void MQTT_ScheduleReconnect(mqtt_conn_params_t *mqtt_params)
+void MQTT_UpdateConnectionParams(mqtt_conn_params_t *mqtt_params, bool schedule_reconnect)
 {
     mqtt_client_t *client = NULL;
 
@@ -630,19 +642,23 @@ void MQTT_ScheduleReconnect(mqtt_conn_params_t *mqtt_params)
         goto exit;
     }
 
+    // Replace the parameters so that the next retry and connect uses these parameters
     ParamReplace(&client->next_params, mqtt_params);
 
     // Make sure we use the same instance
     client->next_params.instance = client->conn_params.instance;
 
-    client->schedule_reconnect = kScheduledAction_Signalled;
-    mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls MQTT_ActivateScheduledActions()
+    if (schedule_reconnect)
+    {
+        client->schedule_reconnect = kScheduledAction_Signalled;
+        mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls MQTT_ActivateScheduledActions()
+    }
 
 exit:
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);
 
     // Wakeup the MTP thread from select()
-    if (client != NULL)
+    if ((client != NULL) && (schedule_reconnect))
     {
         return MTP_EXEC_MqttWakeup();
     }
@@ -1216,6 +1232,7 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
             switch (client->state)
             {
                 case kMqttState_Running:
+                    RemoveExpiredMqttMessages(client);
                     if (client->usp_record_send_queue.head)
                     {
                         if (SendQueueHead(client) == USP_ERR_OK)
@@ -1228,7 +1245,7 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
                             client->disconnect_mid = (q_msg->item.content_type == kMtpContentType_DisconnectRecord) ? q_msg->mid : INVALID_MOSQUITTO_MID;
 
                             // Remove item from send queue
-                            PopClientUspQueue(client);
+                            RemoveMqttQueueItem(client, q_msg);
                         }
                         else
                         {
@@ -1261,6 +1278,7 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
                         else if (cur_time >= client->retry_time)
                         {
                             USP_LOG_Debug("%s: Retrying connection", __FUNCTION__);
+                            ParamReplace(&client->conn_params, &client->next_params);
                             EnableMqttClient(client);
                         }
                     }
@@ -1674,6 +1692,11 @@ void InitClient(mqtt_client_t *client, int index)
     }
 
     InitSubscription(&client->response_subscription);
+
+    for (i = 0; i < NUM_ELEM(client->connack_subscriptions); i++)
+    {
+        InitSubscription(&client->connack_subscriptions[i]);
+    }
 }
 
 /*********************************************************************//**
@@ -1738,6 +1761,11 @@ void DestroyClient(mqtt_client_t *client)
     }
 
     MQTT_SubscriptionDestroy(&client->response_subscription);
+
+    for (i = 0; i < NUM_ELEM(client->connack_subscriptions); i++)
+    {
+        MQTT_SubscriptionDestroy(&client->connack_subscriptions[i]);
+    }
 
     FreeMqttClientCertChain(client);
 
@@ -1807,11 +1835,11 @@ void CleanMqttClient(mqtt_client_t *client, bool is_reconnect)
         return;
     }
 
-    // If the code gets here, this function is being called as part of a reconnect sequence
+    // If the code gets here, this function is being called as part of a scheduled close
     // So purge the send queue
     while (client->usp_record_send_queue.head)
     {
-        PopClientUspQueue(client);
+        RemoveMqttQueueItem(client, (mqtt_send_item_t *)client->usp_record_send_queue.head);
     }
 
     // Free the next_params
@@ -1875,6 +1903,7 @@ void InitSubscription(mqtt_subscription_t *sub)
 **************************************************************************/
 int EnableMqttClient(mqtt_client_t* client)
 {
+    int i;
     mqtt_subscription_t *resp_sub;
     bool allowed;
 
@@ -1896,6 +1925,12 @@ int EnableMqttClient(mqtt_client_t* client)
     resp_sub->qos = kMqttQos_Default;
     resp_sub->enabled = true;
     resp_sub->topic = USP_STRDUP(client->conn_params.response_topic);
+
+    // Initialise the agent's connack subscriptions
+    for (i=0; i<NUM_ELEM(client->connack_subscriptions); i++)
+    {
+        MQTT_SubscriptionDestroy(&client->connack_subscriptions[i]);
+    }
 
     // Exit, putting the client into an immediate retrying state, if it's not allowed to start connecting yet
     allowed = DEVICE_CONTROLLER_CanMtpConnect();
@@ -2057,11 +2092,12 @@ void SetupCallbacks(mqtt_client_t *client)
 ** \param   msi - pointer to content to send
 **                NOTE: Ownership of the payload buffer passes to this function
 ** \param   controller_topic - topic to send the record to
+** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
 **
 ** \return  None
 **
 **************************************************************************/
-void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, char *controller_topic)
+void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, char *controller_topic, time_t expiry_time)
 {
     mqtt_send_item_t *cur_msg;
     mqtt_send_item_t *next_msg;
@@ -2097,6 +2133,7 @@ void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, cha
     send_item->topic = USP_STRDUP(controller_topic);
     send_item->qos = client->conn_params.publish_qos;
     send_item->mid = INVALID;
+    send_item->expiry_time = expiry_time;
 
     DLLIST_LinkToHead(&client->usp_record_send_queue, send_item);
 }
@@ -2144,6 +2181,128 @@ int SendQueueHead(mqtt_client_t *client)
 
 /*********************************************************************//**
 **
+** IsMqttBrokerUp
+**
+** Determines whether the MQTT broker is responsive.
+** This function is used to workaround deficiencies in libmosquitto.
+** libmosquitto's connect functions block for upto 2 minutes if the MQTT Broker is not responsive
+** If this function determines that the MQTT Broker is down, then we do not attempt to call libmosquitto's blocking connect function
+**
+** \param   client - pointer to MQTT client to connect to the broker
+**
+** \return  true if the MQTT Broker is up, false otherwise
+**
+**************************************************************************/
+bool IsMqttBrokerUp(mqtt_client_t *client)
+{
+    int err;
+    bool prefer_ipv6;
+    nu_ipaddr_t dst;
+    struct sockaddr_storage saddr;
+    socklen_t saddr_len;
+    sa_family_t family;
+    int socket_fd = INVALID;
+    fd_set writefds;
+    struct timeval timeout;
+    int num_sockets;
+    int so_err;
+    socklen_t so_len = sizeof(so_err);
+    bool result = false;
+
+    // Get the preference for IPv4 or IPv6, if dual stack
+    prefer_ipv6 = DEVICE_LOCAL_AGENT_GetDualStackPreference();
+
+    // Exit if unable to determine the IP address of the MQTT Broker
+    err = tw_ulib_diags_lookup_host(client->conn_params.host, AF_UNSPEC, prefer_ipv6, NULL, &dst);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to make a socket address structure to probe the MQTT server
+    err = nu_ipaddr_to_sockaddr(&dst, client->conn_params.port, &saddr, &saddr_len);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to determine which address family to use to contact the MQTT broker
+    // NOTE: This shouldn't fail if tw_ulib_diags_lookup_host() is correct
+    err = nu_ipaddr_get_family(&dst, &family);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to create the socket
+    socket_fd = socket(family, SOCK_STREAM, 0);
+    if (socket_fd == -1)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to set the socket as non blocking
+    // We do this before connecting so that we can timeout on connect taking too long
+    err = fcntl(socket_fd, F_SETFL, O_NONBLOCK);
+    if (err == -1)
+    {
+        USP_ERR_ERRNO("fcntl", errno);
+        goto exit;
+    }
+
+    // Exit if unable to connect to the MQTT Broker
+    // NOTE: The connect is performed in non-blocking mode
+    err = connect(socket_fd, (struct sockaddr *) &saddr, saddr_len);
+    if ((err == -1) && (errno != EINPROGRESS))
+    {
+        USP_ERR_ERRNO("connect", errno);
+        goto exit;
+    }
+
+    // Set up arguments for the select() call
+    FD_ZERO(&writefds);
+    FD_SET(socket_fd, &writefds);
+    timeout.tv_sec = MQTT_CONNECT_TIMEOUT;
+    timeout.tv_usec = 0;
+
+    // Exit if the connect timed out
+    num_sockets = select(socket_fd + 1, NULL, &writefds, NULL, &timeout);
+    if (num_sockets == 0)
+    {
+        USP_LOG_Error("%s: connect timed out", __FUNCTION__);
+        goto exit;
+    }
+
+    // Exit if unable to determine whether the connect was successful or not
+    err = getsockopt(socket_fd, SOL_SOCKET, SO_ERROR, &so_err, &so_len);
+    if (err == -1)
+    {
+        USP_ERR_ERRNO("getsockopt", errno);
+        goto exit;
+    }
+
+    // Exit if connect was not successful
+    if (so_err != 0)
+    {
+        USP_LOG_Error("%s: async connect failed", __FUNCTION__);
+        goto exit;
+    }
+
+    // Connect was successful
+    result = true;
+
+exit:
+    // Tidy up
+    if (socket_fd != INVALID)
+    {
+        close(socket_fd);
+    }
+
+    return result;
+}
+
+/*********************************************************************//**
+**
 ** Connect
 **
 ** Kick off connecting the specified MQTT client to its configured broker
@@ -2156,6 +2315,16 @@ int SendQueueHead(mqtt_client_t *client)
 void Connect(mqtt_client_t *client)
 {
     int err = USP_ERR_OK;
+    bool is_up;
+
+    // Exit if after probing the MQTT Broker, it is not up
+    // In this case, we do not attempt to call libmosquitto's connect function, as that function will end up blocking for 2 minutes (since the MQTT broker is down)
+    is_up = IsMqttBrokerUp(client);
+    if (is_up == false)
+    {
+        err = USP_ERR_INTERNAL_ERROR;
+        goto exit;
+    }
 
     // Start the MQTT Connect
     err = PerformMqttClientConnect(client);
@@ -2231,20 +2400,25 @@ int PerformMqttClientConnect(mqtt_client_t *client)
     version = client->conn_params.version;
     if (version == kMqttProtocol_5_0)
     {
-        if (AddConnectProperties(&proplist) != USP_ERR_OK)
+        if (AddConnectProperties(client, &proplist) != USP_ERR_OK)
         {
             err = USP_ERR_INTERNAL_ERROR;
             goto exit;
         }
     }
 
-    // Calculate the keep alive period to pass to libmosquitto. We might need to alter this, because libmosquitto does not support keep alive < 5 seconds
     keep_alive = client->conn_params.keepalive;
+#if LIBMOSQUITTO_VERSION_NUMBER < 2000000
+    // libmosquitto versions less than v2.0.0 do not support turning off keep alive using a value of 0
     if (keep_alive == 0)
     {
         keep_alive = 60*60*18;  // Set to 18 hours which is the largest that libmosquitto accepts (it truncates the arg to uint16 internally)
     }
-    else if (keep_alive < 5)
+#endif
+
+    // No versions of libmosquitto allow a keep alive time of less than 5 seconds
+    // NOTE: Pass through the special case of turning off keep alive using a value of 0 (if not modified for libmosquitto versions < v2.0.0 as above)
+    if ((keep_alive != 0) && (keep_alive < 5))
     {
         keep_alive = 5;
     }
@@ -2351,6 +2525,7 @@ int ConnectSetEncryption(mqtt_client_t *client)
         return USP_ERR_INTERNAL_ERROR;
     }
 
+
     return USP_ERR_OK;
 }
 
@@ -2441,12 +2616,15 @@ exit:
 **************************************************************************/
 void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int flags, const mosquitto_property *props)
 {
+    char *client_id_ptr = NULL;
+    char *response_info_ptr = NULL;
+    mqtt_client_t *client = NULL;
+    int instance = *(int*)userdata;
+
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
     // Receive the CONNACK here
     // Check the same stuff as the connect callback - but also look at the props values etc
-    mqtt_client_t *client = NULL;
-    int instance = *(int*)userdata;
 
     client = FindMqttClientByInstance(instance);
     if (client == NULL)
@@ -2491,16 +2669,14 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
         }
 
         // Pick up client id, as per R-MQTT.9
-        char *client_id_ptr = NULL;
-        char *response_info_ptr = NULL;
-        char *subscribe_topic_ptr = NULL;
-
         if (mosquitto_property_read_string(props, ASSIGNED_CLIENT_IDENTIFIER,
               &client_id_ptr, false /* skip first */) != NULL)
         {
             USP_LOG_Debug("%s: Received client_id: \"%s\"", __FUNCTION__, client_id_ptr);
             USP_SAFE_FREE(client->conn_params.client_id);
             client->conn_params.client_id = USP_STRDUP(client_id_ptr);
+            USP_SAFE_FREE(client->next_params.client_id);
+            client->next_params.client_id = USP_STRDUP(client_id_ptr);
             free(client_id_ptr);
         }
 
@@ -2513,41 +2689,9 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
             SaveAgentTopicFromConnack(client, response_info_ptr);
             free(response_info_ptr);
         }
-        else
-        {
-            // if no response information, check if it's in the subscribe-topic user prop
-            char* userPropName;
-            if (mosquitto_property_read_string_pair(props, USER_PROPERTY,
-                  &userPropName, &subscribe_topic_ptr, false) != NULL)
-            {
-                // we only want subscribe-topic user property
-                if (strcmp("subscribe-topic", userPropName) == 0)
-                {
-                    SaveAgentTopicFromConnack(client, subscribe_topic_ptr);
-                    free(subscribe_topic_ptr);
-                    free(userPropName);
-                }
-                else
-                {
-                    // it wasn't in the 1st one, try the next one, set skip 1st to true
-                    free(subscribe_topic_ptr);
-                    free(userPropName);
-                    if (mosquitto_property_read_string_pair(props, USER_PROPERTY,
-                       &userPropName, &subscribe_topic_ptr, true) != NULL)
-                    {
-                        // we only want subscribe-topic user property
-                        if (strcmp("subscribe-topic", userPropName) == 0)
-                        {
-                            SaveAgentTopicFromConnack(client, subscribe_topic_ptr);
-                        }
-                        free(subscribe_topic_ptr);
-                        free(userPropName);
-                    }
-                }
-            }
-        }
 
-        USP_LOG_Debug("%s: Received client id \"%s\"", __FUNCTION__, client->conn_params.client_id);
+        // Determine if there were any additional topics to subscribe to, indicated in the CONNACK
+        ParseSubscribeTopicsFromConnack(client, (mosquitto_property *)props);
 
         ResetRetryCount(client);
 
@@ -2583,6 +2727,88 @@ void SaveAgentTopicFromConnack(mqtt_client_t *client, char *agent_topic)
     // (so it can be read by Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicDiscovered and Device.MQTT.Client.{i}.ResponseInformation)
     USP_SAFE_FREE(client->agent_topic_from_connack);
     client->agent_topic_from_connack = USP_STRDUP(agent_topic);
+}
+
+/*********************************************************************//**
+**
+** ParseSubscribeTopicsFromConnack
+**
+** Extracts all subscription topics provided in the CONNACK, adding them to subscriptions[]
+**
+** \param   client - pointer to MQTT client structure
+** \param   prop - pointer to first property in a linked list of properties received in the CONNACK
+**
+** \return  None
+**
+**************************************************************************/
+void ParseSubscribeTopicsFromConnack(mqtt_client_t *client, mosquitto_property *prop)
+{
+    char *topic;
+    char *name;
+    const char *subscribe_topic_name = "subscribe-topic";
+    bool skip_first = false;    // initially do not skip checking the first property for being a user property
+
+    while (prop != NULL)
+    {
+        // Advance to the next user property. Exiting if there aren't any more
+        prop = (mosquitto_property *) mosquitto_property_read_string_pair(prop, USER_PROPERTY, &name, &topic, skip_first);
+        if (prop == NULL)
+        {
+            return;
+        }
+
+        // Parse this first user property if it is a 'subscribe-topic'
+        if (strcmp(name, subscribe_topic_name) == 0)
+        {
+            AddConnackSubscription(client, topic);
+        }
+
+        free(name);
+        free(topic);
+        skip_first = true;  // Set to true to skip past the current property (which must've been a user property to have got here)
+    }
+}
+
+/*********************************************************************//**
+**
+** AddConnackSubscription
+**
+** Adds a subscription to the list of subscriptions identified in the 'subscribe-topic' user properties in the CONNACK
+**
+** \param   client - pointer to MQTT client
+** \param   topic - topic to subscribe to
+**
+** \return  None
+**
+**************************************************************************/
+void AddConnackSubscription(mqtt_client_t *client, char *topic)
+{
+    int i;
+    mqtt_subscription_t *sub;
+
+    // Exit if no topic was given (we can't subscribe to an empty string topic)
+    if (*topic == '\0')
+    {
+        return;
+    }
+
+    // Iterate over all connack_subscriptions, adding this topic as the first free entry
+    for (i=0; i< NUM_ELEM(client->connack_subscriptions); i++)
+    {
+        sub = &client->connack_subscriptions[i];
+        if (sub->enabled == false)
+        {
+            sub->instance = 1000+i;     // Not actually used for connack subscriptions, but set to a non INVALID value anyway
+            sub->qos = MQTT_FALLBACK_QOS;
+            sub->topic = USP_STRDUP(topic);
+            sub->enabled = true;
+            sub->mid = 0;
+            sub->state = kMqttSubState_Unsubscribed;
+            return;
+        }
+    }
+
+    USP_LOG_Error("%s: Ignoring 'subscribe-topic=%s' user property in the CONNACK as no free entries", __FUNCTION__, topic);
 }
 
 /*********************************************************************//**
@@ -2756,8 +2982,8 @@ int Subscribe(mqtt_client_t *client, mqtt_subscription_t *sub, bool is_agent_top
     sub->state = kMqttSubState_Subscribing;
     if (version == kMqttProtocol_5_0)
     {
-        USP_LOG_Debug("%s: Sending subscribe to %s %d %d", __FUNCTION__, sub->topic, sub->mid, sub->qos);
         err = SubscribeV5(client, sub);
+        USP_LOG_Debug("%s: Subscribing to %s (id=%d)", __FUNCTION__, sub->topic, sub->mid);
     }
     else
     {
@@ -2772,12 +2998,12 @@ int Subscribe(mqtt_client_t *client, mqtt_subscription_t *sub, bool is_agent_top
             topic = wildcarded_topic;
         }
 
-        USP_LOG_Debug("%s: Sending subscribe to %s %d %d", __FUNCTION__, topic, sub->mid, sub->qos);
         if (mosquitto_subscribe(client->mosq, &sub->mid, topic, sub->qos) != MOSQ_ERR_SUCCESS)
         {
             USP_LOG_Error("%s: Failed to subscribe to %s", __FUNCTION__, sub->topic);
             err = USP_ERR_INTERNAL_ERROR;
         }
+        USP_LOG_Debug("%s: Subscribing to %s (id=%d)", __FUNCTION__, sub->topic, sub->mid);
     }
 
     return err;
@@ -2838,48 +3064,149 @@ error:
 void SubscribeToAll(mqtt_client_t *client)
 {
     int i;
-    char buf[128];
+    int count = 0;
+    mqtt_subscription_t *sub;
 
-    // Exit if no agent response topic configured (or set by the CONNACK)
-    if ((client->response_subscription.topic==NULL) || (client->response_subscription.topic[0] == '\0'))
+    // Subscribe to all subscriptions configured in Device.MQTT.Client.{i}.Subscription.{i}
+    for (i=0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
-        USP_SNPRINTF(buf, sizeof(buf), "%s: No response topic configured (or set by the CONNACK)", __FUNCTION__);
-        HandleMqttError(client, kMqttFailure_Misconfigured, buf);
-        return;
-    }
-
-    // Now we have the proplist, send the subscribe
-    for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
-    {
-        mqtt_subscription_t *sub = &client->subscriptions[i];
+        sub = &client->subscriptions[i];
         if (sub->enabled == true)
         {
             if (sub->topic == NULL)
             {
-                USP_LOG_Error("%s: No to subscribe to, skipping sub %d", __FUNCTION__, i);
+                USP_LOG_Warning("%s: No topic to subscribe to, skipping Subscription.%d", __FUNCTION__, i);
                 continue;
             }
 
-            if (Subscribe(client, sub, false) != USP_ERR_OK)
+            if (Subscribe(client, sub, false) == USP_ERR_OK)
             {
-                USP_SNPRINTF(buf, sizeof(buf), "%s: mosquitto_subscribe() failed for topic=%s", __FUNCTION__, sub->topic);
-                HandleMqttError(client, kMqttFailure_OtherError, buf);
+                count++;
+            }
+            else
+            {
+                USP_LOG_Error("%s: mosquitto_subscribe() failed for topic=%s", __FUNCTION__, sub->topic);
             }
         }
     }
 
-    // Subscribe to response topic too
-    if (Subscribe(client, &client->response_subscription, true) != USP_ERR_OK)
+    // Subscribe to response topic
+    if ((client->response_subscription.topic != NULL) && (client->response_subscription.topic[0] != '\0'))
     {
-        USP_SNPRINTF(buf, sizeof(buf), "%s: mosquitto_subscribe() failed for agent's response topic=%s", __FUNCTION__, client->response_subscription.topic);
+        if (Subscribe(client, &client->response_subscription, true) == USP_ERR_OK)
+        {
+            count++;
+        }
+        else
+        {
+            USP_LOG_Error("%s: mosquitto_subscribe() failed for agent's response topic=%s", __FUNCTION__, client->response_subscription.topic);
+        }
+
+    }
+    else
+    {
+        USP_LOG_Error("%s: No response topic configured (or set by the CONNACK)", __FUNCTION__);
+    }
+
+
+
+    // Subscribe to all subscriptions indicated by the 'subscribe-topic' user properties in the CONNACK
+    for (i=0; i < NUM_ELEM(client->connack_subscriptions); i++)
+    {
+        sub = &client->connack_subscriptions[i];
+        if (sub->enabled == true)
+        {
+            USP_ASSERT(sub->topic != NULL);
+            if (Subscribe(client, sub, false) == USP_ERR_OK)
+            {
+                count++;
+            }
+            else
+            {
+                USP_LOG_Error("%s: mosquitto_subscribe() failed for topic=%s", __FUNCTION__, sub->topic);
+            }
+        }
+    }
+
+    // If we failed to subscribe to anything, then disconnect (R-MQTT.17)
+    if (count == 0)
+    {
+        char buf[128];
+        USP_SNPRINTF(buf, sizeof(buf), "%s: Disconnecting as did not subscribe to any topics", __FUNCTION__);
         HandleMqttError(client, kMqttFailure_OtherError, buf);
+        return;
     }
 
     // Let the DM know we're ready for sending messages and instruct it to send a USP Connect record
     // NOTE: client->response_subscription.topic will contain either the value configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured
     //       or the value received in the CONNACK (for MQTTv5)
-    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->conn_params.version, client->response_subscription.topic, client->role_instance);
+    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->conn_params.version, client->response_subscription.topic, client->conn_params.client_id, client->role_instance);
 }
+
+/*********************************************************************//**
+**
+** DisconnectIfAllSubscriptionsFailed
+**
+** Disconnects from the MQTT Broker, if none of the MQTT subscriptions were successful
+**
+** \param   client - pointer to MQTT client
+**
+** \return  None
+**
+**************************************************************************/
+void DisconnectIfAllSubscriptionsFailed(mqtt_client_t *client)
+{
+    int i;
+    mqtt_subscription_t *sub;
+    int total_subs = 0;
+    int failed_subs = 0;
+    char buf[128];
+
+    // Iterate over all configured subscriptions, counting them, and the number of them which have failed
+    for (i=0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
+    {
+        sub = &client->subscriptions[i];
+        if ((sub->enabled == true) && (sub->topic != NULL))
+        {
+            total_subs++;
+            if (sub->state == kMqttSubState_Failed)
+            {
+                failed_subs++;
+            }
+        }
+    }
+
+    // Add the response topic subscription to the counts
+    total_subs++;
+    sub = &client->response_subscription;
+    if (sub->state == kMqttSubState_Failed)
+    {
+        failed_subs++;
+    }
+
+    // Iterate over all subscriptions indicated as 'subscribe-topic' user properties, counting them, and the number of them which have failed
+    for (i=0; i < NUM_ELEM(client->connack_subscriptions); i++)
+    {
+        sub = &client->connack_subscriptions[i];
+        if (sub->enabled == true)
+        {
+            total_subs++;
+            if (sub->state == kMqttSubState_Failed)
+            {
+                failed_subs++;
+            }
+        }
+    }
+
+    // Disconnect if all subscriptions failed (R-MQTT.17)
+    if (failed_subs == total_subs)
+    {
+        USP_SNPRINTF(buf, sizeof(buf), "%s: Disconnecting, as all subscriptions failed in the SUBACKs", __FUNCTION__);
+        HandleMqttError(client, kMqttFailure_Misconfigured, buf);
+        return;
+    }
+}
+
 
 /*********************************************************************//**
 **
@@ -2898,35 +3225,48 @@ void SubscribeToAll(mqtt_client_t *client)
 **************************************************************************/
 void SubscribeCallback(struct mosquitto *mosq, void *userdata, int mid, int qos_count, const int* granted_qos)
 {
-    OS_UTILS_LockMutex(&mqtt_access_mutex);
-
-    mqtt_client_t *client = NULL;
+    int i;
+    mqtt_subscription_t *sub;
+    mqtt_client_t *client;
     int instance = *(int*) userdata;
+
+    OS_UTILS_LockMutex(&mqtt_access_mutex);
 
     client = FindMqttClientByInstance(instance);
     if (client == NULL)
     {
-        USP_LOG_Error("%s: Failed to find client instance by id %d", __FUNCTION__, instance);
+        USP_LOG_Error("%s: Ignoring SUBACK (Unable to find client instance=%d)", __FUNCTION__, instance);
         goto exit;
     }
 
     // Find the subscriber mid
-    mqtt_subscription_t *sub = FindSubscriptionByMid(client, mid, NULL);
-
+    sub = FindSubscriptionByMid(client, mid, NULL);
     if (sub == NULL)
     {
-        USP_LOG_Error("%s: Failed to find subscription with mid %d", __FUNCTION__, mid);
+        USP_LOG_Error("%s: Ignoring SUBACK (id=%d) as no subscibe sent for that id", __FUNCTION__, mid);
         goto exit;
     }
 
     if (sub->state != kMqttSubState_Subscribing)
     {
-        USP_LOG_Error("%s: Wrong state %d", __FUNCTION__, sub->state);
+        USP_LOG_Warning("%s: Wrong state %d", __FUNCTION__, sub->state);
     }
-    else
+
+    // Exit if failed to subscribe to this topic. Libmosquitto indicates this by putting an error code (128) in granted_qos
+    for (i=0; i<qos_count; i++)
     {
-        sub->state = kMqttSubState_Subscribed;
+        if ((granted_qos[i] < kMqttQos_MostOnce) || (granted_qos[i] > kMqttQos_ExactlyOnce))
+        {
+            USP_LOG_Error("%s: Failed to subscribe to topic %s (id=%d)", __FUNCTION__, sub->topic, sub->mid);
+            sub->state = kMqttSubState_Failed;
+            DisconnectIfAllSubscriptionsFailed(client);
+            goto exit;
+        }
     }
+
+    // If the code gets here, then the subscription was successful
+    USP_LOG_Info("%s: Received SUBACK (topic=%s, id=%d)", __FUNCTION__, sub->topic, sub->mid);
+    sub->state = kMqttSubState_Subscribed;
 
 exit:
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);
@@ -3543,6 +3883,7 @@ void LogCallback(struct mosquitto *mosq, void *userdata, int level, const char *
 void HandleMqttError(mqtt_client_t *client, mqtt_failure_t failure_code, const char* message)
 {
     time_t cur_time;
+    unsigned wait_time;
 
     USP_LOG_Debug("%s: Got error: %d, reason: %s, retry_count: %d", __FUNCTION__, failure_code, message, client->retry_count);
 
@@ -3575,14 +3916,20 @@ void HandleMqttError(mqtt_client_t *client, mqtt_failure_t failure_code, const c
     // Increment retry count
     client->retry_count++;
 
+    // Update to the latest retry parameters, before using them to calculate the wait time
+    ParamReplace(&client->conn_params, &client->next_params);
+
     // Calculate a wait time until retry
     mqtt_retry_params_t *retry = &client->conn_params.retry;
-    time_t wait_time = RETRY_WAIT_Calculate(client->retry_count, retry->connect_retrytime, retry->interval_multiplier);
+
+    wait_time = RETRY_WAIT_Calculate(client->retry_count, retry->connect_retrytime, retry->interval_multiplier);
 
     if (wait_time > retry->max_interval)
     {
         wait_time = retry->max_interval;
     }
+
+    USP_LOG_Info("Retrying MQTT connection to (host %s, port %d) in %u seconds (retry_count=%d)", client->conn_params.host, client->conn_params.port, wait_time, client->retry_count);
 
     // Set retry time as time + wait_time
     client->retry_time = cur_time + wait_time - 1;  // Minus 1 because the code adds an extra 1 second delay to the retry time,
@@ -3771,34 +4118,52 @@ mqtt_subscription_t *FindMqttSubscriptionByInstance(mqtt_client_t *client, int s
 mqtt_subscription_t *FindSubscriptionByMid(mqtt_client_t *client, int mid, bool *is_agent_topic)
 {
     int i;
+    mqtt_subscription_t *sub;
+    bool is_agent_topic_flag = false;
 
     if (client == NULL)
     {
         return NULL;
     }
 
-    for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
+    // See if it matches any of the configured subscriptions
+    for (i=0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
-        if (client->subscriptions[i].mid == mid)
+        sub = &client->subscriptions[i];
+        if ((sub->enabled) && (sub->mid == mid))
         {
-            if (is_agent_topic != NULL)
-            {
-                *is_agent_topic = false;
-            }
-            return &client->subscriptions[i];
+            goto exit;
         }
     }
 
-    if (client->response_subscription.mid == mid)
+    // See if it matches the agent's subscription
+    sub = &client->response_subscription;
+    if (sub->mid == mid)
     {
-        if (is_agent_topic != NULL)
-        {
-            *is_agent_topic = true;
-        }
-        return &client->response_subscription;
+        is_agent_topic_flag = true;
+        goto exit;
     }
 
-    return NULL;
+    // See if it matches any of the subscriptions indicated in the CONNACK
+    for (i=0; i < NUM_ELEM(client->connack_subscriptions); i++)
+    {
+        sub = &client->connack_subscriptions[i];
+        if ((sub->enabled) && (sub->mid == mid))
+        {
+            goto exit;
+        }
+    }
+
+    // If the code gets here, then no matching subscription was found
+    sub = NULL;
+
+exit:
+    if ((sub != NULL) && (is_agent_topic != NULL))
+    {
+        *is_agent_topic = is_agent_topic_flag;
+    }
+
+    return sub;
 }
 
 /*********************************************************************//**
@@ -3861,21 +4226,26 @@ int AddUserProperties(mosquitto_property **props)
 **
 ** Adds all libmosquitto properties used in the CONNECT packet
 **
+** \param   client - pointer to MQTT client to connect to the broker
 ** \param   props - pointer to variable in which to return a pointer to the created libmosquitto property object
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int AddConnectProperties(mosquitto_property **props)
+int AddConnectProperties(mqtt_client_t *client, mosquitto_property **props)
 {
     if (AddUserProperties(props) != USP_ERR_OK)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    if (mosquitto_property_add_byte(props, REQUEST_RESPONSE_INFORMATION, (uint8_t)1) != MOSQ_ERR_SUCCESS)
+    // Add the RequestResponseInformation property, if configured
+    if (client->conn_params.request_response_info)
     {
-        return USP_ERR_INTERNAL_ERROR;
+        if (mosquitto_property_add_byte(props, REQUEST_RESPONSE_INFORMATION, (uint8_t)1) != MOSQ_ERR_SUCCESS)
+        {
+            return USP_ERR_INTERNAL_ERROR;
+        }
     }
 
     return USP_ERR_OK;
@@ -3921,32 +4291,56 @@ int ConvertToMosquittoVersion(mqtt_protocolver_t version, int* mosquitto_version
 
 /*********************************************************************//**
 **
-** PopClientUspQueue
+** RemoveMqttQueueItem
 **
-** Removes the first USP Record from the queue of the specified MQTT client
+** Removes the specified USP Record from the queue of the specified MQTT client
+**
+** \param   client - pointer to MQTT client
+** \param   queued_msg - USP record to remove from queue
+**
+** \return  None
+**
+**************************************************************************/
+void RemoveMqttQueueItem(mqtt_client_t *client, mqtt_send_item_t *queued_msg)
+{
+    USP_SAFE_FREE(queued_msg->topic);
+    USP_SAFE_FREE(queued_msg->item.pbuf);
+    DLLIST_Unlink(&client->usp_record_send_queue, queued_msg);
+    USP_SAFE_FREE(queued_msg);
+}
+
+/*********************************************************************//**
+**
+** RemoveExpiredMqttMessages
+**
+** Removes all expired messages from the queue of messages to send
+** NOTE: This mechanism can be used to prevent the queue from filling up needlessly if the controller is offine
 **
 ** \param   client - pointer to MQTT client
 **
 ** \return  None
 **
 **************************************************************************/
-void PopClientUspQueue(mqtt_client_t *client)
+void RemoveExpiredMqttMessages(mqtt_client_t *client)
 {
-    // Remove the head of the client usp queue
-    // Passed the client, not queue to distinguish this from a generic queue pop
-    // We make some assumptions as to the type of structure this is
+    time_t cur_time;
+    mqtt_send_item_t *queued_msg;
+    mqtt_send_item_t *next_msg;
 
-    if (client)
+    cur_time = time(NULL);
+    queued_msg = (mqtt_send_item_t *) client->usp_record_send_queue.head;
+    while (queued_msg != NULL)
     {
-        mqtt_send_item_t *head = (mqtt_send_item_t *) client->usp_record_send_queue.head;
-        if (head != NULL)
+        next_msg = (mqtt_send_item_t *) queued_msg->link.next;
+        if (cur_time > queued_msg->expiry_time)
         {
-            USP_SAFE_FREE(head->topic);
-            USP_SAFE_FREE(head->item.pbuf);
-            DLLIST_Unlink(&client->usp_record_send_queue, head);
-            USP_SAFE_FREE(head);
+            RemoveMqttQueueItem(client, queued_msg);
         }
+
+        queued_msg = next_msg;
     }
 }
+
+
 
 #endif

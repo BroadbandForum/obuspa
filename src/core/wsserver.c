@@ -1116,7 +1116,7 @@ int HandleWssEvent_NewClient(struct lws *handle)
         conn_id_counter = 0;
     }
 
-    // Determine the IP address of the peer to use in debug. This will be overridden with endpoint_id if present in Sec_WebSocket_Extensions header
+    // Determine the IP address of the peer to use in debug. This will be overridden with endpoint_id if present in EID URI query string
     // NOTE: libwebsockets insists on using a IPv4 mapped IPv6 address to represent IPv4 addresses
     wc->is_peer_an_eid = false;
     lws_get_peer_simple(handle, wc->peer, sizeof(wc->peer));
