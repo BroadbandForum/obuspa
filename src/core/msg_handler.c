@@ -310,7 +310,7 @@ exit:
 **                the payload buffer is not passed to this function and stays with the caller.
 ** \param   protocol - MTP on which the USP Record is to be sent (for use by debug)
 ** \param   host - hostname of controller to send the USP Record to (for use by debug)
-** \param   stomp_header - pointer to string containing the STOMP header (if sent over STOMP, NULL otherwise)
+** \param   header - pointer to string containing extra STOMP/MQTT header info (NULL if not required)
 **                         This is only used for debug purposes
 **
 ** \return  None
@@ -318,7 +318,7 @@ exit:
 **************************************************************************/
 void MSG_HANDLER_LogMessageToSend(mtp_send_item_t *msi,
                                   mtp_protocol_t protocol, char *host,
-                                  unsigned char *stomp_header)
+                                  char *header)
 {
     char buf[MAX_ISO8601_LEN];
     UspRecord__Record *rec;
@@ -335,9 +335,9 @@ void MSG_HANDLER_LogMessageToSend(mtp_send_item_t *msi,
                 DEVICE_MTP_EnumToString(protocol) );
 
     // Print STOMP header (if message is being sent out on STOMP)
-    if ((enable_protocol_trace) && (stomp_header != NULL))
+    if ((enable_protocol_trace) && (header != NULL))
     {
-        USP_PROTOCOL("%s", stomp_header);
+        USP_PROTOCOL("%s", header);
     }
 
     // Unpack the USP record and log it

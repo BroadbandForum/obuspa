@@ -1,5 +1,13 @@
 # OB-USP-AGENT Changelog since Release 8.0.0
 
+## 2024-07-29 v8.0.6
+### Fixed
+- Get requests with max_depth >= 0x80000000 should return full sub-tree
+- USP Connect record not always sent immediately after connection on MQTT
+
+### Removed
+- Unmaintained MQTT tests
+
 ## 2024-07-08 v8.0.5
 ### Fixed
 - MQTT keep alive can now be completely disabled (if required) when linking with libmosquitto v2.0.x

@@ -1070,61 +1070,6 @@ bool DEVICE_CONTROLLER_IsMTPConfigured(char *endpoint_id, mtp_protocol_t protoco
     return true;
 }
 
-#ifdef ENABLE_MQTT
-/*********************************************************************//**
-**
-** DEVICE_CONTROLLER_QueueMqttConnectRecord
-**
-** Queues a connect record for all Controllers attached to the specified MQTT connection
-** The connect record is sent immediately after a successful connection to an MQTT broker to
-** inform the attached Controllers of the presence of the agent, and the STOMP queue on which the agent can be contacted
-**
-** \param   mqtt_instance - Instance number of the connection in Device.MQTT.Client.{i}
-** \param   version - MQTT version in use on the connection
-** \param   agent_topic - MQTT topic which the agent has actually subscribed to
-**                        NOTE: This may have been set by Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured, or it may have been set by the subscribe-topic user prop in the CONNACK
-**
-** \return  None
-**
-**************************************************************************/
-void DEVICE_CONTROLLER_QueueMqttConnectRecord(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic)
-{
-    int i;
-    int j;
-    controller_t *cont;
-    controller_mtp_t *mtp;
-
-    // Iterate over all controllers
-    for (i=0; i<MAX_CONTROLLERS; i++)
-    {
-        // Iterate over all MTP slots for this controller, sending a USP connect record on each one
-        cont = &controllers[i];
-        if (cont->instance != INVALID)
-        {
-            for (j=0; j<MAX_CONTROLLER_MTPS; j++)
-            {
-                mtp = &cont->mtps[j];
-                if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
-                {
-                    if (mtp->mqtt_controller_topic[0] != '\0')
-                    {
-                        mtp_send_item_t msi;
-                        USPREC_MqttConnect_Create(cont->endpoint_id, version, agent_topic, &msi);
-                        MQTT_QueueBinaryMessage(&msi, mqtt_instance, mtp->mqtt_controller_topic, END_OF_TIME);
-                        // NOTE: No need to free any members of the msi structure, since ownership of the payload buffer has passed to MQTT MTP layer
-                    }
-                    else
-                    {
-                        USP_LOG_Error("%s: Unable to send USP Connect record to %s because it has no MQTT topic", __FUNCTION__, cont->endpoint_id);
-                    }
-                }
-            }
-        }
-    }
-
-}
-#endif
-
 #ifndef DISABLE_STOMP
 /*********************************************************************//**
 **
@@ -1222,43 +1167,51 @@ void DEVICE_CONTROLLER_NotifyStompConnDeleted(int stomp_instance)
 #ifdef ENABLE_MQTT
 /*********************************************************************//**
 **
-** DEVICE_CONTROLLER_GetControllerTopic
+** DEVICE_CONTROLLER_GetMqttControllerTopics
 **
-** Gets the name of the controller queue to use for this controller on a particular MQTT client connection
+** Creates a list of controllers (and their associated topics) which are connected to the specified MQTT client
+** The returned list is used later on to send a USP Connect record to each controller in the list
 **
-** \param   instance - instance number of MQTT Clients Connection in the Device.MQTT.Client.{i} table
+** \param   mqtt_instance - Instance number of the connection in Device.MQTT.Client.{i}
+** \param   controller_topics - key value vector in which to return the list of controlelrs and their assocaiated topics
 **
-** \return  pointer to queue name, or NULL if unable to resolve the MQTT connection
+** \return  None
 **
 **************************************************************************/
-char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance)
+void DEVICE_CONTROLLER_GetMqttControllerTopics(int mqtt_instance, kv_vector_t *controller_topics)
 {
-    int i, j;
+    int i;
+    int j;
     controller_t *cont;
     controller_mtp_t *mtp;
 
-    // Iterate over all enabled controllers
+    KV_VECTOR_Init(controller_topics);
+
+    // Iterate over all controllers
     for (i=0; i<MAX_CONTROLLERS; i++)
     {
+        // Iterate over all MTP slots for this controller
         cont = &controllers[i];
         if ((cont->instance != INVALID) && (cont->enable))
         {
-            // Iterate over all enabled MTP slots for this controller
             for (j=0; j<MAX_CONTROLLER_MTPS; j++)
             {
                 mtp = &cont->mtps[j];
-                if ((mtp->instance != INVALID) && (mtp->enable))
+                if ((mtp->instance != INVALID) && (mtp->protocol == kMtpProtocol_MQTT) && (mtp->enable) && (mtp->mqtt_connection_instance == mqtt_instance))
                 {
-                    // If this controller is connected to the specified MQTT connection, then set its inherited role
-                    if ((mtp->protocol == kMtpProtocol_MQTT) && (mtp->mqtt_connection_instance == mqtt_instance))
+                    USP_ASSERT(mtp->mqtt_controller_topic != NULL);
+                    if (mtp->mqtt_controller_topic[0] != '\0')
                     {
-                        return mtp->mqtt_controller_topic;
+                        KV_VECTOR_Add(controller_topics, cont->endpoint_id, mtp->mqtt_controller_topic);
+                    }
+                    else
+                    {
+                        USP_LOG_Error("%s: Unable to send USP Connect record to %s because it has no MQTT topic", __FUNCTION__, cont->endpoint_id);
                     }
                 }
             }
         }
     }
-    return NULL;
 }
 
 /*********************************************************************//**
@@ -2623,6 +2576,10 @@ int Notify_ControllerDeleted(dm_req_t *req)
     // Delete all subscriptions owned by this controller
     DEVICE_SUBSCRIPTION_NotifyControllerDeleted(inst1);
 
+#ifdef ENABLE_MQTT
+    DEVICE_MQTT_UpdateControllerTopics();
+#endif
+
     return USP_ERR_OK;
 }
 
@@ -3062,6 +3019,10 @@ int Notify_ControllerEnable(dm_req_t *req, char *value)
 }
 #endif
 
+#ifdef ENABLE_MQTT
+    DEVICE_MQTT_UpdateControllerTopics();
+#endif
+
     return USP_ERR_OK;
 }
 
@@ -3089,6 +3050,10 @@ int Notify_ControllerEndpointID(dm_req_t *req, char *value)
     // Set the new value
     USP_SAFE_FREE(cont->endpoint_id);
     cont->endpoint_id = USP_STRDUP(value);
+
+#ifdef ENABLE_MQTT
+    DEVICE_MQTT_UpdateControllerTopics();
+#endif
 
     return USP_ERR_OK;
 }
@@ -3190,6 +3155,10 @@ int Notify_ControllerMtpEnable(dm_req_t *req, char *value)
 }
 #endif
 
+#ifdef ENABLE_MQTT
+    DEVICE_MQTT_UpdateControllerTopics();
+#endif
+
     // NOTE: We do not have to do anything for STOMP, as these parameters are only searched when we send
 
     return USP_ERR_OK;
@@ -3281,6 +3250,9 @@ int Notify_ControllerMtpProtocol(dm_req_t *req, char *value)
 }
 #endif
 
+#ifdef ENABLE_MQTT
+    DEVICE_MQTT_UpdateControllerTopics();
+#endif
     // NOTE: We don't need to do anything explicitly for STOMP
 
     return USP_ERR_OK;
@@ -3532,6 +3504,8 @@ int Notify_ControllerMtpMqttReference(dm_req_t *req, char *value)
         }
     }
 
+    DEVICE_MQTT_UpdateControllerTopics();
+
     // Set the new value
     mtp->mqtt_connection_instance = instance;
 
@@ -3560,29 +3534,22 @@ int Notify_ControllerMtpMqttTopic(dm_req_t *req, char *value)
 {
     controller_t *cont;
     controller_mtp_t *mtp;
-    bool schedule_reconnect = false;
 
     // Determine MTP to be updated
     mtp = FindControllerMtpFromReq(req, &cont);
     USP_ASSERT(mtp != NULL);
 
-    if ((mtp->enable == true) && (mtp->protocol == kMtpProtocol_MQTT) &&
-        (strcmp(mtp->mqtt_controller_topic, value) != 0))
+    // Exit if topic has not changed
+    if (strcmp(mtp->mqtt_controller_topic, value)==0)
     {
-        if (mtp->mqtt_connection_instance != INVALID)
-        {
-            schedule_reconnect = true;
-        }
+        return USP_ERR_OK;
     }
 
     // Set the new value
     USP_SAFE_FREE(mtp->mqtt_controller_topic);
     mtp->mqtt_controller_topic = USP_STRDUP(value);
 
-    if (schedule_reconnect)
-    {
-        DEVICE_MQTT_ScheduleReconnect(mtp->mqtt_connection_instance);
-    }
+    DEVICE_MQTT_UpdateControllerTopics();
 
     return USP_ERR_OK;
 }
@@ -4280,6 +4247,10 @@ int ProcessControllerAdded(int cont_instance)
         }
     }
 
+#ifdef ENABLE_MQTT
+    DEVICE_MQTT_UpdateControllerTopics();
+#endif
+
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
     err = ProcessControllerE2ESessionAdded(cont);
     if (err != USP_ERR_OK)
@@ -4534,6 +4505,10 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
     }
 
     // NOTE: No need to start a UDS Client/Server based on this reference - they are started based on being present in the UnixDomainSockets table
+#endif
+
+#ifdef ENABLE_MQTT
+    DEVICE_MQTT_UpdateControllerTopics();
 #endif
 
     err = USP_ERR_OK;
@@ -5234,8 +5209,6 @@ void UpdateFirstPeriodicNotificationTime(void)
     first_periodic_notification_time = first;
     SYNC_TIMER_Reload(PeriodicNotificationExec, 0, first_periodic_notification_time);
 }
-
-
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 /*********************************************************************//**

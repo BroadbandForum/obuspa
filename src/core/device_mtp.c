@@ -92,7 +92,7 @@ typedef struct
 
 #ifdef ENABLE_MQTT
     int mqtt_connection_instance; // Instance number of the MQTT connection which this MTP refers to (ie Device.MQTT.Client.{i})
-    char *mqtt_agent_topic;    // name of the queue on the above MQTT connection, on which this agent listens
+    char *mqtt_agent_topic;    // name of the queue on the above MQTT connection, on which this agent listens (ie Device.Localagent.MTP.{i}.MQTT.ResponseTopicConfigured)
     mqtt_qos_t mqtt_publish_qos;  // From Device.LocalAgent.MTP.{i}.MQTT.PublishQoS TR-369 parameter
 #endif
 

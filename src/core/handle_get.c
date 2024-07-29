@@ -96,7 +96,7 @@ void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_conn_t 
     int num_path_expr;
     Usp__Msg *resp = NULL;
     int size;
-    int depth;
+    unsigned depth;
     group_get_vector_t ggv;
     get_expr_info_t *get_expr_info;
 
@@ -124,8 +124,9 @@ void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_conn_t 
     }
 
     // Calculate the number of hierarchical levels to traverse in the data model when performing partial path resolution
+    // NOTE: protocol buffer has depth as an unsigned quantity, but internally we use a signed number, so limit range to that of a signed number
     depth = usp->body->request->get->max_depth;
-    if (depth == 0)
+    if ((depth == 0) || (depth > FULL_DEPTH))
     {
         depth = FULL_DEPTH;
     }
@@ -139,7 +140,7 @@ void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_conn_t 
     GROUP_GET_VECTOR_Init(&ggv);
     for (i=0; i < num_path_expr; i++)
     {
-        ExpandGetPathExpression(i, path_exprs[i], depth, &get_expr_info[i], &ggv);
+        ExpandGetPathExpression(i, path_exprs[i], (int)depth, &get_expr_info[i], &ggv);
     }
 
     // Get all parameters

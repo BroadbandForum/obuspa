@@ -226,7 +226,7 @@ int DEVICE_CONTROLLER_GetCombinedRoleByInstance(int instance, combined_role_t *c
 void DEVICE_CONTROLLER_GetCombinedRoleByEndpointId(char *endpoint_id, int role_instance, mtp_protocol_t protocol, combined_role_t *combined_role);
 void DEVICE_CONTROLLER_SetRolesFromStomp(int stomp_instance, int role_instance);
 int DEVICE_CONTROLLER_GetSubsRetryParams(char *endpoint_id, unsigned *min_wait_interval, unsigned *interval_multiplier);
-void DEVICE_CONTROLLER_QueueMqttConnectRecord(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic);
+void DEVICE_CONTROLLER_GetMqttControllerTopics(int mqtt_instance, kv_vector_t *controller_topics);
 void DEVICE_CONTROLLER_QueueStompConnectRecord(int stomp_instance, char *agent_queue);
 void DEVICE_CONTROLLER_NotifyStompConnDeleted(int stomp_instance);
 bool DEVICE_CONTROLLER_CanMtpConnect(void);
@@ -322,6 +322,7 @@ mtp_status_t DEVICE_MQTT_GetMtpStatus(int instance);
 char *DEVICE_MTP_GetAgentMqttResponseTopic(int instance);
 mqtt_qos_t DEVICE_MTP_GetAgentMqttPublishQos(int instance);
 int DEVICE_MQTT_CountEnabledConnections(void);
+void DEVICE_MQTT_UpdateControllerTopics(void);
 int DEVICE_MTP_GetMqttReference(char *path, int *mqtt_connection_instance);
 int DEVICE_MTP_GetUdsReference(char *path, int *uds_connection_instance);
 void DEVICE_MTP_StartMtpServers(void);
@@ -329,7 +330,6 @@ void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance);
 void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance);
 int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value);
 void DEVICE_CONTROLLER_SetRolesFromMqtt(int mqtt_instance, int role_instance);
-char *DEVICE_CONTROLLER_GetControllerTopic(int mqtt_instance);
 void DEVICE_CONTROLLER_SetInheritedRole(int cont_instance, int role_instance);
 
 #ifdef ENABLE_WEBSOCKETS

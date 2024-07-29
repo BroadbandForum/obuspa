@@ -112,6 +112,7 @@ typedef struct
     struct mosquitto *mosq;
     mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS];
     double_linked_list_t usp_record_send_queue;
+    kv_vector_t controller_topics;      // Vector of controller Endpoint Ids and their associated topics. Used to form USP Connect records to send to them
 
     // From the broker
     mqtt_subscription_t response_subscription; // Contains subscription for agent's topic
@@ -236,6 +237,8 @@ void RemoveMqttQueueItem(mqtt_client_t *client, mqtt_send_item_t *queued_msg);
 void RemoveExpiredMqttMessages(mqtt_client_t *client);
 void ParseSubscribeTopicsFromConnack(mqtt_client_t *client, mosquitto_property *prop);
 void AddConnackSubscription(mqtt_client_t *client, char *topic);
+void QueueUspMqttConnectRecords(mqtt_client_t *client);
+void QueueUspRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, char *controller_topic, time_t expiry_time, bool link_to_head);
 
 //------------------------------------------------------------------------------------
 #define DEFINE_MQTT_TrustCertVerifyCallbackIndex(index) \
@@ -385,11 +388,13 @@ exit:
 **
 ** \param   mqtt_params - pointer to data model parameters specifying the mqtt params
 ** \param   subscriptions[MAX_MQTT_SUBSCRIPTIONS] - subscriptions to use for this client
+** \param   controller_topics - key value vector containing the endpoint_id and topics of controllers connected to this client
+**                              NOTE: Ownership of the controller_topics vector passes to this function
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS])
+int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS], kv_vector_t *controller_topics)
 {
     int i;
     int err = USP_ERR_OK;
@@ -404,6 +409,7 @@ int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subsc
             ((sub->topic==NULL) || (sub->topic[0] == '\0')) )
         {
             USP_LOG_Error("%s: Cannot enable client (instance=%d) as an enabled subscription's topic (instance=%d) is empty", __FUNCTION__, mqtt_params->instance, sub->instance);
+            KV_VECTOR_Destroy(controller_topics);
             err = USP_ERR_INTERNAL_ERROR;
             goto exit;
         }
@@ -420,6 +426,7 @@ int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subsc
         if (client == NULL)
         {
             USP_LOG_Error("%s: No internal MQTT client matching Device.MQTT.Connection.%d", __FUNCTION__, mqtt_params->instance);
+            KV_VECTOR_Destroy(controller_topics);
             err = USP_ERR_INTERNAL_ERROR;
             goto exit;
         }
@@ -431,14 +438,17 @@ int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subsc
     // Exit if the caller needs to disable this MQTT client first (or wait for the disconnect to complete/timeout)
     if ((client->state != kMqttState_Idle) && (client->state != kMqttState_ErrorRetrying))
     {
-        USP_LOG_Error("%s: Unexpected state: %s for client %d. Failing connection..",
-            __FUNCTION__, mqtt_state_names[client->state], client->conn_params.instance);
+        USP_LOG_Error("%s: Unexpected state: %s for client %d. Failing connection..", __FUNCTION__, mqtt_state_names[client->state], client->conn_params.instance);
+        KV_VECTOR_Destroy(controller_topics);
         err = USP_ERR_INTERNAL_ERROR;
         goto exit;
     }
 
+    // Copy across new connection parameters
     ParamReplace(&client->conn_params, mqtt_params);
     ParamReplace(&client->next_params, mqtt_params);
+    KV_VECTOR_Destroy(&client->controller_topics);
+    memcpy(&client->controller_topics, controller_topics, sizeof(kv_vector_t));
 
     for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
@@ -516,20 +526,30 @@ exit:
 ** \param   msi - Information about the content to send. The ownership of
 **              the payload buffer is passed to this function, unless an error is returned.
 ** \param   instance - instance number for the client in Device.MQTT.Client.{i}
-** \param   topic - controller's topic to publish the message on
+** \param   controller_topic - controller's topic to publish the message on
 ** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
 **
 ** \return  USP_ERR_OK on success, USP_ERR_XXX otherwise
 **
 **************************************************************************/
-int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char* topic, time_t expiry_time)
+int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *controller_topic, time_t expiry_time)
 {
     int err = USP_ERR_GENERAL_FAILURE;
+
     USP_ASSERT(msi != NULL);
 
-    // Add the message to the back of the queue
+    // Exit (discarding the USP record) if no controller topic to send the message to
+    // NOTE: This should already have been ensured by the caller (in the function CalcNotifyDest)
+    if ((controller_topic == NULL) || (*controller_topic == '\0'))
+    {
+        USP_LOG_Error("%s: Discarding USP Message (%s) as no controller topic setup to send it to", __FUNCTION__, MSG_HANDLER_UspMsgTypeToString(msi->usp_msg_type));
+        USP_FREE(msi->pbuf);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
+    // Don't bother queuing the message if the thread has already exited
     if (is_mqtt_mtp_thread_exited)
     {
         OS_UTILS_UnlockMutex(&mqtt_access_mutex);
@@ -547,14 +567,6 @@ int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char* topic, tim
         goto exit;
     }
 
-    // Exit if this is a connect record, adding it at the front of the queue
-    if (msi->content_type == kMtpContentType_ConnectRecord)
-    {
-        QueueUspConnectRecord_MQTT(client, msi, topic, expiry_time);
-        err = USP_ERR_OK;
-        goto exit;
-    }
-
     // Find if this is a duplicate in the queue
     // May have been tried to be resent by the MTP_EXEC thread
     if (IsUspRecordInMqttQueue(client, msi->pbuf, msi->pbuf_len))
@@ -567,38 +579,9 @@ int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char* topic, tim
 
     RemoveExpiredMqttMessages(client);
 
-    mqtt_send_item_t *send_item;
-    send_item = USP_MALLOC(sizeof(mqtt_send_item_t));
-    send_item->item = *msi;  // NOTE: Ownership of the payload buffer passes to the MQTT client
+    // NOTE: Ownership of the payload buffer passes to the MQTT message queue
+    QueueUspRecord_MQTT(client, msi, controller_topic, expiry_time, false);
 
-    // Determine Controller topic to publish to
-    if (topic != NULL)
-    {
-        send_item->topic = USP_STRDUP(topic);
-    }
-    else
-    {
-        // NOTE: If Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Topic is not configured, then send_item->topic will be set to NULL here
-        send_item->topic = USP_STRDUP(client->conn_params.topic);
-    }
-
-    // Exit (discarding the USP record) if no controller topic to send the message to
-    // NOTE: This should already have been ensured by the caller (in the function CalcNotifyDest)
-    if ((send_item->topic == NULL) || (send_item->topic[0] == '\0'))
-    {
-        USP_LOG_Error("%s: Discarding USP Message (%s) as no controller topic to send to", __FUNCTION__, MSG_HANDLER_UspMsgTypeToString(send_item->item.usp_msg_type));
-        USP_SAFE_FREE(send_item->item.pbuf);
-        USP_SAFE_FREE(send_item->topic);
-        USP_FREE(send_item);
-        err = USP_ERR_INTERNAL_ERROR;
-        goto exit;
-    }
-
-    send_item->mid = INVALID;
-    send_item->qos = client->conn_params.publish_qos;
-    send_item->expiry_time = expiry_time;
-
-    DLLIST_LinkToTail(&client->usp_record_send_queue, send_item);
     err = USP_ERR_OK;
 
 exit:
@@ -733,7 +716,7 @@ mtp_status_t MQTT_GetMtpStatus(int instance)
 
     OS_UTILS_LockMutex(&mqtt_access_mutex);
 
-    // Exit if not matching client found for this instance number
+    // Exit if no matching client found for this instance number
     client = FindMqttClientByInstance(instance);
     if (client==NULL)
     {
@@ -1446,7 +1429,6 @@ void MQTT_DestroyConnParams(mqtt_conn_params_t *params)
     USP_SAFE_FREE(params->host);
     USP_SAFE_FREE(params->username);
     USP_SAFE_FREE(params->password);
-    USP_SAFE_FREE(params->topic);
     USP_SAFE_FREE(params->response_topic);
     USP_SAFE_FREE(params->client_id);
     USP_SAFE_FREE(params->name);
@@ -1555,6 +1537,80 @@ void MQTT_AllowConnect(void)
     MTP_EXEC_MqttWakeup();
 }
 
+/*********************************************************************//**
+**
+** MQTT_ModifyConnectedControllers
+**
+** Modifies the set of connected controllers connected to the specified MQTT client instance
+** This function is called when a controller is associated or disassociated from an MQTT client
+**
+** \param   instance - Instance number in Device.MQTT.Client.{i}
+** \param   controller_topics - key-value vector containing the controller endpoint_id (as key) and controller topic (as value)
+**                              NOTE: Ownership of this vector passes to this function
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+void MQTT_ModifyConnectedControllers(int instance, kv_vector_t *controller_topics)
+{
+    int i;
+    mqtt_client_t *client;
+    int index;
+    kv_pair_t *kv;
+    mtp_send_item_t msi;
+
+    OS_UTILS_LockMutex(&mqtt_access_mutex);
+
+    // Exit if no matching client found for this instance number
+    client = FindMqttClientByInstance(instance);
+    if (client==NULL)
+    {
+        goto exit;
+    }
+
+    // Send a USP Disconnect record to all controllers that have been removed, or whose topic has changed
+    for (i=0; i < client->controller_topics.num_entries; i++)
+    {
+        kv = &client->controller_topics.vector[i];
+        index = KV_VECTOR_FindKey(controller_topics, kv->key, i);
+        if ((index == INVALID) || (strcmp(controller_topics->vector[index].value, kv->value) != 0))
+        {
+            // Controller exists in current set, but not in new set, so it has been removed. Send it a USP disconnect record
+            // NOTE: Intentionally using kMtpContentType_UspMessage instead of kMtpContentType_DisconnectRecord, as we don't want to cause an actual disconnect by sending the disconnect record
+            USPREC_Disconnect_Create(kMtpContentType_DisconnectRecord, kv->key, USP_ERR_OK, "Configuration Change", &msi);
+            msi.content_type = kMtpContentType_UspMessage; // Overriding because we don't want any special handling for this record
+            USP_ASSERT((kv->value != NULL) && (kv->value[0] != '\0'));
+            QueueUspRecord_MQTT(client, &msi, kv->value, END_OF_TIME, false);
+        }
+    }
+
+    // Send a USP Connect record to all controllers that have been added, or whose topic has changed
+    for (i=0; i < controller_topics->num_entries; i++)
+    {
+        kv = &controller_topics->vector[i];
+        index = KV_VECTOR_FindKey(&client->controller_topics, kv->key, i);
+        if ((index == INVALID) || (strcmp(client->controller_topics.vector[index].value, kv->value) != 0))
+        {
+            // Controller exists in new set, but not in current set, so it has been added. Send it a USP Connect record
+            if ((client->response_subscription.topic != NULL) && (client->response_subscription.topic[0] != '\0'))
+            {
+                USPREC_MqttConnect_Create(kv->key, client->conn_params.version, client->response_subscription.topic, &msi);
+                msi.content_type = kMtpContentType_UspMessage; // Overriding because we don't want any special handling for this record
+                USP_ASSERT((kv->value != NULL) && (kv->value[0] != '\0'));
+                QueueUspRecord_MQTT(client, &msi, kv->value, END_OF_TIME, false);
+            }
+        }
+    }
+
+    // Free the current list of controllers connected to this MQTT client
+    KV_VECTOR_Destroy(&client->controller_topics);
+
+    // Move ownership of the new set to this client
+    memcpy(&client->controller_topics, controller_topics, sizeof(kv_vector_t));
+
+exit:
+    OS_UTILS_UnlockMutex(&mqtt_access_mutex);
+}
 
 /*********************************************************************//**
 **
@@ -1683,6 +1739,7 @@ void InitClient(mqtt_client_t *client, int index)
     client->agent_topic_from_connack = NULL;
     client->disconnect_mid = INVALID_MOSQUITTO_MID;
     client->is_reconnect = false;
+    KV_VECTOR_Init(&client->controller_topics);
 
     ResetRetryCount(client);
 
@@ -1784,6 +1841,15 @@ void DestroyClient(mqtt_client_t *client)
         client->are_certs_loaded = false;
     }
 
+    // Purge the send queue
+    while (client->usp_record_send_queue.head)
+    {
+        RemoveMqttQueueItem(client, (mqtt_send_item_t *)client->usp_record_send_queue.head);
+    }
+
+    USP_SAFE_FREE(client->agent_topic_from_connack);
+    KV_VECTOR_Destroy(&client->controller_topics);
+
     // NOTE: Following is not stricly necessary, and we do not have to set client->conn_params.instance to INVALID,
     // since this function is only called when shutting down the USP Agent
     memset(client, 0, sizeof(mqtt_client_t));
@@ -1805,6 +1871,7 @@ void DestroyClient(mqtt_client_t *client)
 **************************************************************************/
 void CleanMqttClient(mqtt_client_t *client, bool is_reconnect)
 {
+    int i;
     int sock;
 
     // NOTE: It is expected that this function is called only when we know that no socket is open
@@ -1827,9 +1894,16 @@ void CleanMqttClient(mqtt_client_t *client, bool is_reconnect)
     USP_SAFE_FREE(client->agent_topic_from_connack);
     client->retry_time = 0;
 
+    // Free all subscriptions whose lifetime is set by the connection (rather than being set by configuration in Device.MQTT.Client.{i}.Subscription table)
+    MQTT_SubscriptionDestroy(&client->response_subscription);
+    for (i=0; i<NUM_ELEM(client->connack_subscriptions); i++)
+    {
+        MQTT_SubscriptionDestroy(&client->connack_subscriptions[i]);
+    }
+
     MoveState(&client->state, kMqttState_Idle, "Disable Client");
 
-    // Exit if this function is not being called as part of a reconnect sequence
+    // Exit if this function is being called as part of a reconnect sequence
     if (is_reconnect)
     {
         return;
@@ -1842,8 +1916,9 @@ void CleanMqttClient(mqtt_client_t *client, bool is_reconnect)
         RemoveMqttQueueItem(client, (mqtt_send_item_t *)client->usp_record_send_queue.head);
     }
 
-    // Free the next_params
+    // Free the next_params and controller topics
     MQTT_DestroyConnParams(&client->next_params);
+    KV_VECTOR_Destroy(&client->controller_topics);
 
     // Mark the structure as 'not-in-use'
     client->conn_params.instance = INVALID;
@@ -2101,7 +2176,6 @@ void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, cha
 {
     mqtt_send_item_t *cur_msg;
     mqtt_send_item_t *next_msg;
-    mqtt_send_item_t *send_item;
     mtp_content_type_t type;
 
     // Iterate over USP Records in the queue, removing all stale connect and disconnect records to the specified controller
@@ -2126,16 +2200,47 @@ void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, cha
         cur_msg = next_msg;
     }
 
-    // Add the new connect record to the queue
-    send_item = USP_MALLOC(sizeof(mqtt_send_item_t));
-    send_item->item = *msi;  // NOTE: Ownership of the payload buffer passes to the MQTT message queue
+    // NOTE: Ownership of the payload buffer passes to the MQTT message queue
+    QueueUspRecord_MQTT(client, msi, controller_topic, expiry_time, true);
+}
 
+/*********************************************************************//**
+**
+** QueueUspConnectRecord_MQTT
+**
+** Adds the USP connect record at the front of the queue, ensuring that there is only one connect record in the queue
+**
+** \param   client - pointer to MQTT client to send the connect record on
+** \param   msi - pointer to content to send
+**                NOTE: Ownership of the payload buffer passes to this function
+** \param   controller_topic - topic to send the record to
+** \param   expiry_time - time at which the USP record should be removed from the MTP send queue
+** \param   link_to_head - if set to true, the USP record is added to the front of the send queue, otherwise it is added to the end of the send queue
+**
+** \return  None
+**
+**************************************************************************/
+void QueueUspRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, char *controller_topic, time_t expiry_time, bool link_to_head)
+{
+    mqtt_send_item_t *send_item;
+
+    // Form the send item
+    send_item = USP_MALLOC(sizeof(mqtt_send_item_t));
+    send_item->item = *msi;  // NOTE: Ownership of the payload buffer passes to the MQTT client
     send_item->topic = USP_STRDUP(controller_topic);
-    send_item->qos = client->conn_params.publish_qos;
     send_item->mid = INVALID;
+    send_item->qos = client->conn_params.publish_qos;
     send_item->expiry_time = expiry_time;
 
-    DLLIST_LinkToHead(&client->usp_record_send_queue, send_item);
+    // Add the send item to the send queue
+    if (link_to_head)
+    {
+        DLLIST_LinkToHead(&client->usp_record_send_queue, send_item);
+    }
+    else
+    {
+        DLLIST_LinkToTail(&client->usp_record_send_queue, send_item);
+    }
 }
 
 /*********************************************************************//**
@@ -2593,6 +2698,7 @@ void ConnectCallback(struct mosquitto *mosq, void *userdata, int result)
 
         MoveState(&client->state, kMqttState_Running, "Connect Callback Received");
         SubscribeToAll(client);
+        QueueUspMqttConnectRecords(client);
     }
 
 exit:
@@ -2697,6 +2803,7 @@ void ConnectV5Callback(struct mosquitto *mosq, void *userdata, int result, int f
 
         MoveState(&client->state, kMqttState_Running, "Connect Callback Received");
         SubscribeToAll(client);
+        QueueUspMqttConnectRecords(client);
     }
 
 exit:
@@ -3108,8 +3215,6 @@ void SubscribeToAll(mqtt_client_t *client)
         USP_LOG_Error("%s: No response topic configured (or set by the CONNACK)", __FUNCTION__);
     }
 
-
-
     // Subscribe to all subscriptions indicated by the 'subscribe-topic' user properties in the CONNACK
     for (i=0; i < NUM_ELEM(client->connack_subscriptions); i++)
     {
@@ -3136,11 +3241,48 @@ void SubscribeToAll(mqtt_client_t *client)
         HandleMqttError(client, kMqttFailure_OtherError, buf);
         return;
     }
+}
 
-    // Let the DM know we're ready for sending messages and instruct it to send a USP Connect record
+/*********************************************************************//**
+**
+** QueueUspMqttConnectRecords
+**
+** Queues USP Connect records to all connected controllers, and informs the DM thread that we're ready for it to start sending messages
+**
+** \param   client - pointer to MQTT client
+**
+** \return  None
+**
+**************************************************************************/
+void QueueUspMqttConnectRecords(mqtt_client_t *client)
+{
+    int i;
+    mtp_send_item_t msi;
+    kv_pair_t *kv;
+
+    // Exit if no agent topic has been subscribed to. It doesn't make sense to send out USP Connect records in this case.
+    // NOTE: This case may occur if ResponseTopicConfigured is not setup, and no agent topic was received in the CONNACK
+    // The Agent may still receive messages from other topics which it subscribed to (in Device.MQTT.Client.{i}.Subscription)
+    if (client->response_subscription.topic == NULL)
+    {
+        goto exit;
+    }
+
+    // Queue a USP CONNECT record to all connected controllers
     // NOTE: client->response_subscription.topic will contain either the value configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured
     //       or the value received in the CONNACK (for MQTTv5)
-    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->conn_params.version, client->response_subscription.topic, client->conn_params.client_id, client->role_instance);
+    for (i=0; i < client->controller_topics.num_entries; i++)
+    {
+        kv = &client->controller_topics.vector[i];
+        USPREC_MqttConnect_Create(kv->key, client->conn_params.version, client->response_subscription.topic, &msi);
+        USP_ASSERT((kv->value != NULL) && (kv->value[0] != '\0'));
+        QueueUspConnectRecord_MQTT(client, &msi, kv->value, END_OF_TIME);
+        // NOTE: No need to free payload in msi structure, as ownership of it passes to the queue of messages to send
+    }
+
+exit:
+    // Let the DM know we're ready for sending messages
+    DM_EXEC_PostMqttHandshakeComplete(client->conn_params.instance, client->conn_params.version, client->conn_params.client_id, client->role_instance);
 }
 
 /*********************************************************************//**
@@ -3476,12 +3618,14 @@ void UnsubscribeV5Callback(struct mosquitto *mosq, void *userdata, int mid, cons
 int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
 {
     int err = USP_ERR_OK;
+    char buf[256];
 
     USP_ASSERT(client != NULL);
     USP_ASSERT(msg != NULL);
     USP_ASSERT(msg->topic != NULL);
 
-    MSG_HANDLER_LogMessageToSend(&msg->item, kMtpProtocol_MQTT, client->conn_params.host, NULL);
+    USP_SNPRINTF(buf, sizeof(buf), "topic: %s", msg->topic);
+    MSG_HANDLER_LogMessageToSend(&msg->item, kMtpProtocol_MQTT, client->conn_params.host, buf);
 
     int version = client->conn_params.version;
     if (version == kMqttProtocol_5_0)
@@ -3988,7 +4132,6 @@ void ParamReplace(mqtt_conn_params_t *dest, mqtt_conn_params_t *src)
     dest->host = USP_STRDUP(src->host);
     dest->username = USP_STRDUP(src->username);
     dest->password = USP_STRDUP(src->password);
-    dest->topic = USP_STRDUP(src->topic);
     dest->response_topic = USP_STRDUP(src->response_topic);
     dest->client_id = USP_STRDUP(src->client_id);
     dest->name = USP_STRDUP(src->name);
@@ -4199,7 +4342,7 @@ mqtt_client_t *FindMqttClientByMosquitto(struct mosquitto *mosq)
 **
 ** AddUserProperties
 **
-** Creates a libmosquitto property object containing the 'usp-endpoint-id' user property
+** Called to add the 'usp-endpoint-id' user property to MQTT CONNECT, SUBSCRIBE and UNSUBSCRIBE messages
 **
 ** \param   props - pointer to variable in which to return a pointer to the created libmosquitto property object
 **

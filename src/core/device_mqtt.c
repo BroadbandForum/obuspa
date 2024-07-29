@@ -139,7 +139,7 @@ void DestroyMQTTClient(client_t *client);
 int ProcessMqttClientAdded(int instance);
 int ProcessMqttSubscriptionAdded(int instance, int sub_instance, mqtt_subscription_t **mqtt_sub);
 int DEVICE_MQTT_StartAllClients(void);
-int EnableMQTTClient(mqtt_conn_params_t *mp, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS]);
+int EnableMQTTClient(client_t *mqttclient);
 void ScheduleMqttReconnect(mqtt_conn_params_t *mp);
 void ScheduleMQTTResubscribe(client_t *mqttclient, mqtt_subscription_t *sub);
 int ClientNumberOfEntries(void);
@@ -352,7 +352,7 @@ int DEVICE_MQTT_StartAllClients(void)
         if ((mqttclient->conn_params.instance != INVALID) && (mqttclient->conn_params.enable == true))
         {
             // Exit if no free slots to enable the connection. (Enable is successful, even if the connection is trying to reconnect)
-            err = EnableMQTTClient(&mqttclient->conn_params, mqttclient->subscriptions);
+            err = EnableMQTTClient(mqttclient);
             if (err != USP_ERR_OK)
             {
                 return err;
@@ -425,7 +425,6 @@ void DEVICE_MQTT_UpdateClientId(int instance, char *client_id)
     }
 
     // Set the new value persistently in the USP DB
-    // As we are deleting some subscriptions (from the data model and DB), wrap in a transaction
     err = DM_TRANS_Start(&trans);
     if (err == USP_ERR_OK)
     {
@@ -492,6 +491,39 @@ int DEVICE_MQTT_CountEnabledConnections(void)
     }
 
     return count;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_MQTT_UpdateControllerTopics
+**
+** Called to update all MTP clients with the set of Controllers connected to them
+** (in order that USP Connect/Disconnect records can be sent to the Controllers)
+** This function is called whenever there are changes to Controller MTP parameters
+**
+** \param   req - pointer to structure identifying the path
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+void DEVICE_MQTT_UpdateControllerTopics(void)
+{
+    int i;
+    kv_vector_t controller_topics;
+    mqtt_conn_params_t *mp;
+
+    // Iterate over all MQTT connections, updating which controllers are connected to them
+    for (i=0; i<NUM_ELEM(mqtt_client_params); i++)
+    {
+        mp = &mqtt_client_params[i].conn_params;
+        if ((mp->instance != INVALID) && (mp->enable))
+        {
+            DEVICE_CONTROLLER_GetMqttControllerTopics(mp->instance, &controller_topics);
+            MQTT_ModifyConnectedControllers(mp->instance, &controller_topics); // NOTE: ownership of controller_topics passes to MQTT MTP if it contains anything
+        }
+    }
 }
 
 /*********************************************************************//**
@@ -797,26 +829,29 @@ exit:
 **
 ** EnableMQTTClient
 **
-** Wrapper function to enable a MQTT client with the current connection parameters
+** Wrapper function to start the specified MQTT client connecting
 **
-** \param   mp - MQTT connection parameters
+** \param   mqttclient - MQTT client parameters
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int EnableMQTTClient(mqtt_conn_params_t *mp, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS])
+int EnableMQTTClient(client_t *mqttclient)
 {
     int err;
+    mqtt_conn_params_t *mp;
+    kv_vector_t controller_topics;
 
-    // Update controller and agent topics. Note: Both could possibly be set to NULL
-    USP_SAFE_FREE(mp->topic);
+    // Update agent topic. NOTE: It could be NULL if Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured is empty
+    mp = &mqttclient->conn_params;
     USP_SAFE_FREE(mp->response_topic);
-    mp->topic = USP_STRDUP(DEVICE_CONTROLLER_GetControllerTopic(mp->instance));
     mp->response_topic = USP_STRDUP(DEVICE_MTP_GetAgentMqttResponseTopic(mp->instance));
     mp->publish_qos = DEVICE_MTP_GetAgentMqttPublishQos(mp->instance);
 
-    // Check the error condition
-    err = MQTT_EnableClient(mp, subscriptions);
+    // Exit if unable to start the MQTT client
+    // NOTE: Ownership of controller_topics passes to MQTT_EnableClient
+    DEVICE_CONTROLLER_GetMqttControllerTopics(mqttclient->conn_params.instance, &controller_topics);
+    err = MQTT_EnableClient(mp, mqttclient->subscriptions, &controller_topics);
     if (err != USP_ERR_OK)
     {
         USP_LOG_Error("%s MQTT failed to enable the client", __FUNCTION__);
@@ -1136,7 +1171,7 @@ int Validate_MQTTConnectRetryMaxInterval(dm_req_t *req, char *value)
 **
 ** NotifyChange_MQTTEnable
 **
-** Function called when Device.MQTT.Connection.{i}.Enable is modified
+** Function called when Device.MQTT.Client.{i}.Enable is modified
 **
 ** \param   req - pointer to structure identifying the path
 ** \param   value - new value of this parameter
@@ -1170,7 +1205,7 @@ int NotifyChange_MQTTEnable(dm_req_t *req, char *value)
     if ((old_value == false) && (val_bool == true))
     {
         // Exit if no free slots to enable the connection. (Enable is successful, even if the connection is trying to reconnect)
-        err = EnableMQTTClient(&mqttclient->conn_params, mqttclient->subscriptions);
+        err = EnableMQTTClient(mqttclient);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -1788,9 +1823,7 @@ int NotifyChange_MQTTConnectRetryMaxInterval(dm_req_t *req, char *value)
 void ScheduleMqttReconnect(mqtt_conn_params_t *mp)
 {
     USP_SAFE_FREE(mp->response_topic);
-    USP_SAFE_FREE(mp->topic);
     mp->response_topic = USP_STRDUP(DEVICE_MTP_GetAgentMqttResponseTopic(mp->instance));
-    mp->topic = USP_STRDUP(DEVICE_CONTROLLER_GetControllerTopic(mp->instance));
     mp->publish_qos = DEVICE_MTP_GetAgentMqttPublishQos(mp->instance);
 
     // NOTE: If the agent or controller topics are NULL, this is handled by the MTP layer
@@ -1813,14 +1846,12 @@ void ScheduleMQTTResubscribe(client_t *mqttclient, mqtt_subscription_t *sub)
 {
     // Update controller and agent topics. Note: Both could possibly be set to NULL
     USP_SAFE_FREE(mqttclient->conn_params.response_topic);
-    USP_SAFE_FREE(mqttclient->conn_params.topic);
     mqttclient->conn_params.response_topic = USP_STRDUP(DEVICE_MTP_GetAgentMqttResponseTopic(mqttclient->conn_params.instance));
-    mqttclient->conn_params.topic = USP_STRDUP(DEVICE_CONTROLLER_GetControllerTopic(mqttclient->conn_params.instance));
     mqttclient->conn_params.publish_qos = DEVICE_MTP_GetAgentMqttPublishQos(mqttclient->conn_params.instance);
 
-    if ((mqttclient->conn_params.response_topic == NULL) || (mqttclient->conn_params.topic == NULL))
+    if (mqttclient->conn_params.response_topic == NULL)
     {
-        USP_LOG_Error("%s response topic or topic not found", __FUNCTION__);
+        USP_LOG_Error("%s response topic not found", __FUNCTION__);
         return;
     }
     if ((mqttclient->conn_params.instance != INVALID) && (sub->instance != INVALID))
@@ -1884,7 +1915,7 @@ int Notify_MQTTClientAdded(dm_req_t *req)
     USP_ASSERT(mqttclient != NULL);         // As we had just successfully added it
 
     // Exit if no free slots to enable the connection. (Enable is successful, even if the connection is trying to reconnect)
-    err = EnableMQTTClient(&mqttclient->conn_params, mqttclient->subscriptions);
+    err = EnableMQTTClient(mqttclient);
     if (err != USP_ERR_OK)
     {
         USP_LOG_Error("Enable client failed");

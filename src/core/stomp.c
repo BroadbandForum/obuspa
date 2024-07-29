@@ -3495,7 +3495,7 @@ int StartSendingFrame_SEND(stomp_connection_t *sc, char *controller_queue, char 
     // Form the STOMP headers
     body_offset = USP_SNPRINTF((char *)buf, len, SEND_FRAME_FORMAT, content_length, content_type_str, agent_queue, controller_queue);
 
-    MSG_HANDLER_LogMessageToSend(msi, kMtpProtocol_STOMP, sc->host, buf);
+    MSG_HANDLER_LogMessageToSend(msi, kMtpProtocol_STOMP, sc->host, (char *)buf);
 
     // Form the STOMP body
     memcpy(&buf[body_offset], STOMP_BODY_SEPARATOR, sizeof(STOMP_BODY_SEPARATOR)-1);

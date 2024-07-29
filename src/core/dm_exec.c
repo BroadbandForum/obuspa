@@ -193,7 +193,6 @@ typedef struct
     int role_instance;      // Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
 
     mqtt_protocolver_t version;
-    char *agent_topic;
     char *client_id;
 } mqtt_complete_msg_t;
 
@@ -843,14 +842,13 @@ void DM_EXEC_PostStompHandshakeComplete(int stomp_instance, char *agent_queue, i
 **
 ** \param   mqtt_instance - instance number of connection in Device.MQTT.Client.{i}
 ** \param   version - MQTT version in use on the connection
-** \param   agent_topic - MQTT topic that the agent actually subscribed to. This is put inside a USP Connect record to indicate to the Controller the topic on which the agent is listening
 ** \param   client_id - MQTT client_id that the agent used or was assigned in the MQTTv5 CONNACK. This should be persistently stored in Device.MQTT.Client.{i}.ClientID
 ** \param   role_instance - Inherited role instance in Device.LocalAgent.ControllerTrust.Role.{i}
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *agent_topic, char *client_id, int role_instance)
+void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t version, char *client_id, int role_instance)
 {
     dm_exec_msg_t  msg;
     mqtt_complete_msg_t *mcm;
@@ -863,15 +861,12 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t ver
         return;
     }
 
-    USP_ASSERT(agent_topic != NULL);
-
     // Form message
     memset(&msg, 0, sizeof(msg));
     msg.type = kDmExecMsg_MqttHandshakeComplete;
     mcm = &msg.params.mqtt_complete;
     mcm->mqtt_instance = mqtt_instance;
     mcm->version = version;
-    mcm->agent_topic = USP_STRDUP(agent_topic);
     mcm->client_id = USP_STRDUP(client_id);
     mcm->role_instance = role_instance;
 
@@ -881,7 +876,7 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t ver
     {
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
-        USP_LOG_Error("%s: Failed to send kDmExecMsg_MqttHandshakeComplete (mqtt_instance=%d, agent_topic=%s)", __FUNCTION__, mqtt_instance, agent_topic);
+        USP_LOG_Error("%s: Failed to send kDmExecMsg_MqttHandshakeComplete (mqtt_instance=%d)", __FUNCTION__, mqtt_instance);
         FreeDmExecMessageArguments(&msg);
         return;
     }
@@ -1766,7 +1761,6 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         {
             mqtt_complete_msg_t *mcm;
             mcm = &msg.params.mqtt_complete;
-            DEVICE_CONTROLLER_QueueMqttConnectRecord(mcm->mqtt_instance, mcm->version, mcm->agent_topic);
             DEVICE_CONTROLLER_SetRolesFromMqtt(mcm->mqtt_instance, mcm->role_instance);
             if (mcm->version == kMqttProtocol_5_0)
             {
@@ -2055,7 +2049,6 @@ void FreeDmExecMessageArguments(dm_exec_msg_t *msg)
 
 #ifdef ENABLE_MQTT
         case kDmExecMsg_MqttHandshakeComplete:
-            USP_SAFE_FREE(msg->params.mqtt_complete.agent_topic);
             USP_SAFE_FREE(msg->params.mqtt_complete.client_id);
             break;
 #endif

@@ -38,12 +38,14 @@
 #ifndef MQTT_H
 #define MQTT_H
 
+#include <stdbool.h>
+
 #include "vendor_defs.h"  // For MAX_MQTT_SUBSCRIPTIONS
 #include "usp-msg.pb-c.h"
 #include "mtp_exec.h"
 #include "socket_set.h"
+#include "kv_vector.h"
 
-#include <stdbool.h>
 
 typedef struct
 {
@@ -109,9 +111,6 @@ typedef struct
 
     mqtt_protocolver_t version;   // MQTT protocol version to use
 
-    char* topic;                  // Controller's topic: Topic which Agent publishes to, and Controller subscribes to
-                                  // NOTE: If not configured in Device.LocalAgent.Controller.{i}.MTP.{i}.MQTT.Topic, then this variable may be set to NULL
-
     char* response_topic;         // Agent's topic: Topic which agent subscribes to, and Controller publishes to
                                   // NOTE: If not configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured, then this variable may be set to NULL
     mqtt_qos_t publish_qos;       // Agent's PublishQos: used to set mqtt_send_item_t.qos variable, when building a msg to send.
@@ -137,7 +136,8 @@ int MQTT_Init(void);
 void MQTT_Destroy(void);
 int MQTT_Start(void);
 void MQTT_Stop(void);
-int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS]);
+void MQTT_ModifyConnectedControllers(int instance, kv_vector_t *controller_topics);
+int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS], kv_vector_t *controller_topics);
 int MQTT_DisableClient(int instance);
 int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *topic, time_t expiry_time);
 void MQTT_UpdateConnectionParams(mqtt_conn_params_t *mqtt_params, bool schedule_reconnect);
