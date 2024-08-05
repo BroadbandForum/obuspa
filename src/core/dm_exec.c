@@ -1947,9 +1947,10 @@ void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigne
 
 #ifndef REMOVE_USP_SERVICE
     // If running as a USP Service then...
-    if ((RUNNING_AS_USP_SERVICE()==true) && (path_type == kUdsPathType_BrokersController))
+    if (RUNNING_AS_USP_SERVICE()==true)
     {
-        // Add the endpoint into the Controller table since connected to the Broker's controller socket
+        // Add the Broker's endpoint into the Controller table. This is necessary to accept messages from it, regardless of
+        // whether the messages are from its agent or controller
         // NOTE: This also ensures that the controller's inherited role is full access
         int uds_instance;
         uds_instance = UDS_GetInstanceForConnection(conn_id);
@@ -1959,7 +1960,7 @@ void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigne
         }
 
         // Send a Register request if just connected to the Broker's Controller, and there are some objects to register
-        if (*usp_service_objects != '\0')
+        if ((*usp_service_objects != '\0') && (path_type == kUdsPathType_BrokersController))
         {
             USP_SERVICE_QueueRegisterRequest(endpoint_id, usp_service_objects);
         }

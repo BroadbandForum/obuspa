@@ -483,6 +483,7 @@ int LogLevelToSyslogSeverity(log_level_t log_level)
 
     switch (log_level)
     {
+        case kLogLevel_Trace:
         case kLogLevel_Debug:
             syslog_level = LOG_DEBUG;
             break;

@@ -270,6 +270,7 @@ typedef enum
     kLogLevel_Warning = 2,
     kLogLevel_Info = 3,
     kLogLevel_Debug = 4,
+    kLogLevel_Trace = 5,
 
     kLogLevel_Max       // This should always be the last value in the enum
 } log_level_t;
@@ -538,6 +539,7 @@ extern log_level_t usp_log_level;
 #define USP_LOG_Warning(...)     if (usp_log_level >= kLogLevel_Warning) { USP_LOG_Printf(kLogLevel_Warning, kLogType_Debug, __VA_ARGS__); }
 #define USP_LOG_Info(...)        if (usp_log_level >= kLogLevel_Info)    { USP_LOG_Printf(kLogLevel_Info, kLogType_Debug, __VA_ARGS__); }
 #define USP_LOG_Debug(...)       if (usp_log_level >= kLogLevel_Debug)   { USP_LOG_Printf(kLogLevel_Debug, kLogType_Debug, __VA_ARGS__); }
+#define USP_LOG_Trace(...)       if (usp_log_level >= kLogLevel_Trace)   { USP_LOG_Printf(kLogLevel_Trace, kLogType_Debug, __VA_ARGS__); }
 
 //-------------------------------------------------------------------------
 // Functions used when registering validate_add and validate_delete vendor hooks, if the multi-instance object is read only

@@ -1,5 +1,12 @@
 # OB-USP-AGENT Changelog since Release 8.0.0
 
+## 2024-08-05 v8.0.7
+### Added
+- Improved MQTT MTP debug
+
+### Fixed
+- USP Service acting as pure Controller does not accept responses unless Broker is in the USP Service's Controller table
+
 ## 2024-07-29 v8.0.6
 ### Fixed
 - Get requests with max_depth >= 0x80000000 should return full sub-tree
