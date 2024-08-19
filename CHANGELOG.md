@@ -1,5 +1,9 @@
 # OB-USP-AGENT Changelog since Release 8.0.0
 
+## 2024-08-19 v8.0.8
+### Fixed
+- Dockerfile rewritten to use debian:stable and build libwebsockets [GH #95, #108]
+
 ## 2024-08-05 v8.0.7
 ### Added
 - Improved MQTT MTP debug
