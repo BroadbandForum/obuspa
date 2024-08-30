@@ -58,7 +58,7 @@
 typedef struct
 {
     mqtt_conn_params_t conn_params;
-    mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS];
+    mqtt_subs_config_t subscriptions[MAX_MQTT_SUBSCRIPTIONS];
 } client_t;
 
 
@@ -118,6 +118,7 @@ int NotifyChange_MQTTConnectRetryMaxInterval(dm_req_t *req, char *value);
 int Get_MqttClientStatus(dm_req_t *req, char *buf, int len);
 int AutoPopulate_MqttName(dm_req_t *req, char *buf, int len);
 int Validate_MqttName(dm_req_t *req, char *value);
+int NotifyChange_MQTT_ALPN(dm_req_t *req, char *value);
 
 /*MQTT Subscriptions*/
 int ValidateAdd_MqttClientSubscriptions(dm_req_t *req);
@@ -132,16 +133,16 @@ int Validate_MQTTSubscriptionTopic(dm_req_t *req, char *value);
 
 mqtt_conn_params_t *FindMqttParamsByInstance(int instance);
 mqtt_conn_params_t *FindUnusedMqttParams(void);
-mqtt_subscription_t* FindUnusedSubscriptionInMqttClient(client_t* client);
+mqtt_subs_config_t* FindUnusedSubscriptionInMqttClient(client_t* client);
 client_t *FindUnusedMqttClient(void);
 client_t *FindDevMqttClientByInstance(int instance);
 void DestroyMQTTClient(client_t *client);
 int ProcessMqttClientAdded(int instance);
-int ProcessMqttSubscriptionAdded(int instance, int sub_instance, mqtt_subscription_t **mqtt_sub);
+int ProcessMqttSubscriptionAdded(int instance, int sub_instance, mqtt_subs_config_t **mqtt_sub);
 int DEVICE_MQTT_StartAllClients(void);
 int EnableMQTTClient(client_t *mqttclient);
 void ScheduleMqttReconnect(mqtt_conn_params_t *mp);
-void ScheduleMQTTResubscribe(client_t *mqttclient, mqtt_subscription_t *sub);
+void ScheduleMQTTResubscribe(client_t *mqttclient, mqtt_subs_config_t *sub);
 int ClientNumberOfEntries(void);
 int SubscriptionNumberofEntries(int instance);
 
@@ -161,7 +162,7 @@ int DEVICE_MQTT_Init(void)
     int err = USP_ERR_OK;
     int i, j;
     mqtt_conn_params_t *mp;
-    mqtt_subscription_t *subs;
+    mqtt_subs_config_t *subs;
 
     // Exit if unable to initialise the lower level MQTT component
     err = MQTT_Init();
@@ -181,7 +182,6 @@ int DEVICE_MQTT_Init(void)
         for (j=0; j<MAX_MQTT_SUBSCRIPTIONS; j++)
         {
             subs = &mqtt_client_params[i].subscriptions[j];
-            subs->state = kMqttSubState_Unsubscribed;
             subs->instance = INVALID;
         }
     }
@@ -214,6 +214,7 @@ int DEVICE_MQTT_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.CleanSession", "true", NULL, NotifyChange_MQTTCleanSession , DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.CleanStart", "true", NULL, NotifyChange_MQTTCleanStart , DM_BOOL);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.RequestResponseInfo", "false", NULL, NotifyChange_MQTTRequestResponseInfo , DM_BOOL);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.ALPN", "", DEVICE_SECURITY_ValidateALPN, NotifyChange_MQTT_ALPN , DM_STRING);
 
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.ConnectRetryTime", "5", Validate_MQTTConnectRetryTime, NotifyChange_MQTTConnectRetryTime , DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_MQTT_CLIENT ".{i}.ConnectRetryIntervalMultiplier", "2000", Validate_MQTTConnectRetryIntervalMultiplier, NotifyChange_MQTTConnectRetryIntervalMultiplier , DM_UINT);
@@ -721,6 +722,14 @@ int ProcessMqttClientAdded(int instance)
         goto exit;
     }
 
+    // Exit if unable to get the ALPN options for this MQTT client
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.ALPN", device_mqtt_client_root, instance);
+    err = DM_ACCESS_GetString(path, &mqttclient->conn_params.alpn);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
     // Exit if unable to get the transport protocol for this MQTT client
     USP_SNPRINTF(path, sizeof(path), "%s.%d.TransportProtocol", device_mqtt_client_root, instance);
     err = DM_ACCESS_GetEnum(path, &mqttclient->conn_params.ts_protocol, mqtt_tsprotocol, NUM_ELEM(mqtt_tsprotocol));
@@ -877,12 +886,12 @@ int EnableMQTTClient(client_t *mqttclient)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int ProcessMqttSubscriptionAdded(int instance, int sub_instance, mqtt_subscription_t **mqtt_sub)
+int ProcessMqttSubscriptionAdded(int instance, int sub_instance, mqtt_subs_config_t **mqtt_sub)
 {
     int err = USP_ERR_OK;
     char path[MAX_DM_PATH];
     client_t *client = NULL;
-    mqtt_subscription_t *sub;
+    mqtt_subs_config_t *sub;
 
     // Default return parameters
     if (mqtt_sub != NULL)
@@ -1439,8 +1448,44 @@ int NotifyChange_MQTTKeepAliveTime(dm_req_t *req, char *value)
         return USP_ERR_OK;
     }
 
-    // Set the new value. This must be done before scheduling a reconnect, so that the reconnect uses the correct values
+    // Set the new value
     mp->keepalive = val_uint;
+
+    // Inform the MQTT MTP thread of the new value. This will take effect at the next reconnect.
+    MQTT_UpdateConnectionParams(mp, false);
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** NotifyChange_MQTT_ALPN
+**
+** Function called when Device.MQTT.Client.{i}.ALPN is modified
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_MQTT_ALPN(dm_req_t *req, char *value)
+{
+    mqtt_conn_params_t *mp;
+
+    // Determine mqtt client to be updated
+    mp = FindMqttParamsByInstance(inst1);
+    USP_ASSERT(mp != NULL);
+
+    // Exit if value has not changed
+    if (strcmp(mp->alpn, value)==0)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Set the new value
+    USP_SAFE_FREE(mp->alpn);
+    mp->alpn = USP_STRDUP(value);
 
     // Inform the MQTT MTP thread of the new value. This will take effect at the next reconnect.
     MQTT_UpdateConnectionParams(mp, false);
@@ -1835,14 +1880,15 @@ void ScheduleMqttReconnect(mqtt_conn_params_t *mp)
 **
 ** ScheduleMQTTResubscribe
 **
-** Wrapper function to schedule a MQTT resubscribe with current MQTT subscriptions
+** Wrapper function to schedule a MQTT resubscribe of the specified MQTT subscription
 **
-** \param   mqttclient - MQTT client parameters
+** \param   mqttclient - MQTT client to modify the subscription on
+** \param   sub - subscription owned by the MQTT client to change
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-void ScheduleMQTTResubscribe(client_t *mqttclient, mqtt_subscription_t *sub)
+void ScheduleMQTTResubscribe(client_t *mqttclient, mqtt_subs_config_t *sub)
 {
     // Update controller and agent topics. Note: Both could possibly be set to NULL
     USP_SAFE_FREE(mqttclient->conn_params.response_topic);
@@ -2121,10 +2167,10 @@ client_t *FindUnusedMqttClient(void)
 ** \return  Pointer to first free subscription slot, or NULL if no slot was found
 **
 **************************************************************************/
-mqtt_subscription_t* FindSubscriptionInMqttClient(client_t* client, int instance)
+mqtt_subs_config_t* FindSubscriptionInMqttClient(client_t* client, int instance)
 {
     int i;
-    mqtt_subscription_t* sub = NULL;
+    mqtt_subs_config_t* sub = NULL;
 
     for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
@@ -2150,10 +2196,10 @@ mqtt_subscription_t* FindSubscriptionInMqttClient(client_t* client, int instance
 ** \return  Pointer to first free subscription slot, or NULL if no slot was found
 **
 **************************************************************************/
-mqtt_subscription_t* FindUnusedSubscriptionInMqttClient(client_t* client)
+mqtt_subs_config_t* FindUnusedSubscriptionInMqttClient(client_t* client)
 {
     // Just find a subscription with an INVALID instance
-    mqtt_subscription_t* sub = FindSubscriptionInMqttClient(client, INVALID);
+    mqtt_subs_config_t* sub = FindSubscriptionInMqttClient(client, INVALID);
 
     if (sub != NULL)
     {
@@ -2189,7 +2235,7 @@ int ValidateAdd_MqttClientSubscriptions(dm_req_t *req)
         return USP_ERR_RESOURCES_EXCEEDED;
     }
 
-    mqtt_subscription_t* sub = FindUnusedSubscriptionInMqttClient(mqttclient);
+    mqtt_subs_config_t* sub = FindUnusedSubscriptionInMqttClient(mqttclient);
     if (sub == NULL)
     {
         return USP_ERR_RESOURCES_EXCEEDED;
@@ -2214,7 +2260,7 @@ int Notify_MqttClientSubcriptionsAdded(dm_req_t *req)
 {
     int err;
     client_t *mqttclient;
-    mqtt_subscription_t *sub;
+    mqtt_subs_config_t *sub;
 
     mqttclient = FindDevMqttClientByInstance(inst1);
     USP_ASSERT(mqttclient != NULL); // As we had just successfully added it
@@ -2254,15 +2300,17 @@ int Notify_MqttClientSubscriptionsDeleted(dm_req_t *req)
 {
     client_t *mqttclient;
     int err = USP_ERR_OK;
+    mqtt_subs_config_t *sub;
 
+    // Exit if unable to find the MQTT client owning the subscription which has been deleted
     mqttclient = FindDevMqttClientByInstance(inst1);
-
     if (mqttclient == NULL)
     {
         return USP_ERR_OK;
     }
 
-    mqtt_subscription_t* sub = FindSubscriptionInMqttClient(mqttclient, inst2);
+    // Exit if unable to find the subscription which has been deleted
+    sub = FindSubscriptionInMqttClient(mqttclient, inst2);
     if (sub == NULL)
     {
         USP_ERR_SetMessage("%s: Delete subscription failed", __FUNCTION__);
@@ -2270,7 +2318,9 @@ int Notify_MqttClientSubscriptionsDeleted(dm_req_t *req)
     }
 
     // Delete the subscription from device_mqtt
-    MQTT_SubscriptionDestroy(sub);
+    USP_SAFE_FREE(sub->topic);
+    memset(sub, 0, sizeof(mqtt_subscription_t));
+    sub->instance = INVALID;
 
     // Delete the subscription from core mqtt
     err = MQTT_DeleteSubscription(inst1, inst2);
@@ -2298,7 +2348,7 @@ int Notify_MqttClientSubscriptionsDeleted(dm_req_t *req)
 int Validate_MQTTSubscriptionEnable(dm_req_t *req, char *value)
 {
     client_t *mqttclient;
-    mqtt_subscription_t *sub;
+    mqtt_subs_config_t *sub;
 
     // Exit if the MQTT client or subscription does not exist yet in our local data structure
     // NOTE: this could occur if this validate is being called as part of a USP Add, before the notify vendor hook.
@@ -2342,7 +2392,7 @@ int Validate_MQTTSubscriptionEnable(dm_req_t *req, char *value)
 int NotifyChange_MQTTSubscriptionEnable(dm_req_t *req, char *value)
 {
     client_t *mqttclient;
-    mqtt_subscription_t *sub;
+    mqtt_subs_config_t *sub;
     bool old_value;
 
     // Initialise to defaults
@@ -2390,7 +2440,7 @@ int NotifyChange_MQTTSubscriptionEnable(dm_req_t *req, char *value)
 int NotifyChange_MQTTSubscriptionTopic(dm_req_t *req, char *value)
 {
     client_t *mqttclient;
-    mqtt_subscription_t *sub;
+    mqtt_subs_config_t *sub;
     bool schedule_reconnect = false;
 
     mqttclient = FindDevMqttClientByInstance(inst1);
@@ -2455,7 +2505,7 @@ int Validate_MQTTSubscriptionQoS(dm_req_t *req, char *value)
 int NotifyChange_MQTTSubscriptionQoS(dm_req_t *req, char *value)
 {
     client_t *mqttclient;
-    mqtt_subscription_t *sub;
+    mqtt_subs_config_t *sub;
     bool schedule_reconnect = false;
 
     // Initialise to defaults
@@ -2502,7 +2552,7 @@ int Validate_MQTTSubscriptionTopic(dm_req_t *req, char *value)
 {
     int i;
     client_t *client;
-    mqtt_subscription_t *sub;
+    mqtt_subs_config_t *sub;
 
     // Exit if no value set for Topic (i.e. set to an empty string)
     if (*value == '\0')
@@ -2534,7 +2584,7 @@ int Validate_MQTTSubscriptionTopic(dm_req_t *req, char *value)
         }
     }
 
-    // If the code gets here, then the new topic ID value is unique for this MQTT client
+    // If the code gets here, then the new topic is unique for this MQTT client
     return USP_ERR_OK;
 }
 

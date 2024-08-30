@@ -285,6 +285,8 @@ int DEVICE_SECURITY_TrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x5
 int DEVICE_SECURITY_NoSaveTrustCertVerifyCallback(int preverify_ok, X509_STORE_CTX *x509_ctx);
 int DEVICE_SECURITY_AddCertHostnameValidation(SSL* ssl, const char* name, size_t length);
 int DEVICE_SECURITY_AddCertHostnameValidationCtx(SSL_CTX* ssl_ctx, const char* name, size_t length);
+int DEVICE_SECURITY_ValidateALPN(dm_req_t *req, char *value);
+int DEVICE_SECURITY_SetALPN(SSL_CTX *ssl_ctx, char *alpn);
 #endif
 
 int DEVICE_CTRUST_Init(void);

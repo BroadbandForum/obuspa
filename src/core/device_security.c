@@ -983,6 +983,120 @@ int DEVICE_SECURITY_AddCertHostnameValidationCtx(SSL_CTX* ssl_ctx, const char* n
 
 /*********************************************************************//**
 **
+** DEVICE_SECURITY_ValidateALPN
+**
+** Determines whether the specified ALPN options are valid
+**
+** \param   req - pointer to structure identifying the parameter (unused)
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if options are valid
+**
+**************************************************************************/
+int DEVICE_SECURITY_ValidateALPN(dm_req_t *req, char *value)
+{
+    int len;
+    str_vector_t sv;
+    char *option;
+    int i;
+    int err = USP_ERR_OK;
+
+    (void)req;      // Keep compiler happy about unused argument
+
+    // Exit if no ALPN options to validate
+    if (*value == '\0')
+    {
+        return USP_ERR_OK;
+    }
+
+    // Form a vector of each of the options to set
+    TEXT_UTILS_SplitString(value, &sv, ",");
+
+    for (i=0; i < sv.num_entries; i++)
+    {
+        option = sv.vector[i];
+        len = strlen(option);
+        USP_ASSERT(len != 0);       // TEXT_UTILS_SplitString() should not have populated the string vector with zero length strings
+        if (len > 255)
+        {
+            option[20] = '\0';      // Truncate the option, in order to log it
+            USP_ERR_SetMessage("%s: ALPN option too long ('%s...')", __FUNCTION__, option);
+            err = USP_ERR_INVALID_ARGUMENTS;
+            goto exit;
+        }
+    }
+
+exit:
+    STR_VECTOR_Destroy(&sv);
+    return err;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_SECURITY_SetALPN
+**
+** Sets the Application Layer Protocol Negotiation options to put in all subsequent SSL ClientHello messages
+**
+** \param   ssl_ctx - pointer to SSL context to set the ALPN options up in
+** \param   alpn - string containing comma separated list of ALPN options
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DEVICE_SECURITY_SetALPN(SSL_CTX *ssl_ctx, char *alpn)
+{
+    int len;
+    str_vector_t sv;
+    char *option;
+    unsigned char *buf;
+    unsigned char *p;
+    int err;
+    int i;
+
+    // Exit if no ALPN options to set
+    if ((alpn == NULL) || (*alpn == '\0'))
+    {
+        // Turn off any ALPN options set previously.
+        SSL_CTX_set_alpn_protos(ssl_ctx, NULL, 0);   // NOTE: This call returns an error, but does work in clearing any previously set ALPN options
+        return USP_ERR_OK;
+    }
+
+    // Form a vector of each of the options to set
+    TEXT_UTILS_SplitString(alpn, &sv, ",");
+
+    // Allocate a buffer to place the ALPN options in the format required by OpenSSL library
+    // The buffer contains one length byte followed by the option, for each option
+    len = strlen(alpn) + 1;     // Plus 1 to include a length byte for the first option. The length byte of subsequent options are covered by the comma character
+    buf = USP_MALLOC(len);
+
+    p = buf;
+    for (i=0; i < sv.num_entries; i++)
+    {
+        option = sv.vector[i];
+        len = strlen(option);
+        USP_ASSERT((len > 0) && (len <= 255));
+
+        WRITE_BYTE(p, len);
+        WRITE_N_BYTES(p, option, len);
+    }
+
+    len = p - buf;
+    err = SSL_CTX_set_alpn_protos(ssl_ctx, (const unsigned char *) buf, len);
+    if (err != 0)
+    {
+        USP_LOG_Error("%s: Failed to set ALPN in the SSL CTX", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Clean up
+    USP_FREE(buf);
+    STR_VECTOR_Destroy(&sv);
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** LoadCerts_FromPath
 **
 ** Called to load all certificates in the specified file or directory into the Device.Security.Certificate table

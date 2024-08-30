@@ -249,6 +249,8 @@ void ParseSubscribeTopicsFromConnack(mqtt_client_t *client, mosquitto_property *
 void AddConnackSubscription(mqtt_client_t *client, char *topic);
 void QueueUspMqttConnectRecords(mqtt_client_t *client);
 void QueueUspRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, char *controller_topic, time_t expiry_time, bool link_to_head);
+void MqttSubscriptionReplace(mqtt_subscription_t *dest, mqtt_subs_config_t *src);
+void MqttSubscriptionDestroy(mqtt_subscription_t *sub);
 
 //------------------------------------------------------------------------------------
 #define DEFINE_MQTT_TrustCertVerifyCallbackIndex(index) \
@@ -404,12 +406,12 @@ exit:
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS], kv_vector_t *controller_topics)
+int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subs_config_t subscriptions[MAX_MQTT_SUBSCRIPTIONS], kv_vector_t *controller_topics)
 {
     int i;
     int err = USP_ERR_OK;
     mqtt_client_t *client = NULL;
-    mqtt_subscription_t *sub;
+    mqtt_subs_config_t *sub;
 
     // Exit if any of the subscriptions have an empty topic, but are enabled
     for (i=0; i<MAX_MQTT_SUBSCRIPTIONS; i++)
@@ -462,7 +464,7 @@ int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subsc
 
     for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
-        MQTT_SubscriptionReplace(&client->subscriptions[i], &subscriptions[i]);
+        MqttSubscriptionReplace(&client->subscriptions[i], &subscriptions[i]);
     }
 
     ResetRetryCount(client);
@@ -883,7 +885,7 @@ bool MQTT_AreAllResponsesSent(void)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MQTT_AddSubscription(int instance, mqtt_subscription_t* subscription)
+int MQTT_AddSubscription(int instance, mqtt_subs_config_t *subscription)
 {
     int err = USP_ERR_OK;
     mqtt_client_t *client = NULL;
@@ -920,7 +922,7 @@ int MQTT_AddSubscription(int instance, mqtt_subscription_t* subscription)
     }
 
     // Copy the subscription member variables into the new subscription entry
-    MQTT_SubscriptionReplace(sub_dest, subscription);
+    MqttSubscriptionReplace(sub_dest, subscription);
 
     // Subscribe to the subscription only if currently connected (and subscription is enabled)
     if ((sub_dest->enabled == true) && (client->state == kMqttState_Running))
@@ -992,7 +994,14 @@ int MQTT_DeleteSubscription(int instance, int subinstance)
 
             case kMqttSubState_Subscribed:
                 // Unsubscribe, ignoring any errors, since we are going to mark the subscription as not in use anyway
+                FRAME_TRACE_CLEAR(client);
+                FRAME_TRACE_ADD(client, "UNSUBSCRIBE");
                 Unsubscribe(client, sub);
+
+                USP_LOG_Info("Sending UNSUBSCRIBE frame to (host=%s, port=%d)", client->conn_params.host, client->conn_params.port);
+                FRAME_TRACE_ADD(client, "topic: %s", sub->topic);
+                FRAME_TRACE_ADD(client, "mid: %d", sub->mid);
+                FRAME_TRACE_DUMP(client);
                 break;
 
             default:
@@ -1028,7 +1037,7 @@ exit:
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *new_sub)
+int MQTT_ScheduleResubscription(int instance, mqtt_subs_config_t *new_sub)
 {
     int err = USP_ERR_INTERNAL_ERROR;
     mqtt_client_t *client = NULL;
@@ -1070,7 +1079,7 @@ int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *new_sub)
     // Exit if not currently connected and subscribed - the resubscription will occur after receiving the connect callback
     if (client->state != kMqttState_Running)
     {
-        MQTT_SubscriptionReplace(sub, new_sub);
+        MqttSubscriptionReplace(sub, new_sub);
         err = USP_ERR_OK;
         goto exit;
     }
@@ -1159,10 +1168,9 @@ exit:
 
 /*********************************************************************//**
 **
-** MQTT_SubscriptionReplace
+** MqttSubscriptionReplace
 **
 ** Replaces the specified subscription with a different subscription
-** NOTE: This function does not need to be an API function, as it is only called from this file
 **
 ** \param   dest - pointer to MQTT subscription to replace
 ** \param   src  - pointer to MQTT subscription to copy
@@ -1170,17 +1178,21 @@ exit:
 ** \return  None
 **
 **************************************************************************/
-void MQTT_SubscriptionReplace(mqtt_subscription_t *dest, mqtt_subscription_t *src)
+void MqttSubscriptionReplace(mqtt_subscription_t *dest, mqtt_subs_config_t *src)
 {
-    MQTT_SubscriptionDestroy(dest);
+    MqttSubscriptionDestroy(dest);
 
-    *dest = *src;
+    dest->instance = src->instance;
+    dest->qos = src->qos;
     dest->topic = USP_STRDUP(src->topic);
+    dest->enabled = src->enabled;
+    dest->mid = INVALID;
+    dest->state = kMqttSubState_Unsubscribed;
 }
 
 /*********************************************************************//**
 **
-** MQTT_SubscriptionDestroy
+** MqttSubscriptionDestroy
 **
 ** Destroys the specified subscription and marks it as 'unused'
 **
@@ -1189,7 +1201,7 @@ void MQTT_SubscriptionReplace(mqtt_subscription_t *dest, mqtt_subscription_t *sr
 ** \return  None
 **
 **************************************************************************/
-void MQTT_SubscriptionDestroy(mqtt_subscription_t *sub)
+void MqttSubscriptionDestroy(mqtt_subscription_t *sub)
 {
     USP_SAFE_FREE(sub->topic);
     memset(sub, 0, sizeof(mqtt_subscription_t));
@@ -1449,6 +1461,7 @@ void MQTT_DestroyConnParams(mqtt_conn_params_t *params)
     USP_SAFE_FREE(params->client_id);
     USP_SAFE_FREE(params->name);
     USP_SAFE_FREE(params->response_information);
+    USP_SAFE_FREE(params->alpn);
 
     memset(params, 0, sizeof(mqtt_conn_params_t));
 
@@ -1831,14 +1844,14 @@ void DestroyClient(mqtt_client_t *client)
 
     for (i = 0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
-        MQTT_SubscriptionDestroy(&client->subscriptions[i]);
+        MqttSubscriptionDestroy(&client->subscriptions[i]);
     }
 
-    MQTT_SubscriptionDestroy(&client->response_subscription);
+    MqttSubscriptionDestroy(&client->response_subscription);
 
     for (i = 0; i < NUM_ELEM(client->connack_subscriptions); i++)
     {
-        MQTT_SubscriptionDestroy(&client->connack_subscriptions[i]);
+        MqttSubscriptionDestroy(&client->connack_subscriptions[i]);
     }
 
     FreeMqttClientCertChain(client);
@@ -1913,10 +1926,10 @@ void CleanMqttClient(mqtt_client_t *client, bool is_reconnect)
     client->retry_time = 0;
 
     // Free all subscriptions whose lifetime is set by the connection (rather than being set by configuration in Device.MQTT.Client.{i}.Subscription table)
-    MQTT_SubscriptionDestroy(&client->response_subscription);
+    MqttSubscriptionDestroy(&client->response_subscription);
     for (i=0; i<NUM_ELEM(client->connack_subscriptions); i++)
     {
-        MQTT_SubscriptionDestroy(&client->connack_subscriptions[i]);
+        MqttSubscriptionDestroy(&client->connack_subscriptions[i]);
     }
 
     MoveState(&client->state, kMqttState_Idle, "Disable Client");
@@ -2013,7 +2026,7 @@ int EnableMqttClient(mqtt_client_t* client)
     // Initialise the agent's response topic
     // NOTE: The agent's response topic stored in response_subscription may be NULL, if not configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured
     resp_sub = &client->response_subscription;
-    MQTT_SubscriptionDestroy(resp_sub);
+    MqttSubscriptionDestroy(resp_sub);
     memset(resp_sub, 0, sizeof(mqtt_subscription_t));
     resp_sub->qos = kMqttQos_Default;
     resp_sub->enabled = true;
@@ -2022,7 +2035,7 @@ int EnableMqttClient(mqtt_client_t* client)
     // Initialise the agent's connack subscriptions
     for (i=0; i<NUM_ELEM(client->connack_subscriptions); i++)
     {
-        MQTT_SubscriptionDestroy(&client->connack_subscriptions[i]);
+        MqttSubscriptionDestroy(&client->connack_subscriptions[i]);
     }
 
     // Exit, putting the client into an immediate retrying state, if it's not allowed to start connecting yet
@@ -2064,6 +2077,16 @@ int EnableMosquitto(mqtt_client_t *client)
     bool clean;
     char *version_str;
     char *client_id = NULL;
+
+    // Log the connection attempt
+    if (client->conn_params.ts_protocol == kMqttTSprotocol_tls)
+    {
+        USP_LOG_Info("Attempting to connect to host=%s (port=%d, encrypted, ALPN='%s')", client->conn_params.host, client->conn_params.port, client->conn_params.alpn);
+    }
+    else
+    {
+        USP_LOG_Info("Attempting to connect to host=%s (port=%d, unencrypted)", client->conn_params.host, client->conn_params.port);
+    }
 
     // Create a new mosquitto client instance
     // This takes the instance as the (void *) obj argument
@@ -2138,7 +2161,7 @@ int EnableMosquitto(mqtt_client_t *client)
     // Add part of the debug trace for the CONNECT frame. The rest of the trace is added later in PerformMqttClientConnect()
     FRAME_TRACE_CLEAR(client);
     FRAME_TRACE_ADD(client, "CONNECT");
-    FRAME_TRACE_ADD(client, "client_id: %s", client_id);
+    FRAME_TRACE_ADD(client, "client_id: %s", (client_id != NULL) ? client_id : "");
     FRAME_TRACE_ADD(client, "clean_session: %d", clean);
     FRAME_TRACE_ADD(client, "version: %s", version_str);
 
@@ -2661,6 +2684,13 @@ int ConnectSetEncryption(mqtt_client_t *client)
         return USP_ERR_INTERNAL_ERROR;
     }
 
+    // Exit if unable to set the Application Layer Protocol Negotiation (ALPN) to indicate in the SSL ClientHello
+    // NOTE: We cannot use mosquitto_string_option(MOSQ_OPT_TLS_ALPN) to set it, as that function only supports setting one protocol
+    err = DEVICE_SECURITY_SetALPN(client->ssl_ctx, client->conn_params.alpn);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
 
     return USP_ERR_OK;
 }
@@ -3605,9 +3635,11 @@ void UnsubscribeCallback(struct mosquitto *mosq, void *userdata, int mid )
         goto exit;
     }
 
+    // NOTE: Don't log topic for SUBACK as the logged topic would be the new topic in the case of changing a subscription topic
+    // but we want to log the old topic in this case. Since the UNSUBACK does not contain the topic it seems better to just not log topic
     FRAME_TRACE_CLEAR(client);
     FRAME_TRACE_ADD(client, "UNSUBACK");
-    FRAME_TRACE_ADD(client, "topic: %s", sub->topic);
+    //FRAME_TRACE_ADD(client, "topic: %s", sub->topic);
     FRAME_TRACE_ADD(client, "mid: %d", sub->mid);
     FRAME_TRACE_DUMP(client);
 
@@ -4210,6 +4242,7 @@ void ParamReplace(mqtt_conn_params_t *dest, mqtt_conn_params_t *src)
     dest->client_id = USP_STRDUP(src->client_id);
     dest->name = USP_STRDUP(src->name);
     dest->response_information = USP_STRDUP(src->response_information);
+    dest->alpn = USP_STRDUP(src->alpn);
 }
 
 /*********************************************************************//**
@@ -4344,10 +4377,12 @@ mqtt_subscription_t *FindSubscriptionByMid(mqtt_client_t *client, int mid, bool 
     }
 
     // See if it matches any of the configured subscriptions
+    // NOTE: We check all subscriptions whether enabled or disabled, because this function is called when the UNSUBACK
+    // is received and at that point the subscription is disabled, but the saved mid identifies the UNSUBACK
     for (i=0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         sub = &client->subscriptions[i];
-        if ((sub->enabled) && (sub->mid == mid))
+        if (sub->mid == mid)
         {
             goto exit;
         }

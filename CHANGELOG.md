@@ -1,5 +1,10 @@
 # OB-USP-AGENT Changelog since Release 8.0.0
 
+## 2024-08-30 v8.0.9
+### Added
+- Application Layer Protocol Negotiation (ALPN) support for MQTT over TLS
+- Code maintenance improvements to MQTT MTP
+
 ## 2024-08-19 v8.0.8
 ### Fixed
 - Dockerfile rewritten to use debian:stable and build libwebsockets [GH #95, #108]

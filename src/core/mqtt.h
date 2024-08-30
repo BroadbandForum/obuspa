@@ -89,12 +89,25 @@ typedef enum
     kMqttTSprotocol_Max,
 } mqtt_tsprotocol_t;
 
+// Structure used by device_mqtt.c, containing the configuration of an MQTT subscription
 typedef struct
 {
     int instance;
-    mqtt_qos_t qos;  // From Device.MQTT.Client.{i}.Subscription.{i}.QoS, used along MQTT SUBSCRIBE messages
+    mqtt_qos_t qos;
     char* topic;
     bool enabled;
+} mqtt_subs_config_t;
+
+// Structure used by mqtt.c, containing the configuration and current state of an MQTT subscription
+typedef struct
+{
+    // Configuration
+    int instance;
+    mqtt_qos_t qos;
+    char* topic;
+    bool enabled;
+
+    // State
     int mid; // Last mid for subscribe or unsubscribe message - to identify the SUBACK/UNSUBACK
     mqtt_substate_t state;
 } mqtt_subscription_t;
@@ -106,6 +119,7 @@ typedef struct
     int keepalive;                // Keepalive setting for broker connection
     char* username;               // Username to connect to broker
     char* password;               // Password to connect to broker
+    char *alpn;                   // Application Layer Protocol Negotiation options to send in SSL handshake (comma separated list)
     int instance;                 // Client instance (Device.MQTT.Client.{i})
     bool enable;
 
@@ -137,7 +151,7 @@ void MQTT_Destroy(void);
 int MQTT_Start(void);
 void MQTT_Stop(void);
 void MQTT_ModifyConnectedControllers(int instance, kv_vector_t *controller_topics);
-int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subscription_t subscriptions[MAX_MQTT_SUBSCRIPTIONS], kv_vector_t *controller_topics);
+int MQTT_EnableClient(mqtt_conn_params_t *mqtt_params, mqtt_subs_config_t subscriptions[MAX_MQTT_SUBSCRIPTIONS], kv_vector_t *controller_topics);
 int MQTT_DisableClient(int instance);
 int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *topic, time_t expiry_time);
 void MQTT_UpdateConnectionParams(mqtt_conn_params_t *mqtt_params, bool schedule_reconnect);
@@ -147,15 +161,13 @@ const char* MQTT_GetClientStatus(int instance);
 void MQTT_UpdateRetryParams(int instance, mqtt_retry_params_t *retry_params);
 bool MQTT_AreAllResponsesSent(void);
 void MQTT_ProcessAllActivity(void);
-int MQTT_AddSubscription(int instance, mqtt_subscription_t* subscription);
+int MQTT_AddSubscription(int instance, mqtt_subs_config_t *subscription);
 int MQTT_DeleteSubscription(int instance, int subinstance);
-int MQTT_ScheduleResubscription(int instance, mqtt_subscription_t *new_sub);
+int MQTT_ScheduleResubscription(int instance, mqtt_subs_config_t *new_sub);
 void MQTT_UpdateAllSockSet(socket_set_t *set);
 void MQTT_ProcessAllSocketActivity(socket_set_t* set);
 void MQTT_InitConnParams(mqtt_conn_params_t* params);
 void MQTT_DestroyConnParams(mqtt_conn_params_t* params);
-void MQTT_SubscriptionReplace(mqtt_subscription_t *dest, mqtt_subscription_t *src);
-void MQTT_SubscriptionDestroy(mqtt_subscription_t *sub);
 int MQTT_GetAgentResponseTopicDiscovered(int instance, char *buf, int len);
 void MQTT_AllowConnect(void);
 
