@@ -145,6 +145,7 @@ void ScheduleMqttReconnect(mqtt_conn_params_t *mp);
 void ScheduleMQTTResubscribe(client_t *mqttclient, mqtt_subs_config_t *sub);
 int ClientNumberOfEntries(void);
 int SubscriptionNumberofEntries(int instance);
+int Operate_MQTTForceReconnect(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
 
 /*********************************************************************//**
 **
@@ -233,6 +234,8 @@ int DEVICE_MQTT_Init(void)
 
     char *name_unique_keys[] = { "Name" };
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_MQTT_CLIENT ".{i}", name_unique_keys, NUM_ELEM(name_unique_keys));
+
+    err |= USP_REGISTER_SyncOperation(DEVICE_MQTT_CLIENT ".{i}.ForceReconnect()", Operate_MQTTForceReconnect);
 
     // Exit if any errors occurred
     if (err != USP_ERR_OK)
@@ -1850,6 +1853,48 @@ int NotifyChange_MQTTConnectRetryMaxInterval(dm_req_t *req, char *value)
 
     // Inform the MQTT MTP thread of the new value. This will take effect at the next reconnect.
     MQTT_UpdateConnectionParams(mp, false);
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Operate_MQTTForceReconnect
+**
+** Implements sync command Device.MQTT.Client.{i}.ForceReconnect()
+**
+** \param   req - pointer to structure identifying the operation in the data model
+** \param   command_key - pointer to string containing the command key for this operation
+** \param   input_args - vector containing input arguments and their values
+** \param   output_args - vector to return output arguments in
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Operate_MQTTForceReconnect(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args)
+{
+    mqtt_conn_params_t *mp;
+    char *status;
+
+    // Determine mqtt client to be updated
+    mp = FindMqttParamsByInstance(inst1);
+    USP_ASSERT(mp != NULL);
+
+    // Exit if connection is disabled (reconnect only if the MQTT client is currently connected to the MQTT broker)
+    if (mp->enable == false)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if MQTT client is not currently connected to the MQTT broker (do nothing in this case)
+    status = (char *) MQTT_GetClientStatus(inst1);
+    if (strcmp(status, "Connected") != 0)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Schedule a reconnect
+    ScheduleMqttReconnect(mp);
 
     return USP_ERR_OK;
 }

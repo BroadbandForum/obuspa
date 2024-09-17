@@ -1,5 +1,56 @@
 # Release History
 
+## Release 9.0.0
+  * MQTT
+    * Application Layer Protocol Negotiation (ALPN) support for MQTT over TLS
+    * Device.MQTT.Client.{i}.ForceReconnect() support added
+    * MQTTv5 Assigned Client Identifier is not being saved in Device.MQTT.Client.{i}.ClientID
+    * MQTT keep alive can now be completely disabled (if required) when linking with libmosquitto v2.0.x
+    * OBUSPA should subscribe to all topics indicated by the subscribe-topic user properties in the CONNACK [R-MQTT.15]
+    * OBUSPA should delete pending USP notifications (on MQTT MTP) if notification has expired whilst waiting to be sent
+    * MQTT connection blocks for too long if server is unresponsive. To workaround the underlying issue in libmosquitto, OBUSPA tests for server responsiveness by transiently connecting, before proceeding with the libmosquitto connect (if responsive).
+    * OBUSPA should disconnect if unable to subscribe to anything [R-MQTT.17]
+    * Device.MQTT.Client.{i}.Name should be auto-assigned by the agent, if not given at creation time, and immutable thereafter
+    * Device.MQTT.Client.{i}.RequestResponseInfo should control whether response information is requested in the CONNECT frame. Previously it was always requested, regardless of the value of the parameter
+    * Removed unimplemented parameter: Device.MQTT.Client.{i}.RequestProblemInfo
+    * Modifying MQTT KeepAliveTime should not force a reconnect
+    * MQTT ConnectRetryTime parameter modifications should apply at the next retry [GH #109]
+    * MQTT CleanSession and CleanStart parameter modifications should apply at the next retry
+    * USP Connect record not always sent immediately after connection on MQTT
+    * Improved MQTT MTP debug
+    * Code maintenance improvements to MQTT MTP
+    * Removed unmaintained MQTT tests
+
+  * Websockets
+    * WebSocket client does not send Boot! event (regression introduced in v8.0)
+    * WebSocket client not started after MTP dynamically added to controller table (regression introduced in v8.0)
+
+  * STOMP
+    * STOMP connects shouldn't block the data model thread
+    * STOMP ServerRetryMaxInterval parameter modifications should apply at the next retry
+
+  * USP Broker
+    * CLI initiated gets have been optimized to pass through the path to the USP Service, when possible
+    * Support a USP Service registering Device.DNS.SD before Device.DNS (in separate register messages)
+    * Workaround for USP Services which have limitations on the number of parameters requested in a get
+    * Support additional DM elements registered directly under Device.
+    * USP Broker should not assume hierarchically ordered fields in GSDM and get instances responses
+    * USP Service acting as pure Controller does not accept responses unless Broker is in the USP Service's Controller table
+
+  * Data model
+    * VALUE_CHANGE_WILL_IGNORE flag support
+    * Get requests with max_depth >= 0x80000000 should return full sub-tree
+    * Get instances failures during path resolution should be gracefully ignored
+    * Device.LocalAgent.X_VANTIVA-COM_PreConnectTimeout controls how long to wait for the can_mtp_connect vendor hook to allow connection, before connecting anyway
+    * USP_REGISTER_Object_UniqueKey() validates that the unique key parameters have not already been registered
+
+  * Miscellaneous
+    * Dockerfile rewritten to use debian:stable and build libwebsockets [GH #95, #108]
+    * Compiling without UDS fails [GH#110]
+    * An unused variable warning seen during cmake based builds has been addressed
+    * Prevent accidental CLI socket stealing
+
+
 ## Release 8.0.0
   * USP Services Support
     * USP Broker functionality
