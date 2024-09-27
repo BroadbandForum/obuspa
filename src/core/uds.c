@@ -49,6 +49,7 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/stat.h>
 #include <string.h>
 
 #include "common_defs.h"
@@ -1095,6 +1096,7 @@ int EnableUdsServer(uds_conn_params_t *ucp)
     int result;
     struct sockaddr_un addr;
     uds_server_t *us;
+    mode_t current_mask;
 
     // Exit if unable to find an unused server slot
     us = FindFreeUdsServer();
@@ -1139,6 +1141,8 @@ int EnableUdsServer(uds_conn_params_t *ucp)
     USP_STRNCPY(addr.sun_path, ucp->path, sizeof(addr.sun_path) - 1);
 
     // Exit if unable to bind the socket to the required path
+    // NOTE: Temporarily change file creation permissions so that this process (running as root) creates a socket that can be accessed by non-root users
+    current_mask = umask(0);
     result = bind(us->listen_sock, (struct sockaddr *) &addr, sizeof(struct sockaddr_un));
     if (result == -1)
     {
@@ -1146,6 +1150,7 @@ int EnableUdsServer(uds_conn_params_t *ucp)
         err = USP_ERR_INTERNAL_ERROR;
         goto exit;
     }
+    umask(current_mask);
 
     // this is a passive socket that creates active sockets connections
     #define MAX_PENDING_CONNECTIONS     5

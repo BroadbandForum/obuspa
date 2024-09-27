@@ -46,6 +46,7 @@
 #include <sys/un.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -197,6 +198,7 @@ int CLI_SERVER_Init(void)
     int sock;
     int err;
     struct sockaddr_un sa;
+    mode_t current_mask;
 
     // Exit if unable to create a socket to listen for CLI commands on
     sock = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -241,6 +243,8 @@ int CLI_SERVER_Init(void)
     }
 
     // Exit if unable to bind the socket to the unix domain file
+    // NOTE: Temporarily change file creation permissions so that this process (running as root) creates a socket that can be accessed by non-root users
+    current_mask = umask(0);
     err = bind(sock, (struct sockaddr *) &sa, sizeof(struct sockaddr_un));
     if (err == -1)
     {
@@ -249,6 +253,7 @@ int CLI_SERVER_Init(void)
         close(sock);
         return USP_ERR_INTERNAL_ERROR;
     }
+    umask(current_mask);
 
     // Exit if unable to set the socket in listening mode
     #define CLI_SERVER_BACKLOG  1

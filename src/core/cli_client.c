@@ -103,8 +103,15 @@ int CLI_CLIENT_ExecCommand(int argc, char *argv[], char *db_file)
     len = 0;
     for (i=0; i<argc; i++)
     {
+        // Exit if command is too long to be sent
         arg = argv[i];
         arg_len = strlen(arg);
+        if (len + arg_len + 2 > sizeof(buf))   // Plus 2 to include terminating '\n\0'
+        {
+            USP_LOG_Error("ERROR: command too long. Increase MAX_CLI_CMD_LEN.");
+            return USP_ERR_INVALID_ARGUMENTS;
+        }
+
         memcpy(&buf[len], arg, arg_len);
         len += arg_len;
 
@@ -119,6 +126,7 @@ int CLI_CLIENT_ExecCommand(int argc, char *argv[], char *db_file)
     // Terminate the command with a LF and turn it into a string
     buf[len++] = '\n';
     buf[len] = '\0';
+    USP_ASSERT(len <= MAX_CLI_CMD_LEN);
 
     // Decide where to handle this command
     is_run_locally = CLI_SERVER_IsCmdRunLocally(argv[0]);

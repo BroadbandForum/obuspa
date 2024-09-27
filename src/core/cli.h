@@ -43,7 +43,7 @@
 
 #include "socket_set.h"
 
-#define MAX_CLI_CMD_LEN  1024           // The maximum allowed size of a CLI command. The limit is arbitrary.
+#define MAX_CLI_CMD_LEN  (10*1024)      // The maximum allowed size of a CLI command. The limit is arbitrary.
 #define CLI_SEPARATOR '\xFF'            // Used to separate command and args in stream passed from client to server.
                                         // Used instead of a simple space, because args themselves might contain spaces
 
