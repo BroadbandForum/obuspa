@@ -1690,7 +1690,11 @@ int PerformStompSslConnect(stomp_connection_t *sc)
 
     // Exit if the handshake was successful, but the server did not provide a certificate
     // This might occur if an insecure anonymous cipher suite is being used
+#if OPENSSL_VERSION_NUMBER >= 0x3000000FL // SSL version 3.0.0
+    server_cert = SSL_get1_peer_certificate(sc->ssl);
+#else
     server_cert = SSL_get_peer_certificate(sc->ssl);
+#endif
     if (server_cert == NULL)
     {
         USP_LOG_Error("%s: SSL_get_peer_certificate() failed", __FUNCTION__);

@@ -344,7 +344,11 @@ int DEVICE_SECURITY_Start(void)
 
     // Exit if unable to create a temporary SSL context.
     // This is necessary because the load_agent_cert vendor hook only loads into an SSL context
+#if OPENSSL_VERSION_NUMBER >= 0x1010000FL  // SSL version 1.1.0
+    temp_ssl_ctx = SSL_CTX_new(TLS_client_method());
+#else
     temp_ssl_ctx = SSL_CTX_new(SSLv23_client_method());
+#endif
     if (temp_ssl_ctx == NULL)
     {
         USP_ERR_SetMessage("%s: SSL_CTX_new failed", __FUNCTION__);
@@ -552,11 +556,6 @@ SSL_CTX *DEVICE_SECURITY_CreateSSLContext(const SSL_METHOD *method, int verify_m
         USP_ERR_SetMessage("%s: SSL_CTX_new failed", __FUNCTION__);
         goto exit;
     }
-
-    // Explicitly disallow SSLv2, as it is insecure. See https://arxiv.org/pdf/1407.2168.pdf
-    // NOTE: Even without this, SSLv2 ciphers don't seem to appear in the cipher list. Just added in case someone is using an older version of OpenSSL.
-    SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2);
-    // SSL_CTX_set_options(ssl_ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION);
 
     // Exit if unable to load our trust store and client cert into the SSL context's trust store
     err = DEVICE_SECURITY_LoadTrustStore(ssl_ctx, verify_mode, verify_callback);
@@ -2458,7 +2457,11 @@ int ParseCert_NotBefore(X509 *cert, char *buf, int len)
     ASN1_TIME *cert_time;
 
     // Exit if unable to get a not before time
+#if OPENSSL_VERSION_NUMBER >= 0x1010000FL  // SSL version 1.1.0
+    cert_time = X509_getm_notBefore(cert);
+#else
     cert_time = X509_get_notBefore(cert);
+#endif
     if (cert_time == NULL)
     {
         USP_ERR_SetMessage("%s: X509_get_notBefore() failed", __FUNCTION__);
@@ -2486,7 +2489,11 @@ int ParseCert_NotAfter(X509 *cert, char *buf, int len)
     ASN1_TIME *cert_time;
 
     // Exit if unable to get a not after time
+#if OPENSSL_VERSION_NUMBER >= 0x1010000FL  // SSL version 1.1.0
+    cert_time = X509_getm_notAfter(cert);
+#else
     cert_time = X509_get_notAfter(cert);
+#endif
     if (cert_time == NULL)
     {
         USP_ERR_SetMessage("%s: X509_get_notAfter() failed", __FUNCTION__);
