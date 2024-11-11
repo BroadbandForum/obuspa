@@ -140,6 +140,35 @@ static usp_service_t usp_services[MAX_USP_SERVICES] = {{0}};
 #define FAIL_USP_COMMANDS_IN_PROGRESS      0x00000001
 
 //------------------------------------------------------------------------------
+// Enumeration for CLI command '-c service'
+typedef enum
+{
+    kCliServiceCmd_Get = 0,
+    kCliServiceCmd_Set,
+    kCliServiceCmd_Add,
+    kCliServiceCmd_Del,
+    kCliServiceCmd_Operate,
+    kCliServiceCmd_Instances,
+    kCliServiceCmd_Gsdm,
+    kCliServiceCmd_Subs,
+
+    kCliServiceCmd_Max
+} cli_service_cmd_t;
+
+// Mapping between command name and enumeration
+const enum_entry_t cli_service_cmds[kCliServiceCmd_Max] =
+{
+    { kCliServiceCmd_Get,       "get" },
+    { kCliServiceCmd_Set,       "set" },
+    { kCliServiceCmd_Add,       "add" },
+    { kCliServiceCmd_Del,       "del" },
+    { kCliServiceCmd_Operate,   "operate" },
+    { kCliServiceCmd_Instances, "instances" },
+    { kCliServiceCmd_Gsdm,      "gsdm" },
+    { kCliServiceCmd_Subs,      "subs" }
+};
+
+//------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int GetUspService_EndpointID(dm_req_t *req, char *buf, int len);
 int GetUspService_Protocol(dm_req_t *req, char *buf, int len);
@@ -235,6 +264,8 @@ void RegisterBrokerVendorHooks(usp_service_t *us);
 void DeregisterBrokerVendorHooks(usp_service_t *us);
 void AddTopLevelTableNodes(dm_node_t *parent, str_vector_t *sv);
 bool IsUspServiceNotificationMatch(Usp__Notify *notify, usp_service_t *us, int broker_instance);
+Usp__Msg *CreateCliInitiatedRequest(cli_service_cmd_t cmd, char *path, char *optional, Usp__Header__MsgType *resp_type);
+int ProcessCliInitiatedResponse(cli_service_cmd_t cmd, char *path, Usp__Msg *resp);
 
 /*********************************************************************//**
 **
@@ -946,7 +977,7 @@ int USP_BROKER_IsPathVendorSubscribable(subs_notify_t notify_type, char *path, b
 ** Determines the instance number in Device.USPServices.USPService.{i} with the specified EndpointID
 **
 ** \param   endpoint_id - endpoint of USP service to find
-** \param   flags - Bitmask of flags controling operations e.g. ONLY_CONTROLLER_CONNECTIONS
+** \param   flags - Bitmask of flags controlling operations e.g. ONLY_CONTROLLER_CONNECTIONS
 **
 ** \return  instance number in Device.USPServices.USPService.{i} or INVALID if no USP Service is currenty connected with the specified EndpointID
 **
@@ -1245,6 +1276,280 @@ exit:
     usp__msg__free_unpacked(resp, pbuf_allocator);
 
     return true;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_ExecuteCli_Service
+**
+** Executes the service CLI command, which sends requests to USP services
+**
+** \param   args - Entry [1] endpoint_id of USP Service to contact
+**                 Entry [2] request to perform (get/set/add/del/subs)
+**                 Entry [3] path to use in request
+**                 Entry [4] (optional) value of NotifType parameter if request is 'subs'
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int USP_BROKER_ExecuteCli_Service(str_vector_t *args)
+{
+    int err;
+    char *endpoint_id;
+    char *command;
+    char *path;
+    char *optional;
+    cli_service_cmd_t cmd;
+    usp_service_t *us;
+    Usp__Msg *req;
+    Usp__Msg *resp;
+    Usp__Header__MsgType resp_type;
+
+    // Extract command arguments
+    USP_ASSERT(args->num_entries >= 4);
+    endpoint_id = args->vector[1];
+    command = args->vector[2];
+    path = args->vector[3];
+    optional = (args->num_entries >= 5) ? args->vector[4] : NULL;
+
+    // Exit if the specified USP Service does not exist
+    us = FindUspServiceByEndpoint(endpoint_id);
+    if (us == NULL)
+    {
+        USP_LOG_Error("Unknown USP Service EndpointID (%s)", endpoint_id);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
+    if (us->controller_mtp.protocol == kMtpProtocol_None)
+    {
+        USP_LOG_Error("USP Service is not connected (endpoint_id=%s)", endpoint_id);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if the command is invalid
+    cmd = TEXT_UTILS_StringToEnum(command, cli_service_cmds, NUM_ELEM(cli_service_cmds));
+    if (cmd == INVALID)
+    {
+        char buf[256];
+        USP_LOG_Error("Unknown command. Valid commands: %s", TEXT_UTILS_EnumListToString(cli_service_cmds, NUM_ELEM(cli_service_cmds), buf, sizeof(buf)) );
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Form the USP Request message
+    req = CreateCliInitiatedRequest(cmd, path, optional, &resp_type);
+
+    // Send the request and wait for a response
+    // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
+    resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp, resp_type, RESPONSE_TIMEOUT);
+
+    // Exit if timed out waiting for a response
+    if (resp == NULL)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Process the get response, retrieving the parameter values and putting them into the key-value-vector
+    err = ProcessCliInitiatedResponse(cmd, path, resp);
+
+    // Free the get response, since we've finished with it
+    usp__msg__free_unpacked(resp, pbuf_allocator);
+    return err;
+}
+
+/*********************************************************************//**
+**
+** CreateCliInitiatedRequest
+**
+** This function is called as part of the '-c service' CLI command
+** Creates a request to send to a USP Service.
+**
+** \param   cmd - type of request to create
+** \param   path - path to use in request
+** \param   optional - either value of parameter if request is 'set', or value of NotifType parameter if request is 'subs'
+** \param   resp_type - pointer to variable in which to return the type of the USP response to expect for this request
+**
+** \return  pointer to USP request message, or NULL if the command requested was invalid
+**
+**************************************************************************/
+Usp__Msg *CreateCliInitiatedRequest(cli_service_cmd_t cmd, char *path, char *optional, Usp__Header__MsgType *resp_type)
+{
+    Usp__Msg *req = NULL;
+    char msg_id[MAX_MSG_ID_LEN];
+    char *value;
+    char *notify_type;
+    kv_vector_t kvv;
+    str_vector_t sv;
+
+    KV_VECTOR_Init(&kvv);
+    STR_VECTOR_Init(&sv);
+
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+
+    switch(cmd)
+    {
+        case kCliServiceCmd_Get:
+            KV_VECTOR_Add(&kvv, path, NULL);
+            req = MSG_UTILS_Create_GetReq(msg_id, &kvv);
+            *resp_type = USP__HEADER__MSG_TYPE__GET_RESP;
+            break;
+
+        case kCliServiceCmd_Set:
+            value = (optional != NULL) ? optional : "";
+            KV_VECTOR_Add(&kvv, path, value);
+            req = MSG_UTILS_Create_SetReq(msg_id, &kvv);
+            *resp_type = USP__HEADER__MSG_TYPE__SET_RESP;
+            break;
+
+        case kCliServiceCmd_Add:
+            req = MSG_UTILS_Create_AddReq(msg_id, path, NULL, 0);
+            *resp_type = USP__HEADER__MSG_TYPE__ADD_RESP;
+            break;
+
+        case kCliServiceCmd_Del:
+            STR_VECTOR_Add(&sv, path);
+            req = MSG_UTILS_Create_DeleteReq(msg_id, &sv, false);
+            *resp_type = USP__HEADER__MSG_TYPE__DELETE_RESP;
+            break;
+
+        case kCliServiceCmd_Operate:
+            req = MSG_UTILS_Create_OperateReq(msg_id, path, msg_id, NULL);
+            *resp_type = USP__HEADER__MSG_TYPE__OPERATE_RESP;
+            break;
+
+        case kCliServiceCmd_Instances:
+            STR_VECTOR_Add(&sv, path);
+            req = MSG_UTILS_Create_GetInstancesReq(msg_id, &sv);
+            *resp_type = USP__HEADER__MSG_TYPE__GET_INSTANCES_RESP;
+            break;
+
+        case kCliServiceCmd_Gsdm:
+            STR_VECTOR_Add(&sv, path);
+            req = MSG_UTILS_Create_GetSupportedDMReq(msg_id, &sv);
+            *resp_type = USP__HEADER__MSG_TYPE__GET_SUPPORTED_DM_RESP;
+            break;
+
+        case kCliServiceCmd_Subs:
+            notify_type = (optional != NULL) ? optional : "ValueChange";
+            group_add_param_t subs_params[] = {   {"ReferenceList", path,        true, 0, NULL},
+                                                  {"NotifType",     notify_type, true, 0, NULL},
+                                                  {"Enable",        "true",      true, 0, NULL} };
+            req = MSG_UTILS_Create_AddReq(msg_id, "Device.LocalAgent.Subscription.", subs_params, NUM_ELEM(subs_params));
+            *resp_type = USP__HEADER__MSG_TYPE__ADD_RESP;
+            break;
+
+        default:
+            TERMINATE_BAD_CASE(cmd);
+            break;
+    }
+
+    KV_VECTOR_Destroy(&kvv);
+    STR_VECTOR_Destroy(&sv);
+
+    return req;
+}
+
+/*********************************************************************//**
+**
+** ProcessCliInitiatedResponse
+**
+** This function is called as part of the '-c service' CLI command
+** Processes the response from the USP Service.
+**
+** \param   cmd - type of request to process
+** \param   path - path used in request
+** \param   resp - pointer to response to process
+**
+** \return  pointer to USP request message, or NULL if the command requested was invalid
+**
+**************************************************************************/
+int ProcessCliInitiatedResponse(cli_service_cmd_t cmd, char *path, Usp__Msg *resp)
+{
+    int err = USP_ERR_OK;
+    kv_vector_t kvv;
+    str_vector_t sv;
+    int instance = -1;
+
+    KV_VECTOR_Init(&kvv);
+    STR_VECTOR_Init(&sv);
+
+    switch(cmd)
+    {
+        case kCliServiceCmd_Get:
+            err = MSG_UTILS_ProcessUspService_GetResponse(resp, &kvv);
+            if (err == USP_ERR_OK)
+            {
+                KV_VECTOR_Dump(&kvv);
+            }
+            break;
+
+        case kCliServiceCmd_Set:
+            err = MSG_UTILS_ProcessUspService_SetResponse(resp);
+            break;
+
+        case kCliServiceCmd_Add:
+            err = MSG_UTILS_ProcessUspService_AddResponse(resp, &kvv, &instance);
+            if (err == USP_ERR_OK)
+            {
+                USP_LOG_Info("Created %s%d", path, instance);
+                USP_LOG_Info("UniqueKeys:");
+                KV_VECTOR_Dump(&kvv);
+            }
+            break;
+
+        case kCliServiceCmd_Del:
+            err = MSG_UTILS_ProcessUspService_DeleteResponse(resp, path);
+            break;
+
+        case kCliServiceCmd_Operate:
+            err = MSG_UTILS_ProcessUspService_OperateResponse(resp, path, &kvv);
+            if (err == USP_ERR_OK)
+            {
+                USP_LOG_Info("OutputArgs:");
+                KV_VECTOR_Dump(&kvv);
+            }
+            break;
+
+        case kCliServiceCmd_Instances:
+            err = MSG_UTILS_ProcessUspService_GetInstancesResponse(resp, &sv);
+            if (err == USP_ERR_OK)
+            {
+                STR_VECTOR_Dump(&sv);
+            }
+            break;
+
+        case kCliServiceCmd_Gsdm:
+            err = MSG_UTILS_ProcessUspService_GetSupportedDMResponse(resp, &kvv);
+            if (err == USP_ERR_OK)
+            {
+                KV_VECTOR_Dump(&kvv);
+            }
+            break;
+
+        case kCliServiceCmd_Subs:
+            err = MSG_UTILS_ProcessUspService_AddResponse(resp, &kvv, &instance);
+            if (err == USP_ERR_OK)
+            {
+                USP_LOG_Info("Created %s%d", path, instance);
+                USP_LOG_Info("UniqueKeys:");
+                KV_VECTOR_Dump(&kvv);
+            }
+            break;
+
+        default:
+            TERMINATE_BAD_CASE(cmd);
+            break;
+    }
+
+    if (err != USP_ERR_OK)
+    {
+        USP_LOG_Info("ERROR: %d", err);
+    }
+
+    KV_VECTOR_Destroy(&kvv);
+    STR_VECTOR_Destroy(&sv);
+
+    return err;
 }
 
 /*********************************************************************//**

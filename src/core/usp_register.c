@@ -268,38 +268,9 @@ int USP_REGISTER_Param_NumEntries(char *path, char *table_path)
 **************************************************************************/
 int USP_REGISTER_Param_SupportedList(char *path, const enum_entry_t *enums, int num_enums)
 {
-    int i;
-    char *p;
-    int chars_written;
-    const enum_entry_t *e;
     char buf[MAX_DM_VALUE_LEN];
-    int len;
 
-    // Default to empty string, if no items
-    p = buf;
-    *p = '\0';
-    len = sizeof(buf);
-
-    // Iterate over all enums to add, forming a comma separated string
-    for (i=0; i<num_enums; i++)
-    {
-        // Add comma before every enum (apart from the first)
-        if (p != buf)
-        {
-            chars_written = USP_SNPRINTF(p, len, "%s", ", ");
-            p += chars_written;
-            len -= chars_written;
-        }
-
-        // Add the enum (if it's not empty)
-        e = &enums[i];
-        if (e->name[0] != '\0')
-        {
-            chars_written = USP_SNPRINTF(p, len, "%s", e->name);
-            p += chars_written;
-            len -= chars_written;
-        }
-    }
+    TEXT_UTILS_EnumListToString(enums, num_enums, buf, sizeof(buf));
 
     // Register the parameter as a constant comma separated string
     return USP_REGISTER_Param_Constant(path, buf, DM_STRING);

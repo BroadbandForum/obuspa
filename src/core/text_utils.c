@@ -364,6 +364,54 @@ char *TEXT_UTILS_EnumToString(int value, const enum_entry_t *enums, int num_enum
     return "UNKNOWN";
 }
 
+/*********************************************************************//**
+**
+** TEXT_UTILS_EnumListToString
+**
+** Converts an enumerated list to a comma separated string representation
+**
+** \param   enums - pointer to conversion table containing a list of enumerations and their associated string representation
+** \param   num_enums - number of enumerations in the table
+** \param   buf - buffer in which to write output string
+**
+** \return  pointer to output buffer
+**
+**************************************************************************/
+char *TEXT_UTILS_EnumListToString(const enum_entry_t *enums, int num_enums, char *buf, int len)
+{
+    int i;
+    char *p;
+    int chars_written;
+    const enum_entry_t *e;
+
+    // Default to empty string, if no items
+    p = buf;
+    *p = '\0';
+
+    // Iterate over all enums to add, forming a comma separated string
+    for (i=0; i<num_enums; i++)
+    {
+        // Add comma before every enum (apart from the first)
+        if (p != buf)
+        {
+            chars_written = USP_SNPRINTF(p, len, "%s", ", ");
+            p += chars_written;
+            len -= chars_written;
+        }
+
+        // Add the enum (if it's not empty)
+        e = &enums[i];
+        if (e->name[0] != '\0')
+        {
+            chars_written = USP_SNPRINTF(p, len, "%s", e->name);
+            p += chars_written;
+            len -= chars_written;
+        }
+    }
+
+    return buf;
+}
+
 /******************************************************************//**
 **
 ** TEXT_UTILS_StringToDateTime

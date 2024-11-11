@@ -69,6 +69,7 @@ int TEXT_UTILS_StringToBool(char *str, bool *value);
 char *TEXT_UTILS_BoolToString(bool value);
 int TEXT_UTILS_StringToEnum(char *str, const enum_entry_t *enums, int num_enums);
 char *TEXT_UTILS_EnumToString(int value, const enum_entry_t *enums, int num_enums);
+char *TEXT_UTILS_EnumListToString(const enum_entry_t *enums, int num_enums, char *buf, int len);
 int TEXT_UTILS_StringToDateTime(char *str, time_t *value);
 int TEXT_UTILS_StringToBinary(char *str, unsigned char *buf, int len, int *bytes_written);
 int TEXT_UTILS_StringToIpAddr(char *str, nu_ipaddr_t *ip_addr);

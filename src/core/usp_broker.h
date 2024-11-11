@@ -44,6 +44,7 @@
 
 #include "uds.h"
 #include "usp-record.pb-c.h"
+#include "str_vector.h"
 
 
 //------------------------------------------------------------------------------
@@ -67,5 +68,6 @@ mtp_conn_t *USP_BROKER_GetNotifyDestForEndpoint(char *endpoint_id, Usp__Header__
 bool USP_BROKER_AttemptPassthru(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc, combined_role_t *combined_role, UspRecord__Record *rec);
 void USP_BROKER_HandleUspServiceDisconnect(char *endpoint_id, uds_path_t path_type);
 bool USP_BROKER_AttemptDirectGetForCli(char *path);
+int USP_BROKER_ExecuteCli_Service(str_vector_t *args);
 
 #endif

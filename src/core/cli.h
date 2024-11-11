@@ -55,7 +55,7 @@ void CLI_SERVER_UpdateSocketSet(socket_set_t *set);
 void CLI_SERVER_ProcessSocketActivity(socket_set_t *set);
 void CLI_SERVER_SendResponse(const char *s);
 bool CLI_SERVER_IsCmdRunLocally(char *command);
-int CLI_SERVER_ExecuteCliCommand(char *command);
+int CLI_SERVER_ExecuteCliCommand(char *cmd_line);
 
 //------------------------------------------------------------------------------------
 // Client API

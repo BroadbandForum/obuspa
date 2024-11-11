@@ -59,5 +59,11 @@ Usp__Msg *MSG_UTILS_Create_GetInstancesReq(char *msg_id, str_vector_t *sv);
 Usp__Msg *MSG_UTILS_Create_OperateReq(char *msg_id, char *path, char *command_key, kv_vector_t *input_args);
 int MSG_UTILS_ValidateUspResponse(Usp__Msg *resp, Usp__Response__RespTypeCase response_type, char **param_errs_path);
 int MSG_UTILS_ProcessUspService_GetResponse(Usp__Msg *resp, kv_vector_t *kvv);
+int MSG_UTILS_ProcessUspService_SetResponse(Usp__Msg *resp);
+int MSG_UTILS_ProcessUspService_AddResponse(Usp__Msg *resp, kv_vector_t *unique_keys, int *instance);
+int MSG_UTILS_ProcessUspService_DeleteResponse(Usp__Msg *resp, char *path);
+int MSG_UTILS_ProcessUspService_OperateResponse(Usp__Msg *resp, char *path, kv_vector_t *output_args);
+int MSG_UTILS_ProcessUspService_GetInstancesResponse(Usp__Msg *resp, str_vector_t *sv);
+int MSG_UTILS_ProcessUspService_GetSupportedDMResponse(Usp__Msg *usp, kv_vector_t *kv);
 
 #endif
