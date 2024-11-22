@@ -369,7 +369,6 @@ unsigned short DM_PRIV_GetPermissions(dm_node_t *node, combined_role_t *combined
 int DM_PRIV_ReRegister_DBParam_Default(char *path, char *value);
 bool DM_PRIV_IsChildOf(char *path, dm_node_t *parent_node);
 bool DM_PRIV_IsChildNodeOf(dm_node_t *node, dm_node_t *parent_node);
-bool DM_PRIV_AreAllChildrenGroupId(dm_node_t *parent, int group_id);
 
 #endif
 

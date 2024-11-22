@@ -169,15 +169,15 @@ cli_cmd_t cli_commands[] =
     { "instances", 1,1, RUN_REMOTELY, ExecuteCli_GetInstances,   "instances [path-expr]" },
     { "show",      1,1, RUN_LOCALLY,  ExecuteCli_Show,  "show [ 'database' ]"},
     { "dump",      1,1, RUN_REMOTELY, ExecuteCli_Dump,  "dump ['instances' | 'datamodel' | 'memory' | 'mdelta' | 'subscriptions' ]"},
-    { "perm",      1,1, RUN_REMOTELY, ExecuteCli_Perm,  "perm [parameter or object]"},
+    { "perm",      1,1, RUN_REMOTELY, ExecuteCli_Perm,  "perm [path]"},
     { "dbget",     1,1, RUN_LOCALLY,  ExecuteCli_DbGet, "dbget [parameter]"},
     { "dbset",     2,2, RUN_LOCALLY,  ExecuteCli_DbSet, "dbset [parameter] [value]"},
     { "dbdel",     1,1, RUN_LOCALLY,  ExecuteCli_DbDel, "dbdel [parameter]"},
     { "verbose",   1,1, RUN_REMOTELY, ExecuteCli_Verbose, "verbose [level]"},
     { "prototrace",1,1, RUN_REMOTELY, ExecuteCli_ProtoTrace, "prototrace [enable]"},
 #ifndef REMOVE_USP_SERVICE
-    { "register",  1,1, RUN_REMOTELY, ExecuteCli_Register,  "register [objects]"},
-    { "deregister",1,1, RUN_REMOTELY, ExecuteCli_DeRegister,  "deregister [objects]"},
+    { "register",  1,1, RUN_REMOTELY, ExecuteCli_Register,  "register [paths]"},
+    { "deregister",0,1, RUN_REMOTELY, ExecuteCli_DeRegister,  "deregister [paths]"},
 #endif
 #ifndef REMOVE_USP_BROKER
     { "service",   3,4, RUN_REMOTELY, USP_BROKER_ExecuteCli_Service,  "service [endpoint] [command] [path-expr] [optional: value or notify type]"},
@@ -1745,8 +1745,14 @@ int ExecuteCli_DeRegister(str_vector_t *args)
     char *endpoint_id;
     char *arg1;
 
-    USP_ASSERT(args->num_entries >= 2);
-    arg1 = args->vector[1];
+    if (args->num_entries >= 2)
+    {
+        arg1 = args->vector[1];
+    }
+    else
+    {
+        arg1 = "";
+    }
 
     // Exit if not running as a USP Service
     if (RUNNING_AS_USP_SERVICE()==false)

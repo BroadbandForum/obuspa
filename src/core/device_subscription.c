@@ -2396,7 +2396,26 @@ int Validate_SubsRefList_Inner(subs_notify_t notify_type, char *ref_list)
         err = PATH_RESOLVER_ResolveDevicePath(path, NULL, NULL, op, FULL_DEPTH, &combined_role, 0);
 #else
         // When running as a USP Broker, we cannot validate the path and controller permissions by resolving it, as the
-        // USP Service owning the DM elements in the path may not have registered yet, so just attempt to validate it textually
+        // USP Service owning the DM elements in the path may not have registered yet
+
+        // Exit if the subscription is object creation/deletion and we know that the path is not a multi-instance object
+        if ((notify_type == kSubNotifyType_ObjectCreation) || (notify_type == kSubNotifyType_ObjectDeletion))
+        {
+            dm_node_t *node;
+            char modified_path[MAX_DM_PATH];
+            TEXT_UTILS_SearchExpressionsToWildcards(path, modified_path, sizeof(modified_path));
+            node = DM_PRIV_GetNodeFromPath(modified_path, NULL, NULL, DONT_LOG_ERRORS);
+            if (node != NULL)
+            {
+                if (node->type != kDMNodeType_Object_MultiInstance)
+                {
+                    USP_ERR_SetMessage("%s: Path (%s) is not a multi-instance object", __FUNCTION__, path);
+                    return USP_ERR_NOT_A_TABLE;
+                }
+            }
+        }
+
+        // Otherwise fallback to attempting to validate the path textually
         err = PATH_RESOLVER_ValidatePath(path, notify_type);
 #endif
 

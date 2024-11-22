@@ -94,6 +94,7 @@ void TEXT_UTILS_PathToSchemaForm(char *path, char *buf, int len);
 int TEXT_UTILS_CountConsecutiveDigits(char *p);
 char *TEXT_UTILS_StrDupWithTrailingDot(char *path);
 int TEXT_UTILS_KeyValueFromString(char *buf, char **key, char **value);
+char *TEXT_UTILS_SearchExpressionsToWildcards(char *src, char *dest, int len);
 
 #ifndef REMOVE_DEVICE_SECURITY
 int TEXT_UTILS_Base64StringToBinary(char *str, unsigned char *buf, int len, int *bytes_written);

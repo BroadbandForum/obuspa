@@ -121,7 +121,7 @@ bool GroupReferencedParameters(str_vector_t *params, resolver_state_t *state, in
 void InitSearchParam(search_param_t *sp);
 void DestroySearchParam(search_param_t *sp);
 void RefreshInstances_LifecycleSubscriptionEndingInPartialPath(char *path);
-int ValidatePathSegment(int path_segment_index, char *segment, subs_notify_t notify_type, char *path);
+int ValidatePathSegment(int path_segment_index, char *segment, char *previous_segment, subs_notify_t notify_type, char *path);
 
 /*********************************************************************//**
 **
@@ -444,7 +444,7 @@ int PATH_RESOLVER_ValidatePath(char *path, subs_notify_t notify_type)
     // Iterate over all path segments after the first ('Device'), exiting if any look invalid
     for (i=1; i < path_segments.num_entries; i++)
     {
-        err = ValidatePathSegment(i, path_segments.vector[i], notify_type, path);
+        err = ValidatePathSegment(i, path_segments.vector[i], path_segments.vector[i-1], notify_type, path);
         if (err != USP_ERR_OK)
         {
             goto exit;
@@ -473,7 +473,9 @@ exit:
 **
 ** \param   path_segment_index - Position of this path segment within the path eg. [0] == "Device"
 ** \param   segment - pointer to string containing the segment to check
-**                    NOTE: This string may be truncated by the checking code in the course of checking
+**                    NOTE: This string may have a trailing '+' truncated by the checking code in the course of checking
+** \param   previous_segment - pointer to string containing the preceeding segment to the segment under consideration
+**                    NOTE: This string is used to check that the path doesn't contain wildcards or search expressions next to one another
 ** \param   notify_type - Type of notification that the path refers to
 ** \param   path - path which the segment is part of (used for error reporting)
 **
@@ -481,7 +483,7 @@ exit:
 **          USP_ERR_INVALID_ARGUMENTS if the segment looks invalid
 **
 **************************************************************************/
-int ValidatePathSegment(int path_segment_index, char *segment, subs_notify_t notify_type, char *path)
+int ValidatePathSegment(int path_segment_index, char *segment, char *previous_segment, subs_notify_t notify_type, char *path)
 {
     int i;
     int len;
@@ -503,6 +505,13 @@ int ValidatePathSegment(int path_segment_index, char *segment, subs_notify_t not
         {
             USP_ERR_SetMessage("%s: Path (%s) is not a multi-instance object", __FUNCTION__, path);
             return USP_ERR_NOT_A_TABLE;
+        }
+
+        // Wildcards expressions aren't allowed immediately after a search expression or another wildcard
+        if ((previous_segment[0] == '[') || (previous_segment[0] == '*'))
+        {
+            USP_ERR_SetMessage("%s: Path (%s) contains search expressions or wildcards next to one another", __FUNCTION__, path);
+            return USP_ERR_INVALID_PATH_SYNTAX;
         }
 
         return USP_ERR_OK;
@@ -532,6 +541,13 @@ int ValidatePathSegment(int path_segment_index, char *segment, subs_notify_t not
         {
             USP_ERR_SetMessage("%s: Path (%s) is not a multi-instance object", __FUNCTION__, path);
             return USP_ERR_NOT_A_TABLE;
+        }
+
+        // Search expressions aren't allowed immediately after a wildcard or another search expression
+        if ((previous_segment[0] == '*') || (previous_segment[0] == '['))
+        {
+            USP_ERR_SetMessage("%s: Path (%s) contains search expressions or wildcards next to one another", __FUNCTION__, path);
+            return USP_ERR_INVALID_PATH_SYNTAX;
         }
 
         return USP_ERR_OK;
@@ -1863,7 +1879,7 @@ int ResolvePartialPath(char *path, resolver_state_t *state)
     bool is_qualified_instance;
 
     // Exit if unable to find node representing this object
-    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance, 0);
+    node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance, DONT_LOG_ERRS_FLAG);
     if (node == NULL)
     {
         return USP_ERR_INVALID_PATH;
@@ -2656,7 +2672,6 @@ typedef struct
 
 validate_path_test_case_t validate_path_test_cases[] =
 {
-
     {"",                                                                kSubNotifyType_ValueChange,         USP_ERR_OK },
     {"Device.",                                                         kSubNotifyType_OperationComplete,   USP_ERR_OK },
     {"Device.",                                                         kSubNotifyType_Event,               USP_ERR_OK },
@@ -2708,6 +2723,12 @@ validate_path_test_case_t validate_path_test_cases[] =
     {"Device.Boot!",                                                    kSubNotifyType_None,                USP_ERR_OK },
     {"Device.Obj.[ObjB.ParamC==\"1\"].ParamA",                          kSubNotifyType_ValueChange,         USP_ERR_OK },
     {"Device.Obj.[ObjB.ParamC+.ParamD==\"1\"].ParamA",                  kSubNotifyType_ValueChange,         USP_ERR_OK },
+    {"Device.Obj.*.*.",                                                 kSubNotifyType_ObjectCreation,      USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.Obj.*.*.",                                                 kSubNotifyType_ObjectDeletion,      USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.Obj.*.*.",                                                 kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.Obj.[ObjB.ParamC+.ParamD==\"1\"].*.",                      kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.Obj.*.[ObjB.ParamC+.ParamD==\"1\"].",                      kSubNotifyType_ValueChange,         USP_ERR_INVALID_PATH_SYNTAX },
+    {"Device.Obj.[ObjB.ParamC+.ParamD==\"1\"].[ObjB.ParamC+.ParamD==\"1\"].",  kSubNotifyType_ValueChange,  USP_ERR_INVALID_PATH_SYNTAX },
 
 };
 

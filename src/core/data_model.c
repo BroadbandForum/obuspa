@@ -3252,6 +3252,21 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
     }
     strcpy(schema_path, segments[0].name);
 
+    // Exit if trying to register a multi-instance object, but path did not end in '{i}'
+    seg = &segments[num_segments-1];
+    if ((type == kDMNodeType_Object_MultiInstance) && (seg->type != kDMNodeType_Object_MultiInstance))
+    {
+        USP_ERR_SetMessage("%s: Path (%s) must end in '{i}' for multi-instance object", __FUNCTION__, path);
+        return NULL;
+    }
+
+    // Exit if trying to register a single-instance object, but path ended in '{i}'
+    if ((type == kDMNodeType_Object_SingleInstance) && (seg->type != kDMNodeType_Object_SingleInstance))
+    {
+        USP_ERR_SetMessage("%s: Path (%s) must not end in '{i}' for single-instance object", __FUNCTION__, path);
+        return NULL;
+    }
+
     // Iterate over segments, using them to traverse the data model tree
     inst.order = 0;
     for (i=1; i<num_segments; i++)
@@ -3872,47 +3887,6 @@ bool DM_PRIV_IsChildNodeOf(dm_node_t *node, dm_node_t *parent_node)
     }
 
     return false;
-}
-
-/*********************************************************************//**
-**
-** DM_PRIV_AreAllChildrenGroupId
-**
-** Recursively determines whether all child nodes have the specified group_id (ie are owned by the same data model provider component)
-** NOTE: This function intentionally does not check that the node itself has the specified group_id (as it is used for cases when this is not the case)
-**
-** \param   parent - data model node to check all children of
-** \param   group_id - group_id to check that all children match
-**
-** \return  true all child nodes match the specified group_id
-**
-**************************************************************************/
-bool DM_PRIV_AreAllChildrenGroupId(dm_node_t *parent, int group_id)
-{
-    dm_node_t *child;
-
-    // Iterate over list of children
-    child = (dm_node_t *) parent->child_nodes.head;
-    while (child != NULL)
-    {
-        // Exit if this child does not match the specified group_id
-        if (child->group_id != group_id)
-        {
-            return false;
-        }
-
-        // Exit if all children of this child do not match the specified group_id
-        if (DM_PRIV_AreAllChildrenGroupId(child, group_id) == false)
-        {
-            return false;
-        }
-
-        // Move to next sibling in the data model tree
-        child = (dm_node_t *) child->link.next;
-    }
-
-    // If the code gets here, then all children matched the specified group_id, or the node did not have any children
-    return true;
 }
 
 /*********************************************************************//**
@@ -5029,13 +5003,30 @@ int SortSchemaPath(const void *p1, const void *p2)
 void AddChildNodes(dm_node_t *parent, str_vector_t *sv)
 {
     dm_node_t *child;
-    char obj_path[MAX_DM_PATH];
-    char *path;
+    char path[MAX_DM_PATH];
+    char buf[MAX_DM_PATH+MAX_ENDPOINT_ID_LEN];
+    char *endpoint_id = NULL;
+    char *str;
+
+    // Form path of node, ensuring that object nodes end in '.'
+    USP_SNPRINTF(path, sizeof(path), "%s%c", parent->path, (IsObject(parent)) ? '.' : '\0');
+    str = path;
+
+#ifndef REMOVE_USP_BROKER
+    // If node was registered by a USP Service, then add a column containing endpoint_id of the USP Service
+    if (parent->group_id != NON_GROUPED)
+    {
+        endpoint_id = USP_BROKER_GroupIdToEndpointId(parent->group_id);
+        if (endpoint_id != NULL)
+        {
+            USP_SNPRINTF(buf, sizeof(buf), "%-100s %s", path, endpoint_id);
+            str = buf;
+        }
+    }
+#endif
 
     // Add this node to the string vector
-    USP_SNPRINTF(obj_path, sizeof(obj_path), "%s.", parent->path);
-    path = (IsObject(parent)) ? obj_path : parent->path;
-    STR_VECTOR_Add(sv, path);
+    STR_VECTOR_Add(sv, str);
 
     // Add arguments (if applicable) to string vector
     if (IsOperation(parent))

@@ -287,8 +287,7 @@ Usp__Msg *ProcessSet_AllowPartialFalse(char *msg_id, set_expr_info_t *set_expr_i
     int first_failure;
     Usp__Msg *resp;
     Usp__SetResp *set_resp;
-    int group_id;
-    int first_group_id = NON_GROUPED;
+    bool same_group_id;
 
     // Exit if any of the path expressions failed
     for (i=0; i < num_set_expr; i++)
@@ -302,29 +301,13 @@ Usp__Msg *ProcessSet_AllowPartialFalse(char *msg_id, set_expr_info_t *set_expr_i
         }
     }
 
-    // Exit if the request was trying to change more than one USP Service
-    // This is not supported with allow_partial=false, because if one USP service fails, then all others need to be rolled back
-    // To do that, we would have to get the value of the parameters before performing a set, which is too expensive computationally
-    // and there is the possibility that rollback may fail, leaving the objects in an unknown state. So don't allow, instead.
-    for (i=0; i < gsv->num_entries; i++)
+    // Exit if the request was trying to change more than one USP Service (not allowed, as cannot be rolled back)
+    same_group_id = GROUP_SET_VECTOR_AreAllPathsTheSameGroupId(gsv, 0, gsv->num_entries);
+    if (same_group_id == false)
     {
-        group_id = gsv->vector[i].group_id;
-        if (group_id != NON_GROUPED)
-        {
-            // Save the first group_id found
-            if (first_group_id == NON_GROUPED)
-            {
-                first_group_id = group_id;
-            }
-
-            // Exit if this group_id does not match the first group_id found
-            if (group_id != first_group_id)
-            {
-                USP_ERR_SetMessage("%s: Allow partial=false not supported across more than one USP Service", __FUNCTION__);
-                resp = ERROR_RESP_CreateSingle(msg_id, USP_ERR_RESOURCES_EXCEEDED, NULL);
-                return resp;
-            }
-        }
+        USP_ERR_SetMessage("%s: Allow partial=false not supported across more than one USP Service", __FUNCTION__);
+        resp = ERROR_RESP_CreateSingle(msg_id, USP_ERR_RESOURCES_EXCEEDED, NULL);
+        return resp;
     }
 
     // Exit if unable to start a transaction
@@ -466,11 +449,22 @@ void ProcessSet_AllowPartialTrue_Expression(char *msg_id, Usp__SetResp *set_resp
     dm_trans_vector_t trans;
     int num_params_in_expr;
     int failure_index;
+    bool same_group_id;
 
     // Exit if this path expression failed to resolve, adding a failure response
     if (si->err_code != USP_ERR_OK)
     {
         AddSetResp_OperFailure(set_resp, si->requested_path, si->err_code, si->err_msg);
+        return;
+    }
+
+    // Exit if this expression is trying to change more than one USP Service (not allowed, as cannot be rolled back)
+    num_params_in_expr = si->resolved_objs.num_entries * si->num_params;
+    same_group_id = GROUP_SET_VECTOR_AreAllPathsTheSameGroupId(gsv, si->index, num_params_in_expr);
+    if (same_group_id == false)
+    {
+        USP_ERR_SetMessage("%s: Set not supported across more than one USP Service within expression", __FUNCTION__);
+        AddSetResp_OperFailure(set_resp, si->requested_path, USP_ERR_RESOURCES_EXCEEDED, USP_ERR_GetMessage());
         return;
     }
 
@@ -483,7 +477,6 @@ void ProcessSet_AllowPartialTrue_Expression(char *msg_id, Usp__SetResp *set_resp
     }
 
     // Attempt to set all parameters in this expression
-    num_params_in_expr = si->resolved_objs.num_entries * si->num_params;
     GROUP_SET_VECTOR_SetValues(gsv, si->index, num_params_in_expr);
 
     // Exit if any of the required parameters failed to set

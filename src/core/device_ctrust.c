@@ -716,8 +716,13 @@ void DEVICE_CTRUST_ApplyPermissionsToSubTree(char *path)
     dm_node_t *perm_node;
     char *perm_path;
 
+    // Exit if the path was not present in the data model
+    // This could occur if a USP Service registers a path, but then does not return it in the GSDM response
     node =  DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
-    USP_ASSERT(node != NULL);
+    if (node == NULL)
+    {
+        return;
+    }
 
     // Iterate over all roles
     for (i=0; i<NUM_ELEM(roles); i++)
