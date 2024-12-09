@@ -62,9 +62,12 @@ void USP_BROKER_HandleDeRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *m
 void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
 void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
 int USP_BROKER_IsPathVendorSubscribable(subs_notify_t notify_type, char *path, bool *is_present);
+bool USP_BROKER_IsNotifyTypeVendorSubscribable(int group_id, subs_notify_t notify_type);
+void USP_BROKER_DumpSubsMap(void);
 int USP_BROKER_GetUspServiceInstance(char *endpoint_id, unsigned flags);
 void USP_BROKER_GetAllRegisteredGroupIds(int_vector_t *iv);
 mtp_conn_t *USP_BROKER_GetNotifyDestForEndpoint(char *endpoint_id, Usp__Header__MsgType usp_msg_type);
+char *USP_BROKER_GroupIdToEndpointId(int group_id);
 bool USP_BROKER_AttemptPassthru(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc, combined_role_t *combined_role, UspRecord__Record *rec);
 void USP_BROKER_HandleUspServiceDisconnect(char *endpoint_id, uds_path_t path_type);
 bool USP_BROKER_AttemptDirectGetForCli(char *path);

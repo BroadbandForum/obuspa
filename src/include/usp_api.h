@@ -204,7 +204,7 @@ typedef enum
 
 // InstantiatedObj rw-n
 #define PERMIT_GET_INST           0x0080 // Grants the capability to read the instance numbers and unique keys of the Instantiated Object via GetInstances and read the value of Parameters related to the Instantiated Object via a Get containing a search expression or wildcard in place of the instance identifier
-#define PERMIT_DEL                0x0040 // Grants the capability to remove an existing instance of an Instantiated Object via Delet
+#define PERMIT_DEL                0x0040 // Grants the capability to remove an existing instance of an Instantiated Object via Delete
 #define PERMIT_SUBS_OBJ_DEL       0x0010 // Grants the capability to receive Notify Messages of type ObjectDeletion for this Instantiated Object
 
 // CommandEvent r-xn

@@ -766,7 +766,7 @@ bool AreAllPathsTheSameGroupId(Usp__Add *add)
 ** CalcGroupIdForPath
 **
 ** Determines the GroupId for the specified path expression
-** NOTE: If the path expression contains reference following outside of square barckets (ie outside of a search expression)
+** NOTE: If the path expression contains reference following outside of square brackets (ie outside of a search expression)
 **       then the group_id cannot be determined and NON_GROUPED will be returned
 **
 ** \param   path_expr - path expression

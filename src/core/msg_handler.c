@@ -123,6 +123,7 @@ static enum_entry_t mtp_content_types[] = {
     { kMtpContentType_UspMessage,           "USP_MESSAGE" }, // Not actually used by MtpSendItemToString - the usp_msg_type[] is used instead
     { kMtpContentType_ConnectRecord,        "USP_CONNECT_RECORD" },
     { kMtpContentType_DisconnectRecord,     "USP_DISCONNECT_RECORD" },
+    { kMtpContentType_BulkDataReport,       "BULK_DATA_REPORT" },
 #ifdef E2ESESSION_EXPERIMENTAL_USP_V_1_2
     { kMtpContentType_E2E_SessTermination,  "E2E_DISCONNECT_RECORD" },
     { kMtpContentType_E2E_FullMessage,      "E2E_FULL_MESSAGE" },
@@ -338,6 +339,12 @@ void MSG_HANDLER_LogMessageToSend(mtp_send_item_t *msi,
     if ((enable_protocol_trace) && (header != NULL))
     {
         USP_PROTOCOL("%s", header);
+    }
+
+    // Exit if this is not a USP record
+    if (msi->content_type == kMtpContentType_BulkDataReport)
+    {
+        return;
     }
 
     // Unpack the USP record and log it

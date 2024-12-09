@@ -341,9 +341,11 @@ int DEVICE_CONTROLLER_CountEnabledWebsockClientConnections(void);
 #ifndef REMOVE_USP_BROKER
 int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance);
 bool DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(int broker_instance, subs_notify_t notify_type, char *path, int group_id);
+void DEVICE_SUBSCRIPTION_UnmarkVendorLayerSubs(int broker_instance, subs_notify_t notify_type, char *path, int group_id);
 void DEVICE_SUBSCRIPTION_StartAllVendorLayerSubsForGroup(int group_id);
 void DEVICE_SUBSCRIPTION_FreeAllVendorLayerSubsForGroup(int group_id);
 int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance, int service_instance, char *path);
+void DEVICE_SUBSCRIPTION_UpdateVendorLayerDeviceDotSubs(int group_id, subs_notify_t notify_type);
 bool DEVICE_SUBSCRIPTION_IsMatch(int broker_instance, subs_notify_t notify_type, char *path);
 #endif
 #if defined(ENABLE_UDS) && !(defined(REMOVE_USP_BROKER) && defined(REMOVE_USP_SERVICE))

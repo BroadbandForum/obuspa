@@ -144,6 +144,8 @@ typedef struct
                                 // Used to force a disconnection after the USP disconnect record has been sent
     bool is_reconnect;          // Used to indicate whether the current disconnect is part of a reconnect sequence, or due to a disable
     bool is_disconnected;       // Set if the disconnect callback has been called, to cause ensuing actions to be taken
+    bool is_subscribed;         // Set if the agent is subscribed to at least one topic. This flag is used to prevent the agent
+                                // from sending notification messages until it knows that it can receive a notification response from the Controller
 
     str_vector_t  frame_trace;    // string vector in which to build up debug trace of the options for the next MQTT frame to be transmitted
 } mqtt_client_t;
@@ -550,12 +552,11 @@ int MQTT_QueueBinaryMessage(mtp_send_item_t *msi, int instance, char *controller
 
     USP_ASSERT(msi != NULL);
 
-    // Exit (discarding the USP record) if no controller topic to send the message to
+    // Exit if no controller topic to send the message to
     // NOTE: This should already have been ensured by the caller (in the function CalcNotifyDest)
     if ((controller_topic == NULL) || (*controller_topic == '\0'))
     {
         USP_LOG_Error("%s: Discarding USP Message (%s) as no controller topic setup to send it to", __FUNCTION__, MSG_HANDLER_UspMsgTypeToString(msi->usp_msg_type));
-        USP_FREE(msi->pbuf);
         return USP_ERR_INTERNAL_ERROR;
     }
 
@@ -1245,7 +1246,7 @@ void MQTT_UpdateAllSockSet(socket_set_t *set)
             {
                 case kMqttState_Running:
                     RemoveExpiredMqttMessages(client);
-                    if (client->usp_record_send_queue.head)
+                    if ((client->usp_record_send_queue.head) && (client->is_subscribed))
                     {
                         if (SendQueueHead(client) == USP_ERR_OK)
                         {
@@ -1768,6 +1769,7 @@ void InitClient(mqtt_client_t *client, int index)
     client->agent_topic_from_connack = NULL;
     client->disconnect_mid = INVALID_MOSQUITTO_MID;
     client->is_reconnect = false;
+    client->is_subscribed = false;
     KV_VECTOR_Init(&client->controller_topics);
     STR_VECTOR_Init(&client->frame_trace);
 
@@ -1924,6 +1926,7 @@ void CleanMqttClient(mqtt_client_t *client, bool is_reconnect)
     client->disconnect_mid = INVALID_MOSQUITTO_MID;
     USP_SAFE_FREE(client->agent_topic_from_connack);
     client->retry_time = 0;
+    client->is_subscribed = false;
 
     // Free all subscriptions whose lifetime is set by the connection (rather than being set by configuration in Device.MQTT.Client.{i}.Subscription table)
     MqttSubscriptionDestroy(&client->response_subscription);
@@ -2022,6 +2025,7 @@ int EnableMqttClient(mqtt_client_t* client)
     client->disconnect_mid = INVALID_MOSQUITTO_MID;
     USP_SAFE_FREE(client->agent_topic_from_connack);
     client->retry_time = 0;
+    client->is_subscribed = false;
 
     // Initialise the agent's response topic
     // NOTE: The agent's response topic stored in response_subscription may be NULL, if not configured in Device.LocalAgent.MTP.{i}.MQTT.ResponseTopicConfigured
@@ -3233,6 +3237,7 @@ error:
 ** SubscribeToAll
 **
 ** Subscribes to all topics on the specified MQTT client connection
+** IMPORTANT: Each topic should only be subscribed to once
 **
 ** \param   client - pointer to MQTT client
 **
@@ -3242,8 +3247,37 @@ error:
 void SubscribeToAll(mqtt_client_t *client)
 {
     int i;
-    int count = 0;
     mqtt_subscription_t *sub;
+    str_vector_t subscribed_topics;
+    char *response_topic;
+    int index;
+
+    STR_VECTOR_Init(&subscribed_topics);
+
+    // Subscribe to response topic. This will be either the topic from the Respose Information property in the CONNACK
+    // or, if that isn't present, the value of the ResponseTopicConfigured parameter
+    // NOTE: Subscribe to this first, as we don't want to allow this subscription being unsubscribed, if
+    // this subscription was duplcated in Device.MQTT.Client.{i}.Subscription.{i}, and the subscription was deleted from that table
+    response_topic = client->response_subscription.topic;
+    if ((response_topic != NULL) && (*response_topic != '\0'))
+    {
+        index = STR_VECTOR_Find(&subscribed_topics, response_topic);
+        if (index == INVALID)
+        {
+            if (Subscribe(client, &client->response_subscription, true) == USP_ERR_OK)
+            {
+                STR_VECTOR_Add(&subscribed_topics, response_topic);
+            }
+            else
+            {
+                USP_LOG_Error("%s: mosquitto_subscribe() failed for agent's response topic=%s", __FUNCTION__, client->response_subscription.topic);
+            }
+        }
+    }
+    else
+    {
+        USP_LOG_Error("%s: No response topic configured (or set by the CONNACK)", __FUNCTION__);
+    }
 
     // Subscribe to all subscriptions configured in Device.MQTT.Client.{i}.Subscription.{i}
     for (i=0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
@@ -3257,33 +3291,19 @@ void SubscribeToAll(mqtt_client_t *client)
                 continue;
             }
 
-            if (Subscribe(client, sub, false) == USP_ERR_OK)
+            index = STR_VECTOR_Find(&subscribed_topics, sub->topic);
+            if (index == INVALID)
             {
-                count++;
+                if (Subscribe(client, sub, false) == USP_ERR_OK)
+                {
+                    STR_VECTOR_Add(&subscribed_topics, sub->topic);
+                }
+                else
+                {
+                    USP_LOG_Error("%s: mosquitto_subscribe() failed for topic=%s", __FUNCTION__, sub->topic);
+                }
             }
-            else
-            {
-                USP_LOG_Error("%s: mosquitto_subscribe() failed for topic=%s", __FUNCTION__, sub->topic);
-            }
         }
-    }
-
-    // Subscribe to response topic
-    if ((client->response_subscription.topic != NULL) && (client->response_subscription.topic[0] != '\0'))
-    {
-        if (Subscribe(client, &client->response_subscription, true) == USP_ERR_OK)
-        {
-            count++;
-        }
-        else
-        {
-            USP_LOG_Error("%s: mosquitto_subscribe() failed for agent's response topic=%s", __FUNCTION__, client->response_subscription.topic);
-        }
-
-    }
-    else
-    {
-        USP_LOG_Error("%s: No response topic configured (or set by the CONNACK)", __FUNCTION__);
     }
 
     // Subscribe to all subscriptions indicated by the 'subscribe-topic' user properties in the CONNACK
@@ -3293,24 +3313,30 @@ void SubscribeToAll(mqtt_client_t *client)
         if (sub->enabled == true)
         {
             USP_ASSERT(sub->topic != NULL);
-            if (Subscribe(client, sub, false) == USP_ERR_OK)
+
+            index = STR_VECTOR_Find(&subscribed_topics, sub->topic);
+            if (index == INVALID)
             {
-                count++;
-            }
-            else
-            {
-                USP_LOG_Error("%s: mosquitto_subscribe() failed for topic=%s", __FUNCTION__, sub->topic);
+                if (Subscribe(client, sub, false) == USP_ERR_OK)
+                {
+                    STR_VECTOR_Add(&subscribed_topics, sub->topic);
+                }
+                else
+                {
+                    USP_LOG_Error("%s: mosquitto_subscribe() failed for topic=%s", __FUNCTION__, sub->topic);
+                }
             }
         }
     }
 
     // If we failed to subscribe to anything, then disconnect (R-MQTT.17)
-    if (count == 0)
+    if (subscribed_topics.num_entries == 0)
     {
         USP_LOG_Error("%s: Disconnecting as did not subscribe to any topics", __FUNCTION__);
         HandleMqttError(client, kMqttFailure_OtherError, "Disconnecting as did not subscribe to any topics");
-        return;
     }
+
+    STR_VECTOR_Destroy(&subscribed_topics);
 }
 
 /*********************************************************************//**
@@ -3377,7 +3403,7 @@ void DisconnectIfAllSubscriptionsFailed(mqtt_client_t *client)
     for (i=0; i < MAX_MQTT_SUBSCRIPTIONS; i++)
     {
         sub = &client->subscriptions[i];
-        if ((sub->enabled == true) && (sub->topic != NULL))
+        if ((sub->enabled == true) && (sub->topic != NULL) && (sub->state != kMqttSubState_Unsubscribed))
         {
             total_subs++;
             if (sub->state == kMqttSubState_Failed)
@@ -3388,18 +3414,21 @@ void DisconnectIfAllSubscriptionsFailed(mqtt_client_t *client)
     }
 
     // Add the response topic subscription to the counts
-    total_subs++;
     sub = &client->response_subscription;
-    if (sub->state == kMqttSubState_Failed)
+    if (sub->state != kMqttSubState_Unsubscribed)
     {
-        failed_subs++;
+        total_subs++;
+        if (sub->state == kMqttSubState_Failed)
+        {
+            failed_subs++;
+        }
     }
 
     // Iterate over all subscriptions indicated as 'subscribe-topic' user properties, counting them, and the number of them which have failed
     for (i=0; i < NUM_ELEM(client->connack_subscriptions); i++)
     {
         sub = &client->connack_subscriptions[i];
-        if (sub->enabled == true)
+        if ((sub->enabled == true) && (sub->state != kMqttSubState_Unsubscribed))
         {
             total_subs++;
             if (sub->state == kMqttSubState_Failed)
@@ -3469,6 +3498,13 @@ void SubscribeCallback(struct mosquitto *mosq, void *userdata, int mid, int qos_
         USP_LOG_Warning("%s: Wrong state %d", __FUNCTION__, sub->state);
     }
 
+    // Add the trace for all granted_qos, and log the MQTT frame before any 'failed to subscribe' errors being logged
+    for (i=0; i<qos_count; i++)
+    {
+        FRAME_TRACE_ADD(client, "granted_qos: %d", granted_qos[i]);
+    }
+    FRAME_TRACE_DUMP(client);
+
     // Exit if failed to subscribe to this topic. Libmosquitto indicates this by putting an error code (128) in granted_qos
     for (i=0; i<qos_count; i++)
     {
@@ -3483,8 +3519,8 @@ void SubscribeCallback(struct mosquitto *mosq, void *userdata, int mid, int qos_
     }
 
     // If the code gets here, then the subscription was successful
-    FRAME_TRACE_DUMP(client);
     sub->state = kMqttSubState_Subscribed;
+    client->is_subscribed = true;
 
 exit:
     OS_UTILS_UnlockMutex(&mqtt_access_mutex);
@@ -3709,7 +3745,6 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
     FRAME_TRACE_CLEAR(client);
     FRAME_TRACE_ADD(client, "PUBLISH");
 
-
     int version = client->conn_params.version;
     if (version == kMqttProtocol_5_0)
     {
@@ -3719,9 +3754,17 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
     {
         char escaped_agent_topic[MAX_TOPIC_LEN];
         char topic[2*MAX_TOPIC_LEN+10];             // Plus 10 to allow for '/reply-to='
-        USP_ASSERT((client->response_subscription.topic!= NULL) && (client->response_subscription.topic[0] != '\0')); // SubscribeToAll() should have prevented the code getting here
-        TEXT_UTILS_ReplaceCharInString(client->response_subscription.topic, '/', "%2F", escaped_agent_topic, sizeof(escaped_agent_topic));
-        USP_SNPRINTF(topic, sizeof(topic), "%s/reply-to=%s", msg->topic, escaped_agent_topic);
+
+        if (msg->item.content_type != kMtpContentType_BulkDataReport)
+        {
+            USP_ASSERT((client->response_subscription.topic!= NULL) && (client->response_subscription.topic[0] != '\0')); // SubscribeToAll() should have prevented the code getting here
+            TEXT_UTILS_ReplaceCharInString(client->response_subscription.topic, '/', "%2F", escaped_agent_topic, sizeof(escaped_agent_topic));
+            USP_SNPRINTF(topic, sizeof(topic), "%s/reply-to=%s", msg->topic, escaped_agent_topic);
+        }
+        else
+        {
+            USP_STRNCPY(topic, msg->topic, sizeof(topic));
+        }
 
         if (mosquitto_publish(client->mosq, &msg->mid, topic, msg->item.pbuf_len, msg->item.pbuf, msg->qos, false /*retain*/) != MOSQ_ERR_SUCCESS)
         {
@@ -3734,6 +3777,7 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
     }
 
     FRAME_TRACE_PACK(client, buf, sizeof(buf));
+
     MSG_HANDLER_LogMessageToSend(&msg->item, kMtpProtocol_MQTT, client->conn_params.host, buf);
 
     return err;
@@ -3756,28 +3800,34 @@ int PublishV5(mqtt_client_t *client, mqtt_send_item_t *msg)
     int err = USP_ERR_OK;
     mosquitto_property *proplist = NULL;
     int mosq_err;
+    char *content_type;
 
     FRAME_TRACE_ADD(client, "topic: %s", msg->topic);
 
     // Exit if unable to set content type in the frame
     #define MQTT_USP_CONTENT_TYPE "usp.msg"
-    if (mosquitto_property_add_string(&proplist, CONTENT_TYPE, MQTT_USP_CONTENT_TYPE) != MOSQ_ERR_SUCCESS)
+    #define MQTT_BULK_DATA_CONTENT_TYPE "application/json; charset=UTF-8"
+    content_type = (msg->item.content_type == kMtpContentType_BulkDataReport) ? MQTT_BULK_DATA_CONTENT_TYPE : MQTT_USP_CONTENT_TYPE;
+    if (mosquitto_property_add_string(&proplist, CONTENT_TYPE, content_type) != MOSQ_ERR_SUCCESS)
     {
         USP_LOG_Error("%s: Failed to add content type string", __FUNCTION__);
         err = USP_ERR_INTERNAL_ERROR;
         goto error;
     }
-    FRAME_TRACE_ADD(client, "content_type: %s", MQTT_USP_CONTENT_TYPE);
+    FRAME_TRACE_ADD(client, "content_type: %s", content_type);
 
     // Exit if unable to set response topic in the frame
-    USP_ASSERT((client->response_subscription.topic!= NULL) && (client->response_subscription.topic[0] != '\0')); // SubscribeToAll() should have prevented the code getting here
-    if (mosquitto_property_add_string(&proplist, RESPONSE_TOPIC, client->response_subscription.topic) != MOSQ_ERR_SUCCESS)
+    if (msg->item.content_type != kMtpContentType_BulkDataReport)
     {
-        USP_LOG_Error("%s: Failed to add response topic string", __FUNCTION__);
-        err = USP_ERR_INTERNAL_ERROR;
-        goto error;
+        USP_ASSERT((client->response_subscription.topic!= NULL) && (client->response_subscription.topic[0] != '\0')); // SubscribeToAll() should have prevented the code getting here
+        if (mosquitto_property_add_string(&proplist, RESPONSE_TOPIC, client->response_subscription.topic) != MOSQ_ERR_SUCCESS)
+        {
+            USP_LOG_Error("%s: Failed to add response topic string", __FUNCTION__);
+            err = USP_ERR_INTERNAL_ERROR;
+            goto error;
+        }
+        FRAME_TRACE_ADD(client, "response_topic: %s", client->response_subscription.topic);
     }
-    FRAME_TRACE_ADD(client, "response_topic: %s", client->response_subscription.topic);
 
     // Exit if property check failed
     if (mosquitto_property_check_all(PUBLISH, proplist) != MOSQ_ERR_SUCCESS)
@@ -4158,6 +4208,7 @@ void HandleMqttError(mqtt_client_t *client, mqtt_failure_t failure_code, const c
 
     // Initiate a disconnect, if still connected
     client->is_reconnect = false;
+    client->is_subscribed = false;
     DisconnectClient(client);
 
     // Move to retrying state

@@ -85,6 +85,7 @@ typedef struct
                                 // NOTE: Since the broker's subscription may have a ReferenceList containing many paths,
                                 //       it is possible for there to be more than one entry in this map with the same broker_instance
     char *path;                 // Data model path which is subscribed to on the USP Service
+    subs_notify_t notify_type;  // Type of notification this subscription is for
     int service_instance;       // Instance number in the Service's Device.LocalAgent.Subscription.{i}
     char *subscription_id;      // Subscription Id in the USP Service's subscription table.
                                 // NOTE: This is allocated by the Broker to avoid non-uniqueness in the USP Service, if USP Controllers choose the same ID in the Broker's subscription table
@@ -125,10 +126,13 @@ typedef struct
     int group_id;                   // Group Id assigned for this endpoint
     bool has_controller;            // Set if the USP Service's Controller is connected via the Broker's agent socket
     str_vector_t gsdm_msg_ids;      // Message Ids of all outstanding GSDM requests sent to the USP Service
+    str_vector_t gsdm_paths;        // List of paths that are awaiting a GSDM response before they can be registered into the Broker's data model
     str_vector_t registered_paths;  // vector of top level data model objects that the USP Service provides
     double_linked_list_t subs_map;  // linked list implementing a table mapping the subscription in the Broker's subscription table to the subscription in the Service's subscription table
     double_linked_list_t req_map;   // linked list implementing a table mapping the instance in the Broker's request table to the command_key of the request
     double_linked_list_t msg_map;   // vector mapping the message ID of a request passed thru to this USP service, back to the originating controller which sent the request
+    char *events;                   // String containing comma separated list of all USP events registered by the USP service, or NULL if no events registered
+    char *commands;                 // String containing comma separated list of all USP async commands registered by the USP service, or NULL if no events registered
 } usp_service_t;
 
 static usp_service_t usp_services[MAX_USP_SERVICES] = {{0}};
@@ -169,6 +173,11 @@ const enum_entry_t cli_service_cmds[kCliServiceCmd_Max] =
 };
 
 //------------------------------------------------------------------------------
+// Defines for returned flags of UpdateEventsAndCommands()
+#define EVENTS_LIST_CHANGED     0x00000001
+#define COMMANDS_LIST_CHANGED   0x00000002
+
+//------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int GetUspService_EndpointID(dm_req_t *req, char *buf, int len);
 int GetUspService_Protocol(dm_req_t *req, char *buf, int len);
@@ -187,15 +196,14 @@ int CompareGetInstances_CurInst(const void *entry1, const void *entry2);
 Usp__Msg *CreateRegisterResp(char *msg_id);
 void AddRegisterResp_RegisteredPathResult(Usp__RegisterResp *reg_resp, char *requested_path, int err_code);
 int CompareGsdm_SupportedObj(const void *entry1, const void *entry2);
-bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *ror, usp_service_t *us);
-void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult *sor, int group_id);
+void ProcessGsdm_RequestedObjectResult(Usp__GetSupportedDMResp__RequestedObjectResult *ror, usp_service_t *us, str_vector_t *ipaths);
+void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult *sor, usp_service_t *us, str_vector_t *ipaths);
 unsigned CalcParamType(Usp__GetSupportedDMResp__ParamValueType value_type);
 usp_service_t *AddUspService(char *endpoint_id, mtp_conn_t *mtpc);
-bool IsPathAlreadyRegistered(char *requested_path);
-bool IsPathAlreadyRegisteredAsAParent(usp_service_t *us, char *registered_path);
+bool IsPathAlreadyRegistered(char *requested_path, str_vector_t *accepted_paths);
 void FreeUspService(usp_service_t *us);
-void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths);
-void ApplyPermissionsToUspService(usp_service_t *us);
+int QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *accepted_paths);
+void ApplyPermissionsToPaths(str_vector_t *sv);
 int Broker_GroupGet(int group_id, kv_vector_t *kvv);
 int Broker_GroupSet(int group_id, kv_vector_t *params, unsigned *param_types, int *failure_index);
 int Broker_GroupAdd(int group_id, char *path, int *instance);
@@ -217,11 +225,12 @@ int ValidateAddResponsePath(char *schema_path, char *instantiated_path, int *ins
 int ProcessDeleteResponse(Usp__Msg *resp, str_vector_t *paths, int *failure_index);
 void SubsMap_Init(double_linked_list_t *sm);
 void SubsMap_Destroy(double_linked_list_t *sm);
-void SubsMap_Add(double_linked_list_t *sm, int service_instance, char *path, char *subscription_id, int broker_instance);
+void SubsMap_Add(double_linked_list_t *sm, int service_instance, char *path, subs_notify_t notify_type, char *subscription_id, int broker_instance);
 void SubsMap_Remove(double_linked_list_t *sm, subs_map_t *smap);
 subs_map_t *SubsMap_FindByUspServiceSubsId(double_linked_list_t *sm, char *subscription_id, int broker_instance);
 subs_map_t *SubsMap_FindByBrokerInstanceAndPath(double_linked_list_t *sm, int broker_instance, char *path);
 subs_map_t *SubsMap_FindByPath(double_linked_list_t *sm, char *path);
+subs_map_t *SubsMap_FindByPathAndNotifyType(double_linked_list_t *sm, char *path, subs_notify_t notify_type);
 void ReqMap_Init(double_linked_list_t *rm);
 void ReqMap_Destroy(double_linked_list_t *rm);
 req_map_t *ReqMap_Add(double_linked_list_t *rm, int request_instance, char *path, char *command_key);
@@ -258,14 +267,21 @@ void DeRegisterAllPaths(usp_service_t *us, Usp__DeregisterResp *dreg_resp);
 void RemoveDeRegisterResp_DeRegisteredPathResult(Usp__DeregisterResp *dreg_resp);
 void AddDeRegisterRespSuccess_Path(Usp__DeregisterResp__DeregisteredPathResult *dreg_path_result, char *path);
 int DeRegisterUspServicePath(usp_service_t *us, char *path);
-bool IsPathASpecialException(char *path, int group_id);
-int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path);
+int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path, str_vector_t *accepted_paths);
 void RegisterBrokerVendorHooks(usp_service_t *us);
 void DeregisterBrokerVendorHooks(usp_service_t *us);
-void AddTopLevelTableNodes(dm_node_t *parent, str_vector_t *sv);
 bool IsUspServiceNotificationMatch(Usp__Notify *notify, usp_service_t *us, int broker_instance);
 Usp__Msg *CreateCliInitiatedRequest(cli_service_cmd_t cmd, char *path, char *optional, Usp__Header__MsgType *resp_type);
 int ProcessCliInitiatedResponse(cli_service_cmd_t cmd, char *path, Usp__Msg *resp);
+int CalcStrippedPathLen(char *path, int len);
+bool MatchesOrIsChildOf(char *path1, char *path2, int path2_len);
+void CalculatePermissionPaths(str_vector_t *reg_paths, str_vector_t *perm_paths);
+bool RegisterObjectInBroker(char *path, int len, bool is_multi_instance, bool is_writable, int group_id, str_vector_t *ipaths);
+bool IsWantedDmElement(char *elem_path, str_vector_t *accepted_paths);
+bool IsWantedGsdmObject(char *obj_path, str_vector_t *accepted_paths, bool *want_all_children);
+void CalcCommonAncestorObject(str_vector_t *paths, char *ancestor, int ancestor_len);
+unsigned UpdateEventsAndCommands(usp_service_t *us);
+unsigned UpdateDeviceDotNotificationList(str_vector_t *sv, char **p_list, unsigned flags);
 
 /*********************************************************************//**
 **
@@ -552,6 +568,14 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
         }
     }
 
+    // Exit if we're still waiting for a GSDM response to a previous register request from this USP Service
+    if (us->gsdm_msg_ids.num_entries != 0)
+    {
+        USP_ERR_SetMessage("%s: Cannot register any more DM elements until previous registration sequence has completed", __FUNCTION__);
+        resp = ERROR_RESP_CreateSingle(usp->header->msg_id, USP_ERR_REGISTER_FAILURE, resp);
+        goto exit;
+    }
+
     // Create a Register Response message
     resp = CreateRegisterResp(usp->header->msg_id);
     reg_resp = resp->body->response->register_resp;
@@ -563,7 +587,7 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
         rp = reg->reg_paths[i];
         USP_ASSERT((rp != NULL) && (rp->path != NULL));
 
-        err = ShouldPathBeAddedToDataModel(us, rp->path);
+        err = ShouldPathBeAddedToDataModel(us, rp->path, &accepted_paths);
         if (err == USP_ERR_OK)
         {
             // Path should be added to data model
@@ -599,14 +623,22 @@ exit:
         usp__msg__free_unpacked(resp, pbuf_allocator);
     }
 
-    // If any paths were accepted, then register the paths into the data model and
-    // kick off a query to get the supported data model for the registered paths
+    // If any paths were accepted, then kick off a query to get the supported data model of the registered paths
     if (accepted_paths.num_entries > 0)
     {
-        QueueGetSupportedDMToUspService(us, &accepted_paths);
-    }
+        // Exit if unable to queue the GSDM request
+        err = QueueGetSupportedDMToUspService(us, &accepted_paths);
+        if (err != USP_ERR_OK)
+        {
+            STR_VECTOR_Destroy(&accepted_paths);
+            return;
+        }
 
-    STR_VECTOR_Destroy(&accepted_paths);
+        // Move the accepted paths to the paths to filter for in the GSDM response (when we receive it)
+        // NOTE: accepted_paths does not have to be freed in this case, as ownership of all memory allocated by it has moved to gsdm_paths
+        USP_ASSERT((us->gsdm_paths.vector==NULL) && (us->gsdm_paths.num_entries==0));
+        memcpy(&us->gsdm_paths, &accepted_paths, sizeof(accepted_paths));
+    }
 }
 
 /*********************************************************************//**
@@ -632,7 +664,7 @@ void USP_BROKER_HandleDeRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *m
     Usp__DeregisterResp *dreg_resp;
     char *path;
     bool is_valid;
-    bool is_exception;
+    unsigned change_flags;
 
     // Exit if message is invalid or failed to parse
     // This code checks the parsed message enums and pointers for expectations and validity
@@ -650,7 +682,7 @@ void USP_BROKER_HandleDeRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *m
     resp = CreateDeRegisterResp(usp->header->msg_id);
     dreg_resp = resp->body->response->deregister_resp;
 
-    // Exit if endpoint is not a USP Service
+    // Exit if endpoint has not registered any paths
     us = FindUspServiceByEndpoint(endpoint_id);
     if ((us == NULL) || (us->registered_paths.num_entries == 0))
     {
@@ -687,30 +719,37 @@ void USP_BROKER_HandleDeRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *m
         }
         else
         {
-            is_exception = IsPathASpecialException(path, INVALID);
-            if (is_exception)
+            is_valid = IsValidUspServicePath(path);
+            if (is_valid)
             {
-                // Deregister one of the special exception paths
+                // Deregister a DM object (normal case)
                 err = DeRegisterUspServicePath(us, path);
             }
             else
             {
-                is_valid = IsValidUspServicePath(path);
-                if (is_valid)
-                {
-                    // Deregister a DM object (normal case)
-                    err = DeRegisterUspServicePath(us, path);
-                }
-                else
-                {
-                    // Path to deregister was invalid from a textual perspective and wasn't a special exception
-                    err = USP_ERR_DEREGISTER_FAILURE;
-                }
+                // Path to deregister was invalid from a textual perspective
+                USP_ERR_SetMessage("%s: Path %s is invalid", __FUNCTION__, path);
+                err = USP_ERR_DEREGISTER_FAILURE;
             }
 
             // Add the result to the Deregister response
             AddDeRegisterResp_DeRegisteredPathResult(dreg_resp, path, path, err, USP_ERR_GetMessage());
         }
+    }
+
+    // Update the lists of USP events and async commands registered by this USP service
+    change_flags = UpdateEventsAndCommands(us);
+
+    // Handle the list of events changed, if there is a subscription to Device.
+    if (change_flags & EVENTS_LIST_CHANGED)
+    {
+        DEVICE_SUBSCRIPTION_UpdateVendorLayerDeviceDotSubs(us->group_id, kSubNotifyType_Event);
+    }
+
+    // Handle the list of commands changed, if there is a subscription to Device.
+    if (change_flags & COMMANDS_LIST_CHANGED)
+    {
+        DEVICE_SUBSCRIPTION_UpdateVendorLayerDeviceDotSubs(us->group_id, kSubNotifyType_OperationComplete);
     }
 
 exit:
@@ -743,9 +782,8 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
     Usp__GetSupportedDMResp__RequestedObjectResult *ror;
     usp_service_t *us;
     int index;
-    bool is_accepted;
     str_vector_t ipaths;
-    dm_node_t *node;
+    str_vector_t perm_paths;
 
     // NOTE: Errors in response messages should be ignored according to R-MTP.5 (they should not send a USP ERROR response)
 
@@ -775,6 +813,9 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
         return;
     }
 
+    // Since we've received the response now, free the expected msg_id
+    STR_VECTOR_RemoveByIndex(&us->gsdm_msg_ids, index);
+
     // Exit if the reponse did not contain the GSDM of any paths
     gsdm = usp->body->response->get_supported_dm_resp;
     if (gsdm->n_req_obj_results == 0)
@@ -783,28 +824,22 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
         return;
     }
 
-    // Since we've received the response now, free the expected msg_id
-    STR_VECTOR_RemoveByIndex(&us->gsdm_msg_ids, index);
+    // Calculate the list of paths to apply permissions to later
+    // This is done before processing the GSDM response, in order that it can determine the first hierarchical nodes
+    // in the path which will get added by the processing
+    CalculatePermissionPaths(&us->gsdm_paths, &perm_paths);
 
-    // Iterate over all RequestedObjectResults, registering the data model elements provided
-    // by this USP service into this USP Broker's data model
+    // Iterate over all RequestedObjectResults, adding the data model elements that match those registered earlier by this USP service
     STR_VECTOR_Init(&ipaths);
     for (i=0; i < gsdm->n_req_obj_results; i++)
     {
         ror = gsdm->req_obj_results[i];
-        is_accepted = ProcessGsdm_RequestedPath(ror, us);
-        if (is_accepted)
-        {
-            // Add all top level multi-instance objects under this path to ipaths
-            // NOTE: We cannot just GetInstances to this path directly because GetInstances requires paths to multi-instance objects
-            node = DM_PRIV_GetNodeFromPath(ror->req_obj_path, NULL, NULL, 0);
-            USP_ASSERT(node != NULL);
-            AddTopLevelTableNodes(node, &ipaths);
-        }
+        ProcessGsdm_RequestedObjectResult(ror, us, &ipaths);
     }
+    STR_VECTOR_Destroy(&us->gsdm_paths);
 
     // Apply permissions to the nodes that have just been added
-    ApplyPermissionsToUspService(us);
+    ApplyPermissionsToPaths(&perm_paths);
 
     // Ensure that the USP Service contains only the subscriptions which it is supposed to
     SyncSubscriptions(us);
@@ -817,7 +852,9 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
         UspService_RefreshInstances(us, &ipaths, false);
     }
 
+    // Clean up
     STR_VECTOR_Destroy(&ipaths);
+    STR_VECTOR_Destroy(&perm_paths);
 }
 
 /*********************************************************************//**
@@ -946,10 +983,6 @@ int USP_BROKER_IsPathVendorSubscribable(subs_notify_t notify_type, char *path, b
 {
     dm_node_t *node;
 
-    // Keep the compiler happy, as notify_type is not currently used
-    // notify_type is included in the API, because it could potentially be used in the future as part of the decision
-    (void)notify_type;
-
     // Determine whether the path is an absolute path, wildcarded path or partial path
     // We believe that all USP Services support subscribing to paths of these types
     node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
@@ -968,6 +1001,93 @@ int USP_BROKER_IsPathVendorSubscribable(subs_notify_t notify_type, char *path, b
     }
 
     return node->group_id;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_IsNotifyTypeVendorSubscribable
+**
+** Returns a string containing a comma separated list of all DM elements of the specified
+** notify type owned by the specified USP service
+**
+** \param   group_id - group ID of the USP service
+** \param   notify_type - Type of subscription
+**
+** \return  true if the USP Service has any DM elements of the specified type, false otherwise
+**
+**************************************************************************/
+bool USP_BROKER_IsNotifyTypeVendorSubscribable(int group_id, subs_notify_t notify_type)
+{
+    usp_service_t *us;
+    char *device_dot_paths;
+
+    // Exit if endpoint is not connected as a USP Service
+    us = FindUspServiceByGroupId(group_id);
+    if (us == NULL)
+    {
+        return false;
+    }
+
+    switch(notify_type)
+    {
+        case kSubNotifyType_OperationComplete:
+            device_dot_paths = us->commands;
+            break;
+
+        case kSubNotifyType_Event:
+            device_dot_paths = us->events;
+            break;
+
+        default:
+            return false;
+            break;
+    }
+
+    // Exit if no DM elements in the string
+    if (device_dot_paths == NULL)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_DumpSubsMap
+**
+** Logs the subscription map
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void USP_BROKER_DumpSubsMap(void)
+{
+    int i;
+    usp_service_t *us;
+    subs_map_t *smap;
+
+    for (i=0; i < NUM_ELEM(usp_services); i++)
+    {
+        us = &usp_services[i];
+        if (us->instance != INVALID)
+        {
+            smap = (subs_map_t *) us->subs_map.head;
+            if (smap != NULL)
+            {
+                USP_DUMP("---USP Service %s (group_id=%d)----", us->endpoint_id, us->group_id);
+            }
+
+            while (smap != NULL)
+            {
+                USP_DUMP("Broker[%d] -> Service[%d]: '%s' (%s)", smap->broker_instance, smap->service_instance, smap->path, TEXT_UTILS_EnumToString(smap->notify_type, notify_types, NUM_ELEM(notify_types)) );
+
+                smap = (subs_map_t *) smap->link.next;
+            }
+        }
+    }
 }
 
 /*********************************************************************//**
@@ -1109,6 +1229,31 @@ mtp_conn_t *USP_BROKER_GetNotifyDestForEndpoint(char *endpoint_id, Usp__Header__
     }
 
     return mtpc;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_GroupIdToEndpointId
+**
+** Determines the endpoint_id of the USP Service, given a group_id
+**
+** \param   group_id - Identifies the USP service to return the endpoint_id of
+**
+** \return  pointer to endpoint_id string, or NULL if USP Service with the given group_id exists
+**
+**************************************************************************/
+char *USP_BROKER_GroupIdToEndpointId(int group_id)
+{
+    usp_service_t *us;
+
+    // Exit if no matching USP service found
+    us = FindUspServiceByGroupId(group_id);
+    if (us == NULL)
+    {
+        return NULL;
+    }
+
+    return us->endpoint_id;
 }
 
 /*********************************************************************//**
@@ -1592,10 +1737,13 @@ usp_service_t *AddUspService(char *endpoint_id, mtp_conn_t *mtpc)
     us->group_id = group_id;
     us->has_controller = false;
     STR_VECTOR_Init(&us->gsdm_msg_ids);
+    STR_VECTOR_Init(&us->gsdm_paths);
     STR_VECTOR_Init(&us->registered_paths);
     SubsMap_Init(&us->subs_map);
     ReqMap_Init(&us->req_map);
     MsgMap_Init(&us->msg_map);
+    us->events = NULL;
+    us->commands = NULL;
     us->controller_mtp.protocol = kMtpProtocol_None;
     us->agent_mtp.protocol = kMtpProtocol_None;
 
@@ -1684,41 +1832,34 @@ void UpdateUspServiceMRT(usp_service_t *us, mtp_conn_t *mtpc)
 **************************************************************************/
 int DeRegisterUspServicePath(usp_service_t *us, char *path)
 {
-    int i;
     int index;
     subs_map_t *smap;
     subs_map_t *next_smap;
     req_map_t *rmap;
     req_map_t *next_rmap;
-    dm_node_t *parent;
-    bool is_child;
+    bool remove_entry;
     char err_msg[128];
     int err;
     int len;
-    char *rpath;
-    int rpath_len;
 
     // Exit if this endpoint did not register the specified path
     index = STR_VECTOR_Find(&us->registered_paths, path);
     if (index == INVALID)
     {
-        USP_ERR_SetMessage("%s: Path never registered by endpoint_id=%s", __FUNCTION__, us->endpoint_id);
+        USP_ERR_SetMessage("%s: Path '%s' never registered by endpoint_id=%s", __FUNCTION__, path, us->endpoint_id);
         return USP_ERR_DEREGISTER_FAILURE;
     }
 
-    // Determine the data model node representing the top level path to deregister
-    parent = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
-    USP_ASSERT(parent != NULL);
-
     // Iterate over all subscriptions on the USP Service, unsubscribing from those which are not owned by the USP Service anymore
     // and marking them as being provided by the core mechanism
+    len = strlen(path);
     smap = (subs_map_t *) us->subs_map.head;
     while (smap != NULL)
     {
-        next_smap = (subs_map_t *) smap->link.next;     // Save off the next pointer, as ths entry may get deleted by DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs()
+        next_smap = (subs_map_t *) smap->link.next;     // Save off the next pointer, as this entry may get deleted by DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs()
 
-        is_child = DM_PRIV_IsChildOf(smap->path, parent);
-        if (is_child)
+        remove_entry = MatchesOrIsChildOf(smap->path, path, len);
+        if (remove_entry)
         {
             err = DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(us->group_id, smap->broker_instance, smap->service_instance, smap->path);
             if (err != USP_ERR_OK)
@@ -1726,40 +1867,20 @@ int DeRegisterUspServicePath(usp_service_t *us, char *path)
                 return err;
             }
         }
+
         smap = next_smap;
     }
 
-    // If this is the last path to be deregistered from the USP Service, then unsubscribe all 'Device.' subscriptions
-    if (us->registered_paths.num_entries == 1)
-    {
-        USP_ASSERT(index == 0);
-
-        smap = (subs_map_t *) us->subs_map.head;
-        while (smap != NULL)
-        {
-            next_smap = (subs_map_t *) smap->link.next;     // Save off the next pointer, as ths entry may get deleted by DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs()
-
-            if (strcmp(smap->path, dm_root)==0)
-            {
-                err = DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(us->group_id, smap->broker_instance, smap->service_instance, smap->path);
-                if (err != USP_ERR_OK)
-                {
-                    return err;
-                }
-            }
-            smap = next_smap;
-        }
-    }
-
-    // Send an OperationComplete indicating failure for all currently active USP Commands which are children of the path being deregistered
+    // Send an OperationComplete indicating failure for all currently active USP Commands which match the path being deregistered
     // This also results in the entry in the Broker's Request table for the USP Command being deleted
+    len = strlen(path);
     rmap = (req_map_t *) us->req_map.head;
     while (rmap != NULL)
     {
         next_rmap = (req_map_t *) rmap->link.next;     // Save off the next pointer, as ths entry may get deleted by DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs()
 
-        is_child = DM_PRIV_IsChildOf(rmap->path, parent);
-        if (is_child)
+        remove_entry = MatchesOrIsChildOf(rmap->path, path, len);
+        if (remove_entry)
         {
             USP_SNPRINTF(err_msg, sizeof(err_msg), "%s: USP Service %s deregistered %s whilst command was in progress", __FUNCTION__, us->endpoint_id, path);
             DEVICE_REQUEST_OperationComplete(rmap->request_instance, USP_ERR_COMMAND_FAILURE, err_msg, NULL);
@@ -1778,28 +1899,50 @@ int DeRegisterUspServicePath(usp_service_t *us, char *path)
     // Remove the path from the list of paths that were registered as owned by the USP Service
     STR_VECTOR_RemoveByIndex(&us->registered_paths, index);
 
-    // Remove all children of this path from the registered path list
-    len = strlen(path);
-    for (i=0; i < us->registered_paths.num_entries; i++)
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** MatchesOrIsChildOf
+**
+** Determines whether path1 matches or is a child of path2 (which may be an absolute path or a partial path)
+** NOTE: This function can only be used by paths that are registered/deregistered, as it does not support instance numbers or wildcards
+**
+** \param   path1 - path under consideration for matching against path2. This may be an object, paramter, command or event.
+** \param   path2 - path to match path1 against, this may be an object (partial path), paramter, command or event.
+** \param   path2-len - length of ath2
+**
+** \return  true if path1 matches or is a child of path2
+**
+**************************************************************************/
+bool MatchesOrIsChildOf(char *path1, char *path2, int path2_len)
+{
+    if (path2[path2_len-1] == '.')
     {
-        rpath = us->registered_paths.vector[i];
-        rpath_len = strlen(rpath);
-        if ((rpath_len > len) && (memcmp(rpath, path, len)==0))
+        // Exit if path1 is an exact match or is a child of path2
+        if ((strlen(path1) >= path2_len) && (memcmp(path1, path2, path2_len)==0))
         {
-            USP_FREE(rpath);
-            us->registered_paths.vector[i] = NULL;
+            return true;
         }
     }
-    STR_VECTOR_RemoveUnusedEntries(&us->registered_paths);
+    else
+    {
+        // Exit if path1 is an exact match of path2
+        if (strcmp(path1, path2)==0)
+        {
+            return true;
+        }
+    }
 
-    return USP_ERR_OK;
+    return false;
 }
 
 /*********************************************************************//**
 **
 ** FreeUspService
 **
-** Frees all memory associated with the specified USP servce and marks the USP Service as not in use
+** Frees all memory associated with the specified USP service and marks the USP Service as not in use
 **
 ** \param   us - pointer to USP service in usp_services[]
 **
@@ -1813,11 +1956,15 @@ void FreeUspService(usp_service_t *us)
     DM_EXEC_FreeMTPConnection(&us->controller_mtp);
     DM_EXEC_FreeMTPConnection(&us->agent_mtp);
     STR_VECTOR_Destroy(&us->gsdm_msg_ids);
+    STR_VECTOR_Destroy(&us->gsdm_paths);
 
     STR_VECTOR_Destroy(&us->registered_paths);
     SubsMap_Destroy(&us->subs_map);
     ReqMap_Destroy(&us->req_map);
     MsgMap_Destroy(&us->msg_map);
+
+    USP_SAFE_FREE(us->events);
+    USP_SAFE_FREE(us->commands);
 
     // Mark the entry as not-in-use
     us->instance = INVALID;
@@ -1828,61 +1975,69 @@ void FreeUspService(usp_service_t *us)
 ** QueueGetSupportedDMToUspService
 **
 ** Sends a GetSupportedDM request to the specified USP Service
-** And registers all paths owned by the USP Service into the data model
 **
 ** \param   us - pointer to USP service in usp_services[]
-** \param   paths - pointer to string vector containing paths to include in the GSDM request
+** \param   accepted_paths - pointer to string vector containing paths to get the GSDM of
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths)
+int QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *accepted_paths)
 {
     int i;
     Usp__Msg *req = NULL;
     char msg_id[MAX_MSG_ID_LEN];
-    dm_node_t *node;
-    dm_object_info_t *info;
+    str_vector_t paths;
+    char *vector[1];
+    char ancestor[MAX_DM_PATH];
+    str_vector_t *gsdm_paths;
+    int len;
     char *path;
-    bool is_exception;
+    bool all_paths_are_objects;
 
     // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
+    // In this case, no register response is queued, and no USP Service DM elements are registered into the Broker's data model
     if (us->controller_mtp.protocol == kMtpProtocol_None)
     {
         USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Connection dropped", __FUNCTION__, us->endpoint_id);
-        return;
+        return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Register all special exception paths into the Broker's data model
-    // NOTE: We cannot put these paths into the GSDM request as they are not objects
-    // So instead we register them into the Broker's data model directly here, based on them being standard TR181 data model elements
-    // and we remove them from the paths vector so that they are not put into the GSDM request later in this function
-    for (i=0; i < paths->num_entries; i++)
+    // Determine if all paths are to objects
+    all_paths_are_objects = true;
+    for (i=0; i < accepted_paths->num_entries; i++)
     {
-        path = paths->vector[i];
-        is_exception = IsPathASpecialException(path, us->group_id);
-        if (is_exception == true)
+        path = accepted_paths->vector[i];
+        len = strlen(path);
+        if (path[len-1] != '.')
         {
-            // Apply permissions to the special exception paths that have just been added
-            DEVICE_CTRUST_ApplyPermissionsToSubTree(path);
-            USP_FREE(path);
-            paths->vector[i] = NULL;   // Mark the entry as unused
+            all_paths_are_objects = false;
+            break;
         }
     }
 
-    // Exit if after removing all special exception paths, there are no paths left to get the supported data model of
-    STR_VECTOR_RemoveUnusedEntries(paths);
-    if (paths->num_entries == 0)
+    // Calculate the paths to get the supported data model of
+    if (all_paths_are_objects)
     {
-        // Sync the Broker's subscriptions with the USP Service now, because we're skipping the GSDM part of the registration sequence
-        // NOTE: No need to call UspService_RefreshInstances(), as the paths being registered are all special exception paths, which we know do not contain instance numbers
-        SyncSubscriptions(us);
-        return;
+        // If all paths are to objects, then just request the GSDM of those objects
+        gsdm_paths = accepted_paths;
+    }
+    else
+    {
+        // If some paths are to parameters, commands or events, then determine the common ancestor object of all paths
+        // We do this because some USP Services may not yet support USP Spec 1.4, which would allow us to request the paths individually
+        CalcCommonAncestorObject(accepted_paths, ancestor, sizeof(ancestor));
+
+        // Form a statically allocated string vector containing the path to get the supported data model of
+        vector[0] = ancestor;
+        paths.vector = vector;
+        paths.num_entries = NUM_ELEM(vector);
+        gsdm_paths = &paths;
     }
 
     // Create the GSDM request
     CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    req = MSG_UTILS_Create_GetSupportedDMReq(msg_id, paths);
+    req = MSG_UTILS_Create_GetSupportedDMReq(msg_id, gsdm_paths);
 
     // Queue the GSDM request
     MSG_HANDLER_QueueMessage(us->endpoint_id, req, &us->controller_mtp);
@@ -1890,51 +2045,176 @@ void QueueGetSupportedDMToUspService(usp_service_t *us, str_vector_t *paths)
 
     // Add the msg_id of the GSDM request to the list of GSDM responses we're expecting
     STR_VECTOR_Add(&us->gsdm_msg_ids, msg_id);
+    return USP_ERR_OK;
+}
 
-    // Register these paths owned by the USP Service into the data model as single instance objects
-    // This is necessary to ensure that no other USP Services can register the same path
-    // Whether the path is actually a single or multi-instance object will be discovered (and correctly set) when the GSDM response is processed
-    // NOTE: The path could already exist in the data model, if it had been registered as a parent of a child object previously
-    //       eg now registering Device.Parent and previously registered Device.Parent.Child
-    for (i=0; i < paths->num_entries; i++)
+/*********************************************************************//**
+**
+** CalcCommonAncestorObject
+**
+** Given a list of paths, determines the common root object in the data model which they are all children of
+**
+** \param   paths - string vector containing the paths to find a common ancestor of
+** \param   ancestor - buffer in which to return the common ancestor object path
+** \param   ancestor_len - length of buffer in which to return the common ancestor object path
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+void CalcCommonAncestorObject(str_vector_t *paths, char *ancestor, int ancestor_len)
+{
+    int i, j;
+    char *cur_path;
+    int len;
+    char *p;
+
+    // Calculate the object in the first path. This will be our starter for a common root object
+    USP_ASSERT(paths->num_entries >= 1);
+    USP_STRNCPY(ancestor, paths->vector[0], ancestor_len);
+    p = strrchr(ancestor, '.');
+    USP_ASSERT(p != NULL);      // Because path must include at least 'Device.'
+    p[1] = '\0';                // Terminate the string after the last '.'
+
+    // Exit if there was only one path
+    if (paths->num_entries == 1)
     {
-        path = paths->vector[i];
-        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_SingleInstance, SUPPRESS_PRE_EXISTANCE_ERR);
+        return;
+    }
+
+    // Iterate over the remaining paths finding the common root object
+    ancestor_len = strlen(ancestor);
+    for (i=1; i < paths->num_entries; i++)
+    {
+        // Skip if this path is already a descendant of the currently calculated ancestor
+        cur_path = paths->vector[i];
+        len = strlen(cur_path);
+        if ((ancestor_len <= len) && (memcmp(cur_path, ancestor, ancestor_len) == 0))
+        {
+            continue;
+        }
+
+        // Otherwise determine the last object they have in common
+        // This will be the last '.' in the strings before the strings stop matching
+        p = NULL;
+        len = MIN(len, ancestor_len);
+        for (j=0; j<len; j++)
+        {
+            // Exit loop if we've found a mismatch between the paths (ie the paths have diverged)
+            if (ancestor[j] != cur_path[j])
+            {
+                break;
+            }
+
+            // Save off the location of the last object they have in common
+            if (ancestor[j] == '.')
+            {
+                p = &ancestor[j];
+            }
+        }
+        USP_ASSERT(p != NULL);      // Because both paths must have at least 'Device.' in common
+
+        // Terminate the ancestor
+        p[1] = '\0';
+        ancestor_len = strlen(ancestor);
+    }
+}
+
+/*********************************************************************//**
+**
+** CalculatePermissionPaths
+**
+** Calculates a list of paths to apply permissions to, based on the paths registered by the USP Service
+** Typically the list returned is the same as the paths registered by the USP Service
+** However if the USP Service registers paths containing parent intermediate objects, then permissions should be applied to these instead
+**
+** For example if a USP Service registers Device.Intermediate.ObjectA. then
+** permissions must be applied to the subtree starting at Device.Intermediate (rather than the subtree starting at
+** Device.Intermediate.ObjectA.). If permissions aren't applied to Device.Intermediate., then
+** this node will not be annotated with any permissions, and hence a GSDM request will not return the meta information of
+** Device.Intermediate.
+**
+** \param   reg_paths - string vector of paths that were registered by the USP Service
+** \param   perm_paths - pointer to string vector in which to return the paths to add permissions to
+**
+** \return  None
+**
+**************************************************************************/
+void CalculatePermissionPaths(str_vector_t *reg_paths, str_vector_t *perm_paths)
+{
+    int i;
+    char path[MAX_DM_PATH];
+    dm_node_t *node;
+    int len;
+    char *p;
+
+    STR_VECTOR_Init(perm_paths);
+
+    // Iterate over all registered paths
+    for (i=0; i < reg_paths->num_entries; i++)
+    {
+        // Skip this path if it's already been registered by a previous register request sequence
+        // In this case, permissions will have already been calculated for it, so we don't need to calculate them again
+        USP_STRNCPY(path, reg_paths->vector[i], sizeof(path));
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
         if (node != NULL)
         {
-            info = &node->registered.object_info;
-            memset(info, 0, sizeof(dm_object_info_t));
-            node->group_id = us->group_id;
-            info->group_writable = false;
-            DM_INST_VECTOR_Init(&info->inst_vector);
+            continue;
         }
-        else
+
+        // Remove trailing '.', if the registered path was an object, so that the path just contains the node name at the end
+        // eg 'Device.Intermediate.ObjectA.'  => 'Device.Intermediate.ObjectA'
+        len = strlen(path);
+        if (path[len-1] == '.')
         {
-            USP_LOG_Error("%s: Requested path '%s' could not be registered into the data model", __FUNCTION__, path);
+            path[len-1] = '\0';
+        }
+
+        node = NULL;
+
+        while (node == NULL)
+        {
+            // Remove the node name at the end, to form the parent of the node under consideration
+            // eg 'Device.Intermediate.ObjectA'  => 'Device.Intermediate'
+            p = strrchr(path, '.');
+            *p = '\0';
+
+            // If this parent path already exists in the data model, then we do not have to apply permissions to it
+            // So add the node under consideration (it's child) to the list of paths to apply permissions to
+            // (as the node under consideration is the first node in the hierarchy that does not exist in the data model)
+            node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+            if (node != NULL)
+            {
+                *p = '.';       // Restore the path to the node under consideration
+                STR_VECTOR_Add_IfNotExist(perm_paths, path);
+            }
+
+            // If node is NULL, then we continue to bite off objects from the end of the path until we reach a node that does exist
+            // This is to cope with registered paths such as Device.Intermediate1.Intermediate2.ObjectA., where we want
+            // the permissions to be applied at the subtree Device.Intermediate1.
         }
     }
 }
 
 /*********************************************************************//**
 **
-** ApplyPermissionsToUspService
+** ApplyPermissionsToPaths
 **
-** Calculates the permissions for all nodes owned by the specified USP Service
+** Calculates the permissions for all paths (and their children) specified in the list
 **
-** \param   us - pointer to USP service in usp_services[]
+** \param   sv - string vector of paths to apply permissions to
 **
-** \return  USP_ERR_OK if successful
+** \return  None
 **
 **************************************************************************/
-void ApplyPermissionsToUspService(usp_service_t *us)
+void ApplyPermissionsToPaths(str_vector_t *sv)
 {
     int i;
     char *path;
 
     // Iterate over all paths registered for the USP Service
-    for (i=0; i < us->registered_paths.num_entries; i++)
+    for (i=0; i < sv->num_entries; i++)
     {
-        path = us->registered_paths.vector[i];
+        path = sv->vector[i];
         DEVICE_CTRUST_ApplyPermissionsToSubTree(path);
     }
 }
@@ -2508,18 +2788,10 @@ int Broker_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notif
     char *persistent_str = (persistent) ? "true" : "false";
     static unsigned id_count = 1;
     char *obj_path = "Device.LocalAgent.Subscription.";
-    group_add_param_t params[] = {
-                           // Name,  value,  is_required, err_code, err_msg
-                           {"NotifType", TEXT_UTILS_EnumToString(notify_type, notify_types, NUM_ELEM(notify_types)), true, USP_ERR_OK, NULL },
-                           {"ReferenceList", path, true, USP_ERR_OK, NULL },
-                           {"ID", subscription_id, true, USP_ERR_OK, NULL },
-                           {"Persistent", persistent_str, true, USP_ERR_OK, NULL },
-                           {"TimeToLive", "0", true, USP_ERR_OK, NULL },
-                           {"NotifRetry", "false", true, USP_ERR_OK, NULL },
-                           {"NotifExpiration", "0", true, USP_ERR_OK, NULL },
-                           {"Enable", "true", true, USP_ERR_OK, NULL }
-                         };
     char msg_id[MAX_MSG_ID_LEN];
+    char subs_id_type = 'S';
+    char *notify_type_str;
+    char *ref_list;
 
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(group_id);
@@ -2532,11 +2804,33 @@ int Broker_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notif
         return USP_ERR_INTERNAL_ERROR;
     }
 
+    // If the subscription is to 'Device.', then replace the path with individual DM elements, and indicate a different type in the subscription ID
+    ref_list = path;
+    if ((strcmp(path, dm_root)==0) && ((notify_type==kSubNotifyType_OperationComplete) || (notify_type==kSubNotifyType_Event)) )
+    {
+        ref_list = (notify_type==kSubNotifyType_Event) ?  us->events : us->commands;
+        USP_ASSERT(ref_list != NULL);       // The caller should have ensured that there were some paths to subscribe to
+        subs_id_type = 'D';
+    }
+
     // Form the value of the subscription ID
-    USP_SNPRINTF(subscription_id, sizeof(subscription_id), "%d-%d-%x-%s", broker_instance, id_count, (unsigned) time(NULL), broker_unique_str);
+    USP_SNPRINTF(subscription_id, sizeof(subscription_id), "%d-%d-%x-%s-%c", broker_instance, id_count, (unsigned) time(NULL), broker_unique_str, subs_id_type);
     id_count++;
 
-    // Form the USP Add Request message, ensuring that the path contains a trailing dot
+    notify_type_str = TEXT_UTILS_EnumToString(notify_type, notify_types, NUM_ELEM(notify_types));
+    group_add_param_t params[] = {
+                           // Name,             value,              is_required, err_code, err_msg
+                           {"NotifType",        notify_type_str,    true, USP_ERR_OK, NULL },
+                           {"ReferenceList",    ref_list,           true, USP_ERR_OK, NULL },
+                           {"ID",               subscription_id,    true, USP_ERR_OK, NULL },
+                           {"Persistent",       persistent_str,     true, USP_ERR_OK, NULL },
+                           {"TimeToLive",       "0",                true, USP_ERR_OK, NULL },
+                           {"NotifRetry",       "false",            true, USP_ERR_OK, NULL },
+                           {"NotifExpiration",  "0",                true, USP_ERR_OK, NULL },
+                           {"Enable",           "true",             true, USP_ERR_OK, NULL }
+                         };
+
+    // Form the USP Add Request message
     CalcBrokerMessageId(msg_id, sizeof(msg_id));
     req = MSG_UTILS_Create_AddReq(msg_id, obj_path, params, NUM_ELEM(params));
 
@@ -2556,7 +2850,7 @@ int Broker_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notif
     err = ProcessAddResponse(resp, obj_path, &service_instance, NULL, NULL, 0);
     if (err == USP_ERR_OK)
     {
-        SubsMap_Add(&us->subs_map, service_instance, path, subscription_id, broker_instance);
+        SubsMap_Add(&us->subs_map, service_instance, path, notify_type, subscription_id, broker_instance);
     }
 
     // Free the add response, since we've finished with it
@@ -2622,6 +2916,91 @@ int Broker_GroupUnsubscribe(int broker_instance, int group_id, subs_notify_t not
 
 /*********************************************************************//**
 **
+** UpdateEventsAndCommands
+**
+** Updates the list of USP events and async commands registered by the specified USP service
+**
+** \param   us - pointer to USP service in usp_services[]
+**
+** \return  flags indicating which lists changed
+**
+**************************************************************************/
+unsigned UpdateEventsAndCommands(usp_service_t *us)
+{
+    int i;
+    str_vector_t events;
+    str_vector_t commands;
+    dm_node_t *node;
+    unsigned change_flags = 0;
+
+    // Initialize vectors
+    STR_VECTOR_Init(&events);
+    STR_VECTOR_Init(&commands);
+
+    // Iterate over all paths registered by the USP Service, finding all events and async commands underneath them
+    for (i=0; i < us->registered_paths.num_entries; i++)
+    {
+        node = DM_PRIV_GetNodeFromPath(us->registered_paths.vector[i], NULL, NULL, 0);
+        USP_ASSERT(node != NULL);
+
+        // NOTE: There is no need to check group_id, as USP 1.4 specification ensures that all DM elements underneath a
+        // registered object are owned by the same USP Service as the registered object
+        DM_PRIV_GetAllEventsAndCommands(node, &events, &commands);
+    }
+
+    change_flags |= UpdateDeviceDotNotificationList(&events, &us->events, EVENTS_LIST_CHANGED);
+    change_flags |= UpdateDeviceDotNotificationList(&commands, &us->commands, COMMANDS_LIST_CHANGED);
+
+    // Free the vectors
+    STR_VECTOR_Destroy(&events);
+    STR_VECTOR_Destroy(&commands);
+
+    return change_flags;
+}
+
+/*********************************************************************//**
+**
+** UpdateDeviceDotNotificationList
+**
+** Updates the specified notification list, returning whether the list actually changed
+**
+** \param   sv - vector containing DM paths to put in the list
+** \param   p_list - pointer to a variable to update with the new list
+** \param   flags - flag value to return if the list changed, otherwise return 0 if the list did not change
+**
+** \return  flags indicating which lists changed
+**
+**************************************************************************/
+unsigned UpdateDeviceDotNotificationList(str_vector_t *sv, char **p_list, unsigned flags)
+{
+    char *new_list;
+    char *cur_list = *p_list;
+
+    // Determine the new list
+    new_list = STR_VECTOR_ToSortedList(sv);
+
+    // Exit if the list is still empty
+    if ((new_list == NULL) && (cur_list == NULL))
+    {
+        return 0;
+    }
+
+    // Exit if the list hasn't changed (and is still non-empty)
+    if ((new_list != NULL) && (cur_list != NULL) && (strcmp(new_list, cur_list)==0))
+    {
+        USP_FREE(new_list);
+        return 0;
+    }
+
+    // Otherwise the list has changed (either empty <-> non-empty or list contents changed)
+    // So update with the new list
+    USP_SAFE_FREE(cur_list);
+    *p_list = new_list;
+    return flags;
+}
+
+/*********************************************************************//**
+**
 ** SyncSubscriptions
 **
 ** Ensures that the USP Service contains only the subscriptions which it is supposed to
@@ -2640,6 +3019,9 @@ int SyncSubscriptions(usp_service_t *us)
     kv_vector_t kvv;        // NOTE: None of the data in this structure will be dynamically allocated, so it does not have to be freed
     kv_pair_t kv;
     char msg_id[MAX_MSG_ID_LEN];
+
+    // Update the lists of USP events and async commands registered by this USP service
+    UpdateEventsAndCommands(us);
 
     // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
     if (us->controller_mtp.protocol == kMtpProtocol_None)
@@ -2797,6 +3179,9 @@ void ProcessGetSubsResponse_ResolvedPathResult(usp_service_t *us, Usp__GetResp__
     int err;
     int items_converted;
     bool was_marked;
+    int len;
+    char *device_dot_paths;
+    subs_map_t *sm;
 
     // Exit if unable to extract the instance number of this subscription in the USP Service's subscription table
     node = DM_PRIV_GetNodeFromPath(res->resolved_path, &inst, NULL, 0);
@@ -2841,6 +3226,35 @@ void ProcessGetSubsResponse_ResolvedPathResult(usp_service_t *us, Usp__GetResp__
     {
         STR_VECTOR_Add(subs_to_delete, res->resolved_path);
         return;
+    }
+
+    // Determine if the Subscription ID was the one representing a 'Device.' subscription.
+    // This is denoted by the subscription ID ending in 'D' and the path list matching those in the data model for this USP Service
+    // If it does, then we change the path back to 'Device.' for subsequent code
+    // If it doesn't, then we delete the subscription
+    len = strlen(subscription_id);
+    if ( (subscription_id[len-1] == 'D') &&
+         ((notify_type==kSubNotifyType_OperationComplete) || (notify_type==kSubNotifyType_Event)) )
+    {
+        device_dot_paths = (notify_type==kSubNotifyType_Event) ? us->events : us->commands;
+
+        // Exit, deleting the subscription if it did not match all DM elements registered by the USP Service of the specified subs type
+        if ((device_dot_paths == NULL) || (strcmp(path, device_dot_paths) != 0))
+        {
+            STR_VECTOR_Add(subs_to_delete, res->resolved_path);
+
+            // Clean the broker's internal state, so that the subscription will be recreated with the changed DM elements
+            sm = SubsMap_FindByPathAndNotifyType(&us->subs_map, dm_root, notify_type);
+            if (sm != NULL)
+            {
+                DEVICE_SUBSCRIPTION_UnmarkVendorLayerSubs(sm->broker_instance, notify_type, dm_root, us->group_id);
+                SubsMap_Remove(&us->subs_map, sm);
+            }
+            return;
+        }
+
+        // Otherwise we've matched a subscription to Device. for the notify type, so change the path for the rest of the code
+        path = dm_root;
     }
 
     // Determine whether this path can be satisfied by the vendor layer
@@ -2895,7 +3309,7 @@ void ProcessGetSubsResponse_ResolvedPathResult(usp_service_t *us, Usp__GetResp__
 
     // If the code gets here, then the subscription should be added to the subscription mapping table
     // (It will already have been marked as owned by the Vendor layer in DEVICE_SUBSCRIPTION_MarkVendorLayerSubs)
-    SubsMap_Add(&us->subs_map, service_instance, path, subscription_id, broker_instance);
+    SubsMap_Add(&us->subs_map, service_instance, path, notify_type, subscription_id, broker_instance);
 }
 
 /*********************************************************************//**
@@ -3047,48 +3461,6 @@ int UspService_RefreshInstances(usp_service_t *us, str_vector_t *paths, bool wit
     usp__msg__free_unpacked(resp, pbuf_allocator);
 
     return err;
-}
-
-/*********************************************************************//**
-**
-** AddTopLevelTableNodes
-**
-** Function called recursively to add the object paths of all top level multi-instance object nodes to a string vector
-**
-** \param   parent - pointer to data model node to see whether to add
-** \param   sv - pointer to string vector in which to add the schema paths
-**
-** \return  None
-**
-**************************************************************************/
-void AddTopLevelTableNodes(dm_node_t *parent, str_vector_t *sv)
-{
-    dm_node_t *child;
-    char *path;
-    char *p;
-
-    // Exit if we've found a top level multi-instance object. We do not have to recurse any further for nested multi-instance objects
-    if (parent->type == kDMNodeType_Object_MultiInstance)
-    {
-        STR_VECTOR_Add(sv, parent->path);
-
-        // Convert the schema path back to an object path by in-place truncating the string at the terminating '{i}'
-        path = sv->vector[ sv->num_entries-1 ];
-        p = strchr(path, '{');
-        USP_ASSERT(p != NULL);
-        *p = '\0';
-        return;
-    }
-
-    // Iterate over list of children
-    child = (dm_node_t *) parent->child_nodes.head;
-    while (child != NULL)
-    {
-        AddTopLevelTableNodes(child, sv);
-
-        // Move to next sibling in the data model tree
-        child = (dm_node_t *) child->link.next;
-    }
 }
 
 /*********************************************************************//**
@@ -3785,6 +4157,7 @@ int SendOperateAndProcessResponse(int group_id, char *path, bool is_sync, char *
     Usp__Msg *resp;
     usp_service_t *us;
     char msg_id[MAX_MSG_ID_LEN];
+    bool modified_num_entries = false;
 
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(group_id);
@@ -3797,9 +4170,23 @@ int SendOperateAndProcessResponse(int group_id, char *path, bool is_sync, char *
         return USP_ERR_INTERNAL_ERROR;
     }
 
+    // Temporarily remove the last entry from the input args, as this may be the internally added
+    // Internal_TimeRef argument (for async commands). We don't want to pass this argument through to the USP Service
+    if ((input_args->num_entries >= 1) && (strcmp(input_args->vector[input_args->num_entries-1].key, SAVED_TIME_REF_ARG_NAME)==0))
+    {
+        input_args->num_entries--;
+        modified_num_entries = true;
+    }
+
     // Form the USP Operate Request message
     CalcBrokerMessageId(msg_id, sizeof(msg_id));
     req = MSG_UTILS_Create_OperateReq(msg_id, path, command_key, input_args);
+
+    // Restore the last entry in the input args
+    if (modified_num_entries)
+    {
+        input_args->num_entries++;
+    }
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -4116,46 +4503,36 @@ void ProcessUniqueKeys(char *path, Usp__GetInstancesResp__CurrInstance__UniqueKe
 
 /*********************************************************************//**
 **
-** ProcessGsdm_RequestedPath
+** ProcessGsdm_RequestedObjectResult
 **
 ** Parses the specified RequestedObjectResult of a GSDM Response, registering the data model elements found into the USP Broker's data model
 **
 ** \param   ror - pointer to result object to parse
 ** \param   us - USP Service that sent the GDSM response
+** \param   ipaths - string vector in which to add all top level multi-instance objects which are registered by this function. This will be used to get baseline instances.
 **
-** \return  true if the RequestedObjectResult contained a successful response, and the data model elemts were added into the Broker's data model
+** \return  None
 **
 **************************************************************************/
-bool ProcessGsdm_RequestedPath(Usp__GetSupportedDMResp__RequestedObjectResult *ror, usp_service_t *us)
+void ProcessGsdm_RequestedObjectResult(Usp__GetSupportedDMResp__RequestedObjectResult *ror, usp_service_t *us, str_vector_t *ipaths)
 {
     int i;
-    int index;
-
-    // Exit if this result was not one of the paths that the USP Service originally requested
-    index = STR_VECTOR_Find(&us->registered_paths, ror->req_obj_path);
-    if (index == INVALID)
-    {
-        USP_LOG_Error("%s: Ignoring requested_object_result for '%s', as it wasn't requested", __FUNCTION__, ror->req_obj_path);
-        return false;
-    }
 
     // Exit if the USP Service encountered an error providing the supported data model for this path
     if (ror->err_code != USP_ERR_OK)
     {
-        USP_LOG_Error("%s: USP Service did not provide data model for '%s' (err_code=%d, err_msg='%s')", __FUNCTION__, ror->req_obj_path, ror->err_code, ror->err_msg);
-        return false;
+        USP_LOG_Warning("%s: USP Service did not provide data model for '%s' (err_code=%d, err_msg='%s')", __FUNCTION__, ror->req_obj_path, ror->err_code, ror->err_msg);
+        return;
     }
 
     // Ensure the supported objects are in hierarchical order. This is necessary because parent DM elements must be registered before child DM elements
     qsort(ror->supported_objs, ror->n_supported_objs, sizeof(Usp__GetSupportedDMResp__SupportedObjectResult *), CompareGsdm_SupportedObj);
 
-    // Iterate over all supported objects, registering them into the data model
+    // Iterate over all supported objects
     for (i=0; i < ror->n_supported_objs; i++)
     {
-        ProcessGsdm_SupportedObject(ror->supported_objs[i], us->group_id);
+        ProcessGsdm_SupportedObject(ror->supported_objs[i], us, ipaths);
     }
-
-    return true;
 }
 
 /*********************************************************************//**
@@ -4187,85 +4564,57 @@ int CompareGsdm_SupportedObj(const void *entry1, const void *entry2)
 ** ProcessGsdm_SupportedObject
 **
 ** Parses the specified SupportedObjectResult, registering the data model elements found into the USP Broker's data model
+** NOTE: Errors parsing/adding parameters, commands and events are ignored.
 **
 ** \param   sor - pointer to result object to parse
-** \param   group_id - group_id of the USP Service
+** \param   us - USP Service which we received the GSDM response from
+** \param   ipaths - string vector in which to add all top level multi-instance objects which are registered by this function. This will be used to get baseline instances.
 **
 ** \return  None
 **
 **************************************************************************/
-void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult *sor, int group_id)
+void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult *sor, usp_service_t *us, str_vector_t *ipaths)
 {
     int i;
     int len;
-    int err;
-    char *p;
-    bool is_writable;
     char path[MAX_DM_PATH];
+    unsigned type_flags;
+    int err;
+    bool is_wanted;
+    bool want_all_children;
+    bool is_writable;
+    bool registered_ok;
     Usp__GetSupportedDMResp__SupportedParamResult *sp;
     Usp__GetSupportedDMResp__SupportedEventResult *se;
     Usp__GetSupportedDMResp__SupportedCommandResult *sc;
-    unsigned type_flags;
-    dm_node_t *node;
+    int group_id;
 
+    // Exit if the USP Service did not register (in the last register request) this object or any of its immediate children
     USP_STRNCPY(path, sor->supported_obj_path, sizeof(path));
     len = strlen(path);
-
-    // Exit if the path does not begin with "Device."
-    if (strncmp(path, dm_root, dm_root_len) != 0)
+    is_wanted = IsWantedGsdmObject(path, &us->gsdm_paths, &want_all_children);
+    if (is_wanted == false)
     {
-        USP_LOG_Error("%s: Object path to register is invalid (%s)", __FUNCTION__, path);
         return;
     }
 
-    // Register the object
-    if (sor->is_multi_instance)
+    // Exit if unable to register this object into the Broker's data model
+    // NOTE: We only do this if the USP Service owns all children of this object. If it only owns some children, then this object
+    // is a single instance object and will be registered with no owner automatically when child DM elements are registered.
+    group_id = us->group_id;
+    if (want_all_children)
     {
-        // MULTI-INSTANCE OBJECT
-        // Exit if unable to register the object
         is_writable = (sor->access != USP__GET_SUPPORTED_DMRESP__OBJ_ACCESS_TYPE__OBJ_READ_ONLY);
-
-        // Add this path to the data model
-        // NOTE: If the path is already present, then this just modifies its group_id
-        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_MultiInstance, OVERRIDE_LAST_TYPE);
-        if (node == NULL)
+        registered_ok = RegisterObjectInBroker(path, len, sor->is_multi_instance, is_writable, group_id, ipaths);
+        if (registered_ok == false)
         {
-            USP_LOG_Error("%s: Failed to register multi-instance object '%s'", __FUNCTION__, path);
             return;
         }
-        node->group_id = group_id;
-        node->registered.object_info.group_writable = is_writable;
-
-        // Register a refresh instances vendor hook if this is a top level object
-        // (i.e one that contains only one instance separator, at the end of the string
-        #define INSTANCE_SEPARATOR "{i}"
-        p = strstr(path, INSTANCE_SEPARATOR);
-        if ((p != NULL) && (strcmp(p, "{i}.") == 0))
-        {
-            // Exit if unable to register a refresh instances vendor hook
-            err = USP_REGISTER_Object_RefreshInstances(path, Broker_RefreshInstances);
-            if (err != USP_ERR_OK)
-            {
-                USP_LOG_Error("%s: Failed to register refresh instances vendor hook for object '%s'", __FUNCTION__, path);
-                return;
-            }
-        }
-    }
-    else
-    {
-        // SINGLE-INSTANCE OBJECT
-        // Add this path to the data model
-        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_SingleInstance, SUPPRESS_PRE_EXISTANCE_ERR);
-        if (node == NULL)
-        {
-            USP_LOG_Error("%s: Failed to register single-instance object '%s'", __FUNCTION__, path);
-            return;
-        }
-        node->group_id = group_id;
+        USP_LOG_Info("USP Service '%s' registered object '%s'", us->endpoint_id, path);
     }
 
     //-----------------------------------------------------
-    // Iterate over all child parameters, registering them
+    // Iterate over all child parameters, registering all which were registered by the USP Service
     for (i=0; i < sor->n_supported_params; i++)
     {
         sp = sor->supported_params[i];
@@ -4273,9 +4622,8 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
         // Concatenate the parameter name to the end of the path
         USP_STRNCPY(&path[len], sp->param_name, sizeof(path)-len);
 
-        // Skip if this parameter has already been registered. This may be the case, if a child object is registered before a parent object
-        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
-        if (node != NULL)
+        // Skip if this parameter is not supposed to be registered by the USP Service
+        if ((want_all_children==false) && (IsWantedDmElement(path, &us->gsdm_paths) == false))
         {
             continue;
         }
@@ -4302,6 +4650,10 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
         {
             USP_LOG_Error("%s: Failed to register parameter '%s'", __FUNCTION__, path);
         }
+        else
+        {
+            USP_LOG_Info("USP Service '%s' registered parameter '%s'", us->endpoint_id, path);
+        }
     }
 
     //-----------------------------------------------------
@@ -4313,9 +4665,8 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
         // Concatenate the event name to the end of the path
         USP_STRNCPY(&path[len], se->event_name, sizeof(path)-len);
 
-        // Skip if this event has already been registered. This may be the case, if a child object is registered before a parent object
-        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
-        if (node != NULL)
+        // Skip if this event is not supposed to be registered by the USP Service
+        if ((want_all_children==false) && (IsWantedDmElement(path, &us->gsdm_paths) == false))
         {
             continue;
         }
@@ -4327,6 +4678,8 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
             USP_LOG_Error("%s: Failed to register event '%s'", __FUNCTION__, path);
             continue;
         }
+
+        USP_LOG_Info("USP Service '%s' registered event '%s'", us->endpoint_id, path);
 
         // Register the group_id for this event
         err = USP_REGISTER_GroupId(path, group_id);
@@ -4350,9 +4703,8 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
         // Concatenate the command name to the end of the path
         USP_STRNCPY(&path[len], sc->command_name, sizeof(path)-len);
 
-        // Skip if this command has already been registered. This may be the case, if a child object is registered before a parent object
-        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
-        if (node != NULL)
+        // Skip if this command is not supposed to be registered by the USP Service
+        if ((want_all_children==false) && (IsWantedDmElement(path, &us->gsdm_paths) == false))
         {
             continue;
         }
@@ -4377,6 +4729,8 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
             continue;
         }
 
+        USP_LOG_Info("USP Service '%s' registered command '%s'", us->endpoint_id, path);
+
         // Register the group_id for this USP command
         err = USP_REGISTER_GroupId(path, group_id);
         USP_ASSERT(err == USP_ERR_OK);
@@ -4393,57 +4747,226 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
 
 /*********************************************************************//**
 **
+** RegisterObjectInBroker
+**
+** Registers the specified object from the GSDM response into the Broker's data model
+** NOTE: It is possible that the object has already been registered in the case of multiple register requests
+**
+** \param   path - Supported data model path of object to register
+** \param   len - length of path string
+** \param   is_multi_instance - Set if the object is multi-instance
+** \param   is_writable - Set if the object is multi-instance and a Controller can add/delete instances
+** \param   group_id - Identifies which USP Service is registering this object
+** \param   ipaths - string vector in which to add all top level multi-instance objects which are registered by this function. This will be used to get baseline instances.
+**
+** \return  true if the SupportedObjectResult contained a successful response, and the object was added into the Broker's data model
+**
+**************************************************************************/
+bool RegisterObjectInBroker(char *path, int len, bool is_multi_instance, bool is_writable, int group_id, str_vector_t *ipaths)
+{
+    dm_node_t *node;
+    char *p;
+    int err;
+
+    if (is_multi_instance)
+    {
+        // MULTI-INSTANCE OBJECT
+        // Exit if path does not end in '{i}.'
+        if (strcmp(&path[len-4], "{i}.") != 0)
+        {
+            USP_LOG_Error("%s: Ignoring '%s' as it's a multi-instance object but it does not end in '{i}.'", __FUNCTION__, path);
+            return false;
+        }
+
+        // Add this path to the data model
+        // NOTE: If the path is already present, then this just modifies its group_id
+        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_MultiInstance, SUPPRESS_PRE_EXISTANCE_ERR);
+        if (node == NULL)
+        {
+            USP_LOG_Error("%s: Failed to register multi-instance object '%s' into Broker data model", __FUNCTION__, path);
+            return false;
+        }
+        node->group_id = group_id;
+        node->registered.object_info.group_writable = is_writable;
+
+        // Register a refresh instances vendor hook if this is a top level object
+        // (i.e one that contains only one instance separator, at the end of the string
+        #define INSTANCE_SEPARATOR "{i}"
+        p = strstr(path, INSTANCE_SEPARATOR);
+        if ((p != NULL) && (strcmp(p, "{i}.") == 0))
+        {
+            // Exit if unable to register a refresh instances vendor hook
+            err = USP_REGISTER_Object_RefreshInstances(path, Broker_RefreshInstances);
+            if (err != USP_ERR_OK)
+            {
+                USP_LOG_Error("%s: Failed to register refresh instances vendor hook for object '%s'", __FUNCTION__, path);
+                return false;
+            }
+
+            // Add this path to the list of objects to get the baseline instances of
+            *p = '\0';   // Temporarily truncate the supported data model path to a partial path
+            STR_VECTOR_Add(ipaths, path);
+            *p = '{';
+        }
+    }
+    else
+    {
+        // SINGLE-INSTANCE OBJECT
+        // Exit if path ends in '{i}.'
+        if (strcmp(&path[len-4], "{i}.") == 0)
+        {
+            USP_LOG_Error("%s: Ignoring '%s' as it's a single-instance object but ends in '{i}.'", __FUNCTION__, path);
+            return false;
+        }
+
+        // Add this path to the data model
+        node = DM_PRIV_AddSchemaPath(path, kDMNodeType_Object_SingleInstance, SUPPRESS_PRE_EXISTANCE_ERR);
+        if (node == NULL)
+        {
+            USP_LOG_Error("%s: Failed to register single-instance object '%s' into Broker data model", __FUNCTION__, path);
+            return false;
+        }
+        node->group_id = group_id;
+    }
+
+    return true;
+}
+
+/*********************************************************************//**
+**
+** IsWantedGsdmObject
+**
+** Determines whether the specified object path contains DM elements which were registered by the USP Service
+**
+** \param   obj_path - path to an object that we have received the supported data model of
+** \param   accepted_paths - paths to filter for, which were registered in the previous register request
+**
+** \return  true if the specified object path contains DM elements which were registered by the USP Service
+**
+**************************************************************************/
+bool IsWantedGsdmObject(char *obj_path, str_vector_t *accepted_paths, bool *want_all_children)
+{
+    int i;
+    char *reg_path;
+    int reg_len;
+    int obj_len;
+
+    // Set default return value for want_all_children
+    *want_all_children = false;
+
+    // Exit if path does not begin with 'Device.'
+    obj_len = strlen(obj_path);
+    if ((obj_len < dm_root_len) || (memcmp(obj_path, dm_root, dm_root_len) != 0))
+    {
+        USP_LOG_Warning("%s: Ignoring supported object result for '%s' because it is not rooted in 'Device.'", __FUNCTION__, obj_path);
+        return false;
+    }
+
+    // Exit if the path does not end in '.'
+    if (obj_path[obj_len-1] != '.')
+    {
+        USP_LOG_Warning("%s: Ignoring supported object result for '%s' because it does not end in '.'", __FUNCTION__, obj_path);
+        return false;
+    }
+
+    // Iterate over all accepted paths
+    for (i=0; i < accepted_paths->num_entries; i++)
+    {
+        reg_path = accepted_paths->vector[i];
+        reg_len = strlen(reg_path);
+
+        if (reg_path[reg_len-1] == '.')
+        {
+            // Registered path is a partial path
+            // Exit if the object path matches or is a child of the registered path
+            if ((reg_len <= obj_len) && (memcmp(reg_path, obj_path, reg_len)==0))
+            {
+                *want_all_children = true;
+                return true;
+            }
+        }
+        else
+        {
+            // Registered path is not a partial path (ie it's a parameter, command or event)
+            // Exit if the object path is the immediate parent of the registered path
+            if ((obj_len <= reg_len) && (memcmp(reg_path, obj_path, obj_len)==0) && (strchr(&reg_path[obj_len], '.')==NULL))
+            {
+                return true;
+            }
+        }
+    }
+
+    // If none of the requested paths matched, then this object does not contain DM elements which were registered by the USP Service
+    return false;
+}
+
+/*********************************************************************//**
+**
+** IsWantedDmElement
+**
+** Determines whether the specified DM element is one of, or a child of the accepted paths
+**
+** \param   elem_path - Supported data model element to see if it matches the registered paths
+** \param   accepted_paths - paths to filter for, which were registered in the previous register request
+**
+** \return  true if the DM element matches one of the register paths
+**
+**************************************************************************/
+bool IsWantedDmElement(char *elem_path, str_vector_t *accepted_paths)
+{
+    int i;
+    int elem_len;
+    int reg_len;
+    char *reg_path;
+
+    // Iterate over all registered paths, seeing if any match the DM element
+    elem_len = strlen(elem_path);
+    for (i=0; i< accepted_paths->num_entries; i++)
+    {
+        reg_path = accepted_paths->vector[i];
+        reg_len = strlen(reg_path);
+
+        if (reg_path[reg_len-1] == '.')
+        {
+            // Registered path is an object (partial path), so determine if the element is a child
+            if ((elem_len >= reg_len) && (memcmp(elem_path, reg_path, reg_len)==0))
+            {
+                return true;
+            }
+        }
+        else
+        {
+            // Registered path is a parameter, command or event, so determine if the element matches it exactly
+            if (strcmp(elem_path, reg_path)==0)
+            {
+                return true;
+            }
+
+        }
+    }
+
+    return false;
+}
+
+/*********************************************************************//**
+**
 ** ShouldPathBeAddedToDataModel
 **
 ** Determines whether a path, specified in the register message, should be added into the Broker's data model
 **
 ** \param   us - USP Service that is attempting to register the path
 ** \param   path - path to data model element which USP Service wants to add to Broker's data model
+** \param   accepted_paths - list of paths in the current register request which have been accepted to be registered
+**                           This list is used to check that the USP Service is not attempting to break the registration rules within the register request message
 **
 ** \return  USP_ERR_OK if the path should be added to the Broker's data model,
 **          otherwise return an error code indicating why the paths shouldn't be added
 **
 **************************************************************************/
-int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path)
+int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path, str_vector_t *accepted_paths)
 {
     bool is_registered;
-    bool is_exception;
     bool is_valid;
-    bool is_same_group_id;
-    dm_node_t *node;
-
-    // Exit if this path is the parent of one which has already been registered to this USP Service
-    // In which case, we allow the parent to be registered after the child, but only if the parent
-    // does not have any children owned by another USP Service or the internal data model
-    is_registered = IsPathAlreadyRegisteredAsAParent(us, path);
-    if (is_registered)
-    {
-        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
-        USP_ASSERT(node != NULL);
-
-        is_same_group_id = DM_PRIV_AreAllChildrenGroupId(node, us->group_id);
-        if (is_same_group_id == false)
-        {
-            USP_ERR_SetMessage("%s: Requested path '%s' has some children owned by a different USP Service", __FUNCTION__, path);
-            return USP_ERR_REGISTER_FAILURE;
-        }
-
-        return USP_ERR_OK;
-    }
-
-    // Exit if path is already registered, so should not be added.
-    is_registered = IsPathAlreadyRegistered(path);
-    if (is_registered)
-    {
-        return USP_ERR_PATH_ALREADY_REGISTERED;
-    }
-
-    // Exit if path is one of the list of special exception paths, so should be added
-    is_exception = IsPathASpecialException(path, INVALID);
-    if (is_exception == true)
-    {
-        return USP_ERR_OK;
-    }
 
     // Exit if path looks textually invalid, so should not be added
     is_valid = IsValidUspServicePath(path);
@@ -4452,52 +4975,15 @@ int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path)
         return USP_ERR_REGISTER_FAILURE;
     }
 
-    // If the code gets here, then the path looks valid, so should be added
+    // Exit if path has already been registered, or is prevented from being registered due to a previous registration
+    is_registered = IsPathAlreadyRegistered(path, accepted_paths);
+    if (is_registered)
+    {
+        return USP_ERR_PATH_ALREADY_REGISTERED;
+    }
+
+    // If the code gets here, then the path should be added
     return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
-** IsPathAlreadyRegisteredAsAParent
-**
-** Determines whether the specified path has already been registered as a parent of a path owned by the specified USP Service
-** and that the path doesn't have any children which are registered to any other USP Services
-** This deals with the case of Device.Parent being registered after Device.Parent.Child
-**
-** \param   us - USP Service that is attempting to register the path
-** \param   path - path of the data model object to register
-**
-** \return  true if the path has already been registered into the data model (as a parent of an object owned by this USP Service)
-**
-**************************************************************************/
-bool IsPathAlreadyRegisteredAsAParent(usp_service_t *us, char *path)
-{
-    int i;
-    int len;
-    char *rpath;
-    int rpath_len;
-
-    // Exit if the requested path does not end in a dot. This error will be handled later by IsValidUspServicePath()
-    // (We check this to prevent the code below from matching on a partial object name)
-    len = strlen(path);
-    if (path[len-1] != '.')
-    {
-        return false;
-    }
-
-    // Iterate over all paths registered by this USP Service, seeing if any already contain this path, as their parent
-    for (i=0; i < us->registered_paths.num_entries; i++)
-    {
-        rpath = us->registered_paths.vector[i];
-        rpath_len = strlen(rpath);
-        if ((rpath_len > len) && (memcmp(rpath, path, len)==0))
-        {
-            return true;
-        }
-    }
-
-    // If the code gets here, then no match was found
-    return false;
 }
 
 /*********************************************************************//**
@@ -4505,193 +4991,116 @@ bool IsPathAlreadyRegisteredAsAParent(usp_service_t *us, char *path)
 ** IsPathAlreadyRegistered
 **
 ** Determines whether the specified path has been registered into the data model before
+** or should be prevented from being registered due to a previous registration
 **
-** \param   requested_path - path of the data model object to register
+** \param   req_path - path of the data model object to register
+** \param   accepted_paths - list of paths in the current register request which have been accepted to be registered
+**                           This list is used to check that the USP Service is not attempting to break the registration rules within the register request message
 **
 ** \return  true if the path has already been registered into the data model
 **
 **************************************************************************/
-bool IsPathAlreadyRegistered(char *requested_path)
+bool IsPathAlreadyRegistered(char *req_path, str_vector_t *accepted_paths)
 {
-    int i;
+    int i, j;
     usp_service_t *us;
-    int index;
-    unsigned flags;
+    char *path;
+    int req_path_len;
+    int len;
+    int stripped_req_path_len;
+    int stripped_len;
+    dm_node_t *node;
 
-    // Exit if this path has already been registered by any of the USP Services (including this USP Service)
-    for (i=0; i<MAX_USP_SERVICES; i++)
+    req_path_len = strlen(req_path);
+    stripped_req_path_len = CalcStrippedPathLen(req_path, req_path_len);
+
+    // Iterate over all paths that have been accepted to be registered in the current register request message
+    for (i=0; i < accepted_paths->num_entries; i++)
     {
-        us = &usp_services[i];
-        index = STR_VECTOR_Find(&us->registered_paths, requested_path);
-        if (index != INVALID)
+        path = accepted_paths->vector[i];
+        len = strlen(path);
+        stripped_len = CalcStrippedPathLen(path, len);
+
+        // Exit if this exact path has already been registered by this register request
+        // NOTE: The stripped lengths are used in the comparison so that the textual names of the nodes are compared (without trailing type characters)
+        if ((stripped_len == stripped_req_path_len) && (memcmp(path, req_path, stripped_len)==0))
         {
-            USP_ERR_SetMessage("%s: Requested path '%s' has already been registered by endpoint '%s'", __FUNCTION__, requested_path, us->endpoint_id);
-            return USP_ERR_PATH_ALREADY_REGISTERED;
+            USP_ERR_SetMessage("%s: Cannot register '%s' and '%s'", __FUNCTION__, path, req_path);
+            return USP_ERR_REGISTER_FAILURE;
+        }
+
+        // Exit if one of the parent objects in the path has already been registered by this register request
+        if ((path[len-1] == '.') && (len <= req_path_len) && (memcmp(path, req_path, len)==0))
+        {
+            USP_ERR_SetMessage("%s: No need to register '%s' because whole sub-tree '%s' already registered", __FUNCTION__, req_path, path);
+            return USP_ERR_REGISTER_FAILURE;
+        }
+
+        // Exit if trying to register an object, where children of that object have already been registered by this register request
+        // NOTE: This test prevents a USP Service registering Device.Parent. if it had previously registered Device.Parent.Child
+        if ((req_path[req_path_len-1] == '.') && (req_path_len <= len) && (memcmp(path, req_path, req_path_len)==0))
+        {
+            USP_ERR_SetMessage("%s: Cannot register sub-tree '%s' and child '%s'", __FUNCTION__, req_path, path);
+            return USP_ERR_REGISTER_FAILURE;
         }
     }
 
-    // Exit if this path already exists in the schema e.g it may be one of the paths that are internal to this USP Broker
-    flags = DATA_MODEL_GetPathProperties(requested_path, INTERNAL_ROLE, NULL, NULL, NULL, DONT_LOG_ERRORS);
-    if (flags & PP_EXISTS_IN_SCHEMA)
+    // Iterate over all USP Services
+    for (i=0; i<MAX_USP_SERVICES; i++)
     {
-        USP_ERR_SetMessage("%s: Requested path '%s' already exists in the data model", __FUNCTION__, requested_path);
+        us = &usp_services[i];
+
+        // Iterate over all paths registered by this USP Service
+        for (j=0; j < us->registered_paths.num_entries; j++)
+        {
+            path = us->registered_paths.vector[j];
+            len = strlen(path);
+            stripped_len = CalcStrippedPathLen(path, len);
+
+            // Exit if this exact path has already been registered by any of the USP Services
+            // (including the USP Service requesting this path to be registered)
+            // NOTE: The stripped lengths are used in the comparison so that the textual names of the nodes are compared (without trailing type characters)
+            if ((stripped_len == stripped_req_path_len) && (memcmp(path, req_path, stripped_len)==0))
+            {
+                USP_ERR_SetMessage("%s: Endpoint '%s' has already registered '%s'", __FUNCTION__, us->endpoint_id, path);
+                return USP_ERR_PATH_ALREADY_REGISTERED;
+            }
+
+            // Exit if one of the parent objects in the path has already been registered by any USP Service
+            // (including the USP Service requesting this path to be registered)
+            if ((path[len-1] == '.') && (len <= req_path_len) && (memcmp(path, req_path, len)==0))
+            {
+                USP_ERR_SetMessage("%s: Endpoint '%s' has already registered the whole sub-tree at '%s'", __FUNCTION__, us->endpoint_id, path);
+                return USP_ERR_PATH_ALREADY_REGISTERED;
+            }
+
+            // Exit if trying to register an object, where children of that object have already been registered by any of the USP Services
+            // (including the USP Service requesting this path to be registered)
+            // NOTE: This test prevents a USP Service registering Device.Parent. if it had previously registered Device.Parent.Child
+            if ((req_path[req_path_len-1] == '.') && (req_path_len <= len) && (memcmp(path, req_path, req_path_len)==0))
+            {
+                USP_ERR_SetMessage("%s: Cannot register whole '%s' sub-tree as '%s' already registered by endpoint '%s'", __FUNCTION__, req_path, path, us->endpoint_id);
+                return USP_ERR_PATH_ALREADY_REGISTERED;
+            }
+        }
+    }
+
+    // Since we have checked that no USP Service registered this path before, then if this is a non-object we just need to check
+    // that it is not registered in the Broker's core data model
+    // If the requested path is an object, then it could only have been registered before by a USP Service as part of a path
+    // containing it as a parent object. But we've already prevented that case getting here.
+    // So if the requested path already exists in the data model, this can only be because it is in the core data model,
+    // not because it was added as part of a USP Service registration
+
+    // Exit if this path already exists in the core data model of this USP Broker
+    node = DM_PRIV_GetNodeFromPath(req_path, NULL, NULL, DONT_LOG_ERRORS);
+    if (node != NULL)
+    {
+        USP_ERR_SetMessage("%s: Requested path '%s' already exists in the data model", __FUNCTION__, req_path);
         return USP_ERR_PATH_ALREADY_REGISTERED;
     }
 
     return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
-** IsPathASpecialException
-**
-** Determines whether the path is one of the specific data model elements that we allow to be registered individually
-** These are parameters, commands and events directly under Device.
-** These DM elements are not allowed to be registsred by requirement R-REG.2 of the USP Spec, as they are not an object
-** However, we need to allow them, as they may be owned by a USP Service
-** NOTE: If the path is an exception, and the group_id argument is not INVALID, then this function also adds the path
-**       into the Broker's data model.
-**
-** \param   path - path of the data model object to register
-** \param   group_id - If set to INVALID, the path is not registered. If set to a value other then INVALID, the path is registered into the Broker's data model
-**
-** \return  true if the path is one one of the specific data model elements that we allow to be registered individually, false otherwise
-**
-**************************************************************************/
-bool IsPathASpecialException(char *path, int group_id)
-{
-#ifdef REMOVE_DEVICE_REBOOT
-    // Handle Device.Reboot()
-    if (strcmp(path, "Device.Reboot()")==0)
-    {
-        if (group_id != INVALID)
-        {
-            USP_REGISTER_SyncOperation(path, Broker_SyncOperate);
-            USP_REGISTER_GroupId(path, group_id);
-        }
-        return true;
-    }
-#endif
-
-#ifdef REMOVE_DEVICE_FACTORY_RESET
-    // Handle Device.FactoryReset()
-    if (strcmp(path, "Device.FactoryReset()")==0)
-    {
-        if (group_id != INVALID)
-        {
-            USP_REGISTER_SyncOperation(path, Broker_SyncOperate);
-            USP_REGISTER_GroupId(path, group_id);
-        }
-        return true;
-    }
-#endif
-
-#ifdef REMOVE_DEVICE_SCHEDULE_TIMER
-    // Handle Device.ScheduleTimer()
-    if (strcmp(path, "Device.ScheduleTimer()")==0)
-    {
-        if (group_id != INVALID)
-        {
-            static char *sched_timer_input_args[] = { "DelaySeconds" };
-            USP_REGISTER_AsyncOperation(path, Broker_AsyncOperate, NULL);
-            USP_REGISTER_GroupId(path, group_id);
-            USP_REGISTER_OperationArguments(path, sched_timer_input_args, NUM_ELEM(sched_timer_input_args), NULL, 0);
-        }
-        return true;
-    }
-#endif
-
-#ifdef REMOVE_DEVICE_BOOT_EVENT
-    // Handle Device.Boot!
-    if (strcmp(path, "Device.Boot!")==0)
-    {
-        if (group_id != INVALID)
-        {
-            static char *boot_event_args[] = { "CommandKey", "Cause", "FirmwareUpdated", "ParameterMap" };
-            USP_REGISTER_Event(path);
-            USP_REGISTER_GroupId(path, group_id);
-            USP_REGISTER_EventArguments(path, boot_event_args, NUM_ELEM(boot_event_args));
-        }
-        return true;
-    }
-#endif
-
-    // Handle Device.LocalAgent.TransferComplete!
-    if (strcmp(path, "Device.LocalAgent.TransferComplete!")==0)
-    {
-        if (group_id != INVALID)
-        {
-            static char *transfer_complete_args[] = { "Command", "CommandKey", "Requestor",
-                                                      "TransferType", "Affected", "TransferURL",
-                                                      "StartTime", "CompleteTime", "FaultCode", "FaultString",
-                                                      "CheckSumAlgorithm", "CheckSum" };
-            USP_REGISTER_Event(path);
-            USP_REGISTER_GroupId(path, group_id);
-            USP_REGISTER_EventArguments(path, transfer_complete_args, NUM_ELEM(transfer_complete_args));
-        }
-        return true;
-    }
-
-#ifdef REMOVE_SELF_TEST_DIAG_EXAMPLE
-    // Handle Device.SelfTestDiagnostics()
-    if (strcmp(path, "Device.SelfTestDiagnostics()")==0)
-    {
-        if (group_id != INVALID)
-        {
-            static char *self_test_output_args[] ={ "Status", "Results" };
-
-            USP_REGISTER_AsyncOperation(path, Broker_AsyncOperate, NULL);
-            USP_REGISTER_GroupId(path, group_id);
-            USP_REGISTER_OperationArguments(path, NULL, 0, self_test_output_args, NUM_ELEM(self_test_output_args));
-        }
-        return true;
-    }
-#endif
-
-    // Handle Device.PacketCaptureDiagnostics()
-    if (strcmp(path, "Device.PacketCaptureDiagnostics()")==0)
-    {
-        if (group_id != INVALID)
-        {
-            static char *packet_capture_input_args[] = { "Interface", "Format", "Duration", "PacketCount",
-                                                         "ByteCount", "FileTarget", "FilterExpression",
-                                                         "Username", "Password" };
-            static char *packet_capture_output_args[] ={ "Status",
-                                                         "PacketCaptureResult.{i}.FileLocation",
-                                                         "PacketCaptureResult.{i}.StartTime",
-                                                         "PacketCaptureResult.{i}.EndTime",
-                                                         "PacketCaptureResult.{i}.Count" };
-
-            USP_REGISTER_AsyncOperation(path, Broker_AsyncOperate, NULL);
-            USP_REGISTER_GroupId(path, group_id);
-            USP_REGISTER_OperationArguments(path, packet_capture_input_args, NUM_ELEM(packet_capture_input_args),
-                                                  packet_capture_output_args, NUM_ELEM(packet_capture_output_args));
-        }
-        return true;
-    }
-
-    // Handle Device.InterfaceStackNumberOfEntries
-    if (strcmp(path, "Device.InterfaceStackNumberOfEntries")==0)
-    {
-        if (group_id != INVALID)
-        {
-            USP_REGISTER_GroupedVendorParam_ReadOnly(group_id, path, DM_UINT);
-        }
-        return true;
-    }
-
-    // Handle Device.RootDataModelVersion
-    if (strcmp(path, "Device.RootDataModelVersion")==0)
-    {
-        if (group_id != INVALID)
-        {
-            USP_REGISTER_GroupedVendorParam_ReadOnly(group_id, path, DM_STRING);
-        }
-        return true;
-    }
-
-    // If the code gets here, then the path did not match any of the exceptions
-    return false;
 }
 
 /*********************************************************************//**
@@ -4707,6 +5116,7 @@ bool IsPathASpecialException(char *path, int group_id)
 **************************************************************************/
 bool IsValidUspServicePath(char *path)
 {
+    int i;
     int len;
     char *p;
 
@@ -4717,25 +5127,34 @@ bool IsValidUspServicePath(char *path)
         return false;
     }
 
-    // Exit if the path is for a data model element directly under Device., which has not been handled earlier as a special exception
-    p = strchr(&path[dm_root_len], '.');
-    if (p == NULL)
+    // Exit if the path is only 'Device.'
+    if (path[dm_root_len] == '\0')
     {
-        USP_ERR_SetMessage("%s: %s is not one of the data model elements directly under Device. that are supported for registration", __FUNCTION__, path);
+        USP_ERR_SetMessage("%s: Cannot register '%s'", __FUNCTION__, path);
         return false;
     }
 
-    // Exit if the path does not end in a dot
+    // Exit if the path contains too many dots as a separator
+    if (strstr(path, "..") != NULL)
+    {
+        USP_ERR_SetMessage("%s: Requested path '%s' should not contain '..'", __FUNCTION__, path);
+        return false;
+    }
+
+    // Remove trailing '.', '!' and '()' from the length of the path to validate
     len = strlen(path);
-    if (path[len-1] != '.')
+    len = CalcStrippedPathLen(path, len);
+
+    // Exit if the character immediately before the trailing '.', '!' or '()' was '.'
+    if (path[len-1] == '.')
     {
-        USP_ERR_SetMessage("%s: Requested path '%s' must be a data model object ending in '.'", __FUNCTION__, path);
+        USP_ERR_SetMessage("%s: Requested path '%s' should not end '%s'", __FUNCTION__, path, &path[len-1]);
         return false;
     }
 
-    // Exit if the path contains any characters it shouldn't (Only alphanumerics and period character are allowed)
+    // Exit if the path contains any characters it shouldn't
     p = path;
-    while (*p != '\0')
+    for (i=0; i<len; i++)
     {
         if ((IS_ALPHA_NUMERIC(*p) == false) && (*p != '-') && (*p != '_') && (*p != '.'))
         {
@@ -4761,6 +5180,34 @@ bool IsValidUspServicePath(char *path)
     }
 
     return true;
+}
+
+/*********************************************************************//**
+**
+** CalcStrippedPathLen
+**
+** Calculates the length of the path string, excluding any trailing type characters (eg . ! () )
+**
+** \param   value_type - protobuf parameter type enumeration to convert
+**
+** \return  internal parameter type enumeration
+**
+**************************************************************************/
+int CalcStrippedPathLen(char *path, int len)
+{
+    char last_char;
+
+    last_char = path[len-1];
+    if ((last_char == '.') || (last_char == '!'))
+    {
+        len--;
+    }
+    else if ((last_char == ')') && (path[len-2] == '('))   // NOTE: The test for '(' is necessary for IsValidUspServicePath, but not for other callers
+    {
+        len -= 2;
+    }
+
+    return len;
 }
 
 /*********************************************************************//**
@@ -5568,7 +6015,10 @@ bool AttemptPassThruForSetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
                 return false;
             }
 
-            USP_ASSERT(param_node->group_id == group_id);  // Since this is a child parameter of the object, it must have the same group_id
+            USP_ASSERT(param_node->group_id == group_id);  // Since this is a child parameter of the object, it must have the same group_id as the USP Service
+                                                           // NOTE: In the case of the child parameter being owned by another USP Service or the core data model,
+                                                           // the object will not be owned by any USP Service, so the code would not have got here
+                                                           // as passthru requires that the object is owned by the USP Service
 
             // Exit if the originator does not have permission to set this child parameter
             permission_bitmask = DM_PRIV_GetPermissions(param_node, combined_role);
@@ -5824,7 +6274,7 @@ bool AttemptPassThruForDeleteRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_
 ** AttemptPassThruForNotification
 **
 ** Passback the received notification to the relevant USP Service/Controller
-** This function determines which USP Controller (connected to the USP Broker) set the subscrption on the Broker
+** This function determines which USP Controller (connected to the USP Broker) set the subscription on the Broker
 ** and forwards the notification to it
 **
 ** \param   usp - pointer to parsed USP message structure. This is always freed by the caller (not this function)
@@ -6329,19 +6779,21 @@ void SubsMap_Destroy(double_linked_list_t *sm)
 ** \param   sm - pointer to subscription mapping table
 ** \param   service_instance - Instance of the subscription in the USP Service's Device.LocalAgent.Subscription.{i}
 ** \param   path - data model path which was subscribed to in the vendor layer
+** \param   notify_type - type of notification this subscription is for
 ** \param   subscription_id - Id of the subscription in the USP Service's subscription table
 ** \paam    broker_instance - Instance of the subscription in the USP Broker's Device.LocalAgent.Subscription.{i}
 **
 ** \return  None
 **
 **************************************************************************/
-void SubsMap_Add(double_linked_list_t *sm, int service_instance, char *path, char *subscription_id, int broker_instance)
+void SubsMap_Add(double_linked_list_t *sm, int service_instance, char *path, subs_notify_t notify_type, char *subscription_id, int broker_instance)
 {
     subs_map_t *smap;
 
     smap = USP_MALLOC(sizeof(subs_map_t));
     smap->service_instance = service_instance;
     smap->path = USP_STRDUP(path);
+    smap->notify_type = notify_type;
     smap->subscription_id = USP_STRDUP(subscription_id);
     smap->broker_instance = broker_instance;
 
@@ -6456,6 +6908,39 @@ subs_map_t *SubsMap_FindByPath(double_linked_list_t *sm, char *path)
     while (smap != NULL)
     {
         if (TEXT_UTILS_IsPathMatch(path, smap->path))
+        {
+            return smap;
+        }
+
+        smap = (subs_map_t *) smap->link.next;
+    }
+
+    return NULL;
+}
+
+/*********************************************************************//**
+**
+** SubsMap_FindByPathAndNotifyType
+**
+** Finds the entry in the specified subscription mapping table with a
+** path specification that matches the specified absolute path
+** NOTE: The path specification in the subscription may be an absolute path, partial path, or wildcarded path
+**
+** \param   sm - pointer to subscription mapping table
+** \param   path - absolute path to match
+** \param   notify_type - notification type to match
+**
+** \return  Pointer to entry in subscription map table, or NULL if no match was found
+**
+**************************************************************************/
+subs_map_t *SubsMap_FindByPathAndNotifyType(double_linked_list_t *sm, char *path, subs_notify_t notify_type)
+{
+    subs_map_t *smap;
+
+    smap = (subs_map_t *) sm->head;
+    while (smap != NULL)
+    {
+        if ((smap->notify_type == notify_type) && (TEXT_UTILS_IsPathMatch(path, smap->path)==true))
         {
             return smap;
         }
@@ -6703,5 +7188,79 @@ msg_map_t *MsgMap_Find(double_linked_list_t *mm, char *msg_id)
 
     return NULL;
 }
+
+//------------------------------------------------------------------------------------------
+// Code to test the IsWantedGsdmObject() function
+#if 0
+char *is_wanted_gsdm_obj_test_cases[] =
+{
+//   obj_path              registered_path           result (T=true, F=false, W='true and want all children')
+    "Device.Obj.",            "Device.Obj.",            "W",
+    "Device.Obj.{i}.",        "Device.Obj.",            "W",
+    "Device.Obj.Child.",      "Device.Obj.",            "W",
+    "Device.Obj.Child.{i}.",  "Device.Obj.",            "W",
+    "Device.Obj.",            "Device.Obj.ObjA.",       "F",   // false because obj_path is not a child of ObjA (or equal to it)
+    "Device.Obj.{i}.",        "Device.Obj.ObjA.",       "F",   // false because obj_path is not a child of ObjA (or equal to it)
+    "Device.Obj.",            "Device.",                "W",
+    "Device.Obj.{i}.",        "Device.",                "W",
+    "Device.Elem.",           "Device.Elem",            "F",
+    "Device.ObjA.",           "Device.ObjB.",           "F",
+    "Device.Obj.",            "Device.O.",              "F",
+    "Device.Obj.",            "Device.Obj.Param",       "T",
+    "Device.Obj.",            "Device.Obj.Command()",   "T",
+    "Device.Obj.",            "Device.Obj.Event!",      "T",
+    "Device.Obj.",            "Device.Obj.ObjA.ParamA", "F",   // false because obj_path is not the immediate parent of ParamA
+    "Device.ObjectA.",        "Device.Param",           "F",
+    "Device.Elem.",           "Device.ElemX",           "F",
+};
+
+void TestIsWantedGsdmObj(void)
+{
+    int i;
+    bool result;
+    str_vector_t reg_path;
+    char *vector[1];
+    bool expected_result;
+    char *expected_result_str;
+    bool want_all_children;
+    bool expected_want_all_children;
+
+    reg_path.vector = vector;
+    reg_path.num_entries = NUM_ELEM(vector);
+
+    for (i=0; i < NUM_ELEM(is_wanted_gsdm_obj_test_cases); i+=3)
+    {
+        vector[0] = is_wanted_gsdm_obj_test_cases[i+1];
+        result = IsWantedGsdmObject(is_wanted_gsdm_obj_test_cases[i], &reg_path, &want_all_children);
+        expected_result_str = is_wanted_gsdm_obj_test_cases[i+2];
+
+        expected_result = (strcmp(expected_result_str, "F")==0) ? false : true;
+        expected_want_all_children = (strcmp(expected_result_str, "W")==0) ? true : false;
+        if (result != expected_result)
+        {
+            if (expected_result==true)
+            {
+                printf("ERROR: [%d] object path '%s' should contain the DM element '%s', but doesn't\n", i/3, is_wanted_gsdm_obj_test_cases[i], is_wanted_gsdm_obj_test_cases[i+1]);
+            }
+            else
+            {
+                printf("ERROR: [%d] object path '%s' shouldn't contain the DM element '%s', but does\n", i/3, is_wanted_gsdm_obj_test_cases[i], is_wanted_gsdm_obj_test_cases[i+1]);
+            }
+        }
+
+        if (want_all_children != expected_want_all_children)
+        {
+            if (expected_want_all_children==true)
+            {
+                printf("ERROR: [%d] Registered path '%s' should get all children of '%s' but doesn't\n", i/3, is_wanted_gsdm_obj_test_cases[i+1], is_wanted_gsdm_obj_test_cases[i]);
+            }
+            else
+            {
+                printf("ERROR: [%d] Registered path '%s' shouldn't get all children of '%s' but does\n", i/3, is_wanted_gsdm_obj_test_cases[i+1], is_wanted_gsdm_obj_test_cases[i]);
+            }
+        }
+    }
+}
+#endif
 
 #endif // REMOVE_USP_BROKER

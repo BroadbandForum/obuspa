@@ -161,7 +161,7 @@ cli_cmd_t cli_commands[] =
     { "help",      0,0, RUN_LOCALLY,  ExecuteCli_Help,  "help" },
     { "version",   0,0, RUN_LOCALLY,  ExecuteCli_Version, "version" },
     { "get",       1,1, RUN_REMOTELY, ExecuteCli_Get,   "get [path-expr]" },
-    { "set",       2,2, RUN_REMOTELY, ExecuteCli_Set,   "set [path-expr] [value]"},
+    { "set",       1,2, RUN_REMOTELY, ExecuteCli_Set,   "set [path-expr] [value]"},
     { "add",       1,1, RUN_REMOTELY, ExecuteCli_Add,   "add [object]"},
     { "del",       1,1, RUN_REMOTELY, ExecuteCli_Del,   "del [path-expr]"},
     { "operate",   1,1, RUN_REMOTELY, ExecuteCli_Operate,"operate [operation]"},
@@ -169,15 +169,15 @@ cli_cmd_t cli_commands[] =
     { "instances", 1,1, RUN_REMOTELY, ExecuteCli_GetInstances,   "instances [path-expr]" },
     { "show",      1,1, RUN_LOCALLY,  ExecuteCli_Show,  "show [ 'database' ]"},
     { "dump",      1,1, RUN_REMOTELY, ExecuteCli_Dump,  "dump ['instances' | 'datamodel' | 'memory' | 'mdelta' | 'subscriptions' ]"},
-    { "perm",      1,1, RUN_REMOTELY, ExecuteCli_Perm,  "perm [parameter or object]"},
+    { "perm",      1,1, RUN_REMOTELY, ExecuteCli_Perm,  "perm [path]"},
     { "dbget",     1,1, RUN_LOCALLY,  ExecuteCli_DbGet, "dbget [parameter]"},
-    { "dbset",     2,2, RUN_LOCALLY,  ExecuteCli_DbSet, "dbset [parameter] [value]"},
+    { "dbset",     1,2, RUN_LOCALLY,  ExecuteCli_DbSet, "dbset [parameter] [value]"},
     { "dbdel",     1,1, RUN_LOCALLY,  ExecuteCli_DbDel, "dbdel [parameter]"},
     { "verbose",   1,1, RUN_REMOTELY, ExecuteCli_Verbose, "verbose [level]"},
     { "prototrace",1,1, RUN_REMOTELY, ExecuteCli_ProtoTrace, "prototrace [enable]"},
 #ifndef REMOVE_USP_SERVICE
-    { "register",  1,1, RUN_REMOTELY, ExecuteCli_Register,  "register [objects]"},
-    { "deregister",1,1, RUN_REMOTELY, ExecuteCli_DeRegister,  "deregister [objects]"},
+    { "register",  1,1, RUN_REMOTELY, ExecuteCli_Register,  "register [paths]"},
+    { "deregister",0,1, RUN_REMOTELY, ExecuteCli_DeRegister,  "deregister [paths]"},
 #endif
 #ifndef REMOVE_USP_BROKER
     { "service",   3,4, RUN_REMOTELY, USP_BROKER_ExecuteCli_Service,  "service [endpoint] [command] [path-expr] [optional: value or notify type]"},
@@ -750,9 +750,18 @@ int ExecuteCli_Set(str_vector_t *args)
     char *arg1;
     char *arg2;
 
-    USP_ASSERT(args->num_entries >= 3);
+    // Code to handle setting a parameter to an empty string
+    // Bash does not pass empty string arguments to executables, even if they are indicated as ""
+    if (args->num_entries >= 3)
+    {
+        arg2 = args->vector[2];
+    }
+    else
+    {
+        arg2 = "";
+    }
+
     arg1 = args->vector[1];
-    arg2 = args->vector[2];
 
     STR_VECTOR_Init(&objects);
 
@@ -1530,9 +1539,18 @@ int ExecuteCli_DbSet(str_vector_t *args)
     char *param;
     char *value;
 
-    USP_ASSERT(args->num_entries >= 3);
+    // Code to handle setting a parameter to an empty string
+    // Bash does not pass empty string arguments to executables, even if they are indicated as ""
+    if (args->num_entries >= 3)
+    {
+        value = args->vector[2];
+    }
+    else
+    {
+        value = "";
+    }
+
     param = args->vector[1];
-    value = args->vector[2];
 
     // Exit if unable to directly set the parameter in the database
     err = DATA_MODEL_SetParameterInDatabase(param, value);
@@ -1734,7 +1752,6 @@ exit:
 ** Executes the deregister CLI command, which sends a Deregister message on the UDS MTP
 **
 ** \param   args - Entry [1] pointer to string containing comma separated list of data model objects to deregister
-** \param   arg2 - unused
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -1745,8 +1762,16 @@ int ExecuteCli_DeRegister(str_vector_t *args)
     char *endpoint_id;
     char *arg1;
 
-    USP_ASSERT(args->num_entries >= 2);
-    arg1 = args->vector[1];
+    // Code to handle sending deregister with an empty string
+    // Bash does not pass empty string arguments to executables, even if they are indicated as ""
+    if (args->num_entries >= 2)
+    {
+        arg1 = args->vector[1];
+    }
+    else
+    {
+        arg1 = "";
+    }
 
     // Exit if not running as a USP Service
     if (RUNNING_AS_USP_SERVICE()==false)

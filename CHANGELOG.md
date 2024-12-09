@@ -1,5 +1,14 @@
 # OB-USP-AGENT Changelog since Release 9.0.0
 
+## 2024-12-09 v9.0.4
+### Added
+- USP Broker support for registration of parameters, events and USP commands (USP 1.4)
+- Bulk Data Collection over MQTT
+
+### Fixed
+- Event and OperationComplete subscriptions to 'Device.' on a USP Broker now set subscriptions on each USP Service containing only the DM elements that were registered
+- USP Conformance test 11.11 failure: MQTT PUBLISH frames should not be sent until SUBACK frame indicates successfully subscribed
+
 ## 2024-11-11 v9.0.3
 ### Added
 - New CLI command for interacting directly with USP Services, when obuspa runs as a USP Broker:

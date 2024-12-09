@@ -1570,6 +1570,107 @@ exit:
 
 /*********************************************************************//**
 **
+** TEXT_UTILS_SearchExpressionsToWildcards
+**
+** Copies the path into the output buffer, replacing any search expressions with wildcards
+** The output path can then be used to lookup the data model node using DM_PRIV_GetNodeFromPath()
+**
+** \param   src - data model path to replace search expressions with wildcards
+** \param   dest - buffer in which to copy the input, replacing search expressions with wildcards
+** \param   len - length of destination buffer
+**
+** \return  Pointer to buffer if successfully converted, or NULL, if the path contained a syntactically incorrect search expression
+**
+**************************************************************************/
+char *TEXT_UTILS_SearchExpressionsToWildcards(char *src, char *dest, int len)
+{
+    char c;
+    char *buf = dest;       // Save off a pointer to the start of the buffer, so that we can return it if successful
+
+    c = *src++;
+    while (c != '\0')
+    {
+        if (c == '[')
+        {
+            // Skip to after ']', exiting if search expression is not terminated
+            src = strchr(src, ']');
+            if (src == NULL)
+            {
+                return NULL;
+            }
+            src++;
+
+            // Replace ']' with '*'
+            c = '*';
+        }
+
+        // Copy the character into the buffer, and move to the next input character
+        *dest++ = c;
+        len--;
+        c = *src++;
+
+        // Exit if only space in the output buffer for nul terminator
+        if (len == 1)
+        {
+            goto exit;
+        }
+    }
+
+exit:
+    *dest = '\0';
+    return buf;
+
+}
+
+/*********************************************************************//**
+**
+** TEXT_UTILS_SchemaFormToPath
+**
+** Converts an path in supported data model notation into a wildcarded path
+** by replacing "{i}" with "*"
+**
+** \param   schema_path - Supported data model path (contains {i})
+** \param   buf - pointer to buffer in which to return the wildcarded path
+** \param   len - length of buffer in which to return the wildcarded path
+**
+** \return  None
+**
+**************************************************************************/
+void TEXT_UTILS_SchemaFormToPath(char *schema_path, char *buf, int len)
+{
+    char c;
+
+    // Iterate over all characters in the path
+    c = *schema_path++;
+    while (c != '\0')
+    {
+        // Skip any instance separator, replacing them with a wildcard character
+        if ((c == '{') && (schema_path[0] == 'i') && (schema_path[1] == '}'))
+        {
+            schema_path += 2;
+            c = '*';
+        }
+
+        // Copy across the characters from the schema path
+        *buf++ = c;
+        len--;
+
+        // Exit the loop, if there's only enough space left for the nul terminator
+        if (len == 1)
+        {
+            break;
+        }
+
+        // Read next character from the schema path
+        c = *schema_path++;
+    }
+
+    // Ensure buffer is zero terminated
+    *buf = '\0';
+}
+
+/*********************************************************************//**
+**
 ** TEXT_UTILS_CountConsecutiveDigits
 **
 ** Determines the number of consecutive numeric digits in the string,

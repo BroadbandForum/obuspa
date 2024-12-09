@@ -367,9 +367,8 @@ void DM_PRIV_AddUniqueKey(dm_node_t *node, dm_unique_key_t *unique_key);
 void DM_PRIV_ApplyPermissions(dm_node_t *node, int role_index, unsigned short permission_bitmask);
 unsigned short DM_PRIV_GetPermissions(dm_node_t *node, combined_role_t *combined_role);
 int DM_PRIV_ReRegister_DBParam_Default(char *path, char *value);
-bool DM_PRIV_IsChildOf(char *path, dm_node_t *parent_node);
 bool DM_PRIV_IsChildNodeOf(dm_node_t *node, dm_node_t *parent_node);
-bool DM_PRIV_AreAllChildrenGroupId(dm_node_t *parent, int group_id);
+void DM_PRIV_GetAllEventsAndCommands(dm_node_t *node, str_vector_t *events, str_vector_t *commands);
 
 #endif
 

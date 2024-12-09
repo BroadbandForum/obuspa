@@ -3252,6 +3252,21 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
     }
     strcpy(schema_path, segments[0].name);
 
+    // Exit if trying to register a multi-instance object, but path did not end in '{i}'
+    seg = &segments[num_segments-1];
+    if ((type == kDMNodeType_Object_MultiInstance) && (seg->type != kDMNodeType_Object_MultiInstance))
+    {
+        USP_ERR_SetMessage("%s: Path (%s) must end in '{i}' for multi-instance object", __FUNCTION__, path);
+        return NULL;
+    }
+
+    // Exit if trying to register a single-instance object, but path ended in '{i}'
+    if ((type == kDMNodeType_Object_SingleInstance) && (seg->type != kDMNodeType_Object_SingleInstance))
+    {
+        USP_ERR_SetMessage("%s: Path (%s) must not end in '{i}' for single-instance object", __FUNCTION__, path);
+        return NULL;
+    }
+
     // Iterate over segments, using them to traverse the data model tree
     inst.order = 0;
     for (i=1; i<num_segments; i++)
@@ -3821,31 +3836,6 @@ int DM_PRIV_ParseInstanceString(char *instances, dm_instances_t *inst)
 
 /*********************************************************************//**
 **
-** DM_PRIV_IsChildOf
-**
-** Determines whether the specified path is a child of the specified parent node
-**
-** \param   path - data model path to determine whether it is a child
-** \param   parent_node - data model node of parent to test against
-**
-** \return  true if the specified path is a child of the specified parent node, false otherwise
-**
-**************************************************************************/
-bool DM_PRIV_IsChildOf(char *path, dm_node_t *parent_node)
-{
-    dm_node_t *node;
-
-    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
-    if (node == NULL)
-    {
-        return false;
-    }
-
-    return DM_PRIV_IsChildNodeOf(node, parent_node);
-}
-
-/*********************************************************************//**
-**
 ** DM_PRIV_IsChildNodeOf
 **
 ** Determines whether the specified node is a child of the specified parent node
@@ -3876,43 +3866,51 @@ bool DM_PRIV_IsChildNodeOf(dm_node_t *node, dm_node_t *parent_node)
 
 /*********************************************************************//**
 **
-** DM_PRIV_AreAllChildrenGroupId
+** DM_PRIV_GetAllEventsAndCommands
 **
-** Recursively determines whether all child nodes have the specified group_id (ie are owned by the same data model provider component)
-** NOTE: This function intentionally does not check that the node itself has the specified group_id (as it is used for cases when this is not the case)
+** Recursively finds all USP events and async commands
 **
-** \param   parent - data model node to check all children of
-** \param   group_id - group_id to check that all children match
+** \param   node - data model node to recurse all children of
+** \param   events - string vector in which to return the USP events found
+** \param   commands - string vector in which to return the async commands found
 **
-** \return  true all child nodes match the specified group_id
+** \return  None
 **
 **************************************************************************/
-bool DM_PRIV_AreAllChildrenGroupId(dm_node_t *parent, int group_id)
+void DM_PRIV_GetAllEventsAndCommands(dm_node_t *node, str_vector_t *events, str_vector_t *commands)
 {
     dm_node_t *child;
+    char buf[MAX_DM_PATH];
 
-    // Iterate over list of children
-    child = (dm_node_t *) parent->child_nodes.head;
-    while (child != NULL)
+    switch(node->type)
     {
-        // Exit if this child does not match the specified group_id
-        if (child->group_id != group_id)
-        {
-            return false;
-        }
+        case kDMNodeType_AsyncOperation:
+            // Add this command to the vector of async commands
+            TEXT_UTILS_SchemaFormToPath(node->path, buf, sizeof(buf));
+            STR_VECTOR_Add(commands, buf);
+            break;
 
-        // Exit if all children of this child do not match the specified group_id
-        if (DM_PRIV_AreAllChildrenGroupId(child, group_id) == false)
-        {
-            return false;
-        }
+        case kDMNodeType_Event:
+            // Add this event to the vector of events
+            TEXT_UTILS_SchemaFormToPath(node->path, buf, sizeof(buf));
+            STR_VECTOR_Add(events, buf);
+            break;
 
-        // Move to next sibling in the data model tree
-        child = (dm_node_t *) child->link.next;
+        case kDMNodeType_Object_MultiInstance:
+        case kDMNodeType_Object_SingleInstance:
+            // Iterate over list of children, recursing the data model
+            child = (dm_node_t *) node->child_nodes.head;
+            while (child != NULL)
+            {
+                DM_PRIV_GetAllEventsAndCommands(child, events, commands);
+                child = (dm_node_t *) child->link.next;    // Move to next sibling in the data model tree
+            }
+            break;
+
+        default:
+            // All other node types are parameters or sync commands
+            break;
     }
-
-    // If the code gets here, then all children matched the specified group_id, or the node did not have any children
-    return true;
 }
 
 /*********************************************************************//**
@@ -5029,13 +5027,30 @@ int SortSchemaPath(const void *p1, const void *p2)
 void AddChildNodes(dm_node_t *parent, str_vector_t *sv)
 {
     dm_node_t *child;
-    char obj_path[MAX_DM_PATH];
-    char *path;
+    char path[MAX_DM_PATH];
+    char buf[MAX_DM_PATH+MAX_ENDPOINT_ID_LEN];
+    char *endpoint_id = NULL;
+    char *str;
+
+    // Form path of node, ensuring that object nodes end in '.'
+    USP_SNPRINTF(path, sizeof(path), "%s%c", parent->path, (IsObject(parent)) ? '.' : '\0');
+    str = path;
+
+#ifndef REMOVE_USP_BROKER
+    // If node was registered by a USP Service, then add a column containing endpoint_id of the USP Service
+    if (parent->group_id != NON_GROUPED)
+    {
+        endpoint_id = USP_BROKER_GroupIdToEndpointId(parent->group_id);
+        if (endpoint_id != NULL)
+        {
+            USP_SNPRINTF(buf, sizeof(buf), "%-100s %s", path, endpoint_id);
+            str = buf;
+        }
+    }
+#endif
 
     // Add this node to the string vector
-    USP_SNPRINTF(obj_path, sizeof(obj_path), "%s.", parent->path);
-    path = (IsObject(parent)) ? obj_path : parent->path;
-    STR_VECTOR_Add(sv, path);
+    STR_VECTOR_Add(sv, str);
 
     // Add arguments (if applicable) to string vector
     if (IsOperation(parent))

@@ -123,12 +123,15 @@ static bulkdata_profile_t bulkdata_profiles[BULKDATA_MAX_PROFILES];
 // Bulk Data Collection Protocol
 #define BULKDATA_PROTOCOL_HTTP "HTTP"
 #define BULKDATA_PROTOCOL_USP_EVENT "USPEventNotif"
+#define BULKDATA_PROTOCOL_MQTT "MQTT"
 
 typedef enum
 {
     kBdcProtocol_HTTP,
     kBdcProtocol_UspEvent,
-
+#ifdef ENABLE_MQTT
+    kBdcProtocol_MQTT,
+#endif
     kBdcProtocol_Max               // This should always be the last value in this enumeration. It is used to statically size arrays based on one entry for each active enumeration
 } bdc_protocol_t;
 
@@ -137,6 +140,9 @@ const enum_entry_t bdc_protocols[kBdcProtocol_Max] =
 {
     { kBdcProtocol_HTTP,               BULKDATA_PROTOCOL_HTTP },       // This is the default value for notification type
     { kBdcProtocol_UspEvent,           BULKDATA_PROTOCOL_USP_EVENT },
+#ifdef ENABLE_MQTT
+    { kBdcProtocol_MQTT,               BULKDATA_PROTOCOL_MQTT },
+#endif
 };
 
 //---------------------------------------------------------------------------------------------
@@ -155,6 +161,10 @@ static char *profile_push_event_args[] =
 typedef struct
 {
     int num_retained_failed_reports;
+#ifdef ENABLE_MQTT
+    char mqtt_reference[254];      // relates to Device.BulkData.Profile.{i}.MQTT.Reference
+    char mqtt_publish_topic[254];  // relates to Device.BulkData.Profile.{i}.MQTT.PublishTopic
+#endif
     char report_timestamp[33];
     char url[1025];
     char username[257];
@@ -251,6 +261,11 @@ char *bulkdata_platform_calc_uri_query_string(kv_vector_t *escaped_map);
 int bulkdata_platform_get_param_refs(int profile_id, param_ref_vector_t *param_refs);
 void bulkdata_expand_param_ref(param_ref_entry_t *pr, group_get_vector_t *ggv);
 void bulkdata_append_to_result_map(param_ref_entry_t *pr, group_get_vector_t *ggv, kv_vector_t *report_map);
+#ifdef ENABLE_MQTT
+int Validate_BulkDataMqttReference(dm_req_t *req, char *value);
+void bulkdata_process_profile_mqtt(bulkdata_profile_t *bp);
+int bulkdata_schedule_sending_mqtt_report(profile_ctrl_params_t *ctrl, bulkdata_profile_t *bp, char *json_report, int report_len);
+#endif
 
 /*********************************************************************//**
 **
@@ -332,6 +347,12 @@ int DEVICE_BULKDATA_Init(void)
     err |= USP_REGISTER_Param_NumEntries("Device.BulkData.Profile.{i}.HTTP.RequestURIParameterNumberOfEntries", "Device.BulkData.Profile.{i}.HTTP.RequestURIParameter.{i}");
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.HTTP.RequestURIParameter.{i}.Name", "", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.HTTP.RequestURIParameter.{i}.Reference", "", Validate_BulkDataReference, NULL, DM_STRING);
+
+#ifdef ENABLE_MQTT
+    // Device.BulkData.Profile.{i}.MQTT
+    err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.MQTT.Reference", "", Validate_BulkDataMqttReference, NULL, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.MQTT.PublishTopic", "", NULL, NULL, DM_STRING);
+#endif
 
     // Register Push! Event
     err |= USP_REGISTER_Event(BULKDATA_PROFILE_PUSH_EVENT);
@@ -815,6 +836,37 @@ int Validate_BulkDataRetryIntervalMultiplier(dm_req_t *req, char *value)
 {
     return DM_ACCESS_ValidateRange_Unsigned(req, 1000, 65535);
 }
+
+#ifdef ENABLE_MQTT
+/*********************************************************************//**
+**
+** Validate_BulkDataMqttReference
+**
+** Validates Device.BulkData.Profile.*.MQTT.Reference
+** by checking that it refers to a valid reference in the Device.MQTT.Client table
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   value - value that the controller would like to set the parameter to
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_BulkDataMqttReference(dm_req_t *req, char *value)
+{
+    int err;
+    int mqtt_connection_instance;
+
+    // Exit if the MQTT Reference refers to nothing. This can occur if a MQTT client being referred to is deleted.
+    if (*value == '\0')
+    {
+        return USP_ERR_OK;
+    }
+
+    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", &mqtt_connection_instance);
+
+    return err;
+}
+#endif
 
 /*********************************************************************//**
 **
@@ -2008,6 +2060,38 @@ int bulkdata_platform_get_profile_control_params(bulkdata_profile_t *bp, profile
         return err;
     }
 
+#ifdef ENABLE_MQTT
+{
+    char protocol[32];
+
+    // Exit if unable to get BDC Protocol
+    USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d.Protocol", bp->profile_id);
+    err = DATA_MODEL_GetParameterValue(path, protocol, sizeof(protocol), 0);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // If Protocol is MQTT then get MQTT specific parameters
+    if (strcmp(protocol, BULKDATA_PROTOCOL_MQTT)==0)
+    {
+        USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d.MQTT.Reference", bp->profile_id);
+        err = DATA_MODEL_GetParameterValue(path, ctrl_params->mqtt_reference, sizeof(ctrl_params->mqtt_reference), 0);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+
+        USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d.MQTT.PublishTopic", bp->profile_id);
+        err = DATA_MODEL_GetParameterValue(path, ctrl_params->mqtt_publish_topic, sizeof(ctrl_params->mqtt_publish_topic), 0);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+    }
+}
+#endif
+
     return USP_ERR_OK;
 }
 
@@ -2224,6 +2308,11 @@ void bulkdata_process_profile(int id)
             bulkdata_process_profile_usp_event(bp);
             break;
 
+#ifdef ENABLE_MQTT
+        case kBdcProtocol_MQTT:
+            bulkdata_process_profile_mqtt(bp);
+            break;
+#endif
         default:
             break;
     }
@@ -2404,6 +2493,86 @@ exit:
     // Uncomment the next line to see how much memory is in use by USP Agent after each post
 //    USP_MEM_PrintSummary();
 }
+
+#ifdef ENABLE_MQTT
+/*********************************************************************//**
+**
+**  bulkdata_process_profile_mqtt
+**
+**  Perform the work of processing a profile
+**
+** \param   bp - pointer to bulk data profile to process
+**
+** \return  None
+**
+**************************************************************************/
+void bulkdata_process_profile_mqtt(bulkdata_profile_t *bp)
+{
+    int err;
+    report_t *cur_report;
+    char *report;
+    profile_ctrl_params_t ctrl;
+    char buf[48];
+
+    // Exit if unable to obtain the control parameters for this profile
+    err = bulkdata_platform_get_profile_control_params(bp, &ctrl);
+    if (err != USP_ERR_OK)
+    {
+        return;
+    }
+
+    // If we are not retrying to send a failed report(s) then append the report map for this reporting interval
+    if (bp->retry_count == 0)
+    {
+        // Drop the oldest retained reports, if we would store more than we're meant to
+        if (bp->num_retained_reports > ctrl.num_retained_failed_reports)
+        {
+            bulkdata_drop_oldest_retained_reports(bp, ctrl.num_retained_failed_reports);
+        }
+
+        // Append the report map for this reporting interval
+        cur_report = &bp->reports[bp->num_retained_reports];
+        cur_report->collection_time = time(NULL);
+
+        KV_VECTOR_Init(&cur_report->report_map);
+
+        // Exit if unable to get the map containing the report contents
+        err = bulkdata_calc_report_map(bp, &cur_report->report_map);
+        if (err != USP_ERR_OK)
+        {
+            USP_ERR_SetMessage("%s: bulkdata_calc_report_map failed", __FUNCTION__);
+            return;
+        }
+        bp->num_retained_reports++;
+    }
+
+    // Exit if unable to generate the report
+    report = bulkdata_generate_json_report(bp, ctrl.report_timestamp);
+    if (report == NULL)
+    {
+	    USP_ERR_SetMessage("%s: bulkdata_generate_json_report failed", __FUNCTION__);
+	    return;
+    }
+
+    // Print out the JSON report, if debugging is enabled
+    USP_LOG_Debug("\nBULK DATA: %sing at time %s, to url=%s", ctrl.method, iso8601_cur_time(buf, sizeof(buf)), ctrl.url);
+    if (enable_protocol_trace)
+    {
+        USP_LOG_String(kLogLevel_Info, kLogType_Protocol, report);
+    }
+
+    // Exit if failed to tell BDC thread to send the report
+    err = bulkdata_schedule_sending_mqtt_report(&ctrl, bp, report, strlen(report));
+    if (err != USP_ERR_OK)
+    {
+        DEVICE_BULKDATA_NotifyTransferResult(bp->profile_id, kBDCTransferResult_Failure_Other);
+    }
+    else
+    {
+        DEVICE_BULKDATA_NotifyTransferResult(bp->profile_id, kBDCTransferResult_Success);
+    }
+}
+#endif
 
 /*********************************************************************//**
 **
@@ -2784,6 +2953,56 @@ unsigned char *bulkdata_compress_report(profile_ctrl_params_t *ctrl, char *input
     *p_output_len = zlib_ctx.total_out;
     return output_buf;
 }
+
+#ifdef ENABLE_MQTT
+/*********************************************************************//**
+**
+**  bulkdata_schedule_sending_mqtt_report
+**
+**  Tells the BDC thread to send the report
+**  NOTE: Ownership of report passes to BDC_EXEC or is freed by this function if unable to send the report
+**
+** \param   ctrl - parameters controlling the profile e.g. URL to upload report to
+** \param   bp - pointer to bulk data profile to get the report map for
+** \param   report - pointer to buffer containing the report to send (which may be compressed)
+** \param   report_len - length of json_report
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int bulkdata_schedule_sending_mqtt_report(profile_ctrl_params_t *ctrl, bulkdata_profile_t *bp, char *report, int report_len)
+{
+    mtp_send_item_t mtp_send_item;
+    int mqtt_client_instance = 0;
+    int err;
+
+    // Exit if the MQTT client instance does not exist
+    err = DM_ACCESS_ValidateReference(ctrl->mqtt_reference, "Device.MQTT.Client.{i}", &mqtt_client_instance);
+    if (err != USP_ERR_OK)
+    {
+        USP_LOG_Error("%s: Unable to send report as invalid MQTT client reference (%s)", __FUNCTION__, ctrl->mqtt_reference);
+        USP_FREE(report);
+        return err;
+    }
+
+    // Prepare the MTP item information now it is serialized.
+    MTP_EXEC_MtpSendItem_Init(&mtp_send_item);
+    mtp_send_item.usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;  // This is actually don't care for the content_type
+    mtp_send_item.content_type = kMtpContentType_BulkDataReport;
+    mtp_send_item.pbuf = (uint8_t *)report;  // Ownership of the serialized USP Record passes to the queue, unless an error is returned.
+    mtp_send_item.pbuf_len = report_len;
+
+    // Exit if unable to queue the message. This could occur if the MQTT Client is not enabled
+    err = MQTT_QueueBinaryMessage(&mtp_send_item, mqtt_client_instance, ctrl->mqtt_publish_topic, END_OF_TIME);
+    if (err != USP_ERR_OK)
+    {
+        USP_FREE(report);
+        return err;
+    }
+
+    return USP_ERR_OK;
+}
+#endif
 
 /*********************************************************************//**
 **

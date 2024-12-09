@@ -71,6 +71,7 @@ typedef struct
 void GROUP_SET_VECTOR_Init(group_set_vector_t *gsv);
 void GROUP_SET_VECTOR_Destroy(group_set_vector_t *gsv);
 void GROUP_SET_VECTOR_Add(group_set_vector_t *gsv, char *path, char *value, bool is_required, combined_role_t *combined_role);
+bool GROUP_SET_VECTOR_AreAllPathsTheSameGroupId(group_set_vector_t *gsv, int index, int num_entries);
 int GROUP_SET_VECTOR_GetFailureIndex(group_set_vector_t *gsv, int index, int num_entries);
 void GROUP_SET_VECTOR_SetValues(group_set_vector_t *gsv, int index, int num_entries);
 

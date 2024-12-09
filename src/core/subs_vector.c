@@ -298,7 +298,7 @@ void SUBS_VECTOR_Dump(subs_vector_t *suv)
         // Log all path expressions
         for (j=0; j < sub->path_expressions.num_entries; j++)
         {
-            USP_DUMP("path[%d]=%s, handler_group_id=0x%4x", j, sub->path_expressions.vector[j], sub->handler_group_ids.vector[j]);
+            USP_DUMP("path[%d]=%s, handler_group_id=%d", j, sub->path_expressions.vector[j], sub->handler_group_ids.vector[j]);
         }
 
         // Log all last values
@@ -306,6 +306,13 @@ void SUBS_VECTOR_Dump(subs_vector_t *suv)
         {
             USP_DUMP("last_values[%d] %s => %s", j, sub->last_values.vector[j].key, sub->last_values.vector[j].value);
         }
+
+        // Log all USP Services that have a Device. subscription
+        for (j=0; j < sub->device_group_ids.num_entries; j++)
+        {
+            USP_DUMP("device_group_id=%d", sub->device_group_ids.vector[j]);
+        }
+
         USP_DUMP("-");
 
     }

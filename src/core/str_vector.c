@@ -224,47 +224,6 @@ void STR_VECTOR_RemoveByIndex(str_vector_t *sv, int index)
 
 /*********************************************************************//**
 **
-** STR_VECTOR_RemoveUnusedEntries
-**
-** Removes all NULL string entries from the vector, compacting the vector
-** This function is usually called after marking some entries as NULL in the vector (after freeing them)
-**
-** \param   sv - pointer to structure to remove an entry from
-**
-** \return  None
-**
-**************************************************************************/
-void STR_VECTOR_RemoveUnusedEntries(str_vector_t *sv)
-{
-    int i, j;
-
-    // Move down all items in the vector
-    j = 0;
-    for (i=0; i < sv->num_entries; i++)
-    {
-        if (sv->vector[i] != NULL)
-        {
-            if (i != j)
-            {
-                sv->vector[j] = sv->vector[i];
-            }
-            j++;
-        }
-    }
-
-    // Save the new number of entries, after
-    sv->num_entries = j;
-
-    // Ensure that the vector is freed, if it now contains no entries
-    if (sv->num_entries == 0)
-    {
-        USP_FREE(sv->vector);
-        sv->vector = NULL;
-    }
-}
-
-/*********************************************************************//**
-**
 ** STR_VECTOR_Destroy
 **
 ** Deallocates all memory associated with the string vector
@@ -356,6 +315,91 @@ void STR_VECTOR_ConvertToKeyValueVector(str_vector_t *sv, kv_vector_t *kvv)
     USP_FREE(sv->vector);
     sv->vector = NULL;
     sv->num_entries = 0;
+}
+
+/*********************************************************************//**
+**
+** STR_VECTOR_ToSortedList
+**
+** Converts a string vector into a dynamically allocated string containing a comma separated list of sorted items
+** If there are no items in the list, then it returns NULL
+**
+** \param   sv - pointer to string vector source structure to convert
+**
+** \return  Dynamically allocated string containing comma separated list of all items in the string vector, or NULL if no items
+**          NOTE: Ownership of the string passes to the caller upon return
+**
+**************************************************************************/
+char *STR_VECTOR_ToSortedList(str_vector_t *sv)
+{
+    if (sv->num_entries == 0)
+    {
+        return NULL;
+    }
+
+    STR_VECTOR_Sort(sv);
+    return STR_VECTOR_ToList(sv);
+}
+
+/*********************************************************************//**
+**
+** STR_VECTOR_ToList
+**
+** Converts a string vector into a dynamically allocated string containing a comma separated list of the items
+**
+** \param   sv - pointer to string vector source structure to convert
+**
+** \return  Dynamically allocated string containing comma separated list of all items in the string vector
+**          NOTE: Ownership of the string passes to the caller upon return
+**
+**************************************************************************/
+char *STR_VECTOR_ToList(str_vector_t *sv)
+{
+    int i;
+    int len;
+    char *buf;
+    char *item;
+    char *p;
+
+    // Iterate over all items, calculating the size of string to allocate
+    len = 0;
+    for (i=0; i < sv->num_entries; i++)
+    {
+        // Account for comma+space separator
+        if (i > 0)
+        {
+            len += 2;
+        }
+
+        len += strlen(sv->vector[i]);
+    }
+    len++;   // Plus 1 to include trailing nul terminator
+
+    // Allocate a string buffer in which to copy the items
+    buf = USP_MALLOC(len);
+
+    // Iterate over all items, adding them to the buffer
+    p = buf;
+    for (i=0; i < sv->num_entries; i++)
+    {
+        // Add comma+space separator
+        if (i > 0)
+        {
+            *p++ = ',';
+            *p++ = ' ';
+        }
+
+        // Copy the item into the string buffer
+        item = sv->vector[i];
+        len = strlen(item);
+        memcpy(p, item, len);
+        p += len;
+    }
+
+    // Add nul terminator
+    *p++ = '\0';
+
+    return buf;
 }
 
 /*********************************************************************//**

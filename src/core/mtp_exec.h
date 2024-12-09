@@ -89,6 +89,7 @@ typedef enum
     kMtpContentType_UspMessage,       // Protobuf encoded USP Record containing an unsegmented USP message. No session context.
     kMtpContentType_ConnectRecord,    // A STOMP, MQTT, WebSockets or UDS USP Connect record
     kMtpContentType_DisconnectRecord, // A USP Disconnect record that causes the MTP to disconnect (and retry)
+    kMtpContentType_BulkDataReport,   // Raw Bulk Data report to put into the MTP frame
 #ifdef E2ESESSION_EXPERIMENTAL_USP_V_1_2
     kMtpContentType_E2E_SessTermination, // A USP Disconnect record that doesn't cause the MTP to disconnect (used to terminate an E2E session)
     kMtpContentType_E2E_FullMessage,  // USP Record containing a full USP message in a session context
