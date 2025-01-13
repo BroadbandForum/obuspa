@@ -2217,11 +2217,27 @@ int Validate_SubsID(dm_req_t *req, char *value)
     int err;
     subs_t *sub;
     int controller_instance;
+    char cur_value[MAX_DM_VALUE_LEN];
 
     // Exit if no value set for subscription ID (i.e. set to an empty string)
     if (*value == '\0')
     {
         USP_ERR_SetMessage("%s: Subscription ID must be set to a non-empty string", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if unable to get the current value of the subscription ID
+    err = DATA_MODEL_GetParameterValue(req->path, cur_value, sizeof(cur_value), 0);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: Failed to get the current value of %s", __FUNCTION__, req->path);
+        return err;
+    }
+
+    // Exit if the current value of subscription ID is not empty and is not the default 'cpe-' (to ensure that ID is immutable once set)
+    if ((cur_value[0] != '\0') && (strncmp(cur_value, DEFAULT_ID_PREFIX, sizeof(DEFAULT_ID_PREFIX)-1) != 0))
+    {
+        USP_ERR_SetMessage("%s: Subscription ID parameter values must not be changed once assigned (current_value='%s')", __FUNCTION__, cur_value);
         return USP_ERR_INVALID_ARGUMENTS;
     }
 

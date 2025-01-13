@@ -1,5 +1,11 @@
 # OB-USP-AGENT Changelog since Release 9.0.0
 
+## 2025-01-13 v9.0.5
+### Fixed
+- Compilation failure when building for pure USP Service
+- Subscription ID should be immutable
+- OpenSSL should be initialized only once
+
 ## 2024-12-09 v9.0.4
 ### Added
 - USP Broker support for registration of parameters, events and USP commands (USP 1.4)

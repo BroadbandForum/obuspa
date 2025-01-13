@@ -291,15 +291,6 @@ int DEVICE_SECURITY_Init(void)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Initialise SSL
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-    SSL_library_init();
-    OpenSSL_add_all_algorithms();
-    SSL_load_error_strings();
-#else
-    OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS, NULL);
-#endif
-
     // Initialise client certificate structure
     memset(&client_cert, 0, sizeof(client_cert));
     client_cert.is_san_equal_endpoint_id = false;

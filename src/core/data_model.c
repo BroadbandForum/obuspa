@@ -5028,8 +5028,6 @@ void AddChildNodes(dm_node_t *parent, str_vector_t *sv)
 {
     dm_node_t *child;
     char path[MAX_DM_PATH];
-    char buf[MAX_DM_PATH+MAX_ENDPOINT_ID_LEN];
-    char *endpoint_id = NULL;
     char *str;
 
     // Form path of node, ensuring that object nodes end in '.'
@@ -5037,6 +5035,9 @@ void AddChildNodes(dm_node_t *parent, str_vector_t *sv)
     str = path;
 
 #ifndef REMOVE_USP_BROKER
+    char *endpoint_id = NULL;
+    char buf[MAX_DM_PATH+MAX_ENDPOINT_ID_LEN];
+
     // If node was registered by a USP Service, then add a column containing endpoint_id of the USP Service
     if (parent->group_id != NON_GROUPED)
     {

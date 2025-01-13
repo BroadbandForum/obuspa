@@ -83,7 +83,7 @@
 #endif
 
 //--------------------------------------------------------------------------------------
-// Determine whether libcurl is required by the USP Agent
+// Determine whether libcurl and libssl are required by the USP Agent
 
 #ifndef REMOVE_DEVICE_BULKDATA
 #undef REQUIRE_CURL
@@ -93,6 +93,37 @@
 
 #ifdef REQUIRE_CURL
 #include <curl/curl.h>
+#undef REQUIRE_SSL
+#define REQUIRE_SSL
+#endif
+
+#ifndef REMOVE_DEVICE_SECURITY
+#undef REQUIRE_SSL
+#define REQUIRE_SSL
+#endif
+
+#ifndef DISABLE_STOMP
+#undef REQUIRE_SSL
+#define REQUIRE_SSL
+#endif
+
+#ifdef ENABLE_MQTT
+#undef REQUIRE_SSL
+#define REQUIRE_SSL
+#endif
+
+#ifdef ENABLE_WEBSOCKETS
+#undef REQUIRE_SSL
+#define REQUIRE_SSL
+#endif
+
+#ifdef ENABLE_COAP
+#undef REQUIRE_SSL
+#define REQUIRE_SSL
+#endif
+
+#ifdef REQUIRE_SSL
+#include <openssl/ssl.h>
 #endif
 
 #ifndef OVERRIDE_MAIN
@@ -414,6 +445,19 @@ exit:
 int MAIN_Start(char *db_file, bool enable_mem_info)
 {
     int err;
+
+    // Initialise SSL
+#ifdef REQUIRE_SSL
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    SSL_library_init();
+    OpenSSL_add_all_algorithms();
+    SSL_load_error_strings();
+#else
+    OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS, NULL);
+#endif
+#endif
+
+    // Initialise libcurl
 #ifdef REQUIRE_CURL
     CURLcode curl_err;
 

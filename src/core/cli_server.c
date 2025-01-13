@@ -504,7 +504,6 @@ int CLI_SERVER_ExecuteCliCommand(char *cmd_line)
     // Process command
     err = cli_cmd->exec_cmd(&args);
     print_help = false;
-    err = USP_ERR_OK;
 
 exit:
     dump_to_cli = false;
