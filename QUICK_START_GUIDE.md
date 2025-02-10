@@ -453,6 +453,34 @@ int RefreshIPInterfaceInstances(int group_id, char *path, int *expiry_period)
     *expiry_period = 30;
     return USP_ERR_OK;
 }
+```
 
+## Extending the data model using plug-ins
+As an alternative (or in addition) to extending the data model by adding source code to the stub functions in `src/vendor/vendor.c`, the data model may also be extended using plug-ins. These are shared objects which are dynamically loaded by OB-USP-AGENT at runtime.
+
+Plug-ins are particularly useful in the following cases:
+* When you would like to separate out parts of the extended data model into different binaries e.g., `Device.WiFi` can be implemented in a separate shared object from `Device.USB`. The source code for each of these data model trees may be stored in different repositories and compiled separately.
+* When creating USP Services on memory constrained devices. The OB-USP_AGENT executable may be shared by each USP Service and the USP Broker. Specialization of the data model may be provided by separate plug-ins for each USP Service and the USP Broker.
+
+Plug-ins must provide the three functions `VENDOR_Init()`, `VENDOR_Start()` and `VENDOR_Stop()`, written in the same way as described earlier.
+
+### Example plug-in
+An example plug-in is contained in the `/examples/plugin` directory. The example registers a single data model parameter (`Device.Day`), providing a different day of the week each time it is read. To build it, use the following:
 
 ```
+$ cd obuspa/examples/plugin
+$ autoreconf --force --install
+$ ./configure
+$ make
+$ sudo make install
+```
+
+A shared object will be created in `obuspa/examples/plugin/.libs/plugin.so` and installed to (typically) `/usr/local/lib/plugin/plugin.so`. To invoke OB-USP-AGENT with the plug-in use the '-x' option:
+
+```
+cd obuspa
+obuspa -p -v 4 -r factory_reset_example.txt -i eth0 -x examples/plugin/.libs/plugin.so
+```
+ OB-USP-AGENT supports the loading of multiple plug-ins at start-up, each one specified using a '-x' command line switch.
+
+

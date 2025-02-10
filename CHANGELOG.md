@@ -1,5 +1,9 @@
 # OB-USP-AGENT Changelog since Release 9.0.0
 
+## 2025-02-10 v9.0.6
+### Added
+- Example vendor layer plug-in and documentation (in quick start guide)
+
 ## 2025-01-13 v9.0.5
 ### Fixed
 - Compilation failure when building for pure USP Service
