@@ -1036,17 +1036,28 @@ int GetHardwareVersion(dm_req_t *req, char *buf, int len)
 {
     int err;
     get_hardware_version_cb_t   get_hardware_version_cb;
+    char *p;
 
-    // Exit if unable to get the hardware version from the vendor
+    // Get the hardware version from the vendor hook (if set), otherwise fallback to using the environment variable
     *buf = '\0';
     get_hardware_version_cb = vendor_hook_callbacks.get_hardware_version_cb;
     if (get_hardware_version_cb != NULL)
     {
+        // Exit if unable to get the hardware version from the vendor
         err = get_hardware_version_cb(buf, len);
         if (err != USP_ERR_OK)
         {
             USP_ERR_SetMessage("%s: get_hardware_version_cb() failed", __FUNCTION__);
             return err;
+        }
+    }
+    else
+    {
+        // Copy the hardware version, if specified by an environment variable
+        p = getenv("USP_BOARD_HW_VERSION");
+        if (p != NULL)
+        {
+            USP_STRNCPY(buf, p, len);
         }
     }
 

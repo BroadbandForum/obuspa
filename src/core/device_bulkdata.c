@@ -2555,7 +2555,7 @@ void bulkdata_process_profile_mqtt(bulkdata_profile_t *bp)
     }
 
     // Print out the JSON report, if debugging is enabled
-    USP_LOG_Debug("\nBULK DATA: %sing at time %s, to url=%s", ctrl.method, iso8601_cur_time(buf, sizeof(buf)), ctrl.url);
+    USP_LOG_Debug("\nBULK DATA: Sending at time %s to MQTT topic %s", iso8601_cur_time(buf, sizeof(buf)), ctrl.mqtt_publish_topic);
     if (enable_protocol_trace)
     {
         USP_LOG_String(kLogLevel_Info, kLogType_Protocol, report);

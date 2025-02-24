@@ -1,5 +1,13 @@
 # OB-USP-AGENT Changelog since Release 9.0.0
 
+## 2025-02-24 v9.0.7
+### Added
+- HardwareVersion can also be specified by an environment variable (USP_BOARD_HW_VERSION)
+
+### Fixed
+- Crash that could occur once at startup if the controller trust permissions table contained invalid data
+
+
 ## 2025-02-10 v9.0.6
 ### Added
 - Example vendor layer plug-in and documentation (in quick start guide)

@@ -882,8 +882,12 @@ int Notify_CTrustPermDeleted(dm_req_t *req)
         return USP_ERR_OK;
     }
 
+    // Exit if this permission has already been deleted (or was never actually created - which could be the case if the permission contained invalid values in the DB on startup)
     perm = FindPermissionByInstance(role, inst2);
-    USP_ASSERT(perm != NULL);
+    if (perm == NULL)
+    {
+        return USP_ERR_OK;
+    }
 
     FreePermission(role, perm);
 
