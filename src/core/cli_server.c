@@ -659,6 +659,15 @@ int ExecuteCli_Version(str_vector_t *args)
 **************************************************************************/
 int ExecuteCli_Get(str_vector_t *args)
 {
+#ifndef REMOVE_USP_BROKER
+    char *arg1;
+
+    USP_ASSERT(args->num_entries >= 2);
+    arg1 = args->vector[1];
+
+    // Attempt to send and process a single get request to a USP Service, avoiding costly path resolution by the Broker
+    return USP_BROKER_DirectGetForCli(arg1);
+#else
     int i;
     int err;
     str_vector_t params;
@@ -669,18 +678,6 @@ int ExecuteCli_Get(str_vector_t *args)
 
     USP_ASSERT(args->num_entries >= 2);
     arg1 = args->vector[1];
-
-#ifndef REMOVE_USP_BROKER
-{
-    // Attempt to send and process a single get request to a USP Service, avoiding costly path resolution by the Broker
-    bool is_handled;
-    is_handled = USP_BROKER_AttemptDirectGetForCli(arg1);
-    if (is_handled)
-    {
-        return USP_ERR_OK;
-    }
-}
-#endif
 
     // Exit if unable to get a list of all parameters referenced by the expression
     STR_VECTOR_Init(&params);
@@ -721,8 +718,8 @@ int ExecuteCli_Get(str_vector_t *args)
     }
 
     GROUP_GET_VECTOR_Destroy(&ggv);
-
     return USP_ERR_OK;
+#endif
 }
 
 /*********************************************************************//**

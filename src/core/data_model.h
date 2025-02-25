@@ -203,6 +203,8 @@ typedef struct dm_node_tag
 
     int group_id;                   // Indicates the group_id of the software component implementing this object, or NON_GROUPED
 
+    int depth;                   // The depth of the node within the schema - the number of ancestors a node has
+
     union
     {
         dm_param_info_t  param_info;                    // Parameters

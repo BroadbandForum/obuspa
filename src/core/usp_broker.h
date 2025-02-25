@@ -70,7 +70,8 @@ mtp_conn_t *USP_BROKER_GetNotifyDestForEndpoint(char *endpoint_id, Usp__Header__
 char *USP_BROKER_GroupIdToEndpointId(int group_id);
 bool USP_BROKER_AttemptPassthru(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc, combined_role_t *combined_role, UspRecord__Record *rec);
 void USP_BROKER_HandleUspServiceDisconnect(char *endpoint_id, uds_path_t path_type);
-bool USP_BROKER_AttemptDirectGetForCli(char *path);
+int USP_BROKER_DirectGetForCli(char *path);
 int USP_BROKER_ExecuteCli_Service(str_vector_t *args);
+int USP_BROKER_AttemptDirectGet(char *path, str_vector_t *non_usp_params, int_vector_t *group_ids, kv_vector_t *kvv_resp, combined_role_t *combined_role, int depth);
 
 #endif

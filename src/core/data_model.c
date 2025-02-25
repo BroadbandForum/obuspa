@@ -3334,6 +3334,7 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
             // Save the instance nodes for this object
             memcpy(child->instance_nodes, &inst.nodes, inst.order*sizeof(dm_node_t *));
             child->order = inst.order;
+            child->depth = i+1;
         }
         else
         {
@@ -4150,6 +4151,7 @@ dm_node_t *CreateNode(char *name, dm_node_type_t type, char *schema_path)
     node->path = USP_STRDUP(schema_path);
     DLLIST_Init(&node->child_nodes);
     node->parent_node = NULL;
+    node->depth = -1;
 
     // Default the group_id
     // NOTE: For objects which are non multi-instance, the group_id is effectively 'don't care' as non-table objects are not accessible via the grouped vendor hook APIs
