@@ -58,6 +58,7 @@ char *expr_op_2_str[kExprOp_Max] =
     "<",  // kExprOp_LessThan
     ">",  // kExprOp_GreaterThan
     "=",  // kExprOp_Equals
+    "~=", // kExprOp_Contains
 };
 
 
@@ -479,6 +480,15 @@ char *SplitOnOperator(char *buf, expr_op_t *p_op)
     if (op != NULL)
     {
         *p_op = kExprOp_GreaterThanOrEqual;
+        *op = '\0';
+        return &op[2];
+    }
+
+    // Exit if found the "~=" operator
+    op = strstr(buf, "~=");
+    if (op != NULL)
+    {
+        *p_op = kExprOp_Contains;
         *op = '\0';
         return &op[2];
     }

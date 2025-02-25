@@ -105,7 +105,7 @@ typedef enum
     kExprOp_LessThan,               // '<'
     kExprOp_GreaterThan,            // '>'
     kExprOp_Equals,                 // '='
-
+    kExprOp_Contains,               // '~='
     kExprOp_Max
 } expr_op_t;
 

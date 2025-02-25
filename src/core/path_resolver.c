@@ -1481,7 +1481,7 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     char temp[MAX_DM_PATH];
     bool is_match;
     bool is_ref_match;
-    expr_op_t valid_ops[] = {kExprOp_Equal, kExprOp_NotEqual, kExprOp_LessThanOrEqual, kExprOp_GreaterThanOrEqual, kExprOp_LessThan, kExprOp_GreaterThan};
+    expr_op_t valid_ops[] = {kExprOp_Equal, kExprOp_NotEqual, kExprOp_LessThanOrEqual, kExprOp_GreaterThanOrEqual, kExprOp_LessThan, kExprOp_GreaterThan, kExprOp_Contains};
     unsigned short permission_bitmask;
 
     // Exit if unable to find the end of the unique key
@@ -1814,6 +1814,67 @@ int DoUniqueKeysMatch(int index, search_param_t *sp, bool *is_match)
             return gge->err_code;
         }
         USP_ASSERT(gge->value != NULL);     // GROUP_GET_VECTOR_GetValues() should have set an error message if the vendor hook didn't set a value for the parameter
+
+        if (ec->op == kExprOp_Contains) {
+            // NOTE: There is no "list" flag defined for the key parameter, which should be a limitation at the moment.
+            // The code below assumes comma-separated values in the key parameter value for the "contains" operator
+            char *list_copy = USP_STRDUP(gge->value);
+            char *saveptr;
+            char *token;
+            bool found = false;
+
+            // Split the list and compare each element
+            token = strtok_r(list_copy, ",", &saveptr);
+            while (token != NULL)
+            {
+                // Trim whitespace from token
+                TEXT_UTILS_TrimBuffer(token);
+
+                // Compare based on type
+                if (type_flags & (DM_INT | DM_UINT | DM_ULONG | DM_LONG | DM_DECIMAL))
+                {
+                    err = DM_ACCESS_CompareNumber(token, kExprOp_Equal, ec->value, &result);
+                }
+                else if (type_flags & DM_BOOL)
+                {
+                    err = DM_ACCESS_CompareBool(token, kExprOp_Equal, ec->value, &result);
+                }
+                else if (type_flags & DM_DATETIME)
+                {
+                    err = DM_ACCESS_CompareDateTime(token, kExprOp_Equal, ec->value, &result);
+                }
+                else
+                {
+                    // Default string comparison
+                    err = DM_ACCESS_CompareString(token, kExprOp_Equal, ec->value, &result);
+                }
+
+                if (err != USP_ERR_OK)
+                {
+                    USP_FREE(list_copy);
+                    return err;
+                }
+
+                if (result)
+                {
+                    found = true;
+                    break;
+                }
+
+                token = strtok_r(NULL, ",", &saveptr);
+            }
+
+            USP_FREE(list_copy);
+
+            // Exit if element not found in list
+            if (!found)
+            {
+                return USP_ERR_OK;
+            }
+
+            // Skip the normal comparison since we already handled it
+            continue;
+        }
 
         // Determine the function to call to perform the comparison
         if (type_flags & (DM_INT | DM_UINT | DM_ULONG | DM_LONG | DM_DECIMAL))
