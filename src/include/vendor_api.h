@@ -43,6 +43,7 @@
 
 #include "vendor_defs.h"
 #include "usp_api.h"
+#include "plugin.h"
 
 //---------------------------------------------------------------------
 // Vendor API

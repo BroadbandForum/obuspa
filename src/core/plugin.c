@@ -246,7 +246,7 @@ int PLUGIN_GetFactoryResetParams(kv_vector_t *params)
     {
         if (plugin->vendor_get_factory_reset_params != NULL)
         {
-            err = plugin->vendor_get_factory_reset_params(&params);
+            err = plugin->vendor_get_factory_reset_params(params);
             if (err != USP_ERR_OK)
             {
                 return err;
