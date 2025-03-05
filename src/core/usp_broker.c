@@ -55,6 +55,7 @@
 #include "usp_broker.h"
 #include "proto_trace.h"
 #include "path_resolver.h"  // For FULL_DEPTH
+#include "expr_vector.h"
 #include "cli.h"
 #include "group_get_vector.h"
 
@@ -230,7 +231,6 @@ void SubsMap_Add(double_linked_list_t *sm, int service_instance, char *path, sub
 void SubsMap_Remove(double_linked_list_t *sm, subs_map_t *smap);
 subs_map_t *SubsMap_FindByUspServiceSubsId(double_linked_list_t *sm, char *subscription_id, int broker_instance);
 subs_map_t *SubsMap_FindByBrokerInstanceAndPath(double_linked_list_t *sm, int broker_instance, char *path);
-subs_map_t *SubsMap_FindByPath(double_linked_list_t *sm, char *path);
 subs_map_t *SubsMap_FindByPathAndNotifyType(double_linked_list_t *sm, char *path, subs_notify_t notify_type);
 void ReqMap_Init(double_linked_list_t *rm);
 void ReqMap_Destroy(double_linked_list_t *rm);
@@ -271,7 +271,6 @@ int DeRegisterUspServicePath(usp_service_t *us, char *path);
 int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path, str_vector_t *accepted_paths);
 void RegisterBrokerVendorHooks(usp_service_t *us);
 void DeregisterBrokerVendorHooks(usp_service_t *us);
-bool IsUspServiceNotificationMatch(Usp__Notify *notify, usp_service_t *us, int broker_instance);
 Usp__Msg *CreateCliInitiatedRequest(cli_service_cmd_t cmd, char *path, char *optional, Usp__Header__MsgType *resp_type);
 int ProcessCliInitiatedResponse(cli_service_cmd_t cmd, char *path, Usp__Msg *resp);
 int CalcStrippedPathLen(char *path, int len);
@@ -885,7 +884,6 @@ void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t 
     Usp__Notify__OperationComplete *op;
     int items_converted;
     int broker_instance;
-    bool is_match;
 
     // Exit if message is invalid or failed to parse
     // This code checks the parsed message enums and pointers for expectations and validity
@@ -937,20 +935,12 @@ void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t 
     smap = SubsMap_FindByUspServiceSubsId(&us->subs_map, notify->subscription_id, broker_instance);
     if (smap == NULL)
     {
-        // Subscription doesn't match any that have been paired up
-        // However this may be because the notification was received before the USP Service registration sequence has completed (eg Device.Boot!)
-
-        // Exit if the notification does not match the expected entry in the Broker's subscription table
-        is_match = IsUspServiceNotificationMatch(notify, us, broker_instance);
-        if (is_match == false)
-        {
-            err = USP_ERR_REQUEST_DENIED;
-            goto exit;
-        }
+        err = USP_ERR_REQUEST_DENIED;
+        goto exit;
     }
 
     // Forward the notification back to the controller that set up the subscription on the Broker
-    err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance);
+    err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance, smap->path);
 
     // If this is an OperationComplete notification, then delete the associated request
     // in the Broker's Request table and from this USP Service's request mapping table
@@ -987,9 +977,20 @@ int USP_BROKER_IsPathVendorSubscribable(subs_notify_t notify_type, char *path, b
 {
     dm_node_t *node;
 
-    // Determine whether the path is an absolute path, wildcarded path or partial path
-    // We believe that all USP Services support subscribing to paths of these types
-    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+    // Check whether the path contains a reference follow
+    // An extra check is needed here because the reference might be inside a
+    // search expression, and DM_PRIV_GetNodeFromPath ignores the contents
+    // of search expressions
+    if (TEXT_UTILS_StrStr(path, "+")!=NULL)
+    {
+        node = NULL;
+    }
+    else
+    {
+        // Determine whether the path is an absolute path, wildcarded path or partial path
+        // We believe that all USP Services support subscribing to paths of these types
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, (DONT_LOG_ERRORS|SUBSTITUTE_SEARCH_EXPRS));
+    }
 
     // Fill in whether the path was present in the data model
     if (is_present != NULL)
@@ -998,7 +999,7 @@ int USP_BROKER_IsPathVendorSubscribable(subs_notify_t notify_type, char *path, b
     }
 
     // Exit if this path is not subscribable in the vendor layer
-    // i.e. it is either not present in the data model or contains search expressions or reference follows
+    // i.e. it is either not present in the data model
     if (node == NULL)
     {
         return NON_GROUPED;
@@ -1054,6 +1055,117 @@ bool USP_BROKER_IsNotifyTypeVendorSubscribable(int group_id, subs_notify_t notif
     }
 
     return true;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_CheckAsyncCommandIsSubscribedTo
+**
+** Checks that if the specified path is an async USP command that there is an OperationComplete subscription present on the
+** USP Service implementing the command. This is necessary because otherwise the Broker will not know when the USP Command
+** has completed and hence will never delete the request from the Broker's Request table
+**
+** \param   path - Absolute (fully resolved) path for the USP command to check
+** \param   combined_role - roles that the originator has (inherited & assigned)
+**
+** \return  USP_ERR_OK if the caller can proceed to invoke the USP command
+**          USP_ERR_REQUEST_DENIED if caller cannot invoke the USP command
+**
+**************************************************************************/
+int USP_BROKER_CheckAsyncCommandIsSubscribedTo(char *path, combined_role_t *combined_role)
+{
+    dm_node_t *cmd_node;
+    dm_node_t *subs_node;
+    usp_service_t *us;
+    subs_map_t *smap;
+    str_vector_t subs_paths;
+    int err;
+    int index;
+    int cmd_cont_instance;
+    int subs_cont_instance;
+
+    // Exit if the USP command is a synch cmd. These do not send back OperationComplete notifications, so don't need a subscription
+    cmd_node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
+    USP_ASSERT(cmd_node != NULL);
+    if (cmd_node->type == kDMNodeType_SyncOperation)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if this async cmd is not owned by a USP service. This could be the case on RDK-B
+    us = FindUspServiceByGroupId(cmd_node->group_id);
+    if (us == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Get the instance number of the controller trying to invoke this USP command
+    cmd_cont_instance = MSG_HANDLER_GetMsgControllerInstance();
+
+    // Iterate over all subs maps for this USP service, checking all OperationComplete ones
+    smap = (subs_map_t *) us->subs_map.head;
+    while (smap != NULL)
+    {
+        // Skip this entry if it isn't an OperationComplete notification
+        if (smap->notify_type != kSubNotifyType_OperationComplete)
+        {
+            goto next;
+        }
+
+        // Skip this entry if it isn't owned by the same controller as is trying to invoke the USP command
+        subs_cont_instance = DEVICE_SUBSCRIPTION_GetControllerInstance(smap->broker_instance);
+        if (subs_cont_instance != cmd_cont_instance)
+        {
+            goto next;
+        }
+
+        // Exit if there was a partial path or wildcarded subscription setup on the USP service which matches this Async command
+        if (TEXT_UTILS_IsPathMatch(path, smap->path)==true)
+        {
+            return USP_ERR_OK;
+        }
+
+        // Skip this entry if the subscription doesn't contain a search expression
+        if (strchr(smap->path, '[') == NULL)
+        {
+            goto next;
+        }
+
+        // Skip this entry if the subscription wasn't for this USP command
+        subs_node = DM_PRIV_GetNodeFromPath(smap->path, NULL, NULL, SUBSTITUTE_SEARCH_EXPRS);
+        if (subs_node != cmd_node)
+        {
+            goto next;
+        }
+
+        // Exit if unable to resolve the subscription path into the absolute paths that it specifies
+        STR_VECTOR_Init(&subs_paths);
+        err = PATH_RESOLVER_ResolveDevicePath(smap->path, &subs_paths, NULL, kResolveOp_SubsOper, 1, combined_role, DONT_LOG_RESOLVER_ERRORS);
+        if (err != USP_ERR_OK)
+        {
+            USP_ERR_SetMessage("%s: Unable to determine if OperationComplete subscription was set before invoking '%s'", __FUNCTION__, path);
+            STR_VECTOR_Destroy(&subs_paths);
+            return err;
+        }
+
+        // Exit if the async cmd matches one of the resolved subscription paths
+        index = STR_VECTOR_Find(&subs_paths, path);
+        if (index != INVALID)
+        {
+            STR_VECTOR_Destroy(&subs_paths);
+            return USP_ERR_OK;
+        }
+
+        STR_VECTOR_Destroy(&subs_paths);
+
+next:
+        // Move to the next subs map in the linked list
+        smap = (subs_map_t *) smap->link.next;
+    }
+
+    // If the code gets here, then no subscription was setup for the async cmd on the USP service, so it cannot be invoked
+    USP_ERR_SetMessage("%s: OperationComplete subscription must be set before invoking '%s'", __FUNCTION__, path);
+    return USP_ERR_REQUEST_DENIED;
 }
 
 /*********************************************************************//**
@@ -1344,7 +1456,7 @@ bool USP_BROKER_AttemptPassthru(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mt
 ** If possible, issues a single top level GET to each USP service contained in the path in order to retrieve the full
 ** datamodel of each USP service in one go (as an alternative to requesting each parameter individually).
 **
-** \param   path - the instantialted datamodel path to GET
+** \param   path - the instantiated datamodel path to GET
 ** \param   unresolved_params - pointer to str_vector_t to return a list of paths that have not been resolved by the direct get
 ** \param   group_ids - pointer to int_vector_t containing the group id belonging to each entry in unresolved_params
 ** \param   resolved_params - pointer to kv_vector_t containing key/value results of querying USP services directly
@@ -1375,7 +1487,7 @@ int USP_BROKER_AttemptDirectGet(char *path, str_vector_t *unresolved_params, int
     }
 
     // Exit if this path does not exist in the data model
-    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, (DONT_LOG_ERRORS|SUBSTITUTE_SEARCH_EXPRS));
     if (node == NULL)
     {
         // If unable to determine the node from the path could be a reference following
@@ -1386,6 +1498,20 @@ int USP_BROKER_AttemptDirectGet(char *path, str_vector_t *unresolved_params, int
     us = FindUspServiceByGroupId(node->group_id);
     if (us != NULL)
     {
+        // Before forwarding a GET with search expressions to a service, we
+        // need to check that the client has permission to access all the
+        // parameters referenced
+        if (TEXT_UTILS_StrStr(path, "[") != NULL)
+        {
+           // Path has at least one search expression
+           if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(path, combined_role)==false)
+           {
+               // Missing permissions, resolve using path resolver
+               err = PATH_RESOLVER_ResolveDevicePath(path, unresolved_params, group_ids, kResolveOp_Get, depth, combined_role, 0);
+               goto exit;
+           }
+        }
+
         // Path refers to a specific USP service so use the path including any instances and/or search params
         STR_VECTOR_Add(&usp_service_paths[node->group_id], path);
         // The depth of the USP service GET is that of the passed in request
@@ -2912,7 +3038,6 @@ int Broker_AsyncOperate(dm_req_t *req, kv_vector_t *input_args, int instance)
     char path[MAX_DM_PATH];
     char command_key[MAX_DM_VALUE_LEN];
     kv_vector_t *output_args;
-    subs_map_t *smap;
     req_map_t *rmap;
     usp_service_t *us;
     bool is_complete = false;
@@ -2920,16 +3045,6 @@ int Broker_AsyncOperate(dm_req_t *req, kv_vector_t *input_args, int instance)
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(req->group_id);
     USP_ASSERT(us != NULL);
-
-    // Exit if no subscription was setup on the USP service for an OperateComplete. We disallow async commands from being started
-    // unless there is a subscription setup because otherwise the Broker will not know when the USP Command has completed and hence
-    // will never delete the request from the Broker's Request table
-    smap = SubsMap_FindByPath(&us->subs_map, req->path);
-    if (smap == NULL)
-    {
-        USP_ERR_SetMessage("%s: OperationComplete subscription must be set before invoking '%s'", __FUNCTION__, req->path);
-        return USP_ERR_REQUEST_DENIED;
-    }
 
     // Exit if unable to get the value of the command key
     USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.Request.%d.CommandKey", instance);
@@ -6196,7 +6311,7 @@ bool AttemptPassThruForGetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
     {
         // Exit if the path is not a simple path (ie absolute, wildcarded or partial) or is not currently registered into the data model
         path = get->param_paths[i];
-        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, (DONT_LOG_ERRORS|SUBSTITUTE_SEARCH_EXPRS));
         if (node == NULL)
         {
             return false;
@@ -6238,6 +6353,13 @@ bool AttemptPassThruForGetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
 
         // Exit if the originator does not have permission to get all the referenced parameters
         is_permitted = CheckPassThruPermissions(node, depth, PERMIT_GET | PERMIT_GET_INST, combined_role);
+
+        // If path contains any search expressions, check permissions on the parameters referenced
+        if (TEXT_UTILS_StrStr(path, "[") != NULL)
+        {
+           is_permitted &= USP_BROKER_CheckPassThruPermissionsInSearchExpressions(path, combined_role);
+        }
+
         if (is_permitted == false)
         {
             return false;
@@ -6299,7 +6421,7 @@ bool AttemptPassThruForSetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
     {
         // Exit if the object path to update is not a simple path (ie absolute, wildcarded or partial)
         obj = set->update_objs[i];
-        obj_node = DM_PRIV_GetNodeFromPath(obj->obj_path, NULL, NULL, DONT_LOG_ERRORS);
+        obj_node = DM_PRIV_GetNodeFromPath(obj->obj_path, NULL, NULL, (DONT_LOG_ERRORS|SUBSTITUTE_SEARCH_EXPRS));
         if (obj_node == NULL)
         {
             return false;
@@ -6328,6 +6450,15 @@ bool AttemptPassThruForSetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
         {
             // Exit if subsequent objects to update are not for the same USP Service as previous paths
             if (obj_node->group_id != group_id)
+            {
+                return false;
+            }
+        }
+
+        // If path contains any search expressions, check permissions on the parameters referenced
+        if (TEXT_UTILS_StrStr(obj->obj_path, "[") != NULL)
+        {
+            if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(obj->obj_path, combined_role)==false)
             {
                 return false;
             }
@@ -6421,7 +6552,7 @@ bool AttemptPassThruForAddRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
     {
         // Exit if the object path to add is not a simple path (ie absolute, wildcarded or partial)
         obj = add->create_objs[i];
-        obj_node = DM_PRIV_GetNodeFromPath(obj->obj_path, NULL, NULL, DONT_LOG_ERRORS);
+        obj_node = DM_PRIV_GetNodeFromPath(obj->obj_path, NULL, NULL, (DONT_LOG_ERRORS | SUBSTITUTE_SEARCH_EXPRS));
         if (obj_node == NULL)
         {
             return false;
@@ -6468,6 +6599,15 @@ bool AttemptPassThruForAddRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
             {
                 return false;
             }
+        }
+
+        // If path contains any search expressions, check permissions on the parameters referenced
+        if (TEXT_UTILS_StrStr(obj->obj_path, "[") != NULL)
+        {
+           if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(obj->obj_path, combined_role)==false)
+           {
+              return false;
+           }
         }
 
         // Iterate over all child parameters to set in this object
@@ -6552,7 +6692,7 @@ bool AttemptPassThruForDeleteRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_
     {
         // Exit if the object path to delete is not a simple path (ie absolute, wildcarded or partial)
         path = del->obj_paths[i];
-        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, (DONT_LOG_ERRORS | SUBSTITUTE_SEARCH_EXPRS));
         if (node == NULL)
         {
             return false;
@@ -6591,6 +6731,16 @@ bool AttemptPassThruForDeleteRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_
         if ((permission_bitmask & PERMIT_DEL) == 0)
         {
             return false;
+        }
+
+        // If path contains any search expressions, check permissions on the parameters referenced
+        if (TEXT_UTILS_StrStr(path, "[") != NULL)
+        {
+           // path contains at least one search expression - check all the parameters referenced are readable
+           if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(path, combined_role)==false)
+           {
+              return false;
+           }
         }
     }
 
@@ -6705,7 +6855,7 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
     USP_LOG_Info("Passthru NOTIFY");
 
     // Forward the notification back to the controller that set up the subscription on the Broker
-    err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance);
+    err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance, smap->path);
     if (err != USP_ERR_OK)
     {
         return false;
@@ -6715,86 +6865,6 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
     // this Broker code always sets NotifRetry=false on the USP Service
 
     // The notification was passed back successfully
-    return true;
-}
-
-/*********************************************************************//**
-**
-** IsUspServiceNotificationMatch
-**
-** Determines whether the specified notification, which was received before the registration
-** sequence had completed (ie subscriptions on broker and USP Service have not been synched)
-** matches the specified broker subscription
-**
-** \param   notify - pointer to parsed protobuf notify structure of the notification
-** \param   us - USP Service that sent the notification
-** \param   broker_instance - expected instance number of the subscription on the USP Broker, extracted from the subscription ID of the received notification
-**
-** \return  true if the received notification matches the broker's subscription, false if it doesn't
-**
-**************************************************************************/
-bool IsUspServiceNotificationMatch(Usp__Notify *notify, usp_service_t *us, int broker_instance)
-{
-    char buf[MAX_DM_PATH];
-    char *path;
-    bool is_match;
-    subs_notify_t notify_type;
-    dm_node_t *node;
-
-    // Extract the full path to the data model element
-    switch(notify->notification_case)
-    {
-        case USP__NOTIFY__NOTIFICATION_EVENT:
-            USP_SNPRINTF(buf, sizeof(buf), "%s%s", notify->event->obj_path, notify->event->event_name);
-            path = buf;
-            notify_type = kSubNotifyType_Event;
-            break;
-
-        case USP__NOTIFY__NOTIFICATION_VALUE_CHANGE:
-            path = notify->value_change->param_path;
-            notify_type = kSubNotifyType_ValueChange;
-            break;
-
-        case USP__NOTIFY__NOTIFICATION_OBJ_CREATION:
-            path = notify->obj_creation->obj_path;
-            notify_type = kSubNotifyType_ObjectCreation;
-            break;
-
-        case USP__NOTIFY__NOTIFICATION_OBJ_DELETION:
-            path = notify->obj_deletion->obj_path;
-            notify_type = kSubNotifyType_ObjectDeletion;
-            break;
-
-        default:
-            return false;
-            break;
-    }
-
-    // Exit if the path is not yet registered into the data model. This could occur if the GSDM response has not yet been received in the registration sequence
-    // NOTE: The path has to be in the data model, otherwise we will be unable to retrieve permissions for forwarding the notification
-    //       This limitation means that most notifications cannot be forwarded until after the GSDM response has been retrieved
-    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
-    if (node == NULL)
-    {
-        USP_ERR_SetMessage("%s: Notification path (%s) does not exist in the data model", __FUNCTION__, path);
-        return false;
-    }
-
-    // Exit if the notification path is not owned by the USP Service
-    if (node->group_id != us->group_id)
-    {
-        USP_ERR_SetMessage("%s: Notification path (%s) is not owned by USP Service", __FUNCTION__, path);
-        return false;
-    }
-
-    // Exit if we do not have an enabled matching subscription for this notification
-    is_match = DEVICE_SUBSCRIPTION_IsMatch(broker_instance, notify_type, path);
-    if (is_match == false)
-    {
-        USP_ERR_SetMessage("%s: Notification contains unexpected subscription Id (%s)", __FUNCTION__, notify->subscription_id);
-        return false;
-    }
-
     return true;
 }
 
@@ -6847,6 +6917,125 @@ bool CheckPassThruPermissions(dm_node_t *node, int depth, unsigned short require
 
     // If the code gets here, then all child nodes passed the permission check
     return true;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_CheckPassThruPermissionsInSearchExpressions
+**
+** Determines whether the originator has PERMIT_GET and PERMIT_GET_INST
+** permissions for all the parameters in any search expressions in the given
+** path. Defaults to true if there are no search expressions.
+**
+** \param   path - the data model path to check
+** \param   combined_role - roles that the originator has (inherited & assigned)
+**
+** \return  true if the path is valid, and the originator has the required
+**          permissions; false otherwise
+**
+**************************************************************************/
+bool USP_BROKER_CheckPassThruPermissionsInSearchExpressions(char *path, combined_role_t *combined_role)
+{
+    expr_vector_t ev;
+    char base_path[MAX_DM_PATH];
+    int base_path_len;
+    int err;
+    int i;
+    dm_node_t *node;
+    unsigned short required_permissions = (PERMIT_GET | PERMIT_GET_INST);
+    unsigned short permission_bitmask;
+    expr_op_t valid_ops[] = {kExprOp_Equal, kExprOp_NotEqual, kExprOp_LessThanOrEqual, kExprOp_GreaterThanOrEqual, kExprOp_LessThan, kExprOp_GreaterThan};
+    char *p;
+
+    base_path_len = 0;
+    p = path;
+
+    while (*p)
+    {
+        // Find the start of the next search expression
+        char *next_search_expr_start=TEXT_UTILS_StrStr(p, "[");
+        if (next_search_expr_start==NULL)
+        {
+            // Remaining path segment doesn't contain any search expressions
+            break;
+        }
+
+        // Find the end
+        // Seek to the next ']' which isn't part of a string literal
+        char *next_search_expr_end=TEXT_UTILS_StrStr(next_search_expr_start+1, "]");
+        if (next_search_expr_end==NULL)
+        {
+            // No closing bracket, return false for invalid path
+            return false;
+        }
+
+        // Found a complete search expression, check permissions
+
+        // next_search_expr_start points to the opening '['
+        // next_search_expr_end points to closing ']'
+        // The actual search expression is what's inside the brackets
+
+        // Split into individual components of the form "param op value"
+        *next_search_expr_end='\0';   // Add temporary zero-terminator
+        err = EXPR_VECTOR_SplitExpressions(next_search_expr_start+1, &ev, "&&", valid_ops, NUM_ELEM(valid_ops), EXPR_FROM_USP);
+        *next_search_expr_end=']';    // Restore original string
+        if (err != USP_ERR_OK)
+        {
+            return false;
+        }
+
+        // Update the base path by adding in the parts we skipped over to get
+        // to the search expression; then add "{i}" in place of the
+        // search expression
+        base_path_len += USP_SNPRINTF(base_path+base_path_len, sizeof(base_path)-base_path_len, "%.*s{i}", (int) (next_search_expr_start-p), p);
+
+        // Then check each parameter in the search expression by appending
+        // the param name to the base path
+
+        for (i=0; i<ev.num_entries; i++)
+        {
+            USP_ASSERT(ev.vector[i].param[0] != '\0');
+
+            // Append param to base_path
+            USP_SNPRINTF(base_path+base_path_len, sizeof(base_path)-base_path_len, ".%s", ev.vector[i].param);
+
+            // Note: no need to specify SUBSTITUTE_SEARCH_EXPRS here, as
+            // we've already substituted "{i}" in base_path
+            node = DM_PRIV_GetNodeFromPath(base_path, NULL, NULL, DONT_LOG_ERRORS);
+            if (node==NULL)
+            {
+                 goto exit_bad;
+            }
+
+            // Path should be owned by the Broker's internal data model, rather than a USP Service (the caller will already have checked this)
+            USP_ASSERT (node->group_id != NON_GROUPED);
+
+            // Return false if the path is not a param
+            if (IsParam(node)==false)
+            {
+                 goto exit_bad;
+            }
+
+            // Return false if the originator does not have permissions
+            permission_bitmask = DM_PRIV_GetPermissions(node, combined_role);
+            if ((permission_bitmask & required_permissions) != required_permissions)
+            {
+                 goto exit_bad;
+            }
+        }
+
+        // Finished checking the current search expression, all permissions OK
+
+        EXPR_VECTOR_Destroy(&ev);
+
+        p = next_search_expr_end+1;
+    }
+
+    return true;
+
+exit_bad:
+   EXPR_VECTOR_Destroy(&ev);
+   return false;
 }
 
 /*********************************************************************//**
@@ -7213,38 +7402,6 @@ subs_map_t *SubsMap_FindByBrokerInstanceAndPath(double_linked_list_t *sm, int br
     while (smap != NULL)
     {
         if ((smap->broker_instance == broker_instance) && (strcmp(smap->path, path)==0))
-        {
-            return smap;
-        }
-
-        smap = (subs_map_t *) smap->link.next;
-    }
-
-    return NULL;
-}
-
-/*********************************************************************//**
-**
-** SubsMap_FindByPath
-**
-** Finds the entry in the specified subscription mapping table with a
-** path specification that matches the specified absolute path
-** NOTE: The path specification in the subscription may be an absolute path, partial path, or wildcarded path
-**
-** \param   sm - pointer to subscription mapping table
-** \param   path - absolute path to match
-**
-** \return  Pointer to entry in subscription map table, or NULL if no match was found
-**
-**************************************************************************/
-subs_map_t *SubsMap_FindByPath(double_linked_list_t *sm, char *path)
-{
-    subs_map_t *smap;
-
-    smap = (subs_map_t *) sm->head;
-    while (smap != NULL)
-    {
-        if (TEXT_UTILS_IsPathMatch(path, smap->path))
         {
             return smap;
         }

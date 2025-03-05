@@ -520,15 +520,6 @@ int ValidatePathSegment(int path_segment_index, char *segment, char *previous_se
     // Exit if segment is a search expression
     if (segment[0] == '[')
     {
-        // Search expressions aren't currently supported for USP Events or OperationComplete notifications
-        // This is because the Broker cannot set this subscription on the USP Service because we cannot be sure that the
-        // USP Service supports search expressions
-        if ((notify_type == kSubNotifyType_OperationComplete) || (notify_type == kSubNotifyType_Event))
-        {
-            USP_ERR_SetMessage("%s: Search expressions in '%s' are not supported for NotifType=%s", __FUNCTION__, path, TEXT_UTILS_EnumToString(notify_type, notify_types, NUM_ELEM(notify_types)) );
-            return USP_ERR_RESOURCES_EXCEEDED;
-        }
-
         // Exit if search expression is not terminated correctly
         if (segment[len-1] != ']')
         {
