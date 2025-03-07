@@ -203,6 +203,8 @@ typedef struct dm_node_tag
 
     int group_id;                   // Indicates the group_id of the software component implementing this object, or NON_GROUPED
 
+    int depth;                   // The depth of the node within the schema - the number of ancestors a node has
+
     union
     {
         dm_param_info_t  param_info;                    // Parameters
@@ -319,6 +321,7 @@ extern int dm_root_len;
 //-----------------------------------------------------------------------------
 // Definitions for flags in DM_PRIV_GetNodeFromPath() and DM_PRIV_CalcHashFromPath()
 #define DONT_LOG_ERRORS         0x00000001  // Suppresses logging of errors when calling the function - because errors may be expected
+#define SUBSTITUTE_SEARCH_EXPRS 0x00000002  // Any search expressions in the path are replaced with "{i}" in the hash calculation
 
 //-----------------------------------------------------------------------------
 // API Functions

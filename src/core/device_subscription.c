@@ -820,11 +820,12 @@ void DEVICE_SUBSCRIPTION_NotifyControllerDeleted(int cont_instance)
 **
 ** \param   usp - pointer to parsed USP message structure. This will be freed by the caller (not this function)
 ** \param   instance - instance number of the subscription in the Broker's Device.LocalAgent.Subscription.{i}
+** \param   subscribed_path - the relevant path from the subscription reference list
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance)
+int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance, char *subscribed_path)
 {
     subs_t *sub;
     Usp__Notify *notify;
@@ -836,6 +837,8 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance)
     char *command_key;
     char *reboot_cause;
     char *firmware_updated;
+    int err;
+    combined_role_t combined_role;
 
     // Calculate various values which depend on the type of the received message
     notify = usp->body->request->notify;
@@ -897,6 +900,23 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance)
     if (HasControllerGotNotificationPermission(sub->cont_instance, path, perm_mask) == false)
     {
         return USP_ERR_OK;
+    }
+
+    if (TEXT_UTILS_StrStr(subscribed_path, "[") != NULL)
+    {
+        // The subscribed path contains at least one search expression -
+        // check that the controller has permission to read all the parameters
+        // referenced, and silently drop the notification if not
+        err = DEVICE_CONTROLLER_GetCombinedRoleByInstance(sub->cont_instance, &combined_role);
+        if (err != USP_ERR_OK)
+        {
+            return USP_ERR_OK;
+        }
+
+        if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(subscribed_path, &combined_role)==false)
+        {
+            return USP_ERR_OK;
+        }
     }
 
     // Exit, sending a new Boot! event containing the ParameterMap for the originating controller
@@ -1291,6 +1311,32 @@ bool DEVICE_SUBSCRIPTION_IsMatch(int broker_instance, subs_notify_t notify_type,
     return false;
 }
 #endif
+
+/*********************************************************************//**
+**
+** DEVICE_SUBSCRIPTION_GetControllerInstance
+**
+** Determines the instance number of the controller in Device.LocalAgent.Controller.{i}
+** that owns the specified subscription
+**
+** \param   instance - instance number of the subscription in Device.LocalAgent.Subscription.{i}
+**
+** \return  instance number of the controller in Device.LocalAgent.Controller.{i} or INVALID if the specified subscription does not exist
+**
+**************************************************************************/
+int DEVICE_SUBSCRIPTION_GetControllerInstance(int instance)
+{
+    subs_t *sub;
+
+    // Exit if instance number does not match any subscription
+    sub = FindSubsByInstance(instance);
+    if (sub == NULL)
+    {
+        return INVALID;
+    }
+
+    return sub->cont_instance;
+}
 
 /*********************************************************************//**
 **

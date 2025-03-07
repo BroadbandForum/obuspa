@@ -1,5 +1,13 @@
 # OB-USP-AGENT Changelog since Release 9.0.0
 
+## 2025-03-07 v9.0.8
+### Added
+- USP Broker: Optimize Get requests spanning multiple USP Services
+- USP Broker: Search Expressions optimizations (pass through of requests and subscriptions containing search expressions to USP Services)
+
+### Fixed
+- Compilation failures when INCLUDE_PROGRAMMATIC_FACTORY_RESET is defined (GitHub PR#122)
+
 ## 2025-02-24 v9.0.7
 ### Added
 - HardwareVersion can also be specified by an environment variable (USP_BOARD_HW_VERSION)

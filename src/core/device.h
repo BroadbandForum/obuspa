@@ -266,6 +266,7 @@ void DEVICE_SUBSCRIPTION_ProcessAllObjectLifeEventSubscriptions(void);
 void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, kv_vector_t *output_args);
 void DEVICE_SUBSCRIPTION_SendPeriodicEvent(int cont_instance);
 void DEVICE_SUBSCRIPTION_NotifyControllerDeleted(int cont_instance);
+int DEVICE_SUBSCRIPTION_GetControllerInstance(int instance);
 void DEVICE_SUBSCRIPTION_Dump(void);
 
 #ifndef REMOVE_DEVICE_SECURITY
@@ -339,14 +340,13 @@ int DEVICE_CONTROLLER_CountEnabledWebsockClientConnections(void);
 #endif
 
 #ifndef REMOVE_USP_BROKER
-int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance);
+int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance, char *subscribed_path);
 bool DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(int broker_instance, subs_notify_t notify_type, char *path, int group_id);
 void DEVICE_SUBSCRIPTION_UnmarkVendorLayerSubs(int broker_instance, subs_notify_t notify_type, char *path, int group_id);
 void DEVICE_SUBSCRIPTION_StartAllVendorLayerSubsForGroup(int group_id);
 void DEVICE_SUBSCRIPTION_FreeAllVendorLayerSubsForGroup(int group_id);
 int DEVICE_SUBSCRIPTION_RemoveVendorLayerSubs(int group_id, int broker_instance, int service_instance, char *path);
 void DEVICE_SUBSCRIPTION_UpdateVendorLayerDeviceDotSubs(int group_id, subs_notify_t notify_type);
-bool DEVICE_SUBSCRIPTION_IsMatch(int broker_instance, subs_notify_t notify_type, char *path);
 #endif
 #if defined(ENABLE_UDS) && !(defined(REMOVE_USP_BROKER) && defined(REMOVE_USP_SERVICE))
 void DEVICE_CONTROLLER_AddController_UDS(char *endpoint_id, int uds_instance);

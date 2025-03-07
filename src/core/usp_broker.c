@@ -55,7 +55,9 @@
 #include "usp_broker.h"
 #include "proto_trace.h"
 #include "path_resolver.h"  // For FULL_DEPTH
+#include "expr_vector.h"
 #include "cli.h"
+#include "group_get_vector.h"
 
 #ifndef REMOVE_USP_BROKER
 
@@ -229,7 +231,6 @@ void SubsMap_Add(double_linked_list_t *sm, int service_instance, char *path, sub
 void SubsMap_Remove(double_linked_list_t *sm, subs_map_t *smap);
 subs_map_t *SubsMap_FindByUspServiceSubsId(double_linked_list_t *sm, char *subscription_id, int broker_instance);
 subs_map_t *SubsMap_FindByBrokerInstanceAndPath(double_linked_list_t *sm, int broker_instance, char *path);
-subs_map_t *SubsMap_FindByPath(double_linked_list_t *sm, char *path);
 subs_map_t *SubsMap_FindByPathAndNotifyType(double_linked_list_t *sm, char *path, subs_notify_t notify_type);
 void ReqMap_Init(double_linked_list_t *rm);
 void ReqMap_Destroy(double_linked_list_t *rm);
@@ -270,7 +271,6 @@ int DeRegisterUspServicePath(usp_service_t *us, char *path);
 int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path, str_vector_t *accepted_paths);
 void RegisterBrokerVendorHooks(usp_service_t *us);
 void DeregisterBrokerVendorHooks(usp_service_t *us);
-bool IsUspServiceNotificationMatch(Usp__Notify *notify, usp_service_t *us, int broker_instance);
 Usp__Msg *CreateCliInitiatedRequest(cli_service_cmd_t cmd, char *path, char *optional, Usp__Header__MsgType *resp_type);
 int ProcessCliInitiatedResponse(cli_service_cmd_t cmd, char *path, Usp__Msg *resp);
 int CalcStrippedPathLen(char *path, int len);
@@ -282,6 +282,9 @@ bool IsWantedGsdmObject(char *obj_path, str_vector_t *accepted_paths, bool *want
 void CalcCommonAncestorObject(str_vector_t *paths, char *ancestor, int ancestor_len);
 unsigned UpdateEventsAndCommands(usp_service_t *us);
 unsigned UpdateDeviceDotNotificationList(str_vector_t *sv, char **p_list, unsigned flags);
+void UspService_GetAllParamsForPath( usp_service_t *us, str_vector_t *usp_service_paths, kv_vector_t *usp_service_values, int depth);
+void GetAllPathsForOptimizedUspService(dm_node_t *node, str_vector_t usp_service_paths[], int usp_remaining_depth[], str_vector_t *non_usp_service_params, int_vector_t *non_usp_service_group_ids, combined_role_t *combined_role, int depth_remaining);
+
 
 /*********************************************************************//**
 **
@@ -881,7 +884,6 @@ void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t 
     Usp__Notify__OperationComplete *op;
     int items_converted;
     int broker_instance;
-    bool is_match;
 
     // Exit if message is invalid or failed to parse
     // This code checks the parsed message enums and pointers for expectations and validity
@@ -933,20 +935,12 @@ void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t 
     smap = SubsMap_FindByUspServiceSubsId(&us->subs_map, notify->subscription_id, broker_instance);
     if (smap == NULL)
     {
-        // Subscription doesn't match any that have been paired up
-        // However this may be because the notification was received before the USP Service registration sequence has completed (eg Device.Boot!)
-
-        // Exit if the notification does not match the expected entry in the Broker's subscription table
-        is_match = IsUspServiceNotificationMatch(notify, us, broker_instance);
-        if (is_match == false)
-        {
-            err = USP_ERR_REQUEST_DENIED;
-            goto exit;
-        }
+        err = USP_ERR_REQUEST_DENIED;
+        goto exit;
     }
 
     // Forward the notification back to the controller that set up the subscription on the Broker
-    err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance);
+    err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance, smap->path);
 
     // If this is an OperationComplete notification, then delete the associated request
     // in the Broker's Request table and from this USP Service's request mapping table
@@ -983,9 +977,20 @@ int USP_BROKER_IsPathVendorSubscribable(subs_notify_t notify_type, char *path, b
 {
     dm_node_t *node;
 
-    // Determine whether the path is an absolute path, wildcarded path or partial path
-    // We believe that all USP Services support subscribing to paths of these types
-    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+    // Check whether the path contains a reference follow
+    // An extra check is needed here because the reference might be inside a
+    // search expression, and DM_PRIV_GetNodeFromPath ignores the contents
+    // of search expressions
+    if (TEXT_UTILS_StrStr(path, "+")!=NULL)
+    {
+        node = NULL;
+    }
+    else
+    {
+        // Determine whether the path is an absolute path, wildcarded path or partial path
+        // We believe that all USP Services support subscribing to paths of these types
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, (DONT_LOG_ERRORS|SUBSTITUTE_SEARCH_EXPRS));
+    }
 
     // Fill in whether the path was present in the data model
     if (is_present != NULL)
@@ -994,7 +999,7 @@ int USP_BROKER_IsPathVendorSubscribable(subs_notify_t notify_type, char *path, b
     }
 
     // Exit if this path is not subscribable in the vendor layer
-    // i.e. it is either not present in the data model or contains search expressions or reference follows
+    // i.e. it is either not present in the data model
     if (node == NULL)
     {
         return NON_GROUPED;
@@ -1050,6 +1055,117 @@ bool USP_BROKER_IsNotifyTypeVendorSubscribable(int group_id, subs_notify_t notif
     }
 
     return true;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_CheckAsyncCommandIsSubscribedTo
+**
+** Checks that if the specified path is an async USP command that there is an OperationComplete subscription present on the
+** USP Service implementing the command. This is necessary because otherwise the Broker will not know when the USP Command
+** has completed and hence will never delete the request from the Broker's Request table
+**
+** \param   path - Absolute (fully resolved) path for the USP command to check
+** \param   combined_role - roles that the originator has (inherited & assigned)
+**
+** \return  USP_ERR_OK if the caller can proceed to invoke the USP command
+**          USP_ERR_REQUEST_DENIED if caller cannot invoke the USP command
+**
+**************************************************************************/
+int USP_BROKER_CheckAsyncCommandIsSubscribedTo(char *path, combined_role_t *combined_role)
+{
+    dm_node_t *cmd_node;
+    dm_node_t *subs_node;
+    usp_service_t *us;
+    subs_map_t *smap;
+    str_vector_t subs_paths;
+    int err;
+    int index;
+    int cmd_cont_instance;
+    int subs_cont_instance;
+
+    // Exit if the USP command is a synch cmd. These do not send back OperationComplete notifications, so don't need a subscription
+    cmd_node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
+    USP_ASSERT(cmd_node != NULL);
+    if (cmd_node->type == kDMNodeType_SyncOperation)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if this async cmd is not owned by a USP service. This could be the case on RDK-B
+    us = FindUspServiceByGroupId(cmd_node->group_id);
+    if (us == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Get the instance number of the controller trying to invoke this USP command
+    cmd_cont_instance = MSG_HANDLER_GetMsgControllerInstance();
+
+    // Iterate over all subs maps for this USP service, checking all OperationComplete ones
+    smap = (subs_map_t *) us->subs_map.head;
+    while (smap != NULL)
+    {
+        // Skip this entry if it isn't an OperationComplete notification
+        if (smap->notify_type != kSubNotifyType_OperationComplete)
+        {
+            goto next;
+        }
+
+        // Skip this entry if it isn't owned by the same controller as is trying to invoke the USP command
+        subs_cont_instance = DEVICE_SUBSCRIPTION_GetControllerInstance(smap->broker_instance);
+        if (subs_cont_instance != cmd_cont_instance)
+        {
+            goto next;
+        }
+
+        // Exit if there was a partial path or wildcarded subscription setup on the USP service which matches this Async command
+        if (TEXT_UTILS_IsPathMatch(path, smap->path)==true)
+        {
+            return USP_ERR_OK;
+        }
+
+        // Skip this entry if the subscription doesn't contain a search expression
+        if (strchr(smap->path, '[') == NULL)
+        {
+            goto next;
+        }
+
+        // Skip this entry if the subscription wasn't for this USP command
+        subs_node = DM_PRIV_GetNodeFromPath(smap->path, NULL, NULL, SUBSTITUTE_SEARCH_EXPRS);
+        if (subs_node != cmd_node)
+        {
+            goto next;
+        }
+
+        // Exit if unable to resolve the subscription path into the absolute paths that it specifies
+        STR_VECTOR_Init(&subs_paths);
+        err = PATH_RESOLVER_ResolveDevicePath(smap->path, &subs_paths, NULL, kResolveOp_SubsOper, 1, combined_role, DONT_LOG_RESOLVER_ERRORS);
+        if (err != USP_ERR_OK)
+        {
+            USP_ERR_SetMessage("%s: Unable to determine if OperationComplete subscription was set before invoking '%s'", __FUNCTION__, path);
+            STR_VECTOR_Destroy(&subs_paths);
+            return err;
+        }
+
+        // Exit if the async cmd matches one of the resolved subscription paths
+        index = STR_VECTOR_Find(&subs_paths, path);
+        if (index != INVALID)
+        {
+            STR_VECTOR_Destroy(&subs_paths);
+            return USP_ERR_OK;
+        }
+
+        STR_VECTOR_Destroy(&subs_paths);
+
+next:
+        // Move to the next subs map in the linked list
+        smap = (subs_map_t *) smap->link.next;
+    }
+
+    // If the code gets here, then no subscription was setup for the async cmd on the USP service, so it cannot be invoked
+    USP_ERR_SetMessage("%s: OperationComplete subscription must be set before invoking '%s'", __FUNCTION__, path);
+    return USP_ERR_REQUEST_DENIED;
 }
 
 /*********************************************************************//**
@@ -1334,93 +1450,221 @@ bool USP_BROKER_AttemptPassthru(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mt
 
 /*********************************************************************//**
 **
+** USP_BROKER_AttemptDirectGet
+**
+** Attempts to optimise GET requests to USP services registered on the Broker.
+** If possible, issues a single top level GET to each USP service contained in the path in order to retrieve the full
+** datamodel of each USP service in one go (as an alternative to requesting each parameter individually).
+**
+** \param   path - the instantiated datamodel path to GET
+** \param   unresolved_params - pointer to str_vector_t to return a list of paths that have not been resolved by the direct get
+** \param   group_ids - pointer to int_vector_t containing the group id belonging to each entry in unresolved_params
+** \param   resolved_params - pointer to kv_vector_t containing key/value results of querying USP services directly
+** \param   combined_role - role used to determine the permissions of the originating controller
+** \param 	depth - provide results down to the given depth (or FULL_DEPTH to return all descendants of the given path).
+**
+** \return  USP_ERR_OK if successful or an error code
+**
+**************************************************************************/
+int USP_BROKER_AttemptDirectGet(char *path, str_vector_t *unresolved_params, int_vector_t *group_ids, kv_vector_t *resolved_params, combined_role_t *combined_role, int depth)
+{
+    int i;
+    int err =  USP_ERR_OK;
+    dm_node_t *node;
+    dm_node_t  *ret_node;
+    kv_vector_t usp_service_values;
+    str_vector_t usp_service_paths[MAX_VENDOR_PARAM_GROUPS];
+    int group_max_depth[MAX_VENDOR_PARAM_GROUPS];
+    usp_service_t *us;
+
+    STR_VECTOR_Init(unresolved_params);
+    KV_VECTOR_Init(&usp_service_values);
+
+    for (i = 0 ; i < MAX_VENDOR_PARAM_GROUPS ; i++)
+    {
+        STR_VECTOR_Init(&usp_service_paths[i]);
+        group_max_depth[i] = 0;
+    }
+
+    // Exit if this path does not exist in the data model
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, (DONT_LOG_ERRORS|SUBSTITUTE_SEARCH_EXPRS));
+    if (node == NULL)
+    {
+        // If unable to determine the node from the path could be a reference following
+        err = PATH_RESOLVER_ResolveDevicePath(path, unresolved_params, group_ids, kResolveOp_Get, depth, combined_role, 0);
+        goto exit;
+    }
+
+    us = FindUspServiceByGroupId(node->group_id);
+    if (us != NULL)
+    {
+        // Before forwarding a GET with search expressions to a service, we
+        // need to check that the client has permission to access all the
+        // parameters referenced
+        if (TEXT_UTILS_StrStr(path, "[") != NULL)
+        {
+           // Path has at least one search expression
+           if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(path, combined_role)==false)
+           {
+               // Missing permissions, resolve using path resolver
+               err = PATH_RESOLVER_ResolveDevicePath(path, unresolved_params, group_ids, kResolveOp_Get, depth, combined_role, 0);
+               goto exit;
+           }
+        }
+
+        // Path refers to a specific USP service so use the path including any instances and/or search params
+        STR_VECTOR_Add(&usp_service_paths[node->group_id], path);
+        // The depth of the USP service GET is that of the passed in request
+        group_max_depth[node->group_id] = depth;
+    }
+    else if (node->order == 0)
+    {
+        // Path isn't a USP service and has no instances so may contain a combination of internal objects and USP services
+        GetAllPathsForOptimizedUspService(node, usp_service_paths, group_max_depth, unresolved_params, group_ids, combined_role, depth);
+    }
+    else
+    {
+        // Path cannot contain any USP services as it is both a table and not owned by a USP service
+        // This includes grouped objects that are not part of a USP service and non grouped objects
+        // that are descendants of multi-instance objects.  Resolve using path resolver.
+        err = PATH_RESOLVER_ResolveDevicePath(path, unresolved_params, group_ids, kResolveOp_Get, depth, combined_role, 0);
+        goto exit;
+    }
+
+    // iterate through all usp service path groups
+    for (i = 0 ; i < MAX_VENDOR_PARAM_GROUPS ; i++)
+    {
+        // If the group has any registered services matching the path, perform a GET on those services
+        if (usp_service_paths[i].num_entries > 0)
+        {
+            // Find USP Service associated with the group_id
+            us = FindUspServiceByGroupId(i);
+            USP_ASSERT(us != NULL);     // Since we only put the path into usp_service_paths[] if the path was owned by a USP service
+            UspService_GetAllParamsForPath(us, &usp_service_paths[i], &usp_service_values, group_max_depth[i] );
+        }
+    }
+
+    // filter the direct USP service GET response using permissions
+    for (i = 0 ; i < usp_service_values.num_entries ; i++)
+    {
+        unsigned short permission_bitmask;
+
+        // discard any results that have a depth greater than the requested depth
+        // or aren't registered into the Broker's DM
+        ret_node = DM_PRIV_GetNodeFromPath(usp_service_values.vector[i].key, NULL, NULL, DONT_LOG_ERRORS);
+        if (ret_node == NULL)
+        {
+            USP_LOG_Warning("%s: WARNING: returned path %s not in schema", __FUNCTION__, usp_service_values.vector[i].key);
+            continue;
+        }
+
+        if ((depth != FULL_DEPTH) && (ret_node->depth > (node->depth + depth)))
+        {
+            continue;
+        }
+
+        // It is not an error to not have permissions for a get operation.
+        // It is forgiving, so just continue here, without adding the path to the vector
+        err = DATA_MODEL_GetPermissions(usp_service_values.vector[i].key, combined_role, &permission_bitmask, DONT_LOG_ERRORS);
+        if (err != USP_ERR_OK)
+        {
+            USP_LOG_Warning("%s: WARNING: Unable to get permission for path %s", __FUNCTION__, usp_service_values.vector[i].key);
+            continue;
+        }
+        if ((permission_bitmask & PERMIT_GET) == 0)
+        {
+            continue;
+        }
+
+        KV_VECTOR_Add(resolved_params, usp_service_values.vector[i].key, usp_service_values.vector[i].value);
+    }
+
+exit:
+    for (i = 0 ; i < MAX_VENDOR_PARAM_GROUPS ; i++)
+    {
+        STR_VECTOR_Destroy(&usp_service_paths[i]);
+    }
+    KV_VECTOR_Destroy(&usp_service_values);
+
+    return err;
+}
+
+
+/*********************************************************************//**
+**
 ** USP_BROKER_AttemptDirectGetForCli
 **
 ** This function sees if it's possible to perform a CLI initiated Get, without resolving the path on the Broker first
 ** This is similar to performing a passthru optimization for CLI initiated Gets
-** NOTE: Only absolute paths, partial paths and wildcarded paths are supported by this function (Reference follow and search expressions are not)
 **
 ** \param   path - path expression to get
 **
 ** \return  true if the get has been handled here, false if the caller should perform path resolution and the get
 **
 **************************************************************************/
-bool USP_BROKER_AttemptDirectGetForCli(char *path)
+int USP_BROKER_DirectGetForCli(char *path)
 {
     int i;
-    int err;
-    dm_node_t *node;
-    kv_vector_t kvv;
-    kv_pair_t kv;
-    Usp__Msg *req;
-    Usp__Msg *resp = NULL;
-    usp_service_t *us;
-    char msg_id[MAX_MSG_ID_LEN];
+    kv_vector_t resolved_params;
+    int_vector_t group_ids;
+    str_vector_t unresolved_params;
+    group_get_vector_t ggv;
+    group_get_entry_t *gge;
+    int ret;
 
-    // Exit if this path does not exist in the data model, or is not an absolute, partial or wildcarded path
-    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
-    if (node == NULL)
+    KV_VECTOR_Init(&resolved_params);
+    INT_VECTOR_Init(&group_ids);
+    STR_VECTOR_Init(&unresolved_params);
+    GROUP_GET_VECTOR_Init(&ggv);
+
+    ret = USP_BROKER_AttemptDirectGet(path, &unresolved_params, &group_ids, &resolved_params, INTERNAL_ROLE, FULL_DEPTH);
+    if (ret == USP_ERR_OK)
     {
-        return false;
+        // Print out the values of all parameters retrieved
+        for (i=0; i < resolved_params.num_entries; i++)
+        {
+            CLI_SERVER_SendResponse(resolved_params.vector[i].key);
+            CLI_SERVER_SendResponse(" => ");
+            CLI_SERVER_SendResponse(resolved_params.vector[i].value);
+            CLI_SERVER_SendResponse("\n");
+        }
+
+        if (unresolved_params.num_entries > 0)
+        {
+            // Form the group get vector for all internal (non-group ID) parameters
+            GROUP_GET_VECTOR_AddParams(&ggv, &unresolved_params, &group_ids);
+
+            // Destroy the params and group_ids vectors (since their contents have been moved to the group get vector)
+            USP_SAFE_FREE(unresolved_params.vector);
+            unresolved_params.vector = NULL;
+
+            // Get the values of all the parameters
+            GROUP_GET_VECTOR_GetValues(&ggv);
+
+            // Print out the values of all parameters retrieved
+            // NOTE: If a parameter is secure, then this will retrieve an empty string
+            for (i=0; i < ggv.num_entries; i++)
+            {
+                gge = &ggv.vector[i];
+                if (gge->err_code == USP_ERR_OK)
+                {
+                    USP_ASSERT(gge->value != NULL);
+                    CLI_SERVER_SendResponse(gge->path);
+                    CLI_SERVER_SendResponse(" => ");
+                    CLI_SERVER_SendResponse(gge->value);
+                    CLI_SERVER_SendResponse("\n");
+                }
+            }
+        }
     }
 
-    // Exit, if no USP Service associated with the group_id
-    us = FindUspServiceByGroupId(node->group_id);
-    if (us == NULL)
-    {
-        return false;
-    }
+    STR_VECTOR_Destroy(&unresolved_params);
+    INT_VECTOR_Destroy(&group_ids);
+    KV_VECTOR_Destroy(&resolved_params);
+    GROUP_GET_VECTOR_Destroy(&ggv);
 
-    // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
-    if (us->controller_mtp.protocol == kMtpProtocol_None)
-    {
-        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Connection dropped", __FUNCTION__, us->endpoint_id);
-        return true;
-    }
-
-    // Form the USP Get Request message
-    kv.key = path;
-    kv.value = NULL;
-    kvv.vector = &kv;
-    kvv.num_entries = 1;
-    CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    req = MSG_UTILS_Create_GetReq(msg_id, &kvv);
-
-    // Send the request and wait for a response
-    // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
-    #define CLI_GET_RESPONSE_TIMEOUT (3*60)        // 3 minutes
-    resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp,
-                                                 USP__HEADER__MSG_TYPE__GET_RESP,
-                                                 CLI_GET_RESPONSE_TIMEOUT);
-
-    // Exit if timed out waiting for a response
-    if (resp == NULL)
-    {
-        return true;
-    }
-
-    // Exit if unable to process the get response, retrieving the parameter values and putting them into the key-value-vector output argument
-    KV_VECTOR_Init(&kvv);
-    err = MSG_UTILS_ProcessUspService_GetResponse(resp, &kvv);
-    if (err != USP_ERR_OK)
-    {
-        goto exit;
-    }
-
-    // Print out the values of all parameters retrieved
-    for (i=0; i < kvv.num_entries; i++)
-    {
-        CLI_SERVER_SendResponse(kvv.vector[i].key);
-        CLI_SERVER_SendResponse(" => ");
-        CLI_SERVER_SendResponse(kvv.vector[i].value);
-        CLI_SERVER_SendResponse("\n");
-    }
-
-exit:
-    KV_VECTOR_Destroy(&kvv);
-    usp__msg__free_unpacked(resp, pbuf_allocator);
-
-    return true;
+    // optimised GET always handles all requested parameters
+    return ret;
 }
 
 /*********************************************************************//**
@@ -1504,6 +1748,157 @@ int USP_BROKER_ExecuteCli_Service(str_vector_t *args)
 
 /*********************************************************************//**
 **
+** GetAllPathsForOptimizedUspService
+**
+** Recurses the data model adding all top level DM objects and params owned by a USP Service to usp_service_paths[group_id]
+** and all non USP Service parameters (including those owned by other data model provider components to unresolved_params
+**
+** \param   node - node representing the current Data model element to add and recurse from.
+** \param   usp_service_paths - array of string vectors, indexed by group_id. Each vector will be added to with the top level DM objects and params owned by a USP service
+** \param   usp_service_depths - array of integers to return max depth to GET for each USP service
+** \param   unresolved_params - vector of fully resolved parameter paths owned by the internal data model or data model provider components that aren't USP Services
+** \param   non_usp_service_group_ids - group_id of the data model provider component associated with each entry in the unresolved_params vector
+** \param   combined_role - role used to determine the permissions of the originating controller
+** \param   depth_remaining - provides results down to the given depth
+**
+** \return  None
+**
+**************************************************************************/
+void GetAllPathsForOptimizedUspService(dm_node_t *node, str_vector_t usp_service_paths[], int group_max_depth[], str_vector_t *unresolved_params, int_vector_t *non_usp_service_group_ids, combined_role_t *combined_role, int depth_remaining)
+{
+    dm_node_t *child;
+    char path[MAX_DM_PATH];
+    usp_service_t *us;
+    char *p;
+    int len;
+    int depth;
+
+    // Convert the schema path to a partial path
+    // if the schema path includes { it indicates we've arrived at a multi instance node.  It will be resolved at this depth either as a top
+    // level USP service or using path resolver.  In either case remove the {i}. schema path to convert the path into a valid partial path.
+    USP_STRNCPY(path, node->path, sizeof(path));
+    p = strchr(path, '{');
+    if (p != NULL)
+    {
+        *p = '\0';
+    }
+
+    // Exit if the node is owned by a USP Service. Add it to the relevant string vector, and stop recursing
+    if (node->group_id != NON_GROUPED)
+    {
+        us = FindUspServiceByGroupId(node->group_id);
+        if (us != NULL)
+        {
+            USP_ASSERT(node->group_id < MAX_VENDOR_PARAM_GROUPS);
+
+            switch(node->type)
+            {
+                case kDMNodeType_VendorParam_ReadOnly:
+                case kDMNodeType_VendorParam_ReadWrite:
+                    STR_VECTOR_Add(&usp_service_paths[node->group_id], path);
+                    // NOTE: No need to update group_max_depth[], since this is a parameter so it will automatically be
+                    // obtained by the future GET on the USP Service, regardless of the depth required for any of the other paths in the future GET
+                    break;
+
+                case kDMNodeType_Object_MultiInstance:
+                case kDMNodeType_Object_SingleInstance:
+                    if (depth_remaining > 0) // if depth 0 then we only want params at this level
+                    {
+                        len = strlen(path);
+                        USP_ASSERT(len < MAX_DM_PATH-1);
+                        if (path[len-1] != '.')
+                        {
+                            path[len] = '.';
+                            path[len+1] = '\0';
+                        }
+                        STR_VECTOR_Add(&usp_service_paths[node->group_id], path);
+
+                        // Update group_max_depth[] so that it stores the worst case (maximum) depth needed for
+                        // all paths in the future GET on the USP Service. Some paths may need more depth than others
+                        // in order to achieve the depth given in the original GET request received by the USP Broker.
+                        // The future GET results will be trimmed to the original depth in USP_BROKER_AttemptDirectGet()
+                        if (depth_remaining > group_max_depth[node->group_id])
+                        {
+                            group_max_depth[node->group_id] = depth_remaining;
+                        }
+                    }
+                    break;
+
+                default:
+                case kDMNodeType_Param_ConstantValue:
+                case kDMNodeType_Param_NumEntries:
+                case kDMNodeType_DBParam_ReadWrite:
+                case kDMNodeType_DBParam_ReadOnly:
+                case kDMNodeType_DBParam_ReadOnlyAuto:
+                case kDMNodeType_DBParam_ReadWriteAuto:
+                case kDMNodeType_DBParam_Secure:
+                case kDMNodeType_SyncOperation:
+                case kDMNodeType_AsyncOperation:
+                case kDMNodeType_Event:
+                    // Ignore these, and stop recursing
+                    break;
+            }
+            return;
+        }
+    }
+
+    // If the code gets here, then the node was owned either by the internal data model,
+    // or by a non USP Service data model provider component (RDK-B)
+    // Handle both cases the same
+    switch(node->type)
+    {
+        case kDMNodeType_Param_ConstantValue:
+        case kDMNodeType_Param_NumEntries:
+        case kDMNodeType_DBParam_ReadWrite:
+        case kDMNodeType_DBParam_ReadOnly:
+        case kDMNodeType_DBParam_ReadOnlyAuto:
+        case kDMNodeType_DBParam_ReadWriteAuto:
+        case kDMNodeType_DBParam_Secure:
+        case kDMNodeType_VendorParam_ReadOnly:
+        case kDMNodeType_VendorParam_ReadWrite:
+            // Add all non table parameters directly to the non usp service parameters to get
+            USP_ASSERT(node->order == 0);                   // Since we should have already handled table based parameters in the case kDMNodeType_Object_MultiInstance above
+            USP_ASSERT(node->child_nodes.head == NULL);     // Since parameters do not have any children
+            STR_VECTOR_Add(unresolved_params, path);
+            INT_VECTOR_Add(non_usp_service_group_ids, node->group_id);
+            break;
+
+        case kDMNodeType_Object_MultiInstance:
+            // Resolve all tables using a partial path. No need to recurse, as the partial path resolution takes care of that
+            // Intentionally ignoring errors, allowing the rest of the get optimization to continue
+            if (depth_remaining > 0)
+            {
+                PATH_RESOLVER_ResolvePath(path, unresolved_params, non_usp_service_group_ids, kResolveOp_Get, depth_remaining, combined_role, 0);
+            }
+            break;
+
+        case kDMNodeType_Object_SingleInstance:
+            // if depth remaining we may want to add parameters at this level to the response
+            // Recurse over all children (since single instance objects can have children which are owned by USP Services)
+            if (depth_remaining > 0)
+            {
+                child = (dm_node_t *) node->child_nodes.head;
+                while (child != NULL)
+                {
+                    depth = (depth_remaining == FULL_DEPTH) ? FULL_DEPTH : depth_remaining-1;  // Maintain FULL_DEPTH when recursing, in order that UspService_GetAllParamsForPath() will pass FULL_DEPTH to MSG_UTILS_Create_GetReq()
+                    GetAllPathsForOptimizedUspService(child, usp_service_paths, group_max_depth, unresolved_params, non_usp_service_group_ids, combined_role, depth);
+                    child = (dm_node_t *) child->link.next;
+                }
+            }
+            break;
+
+        default:
+        case kDMNodeType_SyncOperation:
+        case kDMNodeType_AsyncOperation:
+        case kDMNodeType_Event:
+            // Ignore these, and stop recursing
+            break;
+    }
+}
+
+
+/*********************************************************************//**
+**
 ** CreateCliInitiatedRequest
 **
 ** This function is called as part of the '-c service' CLI command
@@ -1535,7 +1930,7 @@ Usp__Msg *CreateCliInitiatedRequest(cli_service_cmd_t cmd, char *path, char *opt
     {
         case kCliServiceCmd_Get:
             KV_VECTOR_Add(&kvv, path, NULL);
-            req = MSG_UTILS_Create_GetReq(msg_id, &kvv);
+            req = MSG_UTILS_Create_GetReq(msg_id, &kvv, FULL_DEPTH);
             *resp_type = USP__HEADER__MSG_TYPE__GET_RESP;
             break;
 
@@ -2294,7 +2689,7 @@ int Broker_GroupGet(int group_id, kv_vector_t *kvv)
 
     // Form the USP Get Request message
     CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    req = MSG_UTILS_Create_GetReq(msg_id, kvv);
+    req = MSG_UTILS_Create_GetReq(msg_id, kvv, FULL_DEPTH);
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -2644,7 +3039,6 @@ int Broker_AsyncOperate(dm_req_t *req, kv_vector_t *input_args, int instance)
     char path[MAX_DM_PATH];
     char command_key[MAX_DM_VALUE_LEN];
     kv_vector_t *output_args;
-    subs_map_t *smap;
     req_map_t *rmap;
     usp_service_t *us;
     bool is_complete = false;
@@ -2652,16 +3046,6 @@ int Broker_AsyncOperate(dm_req_t *req, kv_vector_t *input_args, int instance)
     // Find USP Service associated with the group_id
     us = FindUspServiceByGroupId(req->group_id);
     USP_ASSERT(us != NULL);
-
-    // Exit if no subscription was setup on the USP service for an OperateComplete. We disallow async commands from being started
-    // unless there is a subscription setup because otherwise the Broker will not know when the USP Command has completed and hence
-    // will never delete the request from the Broker's Request table
-    smap = SubsMap_FindByPath(&us->subs_map, req->path);
-    if (smap == NULL)
-    {
-        USP_ERR_SetMessage("%s: OperationComplete subscription must be set before invoking '%s'", __FUNCTION__, req->path);
-        return USP_ERR_REQUEST_DENIED;
-    }
 
     // Exit if unable to get the value of the command key
     USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.Request.%d.CommandKey", instance);
@@ -3038,7 +3422,7 @@ int SyncSubscriptions(usp_service_t *us)
 
     // Form the USP Get Request message
     CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    req = MSG_UTILS_Create_GetReq(msg_id, &kvv);
+    req = MSG_UTILS_Create_GetReq(msg_id, &kvv, FULL_DEPTH);
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -3461,6 +3845,75 @@ int UspService_RefreshInstances(usp_service_t *us, str_vector_t *paths, bool wit
     usp__msg__free_unpacked(resp, pbuf_allocator);
 
     return err;
+}
+
+/*********************************************************************//**
+**
+** UspService_GetAllParamsForPath
+**
+** Gets all parameters under provided paths owned by the USP service
+** This function sends a USP Get request in order to obtain the parameter values from the USP service
+** Then it waits for a USP Get Response and parses it, to return the parameter values
+**
+** \param   us - the USP service to issue the GET request to
+** \param   usp_service_paths - a list of paths to query
+** \param   usp_service_values - a key/value pair vector to pass the returned parameters
+** \param   depth - the maximum depth to request for the returned data model
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+void UspService_GetAllParamsForPath(usp_service_t *us, str_vector_t *usp_service_paths, kv_vector_t *usp_service_values, int depth)
+{
+    kv_vector_t kvv_req;
+    Usp__Msg *req;
+    Usp__Msg *resp = NULL;
+    int i;
+    char msg_id[MAX_MSG_ID_LEN];
+
+    KV_VECTOR_Init(&kvv_req);
+
+    for (i = 0 ; i < usp_service_paths->num_entries ; i++)
+    {
+        KV_VECTOR_Add(&kvv_req, usp_service_paths->vector[i], NULL);
+    }
+
+    if (us->controller_mtp.protocol == kMtpProtocol_None)
+    {
+        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Connection dropped", __FUNCTION__, us->endpoint_id);
+        goto exit;
+    }
+
+    // Form the USP Get Request message
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_GetReq(msg_id, &kvv_req, depth);
+
+    KV_VECTOR_Destroy(&kvv_req);
+
+    // Send the request and wait for a response
+    // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
+    resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp,
+                                                 USP__HEADER__MSG_TYPE__GET_RESP,
+                                                 RESPONSE_TIMEOUT);
+
+    // Exit if timed out waiting for a response
+    if (resp == NULL)
+    {
+        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Request timeout out", __FUNCTION__, us->endpoint_id);
+        goto exit;
+    }
+
+    // Exit if unable to process the get response, retrieving the parameter values and adding them to the key-value-vector output argument
+    if (MSG_UTILS_ProcessUspService_GetResponse(resp, usp_service_values) != USP_ERR_OK)
+    {
+        USP_LOG_Warning("%s: WARNING: Failed to process GET response from UspService=%s", __FUNCTION__, us->endpoint_id);
+        goto exit;
+    }
+
+exit:
+    KV_VECTOR_Destroy(&kvv_req);
+    usp__msg__free_unpacked(resp, pbuf_allocator);
+    resp = NULL;
 }
 
 /*********************************************************************//**
@@ -5859,7 +6312,7 @@ bool AttemptPassThruForGetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
     {
         // Exit if the path is not a simple path (ie absolute, wildcarded or partial) or is not currently registered into the data model
         path = get->param_paths[i];
-        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, (DONT_LOG_ERRORS|SUBSTITUTE_SEARCH_EXPRS));
         if (node == NULL)
         {
             return false;
@@ -5901,6 +6354,13 @@ bool AttemptPassThruForGetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
 
         // Exit if the originator does not have permission to get all the referenced parameters
         is_permitted = CheckPassThruPermissions(node, depth, PERMIT_GET | PERMIT_GET_INST, combined_role);
+
+        // If path contains any search expressions, check permissions on the parameters referenced
+        if (TEXT_UTILS_StrStr(path, "[") != NULL)
+        {
+           is_permitted &= USP_BROKER_CheckPassThruPermissionsInSearchExpressions(path, combined_role);
+        }
+
         if (is_permitted == false)
         {
             return false;
@@ -5962,7 +6422,7 @@ bool AttemptPassThruForSetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
     {
         // Exit if the object path to update is not a simple path (ie absolute, wildcarded or partial)
         obj = set->update_objs[i];
-        obj_node = DM_PRIV_GetNodeFromPath(obj->obj_path, NULL, NULL, DONT_LOG_ERRORS);
+        obj_node = DM_PRIV_GetNodeFromPath(obj->obj_path, NULL, NULL, (DONT_LOG_ERRORS|SUBSTITUTE_SEARCH_EXPRS));
         if (obj_node == NULL)
         {
             return false;
@@ -5991,6 +6451,15 @@ bool AttemptPassThruForSetRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
         {
             // Exit if subsequent objects to update are not for the same USP Service as previous paths
             if (obj_node->group_id != group_id)
+            {
+                return false;
+            }
+        }
+
+        // If path contains any search expressions, check permissions on the parameters referenced
+        if (TEXT_UTILS_StrStr(obj->obj_path, "[") != NULL)
+        {
+            if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(obj->obj_path, combined_role)==false)
             {
                 return false;
             }
@@ -6084,7 +6553,7 @@ bool AttemptPassThruForAddRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
     {
         // Exit if the object path to add is not a simple path (ie absolute, wildcarded or partial)
         obj = add->create_objs[i];
-        obj_node = DM_PRIV_GetNodeFromPath(obj->obj_path, NULL, NULL, DONT_LOG_ERRORS);
+        obj_node = DM_PRIV_GetNodeFromPath(obj->obj_path, NULL, NULL, (DONT_LOG_ERRORS | SUBSTITUTE_SEARCH_EXPRS));
         if (obj_node == NULL)
         {
             return false;
@@ -6131,6 +6600,15 @@ bool AttemptPassThruForAddRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *
             {
                 return false;
             }
+        }
+
+        // If path contains any search expressions, check permissions on the parameters referenced
+        if (TEXT_UTILS_StrStr(obj->obj_path, "[") != NULL)
+        {
+           if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(obj->obj_path, combined_role)==false)
+           {
+              return false;
+           }
         }
 
         // Iterate over all child parameters to set in this object
@@ -6215,7 +6693,7 @@ bool AttemptPassThruForDeleteRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_
     {
         // Exit if the object path to delete is not a simple path (ie absolute, wildcarded or partial)
         path = del->obj_paths[i];
-        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, (DONT_LOG_ERRORS | SUBSTITUTE_SEARCH_EXPRS));
         if (node == NULL)
         {
             return false;
@@ -6254,6 +6732,16 @@ bool AttemptPassThruForDeleteRequest(Usp__Msg *usp, char *endpoint_id, mtp_conn_
         if ((permission_bitmask & PERMIT_DEL) == 0)
         {
             return false;
+        }
+
+        // If path contains any search expressions, check permissions on the parameters referenced
+        if (TEXT_UTILS_StrStr(path, "[") != NULL)
+        {
+           // path contains at least one search expression - check all the parameters referenced are readable
+           if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(path, combined_role)==false)
+           {
+              return false;
+           }
         }
     }
 
@@ -6368,7 +6856,7 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
     USP_LOG_Info("Passthru NOTIFY");
 
     // Forward the notification back to the controller that set up the subscription on the Broker
-    err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance);
+    err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance, smap->path);
     if (err != USP_ERR_OK)
     {
         return false;
@@ -6378,86 +6866,6 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
     // this Broker code always sets NotifRetry=false on the USP Service
 
     // The notification was passed back successfully
-    return true;
-}
-
-/*********************************************************************//**
-**
-** IsUspServiceNotificationMatch
-**
-** Determines whether the specified notification, which was received before the registration
-** sequence had completed (ie subscriptions on broker and USP Service have not been synched)
-** matches the specified broker subscription
-**
-** \param   notify - pointer to parsed protobuf notify structure of the notification
-** \param   us - USP Service that sent the notification
-** \param   broker_instance - expected instance number of the subscription on the USP Broker, extracted from the subscription ID of the received notification
-**
-** \return  true if the received notification matches the broker's subscription, false if it doesn't
-**
-**************************************************************************/
-bool IsUspServiceNotificationMatch(Usp__Notify *notify, usp_service_t *us, int broker_instance)
-{
-    char buf[MAX_DM_PATH];
-    char *path;
-    bool is_match;
-    subs_notify_t notify_type;
-    dm_node_t *node;
-
-    // Extract the full path to the data model element
-    switch(notify->notification_case)
-    {
-        case USP__NOTIFY__NOTIFICATION_EVENT:
-            USP_SNPRINTF(buf, sizeof(buf), "%s%s", notify->event->obj_path, notify->event->event_name);
-            path = buf;
-            notify_type = kSubNotifyType_Event;
-            break;
-
-        case USP__NOTIFY__NOTIFICATION_VALUE_CHANGE:
-            path = notify->value_change->param_path;
-            notify_type = kSubNotifyType_ValueChange;
-            break;
-
-        case USP__NOTIFY__NOTIFICATION_OBJ_CREATION:
-            path = notify->obj_creation->obj_path;
-            notify_type = kSubNotifyType_ObjectCreation;
-            break;
-
-        case USP__NOTIFY__NOTIFICATION_OBJ_DELETION:
-            path = notify->obj_deletion->obj_path;
-            notify_type = kSubNotifyType_ObjectDeletion;
-            break;
-
-        default:
-            return false;
-            break;
-    }
-
-    // Exit if the path is not yet registered into the data model. This could occur if the GSDM response has not yet been received in the registration sequence
-    // NOTE: The path has to be in the data model, otherwise we will be unable to retrieve permissions for forwarding the notification
-    //       This limitation means that most notifications cannot be forwarded until after the GSDM response has been retrieved
-    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
-    if (node == NULL)
-    {
-        USP_ERR_SetMessage("%s: Notification path (%s) does not exist in the data model", __FUNCTION__, path);
-        return false;
-    }
-
-    // Exit if the notification path is not owned by the USP Service
-    if (node->group_id != us->group_id)
-    {
-        USP_ERR_SetMessage("%s: Notification path (%s) is not owned by USP Service", __FUNCTION__, path);
-        return false;
-    }
-
-    // Exit if we do not have an enabled matching subscription for this notification
-    is_match = DEVICE_SUBSCRIPTION_IsMatch(broker_instance, notify_type, path);
-    if (is_match == false)
-    {
-        USP_ERR_SetMessage("%s: Notification contains unexpected subscription Id (%s)", __FUNCTION__, notify->subscription_id);
-        return false;
-    }
-
     return true;
 }
 
@@ -6510,6 +6918,125 @@ bool CheckPassThruPermissions(dm_node_t *node, int depth, unsigned short require
 
     // If the code gets here, then all child nodes passed the permission check
     return true;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_CheckPassThruPermissionsInSearchExpressions
+**
+** Determines whether the originator has PERMIT_GET and PERMIT_GET_INST
+** permissions for all the parameters in any search expressions in the given
+** path. Defaults to true if there are no search expressions.
+**
+** \param   path - the data model path to check
+** \param   combined_role - roles that the originator has (inherited & assigned)
+**
+** \return  true if the path is valid, and the originator has the required
+**          permissions; false otherwise
+**
+**************************************************************************/
+bool USP_BROKER_CheckPassThruPermissionsInSearchExpressions(char *path, combined_role_t *combined_role)
+{
+    expr_vector_t ev;
+    char base_path[MAX_DM_PATH];
+    int base_path_len;
+    int err;
+    int i;
+    dm_node_t *node;
+    unsigned short required_permissions = (PERMIT_GET | PERMIT_GET_INST);
+    unsigned short permission_bitmask;
+    expr_op_t valid_ops[] = {kExprOp_Equal, kExprOp_NotEqual, kExprOp_LessThanOrEqual, kExprOp_GreaterThanOrEqual, kExprOp_LessThan, kExprOp_GreaterThan};
+    char *p;
+
+    base_path_len = 0;
+    p = path;
+
+    while (*p)
+    {
+        // Find the start of the next search expression
+        char *next_search_expr_start=TEXT_UTILS_StrStr(p, "[");
+        if (next_search_expr_start==NULL)
+        {
+            // Remaining path segment doesn't contain any search expressions
+            break;
+        }
+
+        // Find the end
+        // Seek to the next ']' which isn't part of a string literal
+        char *next_search_expr_end=TEXT_UTILS_StrStr(next_search_expr_start+1, "]");
+        if (next_search_expr_end==NULL)
+        {
+            // No closing bracket, return false for invalid path
+            return false;
+        }
+
+        // Found a complete search expression, check permissions
+
+        // next_search_expr_start points to the opening '['
+        // next_search_expr_end points to closing ']'
+        // The actual search expression is what's inside the brackets
+
+        // Split into individual components of the form "param op value"
+        *next_search_expr_end='\0';   // Add temporary zero-terminator
+        err = EXPR_VECTOR_SplitExpressions(next_search_expr_start+1, &ev, "&&", valid_ops, NUM_ELEM(valid_ops), EXPR_FROM_USP);
+        *next_search_expr_end=']';    // Restore original string
+        if (err != USP_ERR_OK)
+        {
+            return false;
+        }
+
+        // Update the base path by adding in the parts we skipped over to get
+        // to the search expression; then add "{i}" in place of the
+        // search expression
+        base_path_len += USP_SNPRINTF(base_path+base_path_len, sizeof(base_path)-base_path_len, "%.*s{i}", (int) (next_search_expr_start-p), p);
+
+        // Then check each parameter in the search expression by appending
+        // the param name to the base path
+
+        for (i=0; i<ev.num_entries; i++)
+        {
+            USP_ASSERT(ev.vector[i].param[0] != '\0');
+
+            // Append param to base_path
+            USP_SNPRINTF(base_path+base_path_len, sizeof(base_path)-base_path_len, ".%s", ev.vector[i].param);
+
+            // Note: no need to specify SUBSTITUTE_SEARCH_EXPRS here, as
+            // we've already substituted "{i}" in base_path
+            node = DM_PRIV_GetNodeFromPath(base_path, NULL, NULL, DONT_LOG_ERRORS);
+            if (node==NULL)
+            {
+                 goto exit_bad;
+            }
+
+            // Path should be owned by the Broker's internal data model, rather than a USP Service (the caller will already have checked this)
+            USP_ASSERT (node->group_id != NON_GROUPED);
+
+            // Return false if the path is not a param
+            if (IsParam(node)==false)
+            {
+                 goto exit_bad;
+            }
+
+            // Return false if the originator does not have permissions
+            permission_bitmask = DM_PRIV_GetPermissions(node, combined_role);
+            if ((permission_bitmask & required_permissions) != required_permissions)
+            {
+                 goto exit_bad;
+            }
+        }
+
+        // Finished checking the current search expression, all permissions OK
+
+        EXPR_VECTOR_Destroy(&ev);
+
+        p = next_search_expr_end+1;
+    }
+
+    return true;
+
+exit_bad:
+   EXPR_VECTOR_Destroy(&ev);
+   return false;
 }
 
 /*********************************************************************//**
@@ -6888,38 +7415,6 @@ subs_map_t *SubsMap_FindByBrokerInstanceAndPath(double_linked_list_t *sm, int br
 
 /*********************************************************************//**
 **
-** SubsMap_FindByPath
-**
-** Finds the entry in the specified subscription mapping table with a
-** path specification that matches the specified absolute path
-** NOTE: The path specification in the subscription may be an absolute path, partial path, or wildcarded path
-**
-** \param   sm - pointer to subscription mapping table
-** \param   path - absolute path to match
-**
-** \return  Pointer to entry in subscription map table, or NULL if no match was found
-**
-**************************************************************************/
-subs_map_t *SubsMap_FindByPath(double_linked_list_t *sm, char *path)
-{
-    subs_map_t *smap;
-
-    smap = (subs_map_t *) sm->head;
-    while (smap != NULL)
-    {
-        if (TEXT_UTILS_IsPathMatch(path, smap->path))
-        {
-            return smap;
-        }
-
-        smap = (subs_map_t *) smap->link.next;
-    }
-
-    return NULL;
-}
-
-/*********************************************************************//**
-**
 ** SubsMap_FindByPathAndNotifyType
 **
 ** Finds the entry in the specified subscription mapping table with a
@@ -7188,6 +7683,7 @@ msg_map_t *MsgMap_Find(double_linked_list_t *mm, char *msg_id)
 
     return NULL;
 }
+
 
 //------------------------------------------------------------------------------------------
 // Code to test the IsWantedGsdmObject() function

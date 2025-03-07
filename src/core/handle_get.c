@@ -52,6 +52,7 @@
 #include "device.h"
 #include "text_utils.h"
 #include "group_get_vector.h"
+#include "usp_broker.h"
 
 //------------------------------------------------------------------------------
 // Structure used to marshall entries in get group vector for a path expression
@@ -66,8 +67,12 @@ typedef struct
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void ExpandGetPathExpression(int get_expr_index, char *path_expr, int depth, get_expr_info_t *gi, group_get_vector_t *ggv);
-void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *gi, group_get_vector_t *ggv, Usp__Msg *resp);
+void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *gi, group_get_vector_t *ggv,  kv_vector_t *kvv_usp_resp, Usp__Msg *resp);
 void AddResolvedPathResult(Usp__GetResp__RequestedPathResult *req_path_result, char *path, char *value);
+#ifndef REMOVE_USP_BROKER
+void HandleDirectGet(int num_path_expr, char **path_exprs, int depth, get_expr_info_t *get_expr_info, group_get_vector_t *ggv, Usp__Msg *resp );
+#endif
+
 Usp__GetResp__ResolvedPathResult *FindResolvedPath(Usp__GetResp__RequestedPathResult *req_path_result, char *obj_path);
 Usp__Msg *CreateGetResp(char *msg_id);
 Usp__GetResp__RequestedPathResult *AddGetResp_ReqPathRes(Usp__Msg *resp, char *requested_path, int err_code, char *err_msg);
@@ -93,12 +98,12 @@ void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_conn_t 
 {
     int i;              // Used to iterate over path expressions in the USP get request message
     char **path_exprs;
-    int num_path_expr;
+    int num_path_expr = 0;
     Usp__Msg *resp = NULL;
     int size;
     unsigned depth;
     group_get_vector_t ggv;
-    get_expr_info_t *get_expr_info;
+    get_expr_info_t *get_expr_info = NULL;
 
     // Exit if message is invalid or failed to parse
     // This code checks the parsed message enums and pointers for expectations and validity
@@ -138,19 +143,26 @@ void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_conn_t 
 
     // Iterate over all input get expressions, adding them to the get_expr_info and group get vectors
     GROUP_GET_VECTOR_Init(&ggv);
+
+#ifndef REMOVE_USP_BROKER
+    HandleDirectGet(num_path_expr, path_exprs, depth, get_expr_info, &ggv, resp);
+#else
+    // Iterate over all input get expressions, adding them to the get_expr_info and group get vectors
     for (i=0; i < num_path_expr; i++)
     {
         ExpandGetPathExpression(i, path_exprs[i], (int)depth, &get_expr_info[i], &ggv);
     }
 
-    // Get all parameters
+    // Get all non USP Service parameters
+    // Do this once for all path expressions to avoid multiple group callbacks
     GROUP_GET_VECTOR_GetValues(&ggv);
 
     // Iterate over all input get expressions, consulting the group get vector to form the USP Get response message
     for (i=0; i < num_path_expr; i++)
     {
-        FormPathExprResponse(i, path_exprs[i], &get_expr_info[i], &ggv, resp);
+        FormPathExprResponse(i, path_exprs[i], &get_expr_info[i], &ggv, NULL, resp);
     }
+#endif
 
     GROUP_GET_VECTOR_Destroy(&ggv);
 
@@ -236,12 +248,13 @@ void ExpandGetPathExpression(int get_expr_index, char *path_expr, int depth, get
 ** \param   path_expr - USP path expression specifying which parameters to get
 ** \param   gi - pointer to info about specified path expression
 ** \param   ggv - pointer to group get vector containing paths and values of params which were retrieved
+** \param   kvv - pointer to optional list of paths and values to add to the response
 ** \param   resp - pointer to GetResponse object
 **
 ** \return  None
 **
 **************************************************************************/
-void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *gi, group_get_vector_t *ggv, Usp__Msg *resp)
+void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *gi, group_get_vector_t *ggv,  kv_vector_t *kvv,  Usp__Msg *resp)
 {
     int i;
     Usp__GetResp__RequestedPathResult *req_path_result;
@@ -254,13 +267,6 @@ void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *
         return;
     }
 
-    // Exit if this path expression failed to resolve to any parameters. In this case just add a requested path response
-    if (gi->num_entries == 0)
-    {
-        (void)AddGetResp_ReqPathRes(resp, path_expr, USP_ERR_OK, "");
-        return;
-    }
-
     // Add the values of all parameters that were retrieved successfully to the result_params
     req_path_result = AddGetResp_ReqPathRes(resp, path_expr, USP_ERR_OK, "");
     for (i=0; i < gi->num_entries; i++)
@@ -269,6 +275,14 @@ void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *
         if (gge->err_code == USP_ERR_OK)
         {
             AddResolvedPathResult(req_path_result, gge->path, gge->value);
+        }
+    }
+
+    if (kvv != NULL)
+    {
+        for (i=0 ; i < kvv->num_entries ; i++)
+        {
+            AddResolvedPathResult(req_path_result, kvv->vector[i].key, kvv->vector[i].value);
         }
     }
 }
@@ -505,7 +519,86 @@ AddResolvedPathRes_ParamsEntry(Usp__GetResp__ResolvedPathResult *resolved_path_r
     return res_params_entry;
 }
 
+#ifndef REMOVE_USP_BROKER
+/*********************************************************************//**
+**
+** HandleDirectGet
+**
+** Optimised USP service GET function that performs top level GET on USP services registered with the broker
+**
+** \param   num_path_expr - the number of provided paths to get in path_exprs
+** \param   path_exprs - an array of strings containing paths to get
+** \param   depth - the requestes depth of results to return
+** \param   ggv - a pointer to an array of group get vectors to use
+** \param   resp - a pointer to an empty USP response message to populate and return
+**
+** \return  None - This code must handle any errors by sending back error messages
+**
+**************************************************************************/
+void HandleDirectGet(int num_path_expr, char **path_exprs, int depth, get_expr_info_t *get_expr_info, group_get_vector_t *ggv, Usp__Msg *resp )
+{
+    int err = USP_ERR_OK;
+    combined_role_t combined_role;
+    kv_vector_t *resolved_params = NULL;
+    int_vector_t group_ids;
+    str_vector_t unresolved_params;
+    int size;
+    int i; // for iterating through each path expression
 
+    size = num_path_expr*sizeof(kv_vector_t);
+    resolved_params = USP_MALLOC(size);
+    MSG_HANDLER_GetMsgRole(&combined_role);
+
+    // Iterate over all input get expressions, adding them to the get_expr_info and group get vectors
+    for (i=0; i < num_path_expr; i++)
+    {
+        // if Broker is available, attmpt to directly GET all parameters from any registered USP services
+        KV_VECTOR_Init(&resolved_params[i]);
+        STR_VECTOR_Init(&unresolved_params);
+        INT_VECTOR_Init(&group_ids);
+
+        // AttemptDirectGet will return any resolved USP service parameters in resolved_params
+        // The remainder of (outstanding) parameters will be returned in unresolved_params
+        err = USP_BROKER_AttemptDirectGet(path_exprs[i], &unresolved_params, &group_ids, &resolved_params[i], &combined_role, depth);
+        if (err != USP_ERR_OK)
+        {
+            get_expr_info[i].err_code = err;
+            get_expr_info[i].err_msg = USP_STRDUP(USP_ERR_GetMessage());
+            STR_VECTOR_Destroy(&unresolved_params);
+        }
+        else
+        {
+            // copy remaining parameters into GGV and get_expr_info struct
+            // Save the range of indexes for this path expression params
+            get_expr_info[i].index = ggv->num_entries;
+            get_expr_info[i].num_entries = unresolved_params.num_entries;
+            // NOTE: Ownership of the strings in the params vector transfers to the group get vector
+            GROUP_GET_VECTOR_AddParams(ggv, &unresolved_params, &group_ids);
+            USP_SAFE_FREE(unresolved_params.vector);
+            unresolved_params.vector = NULL;
+        }
+        INT_VECTOR_Destroy(&group_ids);
+    }
+
+    // Get all non USP service parameters
+    // Do this once for all path expressions to avoid multiple group callbacks
+    GROUP_GET_VECTOR_GetValues(ggv);
+
+    // Iterate over all input get expressions, consulting the group get vector to form the USP Get response message
+    for (i=0; i < num_path_expr; i++)
+    {
+        FormPathExprResponse(i, path_exprs[i], &get_expr_info[i], ggv, &resolved_params[i], resp);
+    }
+
+    for (i=0; i < num_path_expr; i++)
+    {
+        KV_VECTOR_Destroy(&resolved_params[i]);
+    }
+    USP_FREE(resolved_params);
+    STR_VECTOR_Destroy(&unresolved_params);
+    INT_VECTOR_Destroy(&group_ids);
+}
+#endif
 
 
 

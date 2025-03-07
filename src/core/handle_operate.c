@@ -51,6 +51,7 @@
 #include "path_resolver.h"
 #include "proto_trace.h"
 #include "device.h"
+#include "usp_broker.h"
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -147,6 +148,8 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_con
     // Iterate over all operation paths
     for (i=0; i < paths.num_entries; i++)
     {
+        oper_path = paths.vector[i];
+
         // Exit if unable to start a transaction
         err = DM_TRANS_Start(&trans);
         if (err != USP_ERR_OK)
@@ -155,10 +158,20 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_con
             goto exit;
         }
 
-        // Perform the operation
-        oper_path = paths.vector[i];
         KV_VECTOR_Init(&output_args);
+
+#ifndef REMOVE_USP_BROKER
+        // Perform the operation only if there is a subscription on the USP Service when this is an async cmd
+        // This test is necessary because otherwise the Broker will not know when the USP Command has completed and hence will never delete the request from the Broker's Request table
+        err = USP_BROKER_CheckAsyncCommandIsSubscribedTo(oper_path, &combined_role);
+        if (err == USP_ERR_OK)
+        {
+            err = DATA_MODEL_Operate(oper_path, &input_args, &output_args, oper->command_key, &instance);
+        }
+#else
+        // Perform the operation
         err = DATA_MODEL_Operate(oper_path, &input_args, &output_args, oper->command_key, &instance);
+#endif
         if (err != USP_ERR_OK)
         {
             // Operation failed

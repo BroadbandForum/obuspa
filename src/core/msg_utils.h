@@ -50,7 +50,7 @@
 
 //------------------------------------------------------------------------------
 // API
-Usp__Msg *MSG_UTILS_Create_GetReq(char *msg_id, kv_vector_t *kvv);
+Usp__Msg *MSG_UTILS_Create_GetReq(char *msg_id, kv_vector_t *kvv, int depth);
 Usp__Msg *MSG_UTILS_Create_SetReq(char *msg_id, kv_vector_t *kvv);
 Usp__Msg *MSG_UTILS_Create_AddReq(char *msg_id, char *path, group_add_param_t *params, int num_params);
 Usp__Msg *MSG_UTILS_Create_DeleteReq(char *msg_id, str_vector_t *paths, bool allow_partial);

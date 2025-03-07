@@ -2973,7 +2973,7 @@ void DM_PRIV_RequestInit(dm_req_t *req, dm_node_t *node, char *path, dm_instance
 **                 NOTE: This parameter may be NULL if instances are not required
 **
 ** \param   p_hash - pointer to variable in which to return the calculated hash
-** \param   flags - bitmask of options controlling execution (eg DONT_LOG_ERRORS)
+** \param   flags - bitmask of options controlling execution (eg DONT_LOG_ERRORS, SUBSTITUTE_SEARCH_EXPRS)
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -2984,6 +2984,7 @@ int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash
     char c;
     char *p;
     char *p_num;
+    char *p_sexpr_end;
     char t;
     int num_digits;
     unsigned number;
@@ -3072,6 +3073,23 @@ int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash
             ADD_TO_HASH('i', hash);
             ADD_TO_HASH('}', hash);
             c = *p++;
+            continue;
+        }
+        else if ((flags & SUBSTITUTE_SEARCH_EXPRS) && c == '[')
+        {
+           // Start of a search expression - skip over it, then add "{i}" to the hash
+            p_sexpr_end = TEXT_UTILS_StrStr(p, "]");
+            if (p_sexpr_end==NULL)
+            {
+                return USP_ERR_INTERNAL_ERROR;
+            }
+            // Found a completed search expression, substitute '{i}' in hash
+            ADD_TO_HASH('{', hash);
+            ADD_TO_HASH('i', hash);
+            ADD_TO_HASH('}', hash);
+
+            p = p_sexpr_end+1;
+            c = *p;
             continue;
         }
 
@@ -3334,6 +3352,7 @@ dm_node_t *DM_PRIV_AddSchemaPath(char *path, dm_node_type_t type, unsigned flags
             // Save the instance nodes for this object
             memcpy(child->instance_nodes, &inst.nodes, inst.order*sizeof(dm_node_t *));
             child->order = inst.order;
+            child->depth = i+1;
         }
         else
         {
@@ -4150,6 +4169,7 @@ dm_node_t *CreateNode(char *name, dm_node_type_t type, char *schema_path)
     node->path = USP_STRDUP(schema_path);
     DLLIST_Init(&node->child_nodes);
     node->parent_node = NULL;
+    node->depth = -1;
 
     // Default the group_id
     // NOTE: For objects which are non multi-instance, the group_id is effectively 'don't care' as non-table objects are not accessible via the grouped vendor hook APIs

@@ -325,7 +325,7 @@ void *USP_MEM_Realloc(const char *func, int line, void *ptr, int size)
 
     // Terminate if out of memory
     new_ptr = realloc(ptr, size);
-    if (new_ptr == NULL)
+    if ((size > 0) && (new_ptr == NULL))
     {
         USP_ERR_Terminate("%s (%d): realloc(%d bytes) failed", func, line, size);
     }

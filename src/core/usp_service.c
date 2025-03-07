@@ -52,6 +52,7 @@
 #include "os_utils.h"
 #include "usp_api.h"
 #include "usp_service.h"
+#include "path_resolver.h"
 
 #include <semaphore.h>
 
@@ -655,7 +656,7 @@ int USP_SERVICE_Get(kv_vector_t *params, int timeout, char *err_msg, int err_msg
 
     // Form request
     CalcUspServiceMessageId(msg_id, sizeof(msg_id));
-    request.req = MSG_UTILS_Create_GetReq(msg_id, params);
+    request.req = MSG_UTILS_Create_GetReq(msg_id, params, FULL_DEPTH);
     request.err_msg = err_msg;
     request.err_msg_len = err_msg_len;
     request.timeout = timeout;

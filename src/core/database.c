@@ -52,6 +52,7 @@
 #include "os_utils.h"
 #include "text_utils.h"
 #include "vendor_api.h"
+#include "plugin.h"
 
 //--------------------------------------------------------------------
 // Prepared SQL statements

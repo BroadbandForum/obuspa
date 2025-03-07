@@ -43,6 +43,7 @@
 #include "msg_utils.h"
 #include "text_utils.h"
 #include "msg_handler.h"
+#include "path_resolver.h"
 
 #if !defined(REMOVE_USP_BROKER) || !defined(REMOVE_USP_SERVICE)
 //------------------------------------------------------------------------------
@@ -191,11 +192,12 @@ int MSG_UTILS_ValidateUspResponse(Usp__Msg *resp, Usp__Response__RespTypeCase re
 **
 ** \param   msg_id - string containing unique USP message ID to use for the request
 ** \param   kvv - key value vector containing the keys and values to get
+** \param   depth - limit the tree depth of the get response (0 or FULL_DEPTH for unlimited))
 **
 ** \return  Pointer to a Usp__Msg structure- ownership passes to the caller
 **
 **************************************************************************/
-Usp__Msg *MSG_UTILS_Create_GetReq(char *msg_id, kv_vector_t *kvv)
+Usp__Msg *MSG_UTILS_Create_GetReq(char *msg_id, kv_vector_t *kvv, int depth)
 {
     int i;
     int num_paths;
@@ -216,7 +218,11 @@ Usp__Msg *MSG_UTILS_Create_GetReq(char *msg_id, kv_vector_t *kvv)
         get->param_paths[i] = USP_STRDUP(kvv->vector[i].key);
     }
 
-    get->max_depth = 0;
+    if (depth == FULL_DEPTH)
+    {
+        depth = 0;
+    }
+    get->max_depth = depth;
 
     return msg;
 }
