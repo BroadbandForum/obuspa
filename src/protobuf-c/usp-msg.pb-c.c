@@ -466,6 +466,12 @@ void   usp__get_supported_dmresp__supported_event_result__init
   static const Usp__GetSupportedDMResp__SupportedEventResult init_value = USP__GET_SUPPORTED_DMRESP__SUPPORTED_EVENT_RESULT__INIT;
   *message = init_value;
 }
+void   usp__get_supported_dmresp__supported_unique_key_set__init
+                     (Usp__GetSupportedDMResp__SupportedUniqueKeySet         *message)
+{
+  static const Usp__GetSupportedDMResp__SupportedUniqueKeySet init_value = USP__GET_SUPPORTED_DMRESP__SUPPORTED_UNIQUE_KEY_SET__INIT;
+  *message = init_value;
+}
 void   usp__get_supported_dmresp__init
                      (Usp__GetSupportedDMResp         *message)
 {
@@ -2595,7 +2601,7 @@ const ProtobufCMessageDescriptor usp__get_resp__descriptor =
   (ProtobufCMessageInit) usp__get_resp__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor usp__get_supported_dm__field_descriptors[5] =
+static const ProtobufCFieldDescriptor usp__get_supported_dm__field_descriptors[6] =
 {
   {
     "obj_paths",
@@ -2657,6 +2663,18 @@ static const ProtobufCFieldDescriptor usp__get_supported_dm__field_descriptors[5
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "return_unique_key_sets",
+    6,
+    PROTOBUF_C_LABEL_NONE,
+    PROTOBUF_C_TYPE_BOOL,
+    0,   /* quantifier_offset */
+    offsetof(Usp__GetSupportedDM, return_unique_key_sets),
+    NULL,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned usp__get_supported_dm__field_indices_by_name[] = {
   1,   /* field[1] = first_level_only */
@@ -2664,11 +2682,12 @@ static const unsigned usp__get_supported_dm__field_indices_by_name[] = {
   2,   /* field[2] = return_commands */
   3,   /* field[3] = return_events */
   4,   /* field[4] = return_params */
+  5,   /* field[5] = return_unique_key_sets */
 };
 static const ProtobufCIntRange usp__get_supported_dm__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 5 }
+  { 0, 6 }
 };
 const ProtobufCMessageDescriptor usp__get_supported_dm__descriptor =
 {
@@ -2678,7 +2697,7 @@ const ProtobufCMessageDescriptor usp__get_supported_dm__descriptor =
   "Usp__GetSupportedDM",
   "usp",
   sizeof(Usp__GetSupportedDM),
-  5,
+  6,
   usp__get_supported_dm__field_descriptors,
   usp__get_supported_dm__field_indices_by_name,
   1,  usp__get_supported_dm__number_ranges,
@@ -2775,7 +2794,7 @@ const ProtobufCMessageDescriptor usp__get_supported_dmresp__requested_object_res
   (ProtobufCMessageInit) usp__get_supported_dmresp__requested_object_result__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
-static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_object_result__field_descriptors[7] =
+static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_object_result__field_descriptors[8] =
 {
   {
     "supported_obj_path",
@@ -2861,6 +2880,18 @@ static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_objec
     0,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
+  {
+    "unique_key_sets",
+    8,
+    PROTOBUF_C_LABEL_REPEATED,
+    PROTOBUF_C_TYPE_MESSAGE,
+    offsetof(Usp__GetSupportedDMResp__SupportedObjectResult, n_unique_key_sets),
+    offsetof(Usp__GetSupportedDMResp__SupportedObjectResult, unique_key_sets),
+    &usp__get_supported_dmresp__supported_unique_key_set__descriptor,
+    NULL,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
 };
 static const unsigned usp__get_supported_dmresp__supported_object_result__field_indices_by_name[] = {
   1,   /* field[1] = access */
@@ -2870,11 +2901,12 @@ static const unsigned usp__get_supported_dmresp__supported_object_result__field_
   4,   /* field[4] = supported_events */
   0,   /* field[0] = supported_obj_path */
   5,   /* field[5] = supported_params */
+  7,   /* field[7] = unique_key_sets */
 };
 static const ProtobufCIntRange usp__get_supported_dmresp__supported_object_result__number_ranges[1 + 1] =
 {
   { 1, 0 },
-  { 0, 7 }
+  { 0, 8 }
 };
 const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_object_result__descriptor =
 {
@@ -2884,7 +2916,7 @@ const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_object_res
   "Usp__GetSupportedDMResp__SupportedObjectResult",
   "usp",
   sizeof(Usp__GetSupportedDMResp__SupportedObjectResult),
-  7,
+  8,
   usp__get_supported_dmresp__supported_object_result__field_descriptors,
   usp__get_supported_dmresp__supported_object_result__field_indices_by_name,
   1,  usp__get_supported_dmresp__supported_object_result__number_ranges,
@@ -3094,6 +3126,44 @@ const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_event_resu
   usp__get_supported_dmresp__supported_event_result__field_indices_by_name,
   1,  usp__get_supported_dmresp__supported_event_result__number_ranges,
   (ProtobufCMessageInit) usp__get_supported_dmresp__supported_event_result__init,
+  NULL,NULL,NULL    /* reserved[123] */
+};
+static const ProtobufCFieldDescriptor usp__get_supported_dmresp__supported_unique_key_set__field_descriptors[1] =
+{
+  {
+    "key_names",
+    1,
+    PROTOBUF_C_LABEL_REPEATED,
+    PROTOBUF_C_TYPE_STRING,
+    offsetof(Usp__GetSupportedDMResp__SupportedUniqueKeySet, n_key_names),
+    offsetof(Usp__GetSupportedDMResp__SupportedUniqueKeySet, key_names),
+    NULL,
+    &protobuf_c_empty_string,
+    0,             /* flags */
+    0,NULL,NULL    /* reserved1,reserved2, etc */
+  },
+};
+static const unsigned usp__get_supported_dmresp__supported_unique_key_set__field_indices_by_name[] = {
+  0,   /* field[0] = key_names */
+};
+static const ProtobufCIntRange usp__get_supported_dmresp__supported_unique_key_set__number_ranges[1 + 1] =
+{
+  { 1, 0 },
+  { 0, 1 }
+};
+const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_unique_key_set__descriptor =
+{
+  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
+  "usp.GetSupportedDMResp.SupportedUniqueKeySet",
+  "SupportedUniqueKeySet",
+  "Usp__GetSupportedDMResp__SupportedUniqueKeySet",
+  "usp",
+  sizeof(Usp__GetSupportedDMResp__SupportedUniqueKeySet),
+  1,
+  usp__get_supported_dmresp__supported_unique_key_set__field_descriptors,
+  usp__get_supported_dmresp__supported_unique_key_set__field_indices_by_name,
+  1,  usp__get_supported_dmresp__supported_unique_key_set__number_ranges,
+  (ProtobufCMessageInit) usp__get_supported_dmresp__supported_unique_key_set__init,
   NULL,NULL,NULL    /* reserved[123] */
 };
 static const ProtobufCEnumValue usp__get_supported_dmresp__param_access_type__enum_values_by_number[3] =

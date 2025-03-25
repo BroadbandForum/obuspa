@@ -515,6 +515,7 @@ Usp__Msg *MSG_UTILS_Create_GetSupportedDMReq(char *msg_id, str_vector_t *sv)
     gsdm->return_commands = true;
     gsdm->return_events = true;
     gsdm->return_params = true;
+    gsdm->return_unique_key_sets = true;
 
     return msg;
 }

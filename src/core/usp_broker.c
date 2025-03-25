@@ -5040,6 +5040,7 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
     Usp__GetSupportedDMResp__SupportedParamResult *sp;
     Usp__GetSupportedDMResp__SupportedEventResult *se;
     Usp__GetSupportedDMResp__SupportedCommandResult *sc;
+    Usp__GetSupportedDMResp__SupportedUniqueKeySet *set;
     int group_id;
 
     // Exit if the USP Service did not register (in the last register request) this object or any of its immediate children
@@ -5194,6 +5195,23 @@ void ProcessGsdm_SupportedObject(Usp__GetSupportedDMResp__SupportedObjectResult 
         {
             USP_LOG_Error("%s: Failed to register arguments for command '%s'", __FUNCTION__, path);
             continue;
+        }
+    }
+
+    //-----------------------------------------------------
+    // Iterate over all compound unique keys, registering them for this object
+    path[len] = '\0';  // Truncate path back to object name
+    for (i=0; i < sor->n_unique_key_sets; i++)
+    {
+        // Log an error, if failed to register the compound unique key
+        set = sor->unique_key_sets[i];
+        if ((set->key_names != NULL) && (set->n_key_names != 0))
+        {
+            err = USP_REGISTER_Object_UniqueKey(path, set->key_names, set->n_key_names);
+            if (err != USP_ERR_OK)
+            {
+                USP_LOG_Error("%s: Failed to register unique key set for %s (first key='%s')", __FUNCTION__, path, set->key_names[0]);
+            }
         }
     }
 }

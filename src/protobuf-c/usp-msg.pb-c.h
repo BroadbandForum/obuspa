@@ -34,6 +34,7 @@ typedef struct Usp__GetSupportedDMResp__SupportedObjectResult Usp__GetSupportedD
 typedef struct Usp__GetSupportedDMResp__SupportedParamResult Usp__GetSupportedDMResp__SupportedParamResult;
 typedef struct Usp__GetSupportedDMResp__SupportedCommandResult Usp__GetSupportedDMResp__SupportedCommandResult;
 typedef struct Usp__GetSupportedDMResp__SupportedEventResult Usp__GetSupportedDMResp__SupportedEventResult;
+typedef struct Usp__GetSupportedDMResp__SupportedUniqueKeySet Usp__GetSupportedDMResp__SupportedUniqueKeySet;
 typedef struct Usp__GetInstances Usp__GetInstances;
 typedef struct Usp__GetInstancesResp Usp__GetInstancesResp;
 typedef struct Usp__GetInstancesResp__RequestedPathResult Usp__GetInstancesResp__RequestedPathResult;
@@ -404,10 +405,11 @@ struct  Usp__GetSupportedDM
   protobuf_c_boolean return_commands;
   protobuf_c_boolean return_events;
   protobuf_c_boolean return_params;
+  protobuf_c_boolean return_unique_key_sets;
 };
 #define USP__GET_SUPPORTED_DM__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&usp__get_supported_dm__descriptor) \
-    , 0,NULL, 0, 0, 0, 0 }
+    , 0,NULL, 0, 0, 0, 0, 0 }
 
 
 struct  Usp__GetSupportedDMResp__RequestedObjectResult
@@ -439,10 +441,12 @@ struct  Usp__GetSupportedDMResp__SupportedObjectResult
   Usp__GetSupportedDMResp__SupportedParamResult **supported_params;
   size_t n_divergent_paths;
   char **divergent_paths;
+  size_t n_unique_key_sets;
+  Usp__GetSupportedDMResp__SupportedUniqueKeySet **unique_key_sets;
 };
 #define USP__GET_SUPPORTED_DMRESP__SUPPORTED_OBJECT_RESULT__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&usp__get_supported_dmresp__supported_object_result__descriptor) \
-    , (char *)protobuf_c_empty_string, USP__GET_SUPPORTED_DMRESP__OBJ_ACCESS_TYPE__OBJ_READ_ONLY, 0, 0,NULL, 0,NULL, 0,NULL, 0,NULL }
+    , (char *)protobuf_c_empty_string, USP__GET_SUPPORTED_DMRESP__OBJ_ACCESS_TYPE__OBJ_READ_ONLY, 0, 0,NULL, 0,NULL, 0,NULL, 0,NULL, 0,NULL }
 
 
 struct  Usp__GetSupportedDMResp__SupportedParamResult
@@ -483,6 +487,17 @@ struct  Usp__GetSupportedDMResp__SupportedEventResult
 #define USP__GET_SUPPORTED_DMRESP__SUPPORTED_EVENT_RESULT__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&usp__get_supported_dmresp__supported_event_result__descriptor) \
     , (char *)protobuf_c_empty_string, 0,NULL }
+
+
+struct  Usp__GetSupportedDMResp__SupportedUniqueKeySet
+{
+  ProtobufCMessage base;
+  size_t n_key_names;
+  char **key_names;
+};
+#define USP__GET_SUPPORTED_DMRESP__SUPPORTED_UNIQUE_KEY_SET__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&usp__get_supported_dmresp__supported_unique_key_set__descriptor) \
+    , 0,NULL }
 
 
 struct  Usp__GetSupportedDMResp
@@ -1578,6 +1593,9 @@ void   usp__get_supported_dmresp__supported_command_result__init
 /* Usp__GetSupportedDMResp__SupportedEventResult methods */
 void   usp__get_supported_dmresp__supported_event_result__init
                      (Usp__GetSupportedDMResp__SupportedEventResult         *message);
+/* Usp__GetSupportedDMResp__SupportedUniqueKeySet methods */
+void   usp__get_supported_dmresp__supported_unique_key_set__init
+                     (Usp__GetSupportedDMResp__SupportedUniqueKeySet         *message);
 /* Usp__GetSupportedDMResp methods */
 void   usp__get_supported_dmresp__init
                      (Usp__GetSupportedDMResp         *message);
@@ -2148,6 +2166,9 @@ typedef void (*Usp__GetSupportedDMResp__SupportedCommandResult_Closure)
 typedef void (*Usp__GetSupportedDMResp__SupportedEventResult_Closure)
                  (const Usp__GetSupportedDMResp__SupportedEventResult *message,
                   void *closure_data);
+typedef void (*Usp__GetSupportedDMResp__SupportedUniqueKeySet_Closure)
+                 (const Usp__GetSupportedDMResp__SupportedUniqueKeySet *message,
+                  void *closure_data);
 typedef void (*Usp__GetSupportedDMResp_Closure)
                  (const Usp__GetSupportedDMResp *message,
                   void *closure_data);
@@ -2384,6 +2405,7 @@ extern const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_obj
 extern const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_param_result__descriptor;
 extern const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_command_result__descriptor;
 extern const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_event_result__descriptor;
+extern const ProtobufCMessageDescriptor usp__get_supported_dmresp__supported_unique_key_set__descriptor;
 extern const ProtobufCEnumDescriptor    usp__get_supported_dmresp__param_access_type__descriptor;
 extern const ProtobufCEnumDescriptor    usp__get_supported_dmresp__obj_access_type__descriptor;
 extern const ProtobufCEnumDescriptor    usp__get_supported_dmresp__param_value_type__descriptor;

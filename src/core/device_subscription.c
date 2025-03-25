@@ -152,6 +152,9 @@ static char *boot_event_args[] =
 };
 #endif
 
+// Flag to ensure that the Boot! event is sent only once, and that Periodic! events are not sent until after the Boot! event
+static bool boot_subs_processed = false;
+
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 int ProcessSubscriptionAdded(int instance);
@@ -376,7 +379,6 @@ void DEVICE_SUBSCRIPTION_Stop(void)
 **************************************************************************/
 void DEVICE_SUBSCRIPTION_Update(int id)
 {
-    static bool boot_subs_processed = false;
     time_t cur_time;
     int poll_period;
 
@@ -756,6 +758,12 @@ void DEVICE_SUBSCRIPTION_SendPeriodicEvent(int cont_instance)
     subs_t *sub;
     Usp__Msg *req;
     kv_vector_t output_args;
+
+    // Exit if the Boot! event has not been sent yet. Periodic notifications are dropped if they occur before Boot! event has been sent
+    if (boot_subs_processed == false)
+    {
+        return;
+    }
 
     // Output arguments for the Periodic event are empty
     KV_VECTOR_Init(&output_args);

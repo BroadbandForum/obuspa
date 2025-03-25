@@ -1,5 +1,15 @@
 # OB-USP-AGENT Changelog since Release 9.0.0
 
+## 2025-03-25 v9.0.9
+### Added
+- USP 1.4: GSDM should contain unique keys
+- USP 1.4: GSDM should support request of non-objects
+
+### Fixed
+- Periodic! notifications should be sent after the Boot! event
+- Empty string should not be interpreted as 0 by parameter value conversion functions
+
+
 ## 2025-03-07 v9.0.8
 ### Added
 - USP Broker: Optimize Get requests spanning multiple USP Services

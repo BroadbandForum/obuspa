@@ -164,6 +164,13 @@ int TEXT_UTILS_StringToUnsignedLongLong(char *str, unsigned long long *value)
 {
     char *endptr = NULL;
 
+    // Exit if string is empty
+    if (*str == '\0')
+    {
+        USP_ERR_SetMessage("%s: 'Expecting an unsigned number. Got an empty string.", __FUNCTION__);
+        return USP_ERR_INVALID_TYPE;
+    }
+
     // Exit if string contains a negative number
     if (strchr(str, '-') != NULL)
     {
@@ -200,6 +207,13 @@ int TEXT_UTILS_StringToLongLong(char *str, long long *value)
 {
     char *endptr = NULL;
 
+    // Exit if string is empty
+    if (*str == '\0')
+    {
+        USP_ERR_SetMessage("%s: 'Expecting a signed number. Got an empty string.", __FUNCTION__);
+        return USP_ERR_INVALID_TYPE;
+    }
+
     // Do not allow the largest negative number as it is so large it is interpreted as +9223372036854775807 by sprintf() etc
     if (strcmp(str, "-9223372036854775808")==0)
     {
@@ -235,6 +249,13 @@ int TEXT_UTILS_StringToLongLong(char *str, long long *value)
 int TEXT_UTILS_StringToDouble(char *str, double *value)
 {
     char *endptr = NULL;
+
+    // Exit if string is empty
+    if (*str == '\0')
+    {
+        USP_ERR_SetMessage("%s: 'Expecting a number. Got an empty string.", __FUNCTION__);
+        return USP_ERR_INVALID_TYPE;
+    }
 
     // Exit if unable to convert
     errno = 0;
