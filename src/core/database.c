@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -296,6 +297,19 @@ void DATABASE_PerformFactoryReset_ControllerInitiated(void)
     char *db_file = database_filename;
     int err;
 
+#ifndef REMOVE_DEVICE_BOOT_EVENT
+    dm_hash_t hash;
+    char cause[MAX_DM_SHORT_VALUE_LEN] = {0};
+    char reason[MAX_DM_SHORT_VALUE_LEN] = {0};
+
+    // Save the cause and reason for this factory reset from the current database
+    // (so that we can restore them in the new database after the factor reset)
+    DM_PRIV_CalcHashFromPath(reboot_cause_path, NULL, &hash, 0);
+    DATABASE_GetParameterValue(reboot_cause_path, hash, "", cause, sizeof(cause), 0);
+    DM_PRIV_CalcHashFromPath(reboot_reason_path, NULL, &hash, 0);
+    DATABASE_GetParameterValue(reboot_reason_path, hash, "", reason, sizeof(reason), 0);
+#endif
+
     // Close the current database
     DATABASE_Destroy();
 
@@ -337,13 +351,21 @@ void DATABASE_PerformFactoryReset_ControllerInitiated(void)
     }
 
 #ifndef REMOVE_DEVICE_BOOT_EVENT
-    // Finally set the reboot cause to "RemoteFactoryReset"
-    err = DATA_MODEL_SetParameterInDatabase(reboot_cause_path, "RemoteFactoryReset");
+    // Exit if unable to set the reboot cause
+    err = DATA_MODEL_SetParameterInDatabase(reboot_cause_path, cause);
+    if (err != USP_ERR_OK)
+    {
+        return;
+    }
+
+    // Exit if unable to set the reboot reason
+    err = DATA_MODEL_SetParameterInDatabase(reboot_reason_path, reason);
     if (err != USP_ERR_OK)
     {
         return;
     }
 #endif
+
     // NOTE: No need to close this database, as it will be closed by DM_EXEC_Destroy()
 }
 

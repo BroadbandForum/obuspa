@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
@@ -75,11 +76,13 @@ exit_action_t scheduled_exit_action = kExitAction_Exit;
 //------------------------------------------------------------------------------
 // Database paths to parameters associated with rebooting and whether firmware has been activated
 char *reboot_cause_path = "Internal.Reboot.Cause";
+char *reboot_reason_path = "Internal.Reboot.Reason";
 static char *reboot_command_key_path = "Internal.Reboot.CommandKey";
 static char *reboot_request_instance_path = "Internal.Reboot.RequestInstance";
 static char *last_software_version_path = "Internal.Reboot.LastSoftwareVersion";
 
-static char *local_reboot_cause_str = "LocalReboot";
+static char *default_reboot_cause_str = "LocalReboot";
+static char *default_reboot_reason_str = "Unknown";
 #endif
 
 //------------------------------------------------------------------------------
@@ -125,6 +128,26 @@ static char *sched_timer_input_args[] =
 int Start_ScheduleTimer(dm_req_t *req, kv_vector_t *input_args, int instance);
 void *ScheduleTimerThreadMain(void *param);
 int Restart_ScheduleTimer(dm_req_t *req, int instance, bool *is_restart, int *err_code, char *err_msg, int err_msg_len, kv_vector_t *output_args);
+#endif
+
+//------------------------------------------------------------------------------------
+// Array of valid input arguments for Reboot() command
+#ifndef REMOVE_DEVICE_REBOOT
+static char *reboot_input_args[] =
+{
+    "Cause",
+    "Reason",
+};
+#endif
+
+//------------------------------------------------------------------------------------
+// Array of valid input arguments for FactoryReset() command
+#ifndef REMOVE_DEVICE_FACTORY_RESET
+static char *factory_reset_input_args[] =
+{
+    "Cause",
+    "Reason",
+};
 #endif
 
 //------------------------------------------------------------------------------
@@ -185,16 +208,19 @@ int DEVICE_LOCAL_AGENT_Init(void)
 #ifndef REMOVE_DEVICE_REBOOT
     // Register Reboot operation
     err |= USP_REGISTER_SyncOperation("Device.Reboot()", ScheduleReboot);
+    err |= USP_REGISTER_OperationArguments("Device.Reboot()", reboot_input_args, NUM_ELEM(reboot_input_args), NULL, 0);
 #endif
 
 #ifndef REMOVE_DEVICE_FACTORY_RESET
     // Register Factory Reset operation
     err |= USP_REGISTER_SyncOperation("Device.FactoryReset()", ScheduleFactoryReset);
+    err |= USP_REGISTER_OperationArguments("Device.FactoryReset()", factory_reset_input_args, NUM_ELEM(factory_reset_input_args), NULL, 0);
 #endif
 
 #ifndef REMOVE_DEVICE_BOOT_EVENT
     // Register parameters associated with tracking the cause of a reboot
     err |= USP_REGISTER_DBParam_ReadWrite(reboot_cause_path, "FactoryReset", NULL, NULL, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(reboot_reason_path, "Unknown", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(reboot_command_key_path, "", NULL, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite(reboot_request_instance_path, "-1", NULL, NULL, DM_INT);
     err |= USP_REGISTER_DBParam_ReadWrite(last_software_version_path, "", NULL, NULL, DM_STRING);
@@ -267,7 +293,7 @@ int DEVICE_LOCAL_AGENT_SetDefaults(void)
 
     // Get the actual value of OUI
     // This may be the value in the USP DB, the default value (if not present in DB) or a value retrieved by vendor hook (if REMOVE_DEVICE_INFO is defined)
-    err = DATA_MODEL_GetParameterValue(manufacturer_oui_path, oui, sizeof(oui), 0);
+    err = DATA_MODEL_GetParameterValue(manufacturer_oui_path, oui, sizeof(oui), DONT_LOG_NOT_REGISTERED_ERROR);
 
 #ifdef REMOVE_DEVICE_INFO
     // If vendor has not registered Device.DeviceInfo.ManufacturerOUI, then use the default value
@@ -305,7 +331,7 @@ int DEVICE_LOCAL_AGENT_SetDefaults(void)
 
     // Get the actual value of Serial Number
     // This may be the value in the USP DB, the default value (if not present in DB) or a value retrieved by vendor hook (if REMOVE_DEVICE_INFO is defined)
-    err = DATA_MODEL_GetParameterValue(serial_number_path, serial_number, sizeof(serial_number), 0);
+    err = DATA_MODEL_GetParameterValue(serial_number_path, serial_number, sizeof(serial_number), DONT_LOG_NOT_REGISTERED_ERROR);
 
 #ifdef REMOVE_DEVICE_INFO
     // If vendor has not registered Device.DeviceInfo.SerialNumber, then use the default value
@@ -401,6 +427,7 @@ void DEVICE_LOCAL_AGENT_Stop(void)
 {
 #ifndef REMOVE_DEVICE_BOOT_EVENT
     USP_SAFE_FREE(reboot_info.cause);
+    USP_SAFE_FREE(reboot_info.reason);
     USP_SAFE_FREE(reboot_info.command_key);
     USP_SAFE_FREE(reboot_info.cur_software_version);
     USP_SAFE_FREE(reboot_info.last_software_version);
@@ -416,19 +443,27 @@ void DEVICE_LOCAL_AGENT_Stop(void)
 **
 ** \param   exit_action - action to perform on exit
 ** \param   reboot_cause - cause of reboot
+** \param   reboot_reason - reason for reboot
 ** \param   command_key - pointer to string containing the command key for this operation
 ** \param   request_instance - instance number of the request that initiated the reboot, or INVALID if reboot was not initiated by an operation
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DEVICE_LOCAL_AGENT_ScheduleReboot(exit_action_t exit_action, char *reboot_cause, char *command_key, int request_instance)
+int DEVICE_LOCAL_AGENT_ScheduleReboot(exit_action_t exit_action, char *reboot_cause, char *reboot_reason, char *command_key, int request_instance)
 {
 #ifndef REMOVE_DEVICE_BOOT_EVENT
     int err;
 
     // Exit if unable to persist the cause of reboot
     err = DATA_MODEL_SetParameterValue(reboot_cause_path, reboot_cause, 0);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if unable to persist the reason for reboot
+    err = DATA_MODEL_SetParameterValue(reboot_reason_path, reboot_reason, 0);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -650,7 +685,7 @@ int GetKernelUpTime(dm_req_t *req, char *buf, int len)
 **
 ** \param   req - pointer to structure identifying the operation in the data model
 ** \param   command_key - pointer to string containing the command key for this operation
-** \param   input_args - vector containing input arguments and their values (unused)
+** \param   input_args - vector containing input arguments and their values
 ** \param   output_args - vector to return output arguments in
 **
 ** \return  USP_ERR_OK if successful
@@ -659,11 +694,22 @@ int GetKernelUpTime(dm_req_t *req, char *buf, int len)
 int ScheduleReboot(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args)
 {
     int err;
+    char *cause;
+    char *reason;
 
     // Ensure that no output arguments are returned for this sync operation
     USP_ARG_Init(output_args);
 
-    err = DEVICE_LOCAL_AGENT_ScheduleReboot(kExitAction_Reboot, "RemoteReboot", command_key, INVALID);
+    // Exit if reboot cause is not valid
+    cause = USP_ARG_Get(input_args, "Cause", "RemoteReboot");
+    if ((strcmp(cause, "LocalReboot") != 0) && (strcmp(cause, "RemoteReboot") != 0))
+    {
+        USP_ERR_SetMessage("%s: Invalid reboot Cause argument (`%s`)", __FUNCTION__, cause);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    reason = USP_ARG_Get(input_args, "Reason", "Unknown");
+    err = DEVICE_LOCAL_AGENT_ScheduleReboot(kExitAction_Reboot, cause, reason, command_key, INVALID);
 
     return err;
 }
@@ -680,7 +726,7 @@ int ScheduleReboot(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv
 **
 ** \param   req - pointer to structure identifying the operation in the data model
 ** \param   command_key - pointer to string containing the command key for this operation
-** \param   input_args - vector containing input arguments and their values (unused)
+** \param   input_args - vector containing input arguments and their values
 ** \param   output_args - vector to return output arguments in
 **
 ** \return  USP_ERR_OK if successful
@@ -689,11 +735,22 @@ int ScheduleReboot(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv
 int ScheduleFactoryReset(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args)
 {
     int err;
+    char *cause;
+    char *reason;
 
     // Ensure that no output arguments are returned for this sync operation
     USP_ARG_Init(output_args);
 
-    err = DEVICE_LOCAL_AGENT_ScheduleReboot(kExitAction_FactoryReset, "RemoteFactoryReset", command_key, INVALID);
+    // Exit if reboot cause is not valid
+    cause = USP_ARG_Get(input_args, "Cause", "RemoteFactoryReset");
+    if ((strcmp(cause, "LocalFactoryReset") != 0) && (strcmp(cause, "RemoteFactoryReset") != 0))
+    {
+        USP_ERR_SetMessage("%s: Invalid reboot Cause argument (`%s`)", __FUNCTION__, cause);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    reason = USP_ARG_Get(input_args, "Reason", "Unknown");
+    err = DEVICE_LOCAL_AGENT_ScheduleReboot(kExitAction_FactoryReset, cause, reason, command_key, INVALID);
 
     return err;
 }
@@ -884,10 +941,32 @@ int PopulateRebootInfo(void)
     reboot_info.cause = USP_STRDUP(last_value);
 
     // Set the default cause of the next reboot (if we need to because it's changed from the last)
-    if (strcmp(last_value, local_reboot_cause_str) != 0)
+    if (strcmp(last_value, default_reboot_cause_str) != 0)
     {
         // Exit if unable to set the default cause of reboot for next time
-        err = DATA_MODEL_SetParameterValue(reboot_cause_path, local_reboot_cause_str, 0);
+        err = DATA_MODEL_SetParameterValue(reboot_cause_path, default_reboot_cause_str, 0);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+    }
+
+    //-------------------------------------------
+    // Exit if unable to get the reason for the last reboot
+    err = DATA_MODEL_GetParameterValue(reboot_reason_path, last_value, sizeof(last_value), 0);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Cache the reason for the last reboot
+    reboot_info.reason = USP_STRDUP(last_value);
+
+    // Set the default reason for the next reboot (if we need to because it's changed from the last)
+    if (strcmp(last_value, default_reboot_reason_str) != 0)
+    {
+        // Exit if unable to set the default cause of reboot for next time
+        err = DATA_MODEL_SetParameterValue(reboot_reason_path, default_reboot_reason_str, 0);
         if (err != USP_ERR_OK)
         {
             return err;

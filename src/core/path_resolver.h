@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -86,6 +87,7 @@ typedef enum
 int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int depth, combined_role_t *combined_role, unsigned flags);
 int PATH_RESOLVER_ResolvePath(char *path, str_vector_t *sv, int_vector_t *gv, resolve_op_t op, int depth, combined_role_t *combined_role, unsigned flags);
 int PATH_RESOLVER_ValidatePath(char *path, subs_notify_t notify_type);
+void PATH_RESOLVER_AttachErrVector(str_vector_t *sv, int_vector_t *iv);
 
 
 

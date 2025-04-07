@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -60,5 +61,6 @@ bool STR_VECTOR_Compare(str_vector_t *sv1, str_vector_t *sv2);
 void STR_VECTOR_Sort(str_vector_t *sv);
 char *STR_VECTOR_ToSortedList(str_vector_t *sv);
 char *STR_VECTOR_ToList(str_vector_t *sv);
+void STR_VECTOR_RemoveUnusedEntries(str_vector_t *sv);
 
 #endif

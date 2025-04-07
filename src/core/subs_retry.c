@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -478,6 +479,7 @@ void UpdateFirstRetryTime(void)
     for (i=0; i < subs_retry.num_entries; i++)
     {
         sr = &subs_retry.vector[i];
+        USP_ASSERT(sr != NULL);         // This is purely here to prevent clang static analyser from flagging a false positive
         if (sr->next_retry_time < first)
         {
             first = sr->next_retry_time;

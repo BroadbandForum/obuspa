@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) 2020-2024, Broadband Forum
+ * Copyright (C) 2020-2025, Broadband Forum
  * Copyright (C) 2012-2020  Axiros GmbH
  *
  * Redistribution and use in source and binary forms, with or without

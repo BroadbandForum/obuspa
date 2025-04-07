@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -250,7 +251,7 @@ void STR_VECTOR_Destroy(str_vector_t *sv)
     }
 
     // Free the vector itself
-    USP_FREE(sv->vector);
+    USP_SAFE_FREE(sv->vector);
 
 exit:
     // Ensure structure is re-initialised
@@ -456,6 +457,48 @@ void STR_VECTOR_Sort(str_vector_t *sv)
 {
     qsort(sv->vector, sv->num_entries, sizeof(sv->vector[0]), PtrToNaturalStrCmp);
 }
+
+/*********************************************************************//**
+**
+** STR_VECTOR_RemoveUnusedEntries
+**
+** Removes all entries marked as NULL from the vector, compacting the vector
+**
+** \param   sv - pointer to vector to remove the entries from
+**
+** \return  None
+**
+**************************************************************************/
+void STR_VECTOR_RemoveUnusedEntries(str_vector_t *sv)
+{
+    int i;
+    int count;
+
+    // Iterate over all entries in the vector
+    count = 0;
+    for (i=0; i < sv->num_entries; i++)
+    {
+        if (sv->vector[i] != NULL)
+        {
+            // Copy down the entries after any that were removed
+            if (i != count)
+            {
+                sv->vector[count] = sv->vector[i];
+            }
+            count++;
+        }
+    }
+
+    // Store the new number of entries in the vector
+    sv->num_entries = count;
+
+    // Ensure that vector is freed, if it is now empty
+    if (count == 0)
+    {
+        USP_SAFE_FREE(sv->vector);
+    }
+}
+
 
 /*********************************************************************//**
 **

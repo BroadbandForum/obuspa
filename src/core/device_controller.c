@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  * Copyright (C) 2022, Snom Technology GmbH
@@ -1593,7 +1594,7 @@ char *DEVICE_CONTROLLER_FindFirstControllerEndpoint(void)
 **
 ** \param   None
 **
-** \return  true if the MTP can start. flase if the MTP should not start connecting
+** \return  true if the MTP can start. false if the MTP should not start connecting
 **
 **************************************************************************/
 bool DEVICE_CONTROLLER_CanMtpConnect(void)

@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -114,6 +115,29 @@ typedef struct
 } dm_instances_vector_t;
 
 //-----------------------------------------------------------------------------------------
+// Structure containing instance numbers associated with a permission target
+typedef struct
+{
+    int order;                                  // Number of instance selectors in instances[] that apply
+    int selectors[MAX_DM_INSTANCE_ORDER];       // Value of each instance number in the permission's target to apply this permission to
+    unsigned short permission_bitmask;          // Bitmask of permissions that apply for the above instance numbers.
+                                                // NOTE: This is modified from the permission bitmask in permission_t because if there is no permission to read instance numbers, then there's no permission to read parameters either
+} inst_sel_t;
+
+#define WILDCARD_INSTANCE  (-1)   // Special value instance number to denote wildcard (i.e. any) instance
+//-----------------------------------------------------------------------------------------
+// Vector of permission instances
+// - When used in permission_t, this vector has one entry for each permission target and the vector owns the entries
+// - When used in perm_inst_roles_t, this vector is a table of permission instances to match on the node,
+//   from lowest order permission to highest order permission (highest order overrides lowest order) and
+//   the vector does not own the entries (the entries are owned by vectors in permission_t)
+typedef struct
+{
+    inst_sel_t **vector;
+    int num_entries;
+} inst_sel_vector_t;
+
+//-----------------------------------------------------------------------------------------
 // Information registered in the data model for parameters
 // NOTE: Not all of these parameters are relevant for each type of node. See USP_REGISTER_XXX() functions.
 #define NON_GROUPED  (-1)       // Indicates that the parameter is not grouped with any other parameters during get/set
@@ -199,7 +223,7 @@ typedef struct dm_node_tag
                                  // it's instance separator is included e.g. Device.Wifi.{i}.Interface.{i} would have an order of 2
     struct dm_node_tag *instance_nodes[MAX_DM_INSTANCE_ORDER]; // See 'order' above
 
-    unsigned short permissions[MAX_CTRUST_ROLES];    // Bitmask of permissions for each role
+    inst_sel_vector_t permissions[MAX_CTRUST_ROLES];
 
     int group_id;                   // Indicates the group_id of the software component implementing this object, or NON_GROUPED
 
@@ -240,8 +264,9 @@ extern group_vendor_hook_t group_vendor_hooks[MAX_VENDOR_PARAM_GROUPS];
 extern bool is_executing_within_dm_init;
 
 //------------------------------------------------------------------------------
-// Data model path to parameter recording the cause of the last reset (Internal.Reboot.Cause)
+// Data model path to parameter recording the cause and reason of the last reset (Internal.Reboot.Cause)
 extern char *reboot_cause_path;
+extern char *reboot_reason_path;
 
 //------------------------------------------------------------------------------
 // Convenience variables to prevent the proliferation of the string 'Device.' everywhere
@@ -291,6 +316,7 @@ extern int dm_root_len;
 // Definitions for flags in DATA_MODEL_GetParameterValue()
 #define SHOW_PASSWORD 0x00000001        // Used internally by USP Agent to get the actual value of passwords (default behaviour is to return an empty string)
 #define DONT_LOG_NO_INSTANCE_ERROR  0x00000002  // Suppresses logging of the no instance error. The error code is still returned, just not logged
+#define DONT_LOG_NOT_REGISTERED_ERROR  0x00000004  // Suppresses logging of the not in supported data model error. The error code is still returned, just not logged
 
 //------------------------------------------------------------------------------
 // Definitions for flags in DATA_MODEL_SetParameterValue()
@@ -323,6 +349,10 @@ extern int dm_root_len;
 #define DONT_LOG_ERRORS         0x00000001  // Suppresses logging of errors when calling the function - because errors may be expected
 #define SUBSTITUTE_SEARCH_EXPRS 0x00000002  // Any search expressions in the path are replaced with "{i}" in the hash calculation
 
+// Additional definitions for flags used in DM_PRIV_GetPermissions()
+#define CALC_ADD_PERMISSIONS    0x00000004  // Calculates the permissions to be used when adding an instance to a table
+                                            // This requires a special exception to be made in the permission calculating code. See DoPermissionInstancesMatch() for details.
+
 //-----------------------------------------------------------------------------
 // API Functions
 int DATA_MODEL_Init(void);
@@ -330,8 +360,8 @@ int DATA_MODEL_Start(void);
 void DATA_MODEL_Stop(void);
 int DATA_MODEL_GetNumInstances(char *path, int *num_instances);
 int DATA_MODEL_GetInstances(char *path, int_vector_t *iv);
-int DATA_MODEL_GetInstancePaths(char *path, str_vector_t *sv, combined_role_t *combined_role);
-int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv, combined_role_t *combined_role);
+int DATA_MODEL_GetInstancePaths(char *path, str_vector_t *sv);
+int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv);
 int DATA_MODEL_AddInstance(char *path, int *instance, unsigned flags);
 int DATA_MODEL_DeleteInstance(char *path, unsigned flags);
 int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsigned short *perm, unsigned flags);
@@ -367,8 +397,10 @@ int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash
 dm_node_t *DM_PRIV_GetNodeFromPath(char *path, dm_instances_t *inst, bool *is_qualified_instance, unsigned flags);
 dm_node_t *DM_PRIV_FindMatchingChild(dm_node_t *parent, char *name);
 void DM_PRIV_AddUniqueKey(dm_node_t *node, dm_unique_key_t *unique_key);
-void DM_PRIV_ApplyPermissions(dm_node_t *node, int role_index, unsigned short permission_bitmask);
-unsigned short DM_PRIV_GetPermissions(dm_node_t *node, combined_role_t *combined_role);
+void DM_PRIV_ClearPermissionsForRole(dm_node_t *node, int role_index);
+void DM_PRIV_AddPermission(dm_node_t *node, int role_index, inst_sel_t *sel);
+int DM_PRIV_CheckGetReadPermissions(dm_node_t *node, dm_instances_t *inst, combined_role_t *combined_role);
+unsigned short DM_PRIV_GetPermissions(dm_node_t *node, dm_instances_t *inst, combined_role_t *combined_role, unsigned flags);
 int DM_PRIV_ReRegister_DBParam_Default(char *path, char *value);
 bool DM_PRIV_IsChildNodeOf(dm_node_t *node, dm_node_t *parent_node);
 void DM_PRIV_GetAllEventsAndCommands(dm_node_t *node, str_vector_t *events, str_vector_t *commands);

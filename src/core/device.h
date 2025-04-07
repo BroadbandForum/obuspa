@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  *
@@ -73,6 +74,8 @@ typedef struct
 {
     int inherited_index;      // index of the role in roles[] and in node->permissions[] for the inherited role
     int assigned_index;       // index of the role in roles[] and in node->permissions[] for the assigned role
+                              // IMPORTANT: These are not the same as the instance number (minus 1) in Device.LocalAgent.ControllerTrust.Role.{i},
+                              //            as we support non-contiguous instance numbers for role (but only up to a maximum of MAX_CTRUST_ROLES distinct instances)
 } combined_role_t;
 
 #define INTERNAL_ROLE             NULL   // Pointer to combined role used internally by Data Model. This always permits all operations (Even at bootup, when the permissions table has not been seeded yet)
@@ -89,6 +92,7 @@ typedef struct
 typedef struct
 {
     char *cause;                     // cause of the last reboot
+    char *reason;                    // Reason for the last reboot
     char *command_key;               // command_key associated with the last reboot
     char *cur_software_version;      // Current software version that is running
     char *last_software_version;     // Software version before the current boot period
@@ -201,7 +205,7 @@ int DEVICE_TIME_Start(void);
 int DEVICE_LOCAL_AGENT_Init(void);
 int DEVICE_LOCAL_AGENT_SetDefaults(void);
 int DEVICE_LOCAL_AGENT_Start(void);
-int DEVICE_LOCAL_AGENT_ScheduleReboot(exit_action_t exit_action, char *reboot_cause, char *command_key, int request_instance);
+int DEVICE_LOCAL_AGENT_ScheduleReboot(exit_action_t exit_action, char *reboot_cause, char *reboot_reason, char *command_key, int request_instance);
 exit_action_t DEVICE_LOCAL_AGENT_GetExitAction(void);
 int DEVICE_LOCAL_AGENT_SetDefaultRebootCause(void);
 char *DEVICE_LOCAL_AGENT_GetEndpointID(void);
@@ -298,6 +302,7 @@ int DEVICE_CTRUST_GetCertInheritedRole(int cert_instance);
 int DEVICE_CTRUST_RoleInstanceToIndex(int role_instance);
 int DEVICE_CTRUST_RoleIndexToInstance(int role_index);
 void DEVICE_CTRUST_ApplyPermissionsToSubTree(char *path);
+char *DEVICE_CTRUST_InstSelToPermTarget(int role_index, void *is, int *perm_instance);
 int DEVICE_CTRUST_SetRoleParameter(int instance, char *param_name, char *new_value);
 int DEVICE_CTRUST_SetPermissionParameter(int instance1, int instance2, char *param_name, char *new_value);
 int DEVICE_REQUEST_Init(void);

@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  *
@@ -56,6 +57,7 @@
 #include "text_utils.h"
 #include "iso8601.h"
 #include "group_get_vector.h"
+#include "inst_sel_vector.h"
 #include "plugin.h"
 
 #ifdef ENABLE_COAP
@@ -153,7 +155,7 @@ void DestroySchemaRecursive(dm_node_t *node);
 void DestroyNode(dm_node_t *node);
 void DestroyInstanceVectorRecursive(dm_node_t *parent);
 void DumpInstanceVectorRecursive(dm_node_t *parent);
-int GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role);
+int GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv);
 void DumpDataModelNodeMap(void);
 int GetVendorParam(dm_node_t *node, char *path, dm_instances_t *inst, char *buf, int len, dm_req_t *req);
 int SetVendorParam(dm_node_t *node, char *path, dm_instances_t *inst, char *value, dm_req_t *req);
@@ -454,7 +456,7 @@ void DATA_MODEL_Stop(void)
     USP_SERVICE_Stop();
 #endif
 
-    // Free the instance vectors here, so that they are not reported as a memory leak
+    // Free the instance vectors, so that they are not reported as a memory leak
     // NOTE: Whilst this is also done in DestroySchemaRecursive(), we do it earlier here as this memory is logged with checking turned on, whilst the schema itself is not
     DestroyInstanceVectorRecursive(root_device_node);
     DestroyInstanceVectorRecursive(root_internal_node);
@@ -497,11 +499,12 @@ int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags)
     dm_req_t req;
     int num_instances;
     char *default_value;
-    unsigned db_flags = 0;          // Default to database not unobfuscating values. NOTE Only secure nodes are obfuscated
+    unsigned call_flags;
 
     // Exit if unable to get node associated with parameter
     // This could occur if the parameter is not present in the schema
-    node = DM_PRIV_GetNodeFromPath(path, &inst, NULL, 0);
+    call_flags = (flags & DONT_LOG_NOT_REGISTERED_ERROR) ? DONT_LOG_ERRORS : 0;
+    node = DM_PRIV_GetNodeFromPath(path, &inst, NULL, call_flags);
     if (node == NULL)
     {
         return USP_ERR_INVALID_PATH;
@@ -530,6 +533,7 @@ int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags)
     }
 
     // Get value based on the type of the node
+    call_flags = 0;          // Default to database not unobfuscating values. NOTE Only secure nodes are obfuscated
     switch(node->type)
     {
         case kDMNodeType_Param_ConstantValue:
@@ -544,14 +548,14 @@ int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags)
                 break;
             }
             // Intentional fall through to code below
-            db_flags = OBFUSCATED_VALUE;
+            call_flags = OBFUSCATED_VALUE;
 
         case kDMNodeType_DBParam_ReadWrite:
         case kDMNodeType_DBParam_ReadOnly:
         case kDMNodeType_DBParam_ReadOnlyAuto:
         case kDMNodeType_DBParam_ReadWriteAuto:
             FormInstanceString(&inst, instances, sizeof(instances));
-            err = DATABASE_GetParameterValue(path, node->hash, instances, buf, len, db_flags);
+            err = DATABASE_GetParameterValue(path, node->hash, instances, buf, len, call_flags);
             if (err == USP_ERR_OBJECT_DOES_NOT_EXIST)
             {
                 // No entry present in the database, use the default value
@@ -1247,10 +1251,11 @@ int DATA_MODEL_DeleteInstance(char *path, unsigned flags)
 int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsigned short *perm, unsigned flags)
 {
     dm_node_t *node;
+    dm_instances_t inst;
 
     // Exit if unable to get node associated with object or parameter
     // This could occur if the parameter is not present in the schema, or if the specified instance does not exist
-    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, flags);
+    node = DM_PRIV_GetNodeFromPath(path, &inst, NULL, flags);
     if (node == NULL)
     {
         *perm = 0;
@@ -1258,7 +1263,7 @@ int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsign
     }
 
     // Get the permissions associated with the role
-    *perm = DM_PRIV_GetPermissions(node, combined_role);
+    *perm = DM_PRIV_GetPermissions(node, &inst, combined_role, 0);
 
     return USP_ERR_OK;
 }
@@ -1413,7 +1418,7 @@ int DATA_MODEL_NotifyInstanceDeleted(char *path)
 
     // Queue object life events for this object and all child objects
     STR_VECTOR_Init(&child_objs);
-    err = DATA_MODEL_GetAllInstancePaths(path, &child_objs, INTERNAL_ROLE);
+    err = DATA_MODEL_GetAllInstancePaths(path, &child_objs);
     if (err == USP_ERR_OK)
     {
         for (i=0; i < child_objs.num_entries; i++)
@@ -1752,8 +1757,8 @@ int DATA_MODEL_RestartAsyncOperation(char *path, kv_vector_t *input_args, int in
 **                               and the role argument is ignored
 ** \param   group_id - pointer to variable in which to return the group_id, or NULL if this is not required
 ** \param   type_flags - pointer to variable in which to return the type of the parameter, or NULL if this is not required. NOTE: Only applicable for parameters
-** \param   exec_flags - bitmask of options controling execution (eg DONT_LOG_ERRORS)
-**
+** \param   exec_flags - bitmask of options controlling execution (eg DONT_LOG_ERRORS, CALC_ADD_PERMISSIONS)
+
 ** \return  flag variable containing the path's properties
 **          NOTE: Sets USP error message if returning flags that would constitute an error
 **
@@ -1785,7 +1790,7 @@ unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role
     // Setup permissions to return
     if (permission_bitmask != NULL)
     {
-        *permission_bitmask = DM_PRIV_GetPermissions(node, combined_role);
+        *permission_bitmask = DM_PRIV_GetPermissions(node, &inst, combined_role, exec_flags);
     }
 
     // Determine whether path is to a parameter or an object, and also whether the parameter is writable
@@ -2551,18 +2556,18 @@ int DATA_MODEL_GetInstances(char *path, int_vector_t *iv)
 ** DATA_MODEL_GetInstancePaths
 **
 ** Returns a string vector containing the paths of all instances of the specified object
+** NOTE: This function does not apply permissions to the paths being returned
 ** NOTE: This code copes with being given a single qualified object instance (rather than a table)
 **       by just returning that specific object instance in the string vector
 **
 ** \param   path - path of the object. NOTE: This is not a schema path (ie no '{i}' in the path. Use a partial path).
 ** \param   sv - pointer to structure in which to return the paths to the instances
 **               NOTE: The caller must initialise this structure. This function adds to this structure, it does not initialise it.
-** \param   combined_role - role to use to check that object instances may be returned.  If set to INTERNAL_ROLE, then full permissions are always returned
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DATA_MODEL_GetInstancePaths(char *path, str_vector_t *sv, combined_role_t *combined_role)
+int DATA_MODEL_GetInstancePaths(char *path, str_vector_t *sv)
 {
     int_vector_t iv;
     dm_instances_t inst;
@@ -2572,7 +2577,6 @@ int DATA_MODEL_GetInstancePaths(char *path, str_vector_t *sv, combined_role_t *c
     int i;
     int instance;
     char buf[MAX_DM_PATH];
-    unsigned short permission_bitmask;
 
     INT_VECTOR_Init(&iv);
 
@@ -2581,13 +2585,6 @@ int DATA_MODEL_GetInstancePaths(char *path, str_vector_t *sv, combined_role_t *c
     if (node == NULL)
     {
         return USP_ERR_INVALID_PATH;
-    }
-
-    // Exit if there is no permission to read the instance numbers of this object
-    permission_bitmask = DM_PRIV_GetPermissions(node, combined_role);
-    if ((permission_bitmask & PERMIT_GET_INST)==0)
-    {
-        return USP_ERR_OK;
     }
 
     // Exit if this is not a multi-instance object, putting the single instance object in the returned string vector
@@ -2604,7 +2601,7 @@ int DATA_MODEL_GetInstancePaths(char *path, str_vector_t *sv, combined_role_t *c
         STR_VECTOR_Add_IfNotExist(sv, path);
     }
 
-    // Get an array of instances for this specific object
+    // Get an array of instances for this table
     err = DM_INST_VECTOR_GetInstances(node, &inst, &iv);
     if (err != USP_ERR_OK)
     {
@@ -2632,16 +2629,16 @@ exit:
 ** DATA_MODEL_GetAllInstancePaths
 **
 ** Returns a string vector containing the paths of all instances of the specified object and recursively all child instances
+** NOTE: This function does not apply permissions to the paths being returned
 **
 ** \param   path - path of the object. NOTE: This is not a schema path (ie no '{i}' in the path. Use a partial path).
 ** \param   sv - pointer to structure in which to return the paths to the instances
 **               NOTE: The caller must initialise this structure. This function adds to this structure, it does not initialise it.
-** \param   combined_role - role to use to check that object instances may be returned.  If set to INTERNAL_ROLE, then full permissions are always returned
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv, combined_role_t *combined_role)
+int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv)
 {
     dm_instances_t inst;
     dm_node_t *node;
@@ -2661,7 +2658,7 @@ int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv, combined_role_t
     // return this object and the child objects that match this instance
     if ((node->type==kDMNodeType_Object_MultiInstance) && (is_qualified_instance))
     {
-        err = DM_INST_VECTOR_GetAllInstancePaths_Qualified(&inst, sv, combined_role);
+        err = DM_INST_VECTOR_GetAllInstancePaths_Qualified(&inst, sv);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -2671,7 +2668,7 @@ int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv, combined_role_t
     }
 
     // Find all child instances starting at this node
-    err = GetAllInstancePathsRecursive(node, &inst, sv, combined_role);
+    err = GetAllInstancePathsRecursive(node, &inst, sv);
     if (err != USP_ERR_OK)
     {
         return err;
@@ -2978,6 +2975,29 @@ void DM_PRIV_RequestInit(dm_req_t *req, dm_node_t *node, char *path, dm_instance
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
+// Macro to store the instnace number in the inst array
+#define STORE_INSTANCE_NUMBER(inst, number, flags)                                          \
+                if (inst != NULL)                                                           \
+                {                                                                           \
+                    if (inst->order == MAX_DM_INSTANCE_ORDER)                               \
+                    {                                                                       \
+                        if ((flags & DONT_LOG_ERRORS)==0)                                   \
+                        {                                                                   \
+                            USP_ERR_SetMessage("%s: More than %d instance numbers in path", \
+                                                __FUNCTION__, MAX_DM_INSTANCE_ORDER);       \
+                        }                                                                   \
+                        return USP_ERR_INTERNAL_ERROR;                                      \
+                    }                                                                       \
+                    inst->instances[ inst->order ] = number;                                \
+                    inst->order++;                                                          \
+                }
+
+// Macro to add the schema instance separator '{i}' to the hash
+#define ADD_INSTANCE_SEPARATOR_TO_HASH(hash)    ADD_TO_HASH('{', hash);  \
+                                                ADD_TO_HASH('i', hash);  \
+                                                ADD_TO_HASH('}', hash);
+
+
 int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash, unsigned flags)
 {
     dm_hash_t hash = OFFSET_BASIS;
@@ -3025,6 +3045,7 @@ int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash
                 break;
             }
 
+            // INSTANCE NUMBER
             // Determine the number of digits, if the following path segment is a number
             // Also calculate the instance number in the path segment
             num_digits = 0;
@@ -3040,25 +3061,11 @@ int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash
             if ((num_digits > 0) && ((t == '.') || (t == '\0')))
             {
                 // Store the instance number in the dm_instances_t structure
-                if (inst != NULL)
-                {
-                    if (inst->order == MAX_DM_INSTANCE_ORDER)
-                    {
-                        if ((flags & DONT_LOG_ERRORS)==0)
-                        {
-                            USP_ERR_SetMessage("%s: More than %d instance numbers in path", __FUNCTION__, MAX_DM_INSTANCE_ORDER);
-                        }
-                        return USP_ERR_INTERNAL_ERROR;
-                    }
-                    inst->instances[ inst->order ] = number;
-                    inst->order++;
-                }
+                STORE_INSTANCE_NUMBER(inst, number, flags);
 
                 // Add schema instance separator to hash, instead of the instance number in the path segment
                 ADD_TO_HASH('.', hash);
-                ADD_TO_HASH('{', hash);
-                ADD_TO_HASH('i', hash);
-                ADD_TO_HASH('}', hash);
+                ADD_INSTANCE_SEPARATOR_TO_HASH(hash);
 
                 // Skip to after instance number
                 p += num_digits;
@@ -3066,27 +3073,46 @@ int DM_PRIV_CalcHashFromPath(char *path, dm_instances_t *inst, dm_hash_t *p_hash
                 continue;
             }
         }
-        else if (c == '*')
+        else if ((c == '{') && (p[0] == 'i') && (p[1] == '}'))
         {
-            // Add schema instance separator to hash, instead of the wildcard in the path segment
-            ADD_TO_HASH('{', hash);
-            ADD_TO_HASH('i', hash);
-            ADD_TO_HASH('}', hash);
+            // SCHEMA INSTANCE SEPARATOR - {i}
+            // Store a wildcard in the dm_instances_t structure
+            STORE_INSTANCE_NUMBER(inst, WILDCARD_INSTANCE, flags);
+
+            // Add schema instance separator to hash
+            ADD_INSTANCE_SEPARATOR_TO_HASH(hash);
+
+            // Skip to after the schema instance separator
+            p += 2;
             c = *p++;
             continue;
         }
-        else if ((flags & SUBSTITUTE_SEARCH_EXPRS) && c == '[')
+        else if (c == '*')
         {
-           // Start of a search expression - skip over it, then add "{i}" to the hash
+            // WILDCARD
+            // Store a wildcard in the dm_instances_t structure
+            STORE_INSTANCE_NUMBER(inst, WILDCARD_INSTANCE, flags);
+
+            // Add schema instance separator to hash, instead of the wildcard in the path segment
+            ADD_INSTANCE_SEPARATOR_TO_HASH(hash);
+            c = *p++;
+            continue;
+        }
+        else if ((c == '[') && (flags & SUBSTITUTE_SEARCH_EXPRS))
+        {
+            // SEARCH EXPRESSION
+            // Store a wildcard in the dm_instances_t structure
+            STORE_INSTANCE_NUMBER(inst, WILDCARD_INSTANCE, flags);
+
+            // Add schema instance separator to hash, instead of the search expression in the path segment
+            ADD_INSTANCE_SEPARATOR_TO_HASH(hash);
+
+            // Skip to after the search expression
             p_sexpr_end = TEXT_UTILS_StrStr(p, "]");
             if (p_sexpr_end==NULL)
             {
                 return USP_ERR_INTERNAL_ERROR;
             }
-            // Found a completed search expression, substitute '{i}' in hash
-            ADD_TO_HASH('{', hash);
-            ADD_TO_HASH('i', hash);
-            ADD_TO_HASH('}', hash);
 
             p = p_sexpr_end+1;
             c = *p;
@@ -3147,9 +3173,7 @@ dm_node_t *DM_PRIV_GetNodeFromPath(char *path, dm_instances_t *inst, bool *is_qu
         // NOTE: This is necessary because this function is sometimes called with a path representing an
         // unqualified multi-instance object. But the hash must be of a qualified multi-instance schema path
         ADD_TO_HASH('.', hash);
-        ADD_TO_HASH('{', hash);
-        ADD_TO_HASH('i', hash);
-        ADD_TO_HASH('}', hash);
+        ADD_INSTANCE_SEPARATOR_TO_HASH(hash);
 
         // Exit if unable to find the node
         node = FindNodeFromHash(hash);
@@ -3676,19 +3700,18 @@ void DM_PRIV_AddUniqueKey(dm_node_t *node, dm_unique_key_t *unique_key)
 
 /*********************************************************************//**
 **
-** DM_PRIV_ApplyPermissions
+** DM_PRIV_ClearPermissionsForRole
 **
-** Applies the specified permission to this node and all of it's children
+** Clears all permissions for the specified Role. After calling this function, the role has no permission to do anything
 ** NOTE: This function is recursive
 **
-** \param   node - Node to apply permissions to. If set to NULL, this imples that permissions must be set from the root device node
-** \param   role_index - role to apply permissions to
-** \param   permission_bitmask - bitmask of permissions to apply
+** \param   node - Node to clear permissions from, recursively. If set to NULL, this implies that permissions must be cleared from the root device node
+** \param   role_index - role to remove all permissions for
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_PRIV_ApplyPermissions(dm_node_t *node, int role_index, unsigned short permission_bitmask)
+void DM_PRIV_ClearPermissionsForRole(dm_node_t *node, int role_index)
 {
     dm_node_t *child;
 
@@ -3698,21 +3721,49 @@ void DM_PRIV_ApplyPermissions(dm_node_t *node, int role_index, unsigned short pe
         node = root_device_node;
     }
 
+    // Clear the permissions on this node
+    INST_SEL_VECTOR_Destroy(&node->permissions[role_index], false);
+
+    // Iterate over list of children
+    child = (dm_node_t *) node->child_nodes.head;
+    while (child != NULL)
+    {
+        DM_PRIV_ClearPermissionsForRole(child, role_index);
+
+        // Move to next sibling in the data model tree
+        child = (dm_node_t *) child->link.next;
+    }
+}
+
+/*********************************************************************//**
+**
+** DM_PRIV_AddPermission
+**
+** Adds the specified permission to this node and all of it's children
+** NOTE: This function is recursive
+**
+** \param   node - Node to add the permission to
+** \param   role_index - role to add permissions for
+** \param   sel - instance selectors for the permission
+**
+** \return  None
+**
+**************************************************************************/
+void DM_PRIV_AddPermission(dm_node_t *node, int role_index, inst_sel_t *sel)
+{
+    dm_node_t *child;
+
+    USP_ASSERT(node != NULL)
+
     // Apply permissions to this node
-    node->permissions[role_index] = permission_bitmask;
+    INST_SEL_VECTOR_Add(&node->permissions[role_index], sel);
 
     // Iterate over list of children
     child = (dm_node_t *) node->child_nodes.head;
     while (child != NULL)
     {
         // Apply permissions to child node
-        child->permissions[role_index] = permission_bitmask;
-
-        // Apply permissions to all children of the child node
-        if (child->child_nodes.head != NULL)
-        {
-            DM_PRIV_ApplyPermissions(child, role_index, permission_bitmask);
-        }
+        DM_PRIV_AddPermission(child, role_index, sel);
 
         // Move to next sibling in the data model tree
         child = (dm_node_t *) child->link.next;
@@ -3768,20 +3819,81 @@ int DM_PRIV_ReRegister_DBParam_Default(char *path, char *value)
 
 /*********************************************************************//**
 **
-** DM_PRIV_GetPermissions
+** DM_PRIV_CheckGetReadPermissions
 **
-** Returns the permissions for the specified data model node, given the specified role
+** Checks that GET requests (that are not search paths) have read permissions
+** In this case R-GET.1 says that the path should be treated the same as if it was not in the supported data model,
+** which according to R-GET.0 results in an error being returned in the GET response
 **
 ** \param   node - Node to get permissions for
+** \param   inst - pointer to instances in the node's instantiated path.
+**                 NOTE: If some instances of the node are not defined in 'inst' (eg unqualified object)
+**                       then this function treats them as wildcards for the purposes of permissions
+** \param   combined_role - role to use when performing the resolution. If set to INTERNAL_ROLE, then permissions are ignored (used internally)
+**
+** \return  USP_ERR_INVALID_PATH if R-GET.1 and R-GET.0 apply
+**          Otherwise USP_ERR_OK if the caller should proceed with normal processing of the path
+**
+**************************************************************************/
+int DM_PRIV_CheckGetReadPermissions(dm_node_t *node, dm_instances_t *inst, combined_role_t *combined_role)
+{
+    int i;
+    unsigned short permission_bitmask;
+
+    // Exit if this is a partial path on a table
+    // In this case we do not want to generate an error in the GET response because the table could contain some whitelisted instances or whitelisted children
+    if (node->type == kDMNodeType_Object_MultiInstance)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if the path contained a search path
+    // In this case R-GET.0 does not apply, so we allow the normal code in the caller to handle this
+    for (i=0; i < inst->order; i++)
+    {
+        if (inst->instances[i] == WILDCARD_INSTANCE)
+        {
+            return USP_ERR_OK;
+        }
+    }
+
+    // Exit if there is no read permission on this path
+    // In this case R-GET.1 says that the path should be treated the same as if it was not in the supported data model,
+    // which according to R-GET.0 results in an error being returned in the GET response
+    #define PERM_REQUIRED (PERMIT_GET | PERMIT_OBJ_INFO)
+    permission_bitmask = DM_PRIV_GetPermissions(node, inst, combined_role, 0);
+    if ((permission_bitmask & PERM_REQUIRED) != PERM_REQUIRED)
+    {
+        USP_ERR_SetMessage("%s: Invalid path", __FUNCTION__);
+        return USP_ERR_INVALID_PATH;
+    }
+
+    // If there was read permission for the path, then R-GET.1 does not apply, so the normal code in the caller can handle this
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DM_PRIV_GetPermissions
+**
+** Returns the permissions for the specified data model node, given the specified role and instance numbers
+**
+** \param   node - Node to get permissions for
+** \param   inst - pointer to instances in the node's instantiated path.
+**                 NOTE: If some instances of the node are not defined in 'inst' (eg unqualified object)
+**                       then this function treats them as wildcards for the purposes of permissions
 ** \param   combined_role - role to get permissions for.  If set to INTERNAL_ROLE, then full permissions are always returned
+** \param   flags - Flags controlling execution of this function (eg CALC_ADD_PERMISSIONS)
 **
 ** \return  Permissions bitmask associated with the specified node and role
 **
 **************************************************************************/
-unsigned short DM_PRIV_GetPermissions(dm_node_t *node, combined_role_t *combined_role)
+unsigned short DM_PRIV_GetPermissions(dm_node_t *node, dm_instances_t *inst, combined_role_t *combined_role, unsigned flags)
 {
+    int i;
     unsigned short permissions = 0;
     int role_index;
+    dm_instances_t qualified_inst;
 
     // If using the internal role, then this overrides all permissions setup and permits all
     // This is necessary because at startup the permission bitmask in the data model is not setup, but we still need to ensure that we can do everything
@@ -3790,18 +3902,36 @@ unsigned short DM_PRIV_GetPermissions(dm_node_t *node, combined_role_t *combined
         return PERMIT_ALL;
     }
 
+    // Ensure that inst contains instance numbers (or wildcards if they are unknown) for all of the instance numbers in the node's path
+    // This is necessary because in the case of passthru, subscriptions, GSDM or get instances containing a partial path (or wildcard for passthru),
+    // the caller can pass unqualified instance number sets to this function, but all instance numbers are required to match the correct permission selector
+    if (inst->order < node->order)
+    {
+        for (i=0; i < inst->order; i++)
+        {
+            qualified_inst.instances[i] = inst->instances[i]; // Copy across the known instance numbers for the node's path
+        }
+
+        for (i=inst->order; i < node->order; i++)
+        {
+            qualified_inst.instances[i] = WILDCARD_INSTANCE;  // Fill in unknown instance numbers for the node's path with wildcards
+        }
+        qualified_inst.order = node->order;
+        inst = &qualified_inst;
+    }
+
     // Add permissions from inherited role
     role_index = combined_role->inherited_index;
     if ((role_index < MAX_CTRUST_ROLES) && (role_index != INVALID))
     {
-        permissions |= node->permissions[ role_index ];
+        permissions |= INST_SEL_VECTOR_GetPermissionForInstance(&node->permissions[role_index], inst, flags);
     }
 
-    // Add permissions from assigned role
+    // Add permissions from assigned role (if it's different from inherited role)
     role_index = combined_role->assigned_index;
-    if ((role_index < MAX_CTRUST_ROLES) && (role_index != INVALID))
+    if ((role_index < MAX_CTRUST_ROLES) && (role_index != INVALID) && (role_index != combined_role->inherited_index))
     {
-        permissions |= node->permissions[ role_index ];
+        permissions |= INST_SEL_VECTOR_GetPermissionForInstance(&node->permissions[role_index], inst, flags);
     }
 
     return permissions;
@@ -3942,12 +4072,11 @@ void DM_PRIV_GetAllEventsAndCommands(dm_node_t *node, str_vector_t *events, str_
 ** \param   inst - pointer to instance structure specifying the object's parents and their instance numbers
 ** \param   sv - pointer to structure in which to return the paths to the instances
 **               NOTE: The caller must initialise this structure. This function adds to this structure, it does not initialise it.
-** \param   combined_role - role to use to check that object instances may be returned.  If set to INTERNAL_ROLE, then full permissions are always returned
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role)
+int GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv)
 {
     dm_node_t *child;
     int err;
@@ -3955,7 +4084,7 @@ int GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vect
     // Exit if this is a multi-instance node, adding all child instances below this node to the results
     if (node->type == kDMNodeType_Object_MultiInstance)
     {
-        err = DM_INST_VECTOR_GetAllInstancePaths_Unqualified(node, inst, sv, combined_role);
+        err = DM_INST_VECTOR_GetAllInstancePaths_Unqualified(node, inst, sv);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -3968,7 +4097,7 @@ int GetAllInstancePathsRecursive(dm_node_t *node, dm_instances_t *inst, str_vect
     child = (dm_node_t *) node->child_nodes.head;
     while (child != NULL)
     {
-        err = GetAllInstancePathsRecursive(child, inst, sv, combined_role);
+        err = GetAllInstancePathsRecursive(child, inst, sv);
         if (err != USP_ERR_OK)
         {
             return err;
@@ -4156,6 +4285,8 @@ dm_node_t *CreateNode(char *name, dm_node_type_t type, char *schema_path)
 {
     dm_node_t *node;
     int err;
+    int i;
+    inst_sel_vector_t *isv;
 
     // Allocate memory for the node
     node = USP_MALLOC(sizeof(dm_node_t));
@@ -4170,6 +4301,12 @@ dm_node_t *CreateNode(char *name, dm_node_type_t type, char *schema_path)
     DLLIST_Init(&node->child_nodes);
     node->parent_node = NULL;
     node->depth = -1;
+
+    for (i=0; i<MAX_CTRUST_ROLES; i++)
+    {
+        isv = &node->permissions[i];
+        INST_SEL_VECTOR_Init(isv);
+    }
 
     // Default the group_id
     // NOTE: For objects which are non multi-instance, the group_id is effectively 'don't care' as non-table objects are not accessible via the grouped vendor hook APIs
@@ -4799,6 +4936,8 @@ void DestroySchemaRecursive(dm_node_t *node)
 **************************************************************************/
 void DestroyNode(dm_node_t *node)
 {
+    int i;
+    inst_sel_vector_t *isv;
     dm_node_t *parent;
 
     // Remove it from the NodeMap
@@ -4858,6 +4997,14 @@ void DestroyNode(dm_node_t *node)
             break;
     }
 
+    // Free permissions vectors
+    // NOTE: Ownership of the entries within the permissions vectors stay with permission_t
+    for (i=0; i<MAX_CTRUST_ROLES; i++)
+    {
+        isv = &node->permissions[i];
+        INST_SEL_VECTOR_Destroy(isv, false);
+    }
+
     // Finally free this node itself
     USP_FREE(node->path);
     USP_FREE(node->name);
@@ -4879,11 +5026,10 @@ void DestroyInstanceVectorRecursive(dm_node_t *parent)
 {
     dm_node_t *child;
 
+    // Exit if this node is a top level multi instance node, freeing it's instances and all instances of its children
+    // NOTE: we do not have to recurse to its children because their instances are stored in the vector in this node
     if (parent->type == kDMNodeType_Object_MultiInstance)
     {
-        // This node is a top level multi instance node, storing it's instances and all instances of its children
-        // So free the instance vector it holds, then exit
-        // NOTE: we do not have to recurse to its children because their instances are stored here
         DM_INST_VECTOR_Destroy(&parent->registered.object_info.inst_vector);
         return;
     }

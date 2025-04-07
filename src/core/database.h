@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -55,7 +56,7 @@ extern char *factory_reset_text_file;
 int DATABASE_Init(char *db_file);
 int DATABASE_Start(void);
 void DATABASE_Destroy(void);
-void DATABASE_PerformFactoryReset_ControllerInitiated(void);
+void DATABASE_PerformFactoryReset_ControllerInitiated();
 int DATABASE_GetParameterValue(char *path, dm_hash_t hash, char *instances, char *buf, int buflen, unsigned flags);
 int DATABASE_SetParameterValue(char *path, dm_hash_t hash, char *instances, char *new_value, unsigned flags);
 int DATABASE_DeleteParameter(char *path, dm_hash_t hash, char *instances);

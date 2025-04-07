@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -89,6 +90,11 @@ typedef struct
 typedef int (*dm_cmp_cb_t)(char *lhs, expr_op_t op, char *rhs, bool *result);
 
 //--------------------------------------------------------------------
+// Globals used to contain error responses for Add requests
+str_vector_t *err_str_vec;
+int_vector_t *err_int_vec;
+
+//--------------------------------------------------------------------
 // Convenience macro to wrap calls to USP_ERR_SetMessage(). Prevents USP_ERR_SetMessage() being called if DONT_LOG_RESOLVER_ERRORS is set
 #define USP_ERR_SetMessageIfAllowed(...)      if ((state->flags & DONT_LOG_RESOLVER_ERRORS)==0) { USP_ERR_SetMessage(__VA_ARGS__); }
 
@@ -109,19 +115,39 @@ int GetChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *node
 int AddPathFound(char *path, resolver_state_t *state);
 int CountPathSeparator(char *path);
 int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector, unsigned *path_properties, int *group_id);
-int GetGroupIdForUniqueKeys(char *object, expr_vector_t *keys, resolver_state_t *state, int_vector_t *group_ids, int_vector_t *key_types, int_vector_t *perm);
-void ExpandUniqueKeysOverAllInstances(char *object, int_vector_t *instances, int_vector_t *group_ids, int_vector_t *key_types, int_vector_t *perm, search_param_t *sp);
-void ExpandUniqueKeysOverSingleInstance(char *object, int instance, int_vector_t *group_ids, int_vector_t *key_types, int_vector_t *perm, search_param_t *sp);
 int DoUniqueKeysMatch(int index, search_param_t *sp, bool *is_match);
 int SplitReferenceKeysFromkeys(expr_vector_t *all_keys, expr_vector_t *keys, expr_vector_t *ref_keys);
 int ExpandsNonReferencedKeys(char *resolved, resolver_state_t *state, int_vector_t *instances, search_param_t *sp);
 int ResolveReferencedKeys(char *resolved, resolver_state_t *state, int_vector_t *instances, search_param_t *sp);
 int ResolveIntermediateReferences(str_vector_t *params, resolver_state_t *state, int_vector_t *perm);
+int CheckPathPermission(char *path, resolver_state_t *state, int *gid, int *param_type, bool *has_permission);
 bool GroupReferencedParameters(str_vector_t *params, resolver_state_t *state, int_vector_t *perm, group_get_vector_t *ggv, int *err);
 void InitSearchParam(search_param_t *sp);
 void DestroySearchParam(search_param_t *sp);
 void RefreshInstances_LifecycleSubscriptionEndingInPartialPath(char *path);
 int ValidatePathSegment(int path_segment_index, char *segment, char *previous_segment, subs_notify_t notify_type, char *path);
+int GetPermittedInstances(char *obj_path, int_vector_t *iv, resolver_state_t *state);
+void FilterPathsByPermission(str_vector_t *sv, unsigned short permission_bitmask, unsigned short required_permission, combined_role_t *combined_role);
+
+/*********************************************************************//**
+**
+** PATH_RESOLVER_AttachErrVector
+**
+** Called to specify vectors to be used by the path resolver in which to return errors found
+** This function is only called when performing an Add, and the vectors are only added to when op=kResolveOp_Add
+** This function avoids adding yet another optional input argument to PATH_RESOLVER_ResolveDevicePath
+**
+** \param   sv - string vector to return error messages in. NOTE: Use NULL to detach the vector
+** \param   iv - int vector to return error codes in. NOTE: Use NULL to detach the vector
+**
+** \return  None
+**
+**************************************************************************/
+void PATH_RESOLVER_AttachErrVector(str_vector_t *sv, int_vector_t *iv)
+{
+    err_str_vec = sv;
+    err_int_vec = iv;
+}
 
 /*********************************************************************//**
 **
@@ -153,6 +179,8 @@ int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *
 {
     int err;
     int len;
+    dm_node_t *node;
+    dm_instances_t inst;
 
     // Exit if the path does not begin with "Device."
     if (strncmp(path, dm_root, dm_root_len) != 0)
@@ -181,6 +209,20 @@ int PATH_RESOLVER_ResolveDevicePath(char *path, str_vector_t *sv, int_vector_t *
         {
             USP_ERR_SetMessage("%s: Path must end in '.'", __FUNCTION__);
             return USP_ERR_INVALID_PATH_SYNTAX;
+        }
+    }
+
+    // Exit if the path was an absolute path without read permission (implements R-GET.1, R-GET.0)
+    if (op == kResolveOp_Get)
+    {
+        node = DM_PRIV_GetNodeFromPath(path, &inst, NULL, (DONT_LOG_ERRORS|SUBSTITUTE_SEARCH_EXPRS));
+        if (node != NULL)
+        {
+            err = DM_PRIV_CheckGetReadPermissions(node, &inst, combined_role);
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
         }
     }
 
@@ -830,32 +872,12 @@ int ExpandWildcard(char *resolved, char *unresolved, resolver_state_t *state)
     int len;
     int len_left;
     char *p;
-    unsigned short permission_bitmask;
 
-    // Exit if unable to get the permissions for this object
-    err = DATA_MODEL_GetPermissions(resolved, state->combined_role, &permission_bitmask, DONT_LOG_ERRS_FLAG);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    // Exit if the controller does not have permission to read the instance numbers
-    if ((permission_bitmask & PERMIT_GET_INST)==0)
-    {
-        USP_ERR_SetMessageIfAllowed("%s: Not permitted to read instance numbers in %s", __FUNCTION__, resolved);
-        return USP_ERR_PERMISSION_DENIED;
-    }
-
-    // Exit if unable to get the instances of this object
+    // Exit if unable to get the permitted instances of this object
     INT_VECTOR_Init(&iv);
-    err = DATA_MODEL_GetInstances(resolved, &iv);
+    err = GetPermittedInstances(resolved, &iv, state);
     if (err != USP_ERR_OK)
     {
-        // According to R.GET-0, if the path contains a search path (eg wildcard), it acts as a filter, and should not generate an error if instance numbers do not exist
-        if ((state->op == kResolveOp_Get) && (err == USP_ERR_OBJECT_DOES_NOT_EXIST))
-        {
-            err = USP_ERR_OK;
-        }
         goto exit;
     }
 
@@ -1041,412 +1063,6 @@ int ResolveReferenceFollow(char *resolved, char *unresolved, resolver_state_t *s
 
 /*********************************************************************//**
 **
-** SplitReferenceKeysFromkeys
-**
-** Split expression keys in all_keys with reference parameters and non-referenced parameters
-**
-** \param   all_keys - Pointer to all expression keys
-** \param   keys - pointer to expression keys which does not have a referenced parameter
-** \param   ref_keys - pointer to expression keys with referenced parameter
-**
-** \return  USP_ERR_OK if split succeed, or err if reference keys doesn't have an object
-**
-**************************************************************************/
-int SplitReferenceKeysFromkeys(expr_vector_t *all_keys, expr_vector_t *keys, expr_vector_t *ref_keys)
-{
-    int i;
-    expr_comp_t *ec;
-    char *is_ref;
-    size_t param_len;
-
-    EXPR_VECTOR_Init(keys);
-    EXPR_VECTOR_Init(ref_keys);
-
-    for (i=0; i < all_keys->num_entries; i++)
-    {
-        ec = &all_keys->vector[i];
-        is_ref = strchr(ec->param, '+');
-
-        if (is_ref)
-        {
-            param_len = strlen(ec->param);
-            // Error if reference follow does not have a key after the reference object
-            if (ec->param[param_len - 1] == '+')
-            {
-                USP_ERR_SetMessage("%s: Key (%s) does not terminate in a parameter name. References must be to objects.", __FUNCTION__, ec->param);
-                return USP_ERR_INVALID_PATH_SYNTAX;
-            }
-
-            EXPR_VECTOR_Add(ref_keys, ec->param, ec->op, ec->value);
-        }
-        else
-        {
-            EXPR_VECTOR_Add(keys, ec->param, ec->op, ec->value);
-        }
-    }
-
-    return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
-** CheckPathPermission
-**
-** Checks permission of the datamodel object path for uniqe key search
-**
-** \param   path - Datamodel object path
-** \param   state - pointer to structure containing state variables to use with this resolution
-** \param   gid - pointer to group_id variable to get the group_id of path object
-** \param   param_type - pointer to type_flags to get the parameter type of path object
-** \param   has_permission - pointer to permission flag to get the read permission of the path object
-**
-** \return  USP_ERR_OK if controller has permission of parameters
-**
-**************************************************************************/
-int CheckPathPermission(char *path, resolver_state_t *state, int *gid, int *param_type, bool *has_permission)
-{
-    unsigned flags;
-    unsigned short permission_bitmask;
-    unsigned param_type_flags;
-    int param_group_id;
-
-    // Initialize with default values
-    *has_permission = true;
-
-    // Exit if the path is not a parameter
-    flags = DATA_MODEL_GetPathProperties(path, state->combined_role, &permission_bitmask, &param_group_id, &param_type_flags, 0);
-    if ((flags & PP_IS_PARAMETER) == 0)
-    {
-        USP_ERR_SetMessage("%s: Search key '%s' is not a parameter", __FUNCTION__, path);
-        return USP_ERR_INVALID_PATH;
-    }
-
-    if ((permission_bitmask & PERMIT_GET) == 0)
-    {
-        *has_permission = false;
-        // Get operations are forgiving of permissions, so just indicate that none of the instances match
-        // NOTE: BulkData get operations are not forgiving of permissions, so will return an error
-        if (IS_STRICT(state->op))
-        {
-            USP_ERR_SetMessage("%s: Not permitted to read unique key %s", __FUNCTION__, path);
-            return USP_ERR_PERMISSION_DENIED;
-        }
-    }
-
-    *gid = param_group_id;
-    if (param_type)
-    {
-        *param_type = (int)param_type_flags;
-    }
-
-    return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
-** GroupReferencedParameters
-**
-** Create group get vector with referenced path present in params vector,
-** and check permission for the considered parameters.
-**
-** \param   params - pointer to path vectors with referenced parameters
-** \param   state - pointer to structure containing state variables to use with this resolution
-** \param   perm - pointer to permission vector, containing permissions of the params
-** \param   ggv - pointer to group get vector to populate with the intermediate referenced key
-** \param   err - pointer to error variable, err in case controller does not have permission on referenced keys
-**
-** \return  True if params vector still have path with references
-**
-**************************************************************************/
-bool GroupReferencedParameters(str_vector_t *params, resolver_state_t *state, int_vector_t *perm, group_get_vector_t *ggv, int *err)
-{
-    int i;
-    char *path;
-    char *ref;
-    bool is_ref_found;
-    int param_group_id;
-    bool has_permission;
-
-    // Initialise with default values
-    is_ref_found = false;
-    *err = USP_ERR_OK;
-
-    // Form a vector containing the paths to the next references to resolve
-    for (i = 0; i < params->num_entries; i++)
-    {
-        path = params->vector[i];
-
-        // No need to resolve this path further as controller does not have permission
-        if (perm->vector[i] == false)
-        {
-            continue;
-        }
-
-        ref = strchr(path, '+');
-        if (ref)
-        {
-            ref[0] = '\0';
-            *err = CheckPathPermission(path, state, &param_group_id, NULL, &has_permission);
-            if (*err != USP_ERR_OK)
-            {
-                ref[0] = '+';
-                goto exit;
-            }
-
-            // Only add the path to ggv, if the current object+key has permission
-            // along with previous object+key pair
-            if (has_permission == true)
-            {
-                is_ref_found = true;
-                GROUP_GET_VECTOR_Add(ggv, path, param_group_id);
-            }
-            else
-            {
-                perm->vector[i] = false;
-            }
-            ref[0] = '+';
-        }
-    }
-
-exit:
-    return is_ref_found;
-}
-
-/*********************************************************************//**
-**
-** ResolveIntermediateReferences
-**
-** De-references paths of params vector in place
-**
-** \param   params - pointer to path vectors with referenced parameters
-** \param   state - pointer to structure containing state variables to use with this resolution
-** \param   perm - pointer to permission vector, containing permissions of the params
-**
-** \return  USP_ERR_OK if successful, or no prams with referenced keys
-**
-**************************************************************************/
-int ResolveIntermediateReferences(str_vector_t *params, resolver_state_t *state, int_vector_t *perm)
-{
-    int i;
-    int index;
-    int err;
-    char temp[MAX_DM_PATH];
-    char *ref;
-    group_get_vector_t ggv;
-    group_get_entry_t *gge;
-
-    // Initialise with default values
-    GROUP_GET_VECTOR_Init(&ggv);
-
-    // Loop until all path references(+) of params vector resolved, or error occurred
-    while (GroupReferencedParameters(params, state, perm, &ggv, &err))
-    {
-        index = 0;
-        // exit if error occurred in GroupReferencedParameters call
-        if (err != USP_ERR_OK)
-        {
-            goto exit;
-        }
-
-        // Get the values of referenced paths only
-        GROUP_GET_VECTOR_GetValues(&ggv);
-        for (i = 0; i < params->num_entries; i++)
-        {
-            // Update the params vector in-place with the new referenced path value and rest of the key
-            // if the index has get permission
-            ref = strchr(params->vector[i], '+');
-            if (ref && (perm->vector[i] == true))
-            {
-                gge = &ggv.vector[index];
-                index++;
-
-                // Exit if an error occurred when getting the unique key param, or no parameter was provided
-                if (gge->err_code != USP_ERR_OK)
-                {
-                    USP_ERR_SetMessage("%s: Failed when defererencing %s (%s)", __FUNCTION__, gge->path, gge->err_msg);
-                    err = gge->err_code;
-                    goto exit;
-                }
-                USP_ASSERT(gge->value != NULL);     // GROUP_GET_VECTOR_GetValues() should have set an error message if the vendor hook didn't set a value for the parameter
-                ref[0] = '\0';
-
-                // If the dereferenced path is not a fully qualified object, mark permission as false for this instance
-                // to avoid further processing.
-                // NOTE: This applies to both gets and sets. Sets are forgiving if ANY instance matches, when using keys containing references
-                if(strlen(gge->value) == 0)
-                {
-                    if (IS_STRICT(state->op))
-                    {
-                        USP_ERR_SetMessage("%s: The dereferenced path contained in '%s' was not an object instance (got the value '%s')", __FUNCTION__, gge->path, gge->value);
-                    }
-                    perm->vector[i] = false;
-                    continue;
-                }
-                USP_SNPRINTF(temp, sizeof(temp), "%s%s", gge->value, &ref[1]);
-
-                // Free the previous value and update the new resolved path
-                USP_FREE(params->vector[i]);
-                params->vector[i] = USP_STRDUP(temp);
-            }
-        }
-        GROUP_GET_VECTOR_Destroy(&ggv);
-    }
-
-exit:
-    GROUP_GET_VECTOR_Destroy(&ggv);
-    return err;
-}
-
-/*********************************************************************//**
-**
-** ResolveReferencedKeys
-**
-** Resolves the intermediate references to form a group get vector of final parameters to get
-**
-** \param   resolved - pointer to data model object that we want to lookup by unique key
-** \param   state - pointer to structure containing state variables to use with this resolution
-** \param   instances - instances of base object to get
-** \param   sp - pointer to search parameter structure to return ggv_index, ggv and key_types for each valid {instance, key} pair
-**
-** \return  USP_ERR_OK if successful, or no referenced unique keys present
-**
-**************************************************************************/
-int ResolveReferencedKeys(char *resolved, resolver_state_t *state, int_vector_t *instances, search_param_t *sp)
-{
-    char temp[MAX_DM_PATH];
-    int err, i, j;
-    expr_comp_t *ec;
-    str_vector_t params;
-    int_vector_t perm;
-    int ggv_index;
-    int group_id;
-    int param_type;
-    bool has_permission;
-
-    // It is possible to have only non-referenced unique keys
-    if (sp->keys.num_entries == 0)
-    {
-        return USP_ERR_OK;
-    }
-
-    // Exit if unable to get a list of all parameters referenced by the expression
-    STR_VECTOR_Init(&params);
-    INT_VECTOR_Init(&perm);
-
-    // Create a STR vector of the parameters path for further resolution
-    for (i = 0; i < instances->num_entries; i++)
-    {
-        for (j = 0; j < sp->keys.num_entries; j++)
-        {
-            ec = &sp->keys.vector[j];
-            USP_SNPRINTF(temp, sizeof(temp), "%s%d.%s", resolved, instances->vector[i], ec->param);
-            STR_VECTOR_Add(&params, temp);
-            // Initialise each {instance, key} pair with valid permission, latter on if any reference doesn't
-            // have read permission, it will be updated to Invalid
-            INT_VECTOR_Add(&perm, true);
-        }
-    }
-
-    // Resolve all references within params vector inline, to leave only final parameter to get
-    // this will only have list of parameter for which controller has read permission
-    err = ResolveIntermediateReferences(&params, state, &perm);
-    if (err != USP_ERR_OK)
-    {
-        goto exit;
-    }
-
-    // This checks permission on the fully resolved parameter list and also gets
-    // group_ids and key_types of the parameters.
-    ggv_index = 0;
-    for (i = 0; i < params.num_entries; i++)
-    {
-        // mark permission vector as invalid if intermediate nodes does not have permissions
-        if (perm.vector[i] == false)
-        {
-            INT_VECTOR_Add(&sp->ggv_indexes, INVALID);
-        }
-        else
-        {
-            // Check permission of final parameter list, mark ggv_index as invalid if controller
-            // does not have read permission of that parameter,
-            // or it should point to the valid ggv index which shall be used to do compare in DoUniqueKeysMatch
-            err = CheckPathPermission(params.vector[i], state, &group_id, &param_type, &has_permission);
-            if (err != USP_ERR_OK)
-            {
-                goto exit;
-            }
-
-            if (has_permission == true)
-            {
-                GROUP_GET_VECTOR_Add(&sp->ggv, params.vector[i], group_id);
-                INT_VECTOR_Add(&sp->ggv_indexes, ggv_index);
-                INT_VECTOR_Add(&sp->key_types, param_type);
-                ggv_index++;
-            }
-            else
-            {
-                INT_VECTOR_Add(&sp->ggv_indexes, INVALID);
-            }
-        }
-    }
-
-exit:
-    STR_VECTOR_Destroy(&params);
-    INT_VECTOR_Destroy(&perm);
-
-    return err;
-}
-
-/*********************************************************************//**
-**
-** ExpandsNonReferencedKeys
-**
-** Expands keys over instances to create a group get vector for the non
-** referenced keys present in unique key search
-**
-** \param   resolved - pointer to data model object that we want to lookup by unique key
-** \param   state - pointer to structure containing state variables to use with this resolution
-** \param   instances - instances of base object to get
-** \param   sp - pointer to search parameter structure to return ggv_index, ggv and key_types for each valid {instance, key} pair
-**
-** \return  USP_ERR_OK if successful, or no non-referenced keys present
-**
-**************************************************************************/
-int ExpandsNonReferencedKeys(char *resolved, resolver_state_t *state, int_vector_t *instances, search_param_t *sp)
-{
-    int err;
-    int_vector_t group_ids;
-    int_vector_t perm;
-    int_vector_t key_types;
-
-    // It is possible to have non-referenced unique keys
-    if (sp->keys.num_entries == 0)
-        return USP_ERR_OK;
-
-    INT_VECTOR_Init(&group_ids);
-    INT_VECTOR_Init(&perm);
-    INT_VECTOR_Init(&key_types);
-
-    // Get the group IDs of all unique key parameters, this also checks that we have permissions to read the parameters
-    // If we don't have permissions, then the path resolution may fail either with an error (eg for SET) or silently (eg for GET)
-    err = GetGroupIdForUniqueKeys(resolved, &sp->keys, state, &group_ids, &key_types, &perm);
-    if (err != USP_ERR_OK)
-    {
-        goto exit;
-    }
-
-    // Populate the search parameter structure with unique keys for all instances
-    ExpandUniqueKeysOverAllInstances(resolved, instances, &group_ids, &key_types, &perm, sp);
-
-exit:
-    INT_VECTOR_Destroy(&group_ids);
-    INT_VECTOR_Destroy(&perm);
-    INT_VECTOR_Destroy(&key_types);
-    return err;
-}
-
-/*********************************************************************//**
-**
 ** ResolveUniqueKey
 **
 ** Resolves the unique key
@@ -1473,7 +1089,6 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     bool is_match;
     bool is_ref_match;
     expr_op_t valid_ops[] = {kExprOp_Equal, kExprOp_NotEqual, kExprOp_LessThanOrEqual, kExprOp_GreaterThanOrEqual, kExprOp_LessThan, kExprOp_GreaterThan};
-    unsigned short permission_bitmask;
 
     // Exit if unable to find the end of the unique key
     p = strchr(unresolved, ']');
@@ -1483,35 +1098,16 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
         return USP_ERR_INVALID_PATH_SYNTAX;
     }
 
-    // Exit if unable to get the permissions for this object
-    err = DATA_MODEL_GetPermissions(resolved, state->combined_role, &permission_bitmask, DONT_LOG_ERRS_FLAG);
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    // Exit if the controller does not have permission to read the instance numbers
-    if ((permission_bitmask & PERMIT_GET_INST)==0)
-    {
-        USP_ERR_SetMessage("%s: Not permitted to read instance numbers in %s", __FUNCTION__, resolved);
-        return USP_ERR_PERMISSION_DENIED;
-    }
-
     // Initialise vectors used by this function
     EXPR_VECTOR_Init(&keys);
     INT_VECTOR_Init(&instances);
     InitSearchParam(&sp);
     InitSearchParam(&ref_sp);
 
-    // Exit if unable to get the instances of this object
-    err = DATA_MODEL_GetInstances(resolved, &instances);
+    // Exit if unable to get the permitted instances of this object
+    err = GetPermittedInstances(resolved, &instances, state);
     if (err != USP_ERR_OK)
     {
-        // According to R.GET-0, if the path contains a search path (eg unique key), it acts as a filter, and should not generate an error if instance numbers do not exist
-        if ((state->op == kResolveOp_Get) && (err == USP_ERR_OBJECT_DOES_NOT_EXIST))
-        {
-            err = USP_ERR_OK;
-        }
         goto exit;
     }
 
@@ -1635,47 +1231,48 @@ exit:
 
 /*********************************************************************//**
 **
-** GetGroupIdForUniqueKeys
+** SplitReferenceKeysFromkeys
 **
-** Gets the GroupIds of all parameters in the specified unique key
-** NOTE: For efficiency reasons, this function also checks that we have permission to read the unique keys
+** Split expression keys in all_keys with reference parameters and non-referenced parameters
 **
-** \param   object - data model path of object to see if it matches the unique key
-** \param   keys - vector of key expressions that specify the unique key
-** \param   state - pointer to structure containing state variables to use with this resolution
-** \param   group_ids - pointer to vector in which to return the group_id of the parameters
-** \param   key_types - pointer to vector in which to return the type_flags of the parameters
-** \param   perm - pointer to vector in which to return the permission of the parameters
+** \param   all_keys - Pointer to all expression keys
+** \param   keys - pointer to expression keys which does not have a referenced parameter
+** \param   ref_keys - pointer to expression keys with referenced parameter
 **
-** \return  USP_ERR_OK if no errors occurred
+** \return  USP_ERR_OK if split succeed, or err if reference keys doesn't have an object
 **
 **************************************************************************/
-int GetGroupIdForUniqueKeys(char *object, expr_vector_t *keys, resolver_state_t *state, int_vector_t *group_ids, int_vector_t *key_types, int_vector_t *perm)
+int SplitReferenceKeysFromkeys(expr_vector_t *all_keys, expr_vector_t *keys, expr_vector_t *ref_keys)
 {
     int i;
     expr_comp_t *ec;
-    char path[MAX_DM_PATH];
-    int param_group_id;
-    int param_type_flags;
-    int err;
-    bool has_permission;
+    char *is_ref;
+    size_t param_len;
 
-    // Iterate over all unique keys, checking their permissions and getting their group_id
-    for (i=0; i < keys->num_entries; i++)
+    EXPR_VECTOR_Init(keys);
+    EXPR_VECTOR_Init(ref_keys);
+
+    for (i=0; i < all_keys->num_entries; i++)
     {
-        // Form parameter path of the unique key to check
-        // NOTE: DATA_MODEL_GetPathProperties() requires a non-schema path, so just choose 1 for the instance number (the path does not have to be instantiated to get the path's properties)
-        ec = &keys->vector[i];
-        USP_SNPRINTF(path, sizeof(path), "%s1.%s", object, ec->param);
+        ec = &all_keys->vector[i];
+        is_ref = strchr(ec->param, '+');
 
-        err = CheckPathPermission(path, state, &param_group_id, &param_type_flags, &has_permission);
-        if (err != USP_ERR_OK)
+        if (is_ref)
         {
-            return err;
+            param_len = strlen(ec->param);
+            // Error if reference follow does not have a key after the reference object
+            if (ec->param[param_len - 1] == '+')
+            {
+                USP_ERR_SetMessage("%s: Key (%s) does not terminate in a parameter name. References must be to objects.", __FUNCTION__, ec->param);
+                return USP_ERR_INVALID_PATH_SYNTAX;
+            }
+
+            EXPR_VECTOR_Add(ref_keys, ec->param, ec->op, ec->value);
         }
-        INT_VECTOR_Add(perm, has_permission);
-        INT_VECTOR_Add(group_ids, param_group_id);
-        INT_VECTOR_Add(key_types, param_type_flags);
+        else
+        {
+            EXPR_VECTOR_Add(keys, ec->param, ec->op, ec->value);
+        }
     }
 
     return USP_ERR_OK;
@@ -1683,74 +1280,425 @@ int GetGroupIdForUniqueKeys(char *object, expr_vector_t *keys, resolver_state_t 
 
 /*********************************************************************//**
 **
-** ExpandUniqueKeysOverAllInstances
+** ExpandsNonReferencedKeys
 **
-** Fills in the group get vector with all unique key parameters to get (for all instances of an object)
+** Expands keys over instances to create a group get vector for the non
+** referenced keys present in unique key search
 **
-** \param   object - data model path of base object
+** \param   resolved - pointer to data model object that we want to lookup by unique key
+** \param   state - pointer to structure containing state variables to use with this resolution
 ** \param   instances - instances of base object to get
-** \param   group_ids - pointer to vector in which to return the group_id of the parameters
-** \param   key_types - pointer to vector in which to return the type_flags of the parameters
-** \param   perm - pointer to vector in which to return the permission of the parameters
 ** \param   sp - pointer to search parameter structure to return ggv_index, ggv and key_types for each valid {instance, key} pair
 **
-** \return  None
+** \return  USP_ERR_OK if successful, or no non-referenced keys present
 **
 **************************************************************************/
-void ExpandUniqueKeysOverAllInstances(char *object, int_vector_t *instances, int_vector_t *group_ids, int_vector_t *key_types, int_vector_t *perm, search_param_t *sp)
+int ExpandsNonReferencedKeys(char *resolved, resolver_state_t *state, int_vector_t *instances, search_param_t *sp)
 {
-    int i;
+    int err;
+    int i, j;
+    expr_comp_t *ec;
+    char path[MAX_SEARCH_KEYS][MAX_DM_PATH];
+    int param_group_id[MAX_SEARCH_KEYS];
+    int param_type_flags[MAX_SEARCH_KEYS];
+    bool has_permission;
+    int instance;
 
-    // Iterate over all instances of the object present in the data model
-    for (i = 0; i < instances->num_entries; i++)
+    // Exit if there are no keys that need expanding. Nothing to do in this case.
+    if (sp->keys.num_entries == 0)
     {
-        ExpandUniqueKeysOverSingleInstance(object, instances->vector[i], group_ids, key_types, perm, sp);
+        return USP_ERR_OK;
     }
+
+    // Exit if there are more keys than this code can handle
+    if (sp->keys.num_entries > MAX_SEARCH_KEYS)
+    {
+        USP_ERR_SetMessage("%s: More than %d parameters in search expression", __FUNCTION__, MAX_SEARCH_KEYS);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Iterate over all instances
+    for (i=0; i < instances->num_entries; i++)
+    {
+        instance = instances->vector[i];
+
+        // Iterate over all (non-reference following) unique keys for this instance
+        // Forming the path and determining whether there is read permission for them
+        has_permission = false;
+        for (j=0; j < sp->keys.num_entries; j++)
+        {
+            // Exit if unique key parameter does not exist in the data model
+            ec = &sp->keys.vector[j];
+            USP_SNPRINTF(&path[j][0], MAX_DM_PATH, "%s%d.%s", resolved, instance, ec->param);
+            err = CheckPathPermission(&path[j][0], state, &param_group_id[j], &param_type_flags[j], &has_permission);
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
+
+            // Exit the loop if any parameter does not have read permission for this instance
+            // In this case, we should not bother getting any of the parameters in the key for this instance
+            if (has_permission == false)
+            {
+                break;
+            }
+        }
+
+        if (has_permission)
+        {
+            // If there was permission to read all keys for this instance, then add them all to the group get vector and reference them from the ggv_index
+            for (j=0; j < sp->keys.num_entries; j++)
+            {
+                INT_VECTOR_Add(&sp->ggv_indexes, sp->ggv.num_entries);  // Set index to point to entry about to be added to group get vector
+                GROUP_GET_VECTOR_Add(&sp->ggv, &path[j][0], param_group_id[j]);
+                INT_VECTOR_Add(&sp->key_types, param_type_flags[j]);
+            }
+        }
+        else
+        {
+            // If there wasn't permission to read one of the parameters in the search expression for this instance
+            // then indicate this in the ggv_indexes by marking all parameters in this instance with invalid
+            for (j=0; j < sp->keys.num_entries; j++)
+            {
+                INT_VECTOR_Add(&sp->ggv_indexes, INVALID);
+            }
+        }
+    }
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
 **
-** ExpandUniqueKeysOverSingleInstance
+** ResolveReferencedKeys
 **
-** Calculates the full paths of the unique keys for a specific object instance, returning them in the params vector
+** Resolves the intermediate references to form a group get vector of final parameters to get
 **
-** \param   object - data model path of object to see if it matches the unique key
-** \param   instance - instance number of the object to see if it matches the unique key
-** \param   group_ids - int vector containing group_id of each datamodel object
-** \param   key_types - int vector containing key_types of each datamodel object
-** \param   perm - int vector containing read permission of each datamodel object
+** \param   resolved - pointer to data model object that we want to lookup by unique key
+** \param   state - pointer to structure containing state variables to use with this resolution
+** \param   instances - instances of base object to get
 ** \param   sp - pointer to search parameter structure to return ggv_index, ggv and key_types for each valid {instance, key} pair
 **
-** \return  None
+** \return  USP_ERR_OK if successful, or no referenced unique keys present
 **
 **************************************************************************/
-void ExpandUniqueKeysOverSingleInstance(char *object, int instance, int_vector_t *group_ids, int_vector_t *key_types, int_vector_t *perm, search_param_t *sp)
+int ResolveReferencedKeys(char *resolved, resolver_state_t *state, int_vector_t *instances, search_param_t *sp)
 {
-    int i;
+    char temp[MAX_DM_PATH];
+    int err, i, j;
     expr_comp_t *ec;
-    char path[MAX_DM_PATH];
+    str_vector_t params;
+    int_vector_t perm;
     int ggv_index;
+    int group_id;
+    int param_type;
+    bool has_permission;
 
-    ggv_index = sp->ggv.num_entries;
-    // Form vector of unique key params for this instance
-    for (i=0; i < sp->keys.num_entries; i++)
+    // Exit if there are no keys containing reference following that need expanding. Nothing to do in this case.
+    if (sp->keys.num_entries == 0)
     {
-        // In case controller does not have read permission for the parameter,
-        // point ggv_index to INVALID, or a valid ggv index if it does.
-        if (perm->vector[i] == false)
+        return USP_ERR_OK;
+    }
+
+    STR_VECTOR_Init(&params);
+    INT_VECTOR_Init(&perm);
+
+    // Create a string vector containing the paths of all keys of all instances to get
+    for (i = 0; i < instances->num_entries; i++)
+    {
+        for (j = 0; j < sp->keys.num_entries; j++)
+        {
+            ec = &sp->keys.vector[j];
+            USP_SNPRINTF(temp, sizeof(temp), "%s%d.%s", resolved, instances->vector[i], ec->param);
+            STR_VECTOR_Add(&params, temp);
+            // Initialise each {instance, key} pair with valid permission, later on if any reference doesn't
+            // have read permission, it will be updated to Invalid
+            INT_VECTOR_Add(&perm, true);
+        }
+    }
+
+    // Resolve all references within params vector inline, to leave only final parameter to get
+    // this will only have list of parameter for which controller has read permission
+    err = ResolveIntermediateReferences(&params, state, &perm);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // This checks permission on the fully resolved parameter list and also gets
+    // group_ids and key_types of the parameters.
+    ggv_index = 0;
+    for (i = 0; i < params.num_entries; i++)
+    {
+        // mark permission vector as invalid if intermediate nodes do not have permissions
+        if (perm.vector[i] == false)
         {
             INT_VECTOR_Add(&sp->ggv_indexes, INVALID);
         }
         else
         {
-            INT_VECTOR_Add(&sp->ggv_indexes, ggv_index);
-            ec = &sp->keys.vector[i];
-            USP_SNPRINTF(path, sizeof(path), "%s%d.%s", object, instance, ec->param);
-            GROUP_GET_VECTOR_Add(&sp->ggv, path, group_ids->vector[i]);
-            INT_VECTOR_Add(&sp->key_types, key_types->vector[i]);
-            ggv_index++;
+            // Check permission of final parameter list, mark ggv_index as invalid if controller
+            // does not have read permission of that parameter,
+            // or it should point to the valid ggv index which shall be used to do compare in DoUniqueKeysMatch
+            err = CheckPathPermission(params.vector[i], state, &group_id, &param_type, &has_permission);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+
+            if (has_permission == true)
+            {
+                GROUP_GET_VECTOR_Add(&sp->ggv, params.vector[i], group_id);
+                INT_VECTOR_Add(&sp->ggv_indexes, ggv_index);
+                INT_VECTOR_Add(&sp->key_types, param_type);
+                ggv_index++;
+            }
+            else
+            {
+                INT_VECTOR_Add(&sp->ggv_indexes, INVALID);
+            }
         }
     }
+
+exit:
+    STR_VECTOR_Destroy(&params);
+    INT_VECTOR_Destroy(&perm);
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** ResolveIntermediateReferences
+**
+** De-references paths of params vector in place
+**
+** \param   params - pointer to path vectors with referenced parameters
+** \param   state - pointer to structure containing state variables to use with this resolution
+** \param   perm - pointer to vector, containing a boolean specifying whether the associated path (in params vector) has permission
+**
+** \return  USP_ERR_OK if successful, or no prams with referenced keys
+**
+**************************************************************************/
+int ResolveIntermediateReferences(str_vector_t *params, resolver_state_t *state, int_vector_t *perm)
+{
+    int i;
+    int index;
+    int err;
+    char temp[MAX_DM_PATH];
+    char *ref;
+    group_get_vector_t ggv;
+    group_get_entry_t *gge;
+
+    // Initialise with default values
+    GROUP_GET_VECTOR_Init(&ggv);
+
+    // Loop until all path references(+) of params vector resolved, or error occurred
+    while (GroupReferencedParameters(params, state, perm, &ggv, &err))
+    {
+        index = 0;
+        // exit if error occurred in GroupReferencedParameters call
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
+
+        // Get the values of referenced paths only
+        GROUP_GET_VECTOR_GetValues(&ggv);
+        for (i = 0; i < params->num_entries; i++)
+        {
+            // Update the params vector in-place with the new referenced path value and rest of the key
+            // if the index has get permission
+            ref = strchr(params->vector[i], '+');
+            if ((ref != NULL) && (perm->vector[i] == true))
+            {
+                gge = &ggv.vector[index];
+                index++;
+
+                // Exit if an error occurred when getting the unique key param, or no parameter was provided
+                if (gge->err_code != USP_ERR_OK)
+                {
+                    USP_ERR_SetMessage("%s: Failed when defererencing %s (%s)", __FUNCTION__, gge->path, gge->err_msg);
+                    err = gge->err_code;
+                    goto exit;
+                }
+                USP_ASSERT(gge->value != NULL);     // GROUP_GET_VECTOR_GetValues() should have set an error message if the vendor hook didn't set a value for the parameter
+                ref[0] = '\0';
+
+                // If the dereferenced path is not a fully qualified object, mark permission as false for this instance
+                // to avoid further processing.
+                // NOTE: This applies to both gets and sets. Sets are forgiving if ANY instance matches, when using keys containing references
+                if(strlen(gge->value) == 0)
+                {
+                    if (IS_STRICT(state->op))
+                    {
+                        USP_ERR_SetMessage("%s: The dereferenced path contained in '%s' was not an object instance (got the value '%s')", __FUNCTION__, gge->path, gge->value);
+                    }
+                    perm->vector[i] = false;
+                    continue;
+                }
+                USP_SNPRINTF(temp, sizeof(temp), "%s%s", gge->value, &ref[1]);
+
+                // Free the previous value and update the new resolved path
+                USP_FREE(params->vector[i]);
+                params->vector[i] = USP_STRDUP(temp);
+            }
+        }
+        GROUP_GET_VECTOR_Destroy(&ggv);
+    }
+
+exit:
+    GROUP_GET_VECTOR_Destroy(&ggv);
+    return err;
+}
+
+/*********************************************************************//**
+**
+** GroupReferencedParameters
+**
+** Create group get vector with referenced path present in params vector,
+** and check permission for the considered parameters.
+**
+** \param   params - pointer to path vectors with referenced parameters
+** \param   state - pointer to structure containing state variables to use with this resolution
+** \param   perm - pointer to permission vector, containing permissions of the params
+** \param   ggv - pointer to group get vector to populate with the intermediate referenced key
+** \param   err - pointer to error variable, err in case controller does not have permission on referenced keys
+**
+** \return  True if params vector still have path with references
+**
+**************************************************************************/
+bool GroupReferencedParameters(str_vector_t *params, resolver_state_t *state, int_vector_t *perm, group_get_vector_t *ggv, int *err)
+{
+    int i;
+    char *path;
+    char *ref;
+    bool is_ref_found;
+    int param_group_id;
+    bool has_permission;
+
+    // Initialise with default values
+    is_ref_found = false;
+    *err = USP_ERR_OK;
+
+    // Form a vector containing the paths to the next set of references to resolve (ie the parameters to read containing references)
+    for (i = 0; i < params->num_entries; i++)
+    {
+        path = params->vector[i];
+
+        // No need to resolve this path further as controller does not have permission
+        if (perm->vector[i] == false)
+        {
+            continue;
+        }
+
+        ref = strchr(path, '+');
+        if (ref != NULL)
+        {
+            ref[0] = '\0';      // Temporarily truncate at the '+'
+            *err = CheckPathPermission(path, state, &param_group_id, NULL, &has_permission);
+            if (*err != USP_ERR_OK)
+            {
+                ref[0] = '+';
+                goto exit;
+            }
+
+            // Only add the path to ggv, if the current object+key has permission
+            // along with previous object+key pair
+            if (has_permission == true)
+            {
+                is_ref_found = true;
+                GROUP_GET_VECTOR_Add(ggv, path, param_group_id);
+            }
+            else
+            {
+                perm->vector[i] = false;
+            }
+            ref[0] = '+';      // Restore the '+'
+        }
+    }
+
+exit:
+    return is_ref_found;
+}
+
+/*********************************************************************//**
+**
+** CheckPathPermission
+**
+** Checks permission of the datamodel object path for unique key search
+**
+** \param   path - Datamodel parameter path
+** \param   state - pointer to structure containing state variables to use with this resolution
+** \param   gid - pointer to group_id variable to get the group_id of path object
+** \param   param_type - pointer to type_flags to get the parameter type of path object
+** \param   has_permission - pointer to varaibale in which to return whether there is permission to read this parameter
+**
+** \return  USP_ERR_OK if key exists in the DM
+**
+**************************************************************************/
+int CheckPathPermission(char *path, resolver_state_t *state, int *gid, int *param_type, bool *has_permission)
+{
+    unsigned flags;
+    unsigned short permission_bitmask;
+    unsigned param_type_flags;
+    int param_group_id;
+
+    // Initialize with default values
+    *has_permission = true;
+
+    // Exit if the path is not a parameter
+    flags = DATA_MODEL_GetPathProperties(path, state->combined_role, &permission_bitmask, &param_group_id, &param_type_flags, 0);
+    if ((flags & PP_IS_PARAMETER) == 0)
+    {
+        USP_ERR_SetMessage("%s: Search key '%s' is not a parameter", __FUNCTION__, path);
+        return USP_ERR_INVALID_PATH;
+    }
+
+    if ((permission_bitmask & PERMIT_GET) == 0)
+    {
+        *has_permission = false;
+    }
+
+    *gid = param_group_id;
+    if (param_type)
+    {
+        *param_type = (int)param_type_flags;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** GetPermittedInstances
+**
+** Determines the instance numbers of a table that are permitted to be read
+**
+** \param   obj_path - path to a multi-instance object (unqualified)
+** \param   iv - pointer to int vector in which to return the instance numbers of the object that are permitted to be read
+** \param   state - pointer to structure containing state variables to use with this resolution
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int GetPermittedInstances(char *obj_path, int_vector_t *iv, resolver_state_t *state)
+{
+    int err;
+
+    // Exit if unable to get the instances of this object
+    err = DATA_MODEL_GetInstances(obj_path, iv);
+    if (err != USP_ERR_OK)
+    {
+        // According to R.GET-0, if the path contains a search path (eg unique key), it acts as a filter, and should not generate an error if instance numbers do not exist
+        if ((state->op == kResolveOp_Get) && (err == USP_ERR_OBJECT_DOES_NOT_EXIST))
+        {
+            err = USP_ERR_OK;
+        }
+        return err;
+    }
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**
@@ -1989,7 +1937,7 @@ int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *in
             case kDMNodeType_DBParam_Secure:
                 {
                     // Deal with GetBulkData operations
-                    permission_bitmask = DM_PRIV_GetPermissions(child, state->combined_role);
+                    permission_bitmask = DM_PRIV_GetPermissions(child, inst, state->combined_role, 0);
                     if (state->op == kResolveOp_GetBulkData)
                     {
                         if (permission_bitmask & PERMIT_GET)
@@ -2024,7 +1972,7 @@ int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *in
                 break;
 
             case kDMNodeType_AsyncOperation:
-                permission_bitmask = DM_PRIV_GetPermissions(child, state->combined_role);
+                permission_bitmask = DM_PRIV_GetPermissions(child, inst, state->combined_role, 0);
                 if ((state->op == kResolveOp_SubsOper) && (permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP))
                 {
                     add_to_vector = true;
@@ -2033,7 +1981,7 @@ int GetChildParams(char *path, int path_len, dm_node_t *node, dm_instances_t *in
 
 
             case kDMNodeType_Event:
-                permission_bitmask = DM_PRIV_GetPermissions(child, state->combined_role);
+                permission_bitmask = DM_PRIV_GetPermissions(child, inst, state->combined_role, 0);
                 if ((state->op == kResolveOp_SubsEvent) && (permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP))
                 {
                     add_to_vector = true;
@@ -2127,9 +2075,9 @@ int GetChildParams_MultiInstanceObject(char *path, int path_len, dm_node_t *node
         // Form the path to this instance
         instance = iv.vector[i];
         len = USP_SNPRINTF(&path[path_len], MAX_DM_PATH-path_len, ".%d", instance);
+        inst->instances[order] = instance;
 
         // Get all child parameters of this object
-        inst->instances[order] = instance;
         err = GetChildParams(path, path_len+len, node, inst, state, depth_remaining);
         if (err != USP_ERR_OK)
         {
@@ -2197,8 +2145,7 @@ int AddPathFound(char *path, resolver_state_t *state)
          ((path_properties & PP_IS_OBJECT_INSTANCE) == 0) )
     {
         USP_ASSERT(path_properties & PP_IS_MULTI_INSTANCE_OBJECT);
-        err = DATA_MODEL_GetInstancePaths(path, state->sv, INTERNAL_ROLE);  // NOTE: We can use internal role because we've already checked permissions on this object
-                                                                            //       and we don't want it to check get object instance permissions anyway for subscription add/delete paths
+        err = DATA_MODEL_GetInstancePaths(path, state->sv);
         return err;
     }
 
@@ -2207,12 +2154,13 @@ int AddPathFound(char *path, resolver_state_t *state)
     {
         if (state->flags & GET_ALL_INSTANCES)
         {
-            err = DATA_MODEL_GetAllInstancePaths(path, state->sv, state->combined_role);
+            err = DATA_MODEL_GetAllInstancePaths(path, state->sv);
         }
         else
         {
-            err = DATA_MODEL_GetInstancePaths(path, state->sv, state->combined_role);
+            err = DATA_MODEL_GetInstancePaths(path, state->sv);
         }
+        FilterPathsByPermission(state->sv, PERMIT_GET_INST, 0, state->combined_role);  // Remove paths that don't have the PERMIT_GET_INST permission
         return err;
     }
 
@@ -2259,12 +2207,20 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
     unsigned property_flags;
     int err;
     unsigned short permission_bitmask;
+    unsigned exec_flags;
 
     // Assume that the path should not be added to the vector
     *add_to_vector = false;
 
+    // Calculate the flags controlling execution of DATA_MODEL_GetPathProperties()
+    exec_flags = DONT_LOG_ERRS_FLAG;
+    if (state->op == kResolveOp_Add)
+    {
+        exec_flags |= CALC_ADD_PERMISSIONS;
+    }
+
     // Exit if the path does not exist in the schema
-    property_flags = DATA_MODEL_GetPathProperties(path, state->combined_role, &permission_bitmask, group_id, NULL, DONT_LOG_ERRS_FLAG);
+    property_flags = DATA_MODEL_GetPathProperties(path, state->combined_role, &permission_bitmask, group_id, NULL, exec_flags);
     *path_properties = property_flags;
     if ((property_flags & PP_EXISTS_IN_SCHEMA)==0)
     {
@@ -2411,114 +2367,6 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
     }
 
 
-
-    // ===
-    // Exit if the role associated with the USP operation invoking path resolution does not have permission to perform the required operation
-    switch(state->op)
-    {
-        case kResolveOp_Get:
-            // It is not an error to not have permissions for a get operation.
-            // It is forgiving, so just exit here, without adding the path to the vector
-            if ((permission_bitmask & PERMIT_GET)==0)
-            {
-                return USP_ERR_OK;
-            }
-            break;
-
-        case kResolveOp_Set:
-            // kResolveOp_Set resolves to objects, not parameters
-            // So checking for permission to write is performed later in GROUP_SET_VECTOR_Add() when the parameter to set is known
-            break;
-
-        case kResolveOp_Add:
-            if ((permission_bitmask & PERMIT_ADD)==0)
-            {
-                USP_ERR_SetMessageIfAllowed("%s: No permission to add to %s", __FUNCTION__, path);
-                return USP_ERR_PERMISSION_DENIED;
-            }
-            break;
-
-        case kResolveOp_Del:
-            if ((permission_bitmask & PERMIT_DEL)==0)
-            {
-                USP_ERR_SetMessageIfAllowed("%s: No permission to delete %s", __FUNCTION__, path);
-                return USP_ERR_PERMISSION_DENIED;
-            }
-            break;
-
-        case kResolveOp_Instances:
-            // Checking for permission to read instances of this object
-            // is performed later by DATA_MODEL_GetAllInstancePaths() or DATA_MODEL_GetInstancePaths()
-            break;
-
-        case kResolveOp_Oper:
-            if ((permission_bitmask & PERMIT_OPER)==0)
-            {
-                USP_ERR_SetMessageIfAllowed("%s: No permission to perform operation %s", __FUNCTION__, path);
-                return USP_ERR_COMMAND_FAILURE;
-            }
-            break;
-
-        case kResolveOp_Event:
-        case kResolveOp_SubsEvent:
-            if ((permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP)==0)
-            {
-                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to event %s", __FUNCTION__, path);
-                return USP_ERR_PERMISSION_DENIED;
-            }
-            break;
-
-        case kResolveOp_SubsOper:
-            if ((permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP)==0)
-            {
-                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to operation %s", __FUNCTION__, path);
-                return USP_ERR_PERMISSION_DENIED;
-            }
-            break;
-
-        case kResolveOp_SubsAdd:
-            if ((permission_bitmask & PERMIT_SUBS_OBJ_ADD)==0)
-            {
-                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to object creation on %s", __FUNCTION__, path);
-                return USP_ERR_PERMISSION_DENIED;
-            }
-            break;
-
-        case kResolveOp_SubsDel:
-            if ((permission_bitmask & PERMIT_SUBS_OBJ_DEL)==0)
-            {
-                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to object deletion on %s", __FUNCTION__, path);
-                return USP_ERR_PERMISSION_DENIED;
-            }
-            break;
-
-        case kResolveOp_SubsValChange:
-            if ((permission_bitmask & PERMIT_SUBS_VAL_CHANGE)==0)
-            {
-                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to value change on %s", __FUNCTION__, path);
-                return USP_ERR_PERMISSION_DENIED;
-            }
-            break;
-
-        case kResolveOp_GetBulkData:
-            if ((permission_bitmask & PERMIT_GET)==0)
-            {
-                USP_ERR_SetMessageIfAllowed("%s: No permission to get bulk data on %s", __FUNCTION__, path);
-                return USP_ERR_PERMISSION_DENIED;
-            }
-            break;
-
-        case kResolveOp_Any:
-        case kResolveOp_StrictRef:
-        case kResolveOp_ForgivingRef:
-            // Not applicable, as this operation just validates the expression
-            break;
-
-        default:
-            TERMINATE_BAD_CASE(state->op);
-            break;
-    }
-
     // ===
     // Exit if the instance numbers in the path are not instantiated (do not currently exist in the data model)
     switch(state->op)
@@ -2578,9 +2426,177 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
             break;
     }
 
+
+    // ===
+    // Exit if the role associated with the USP operation invoking path resolution does not have permission to perform the required operation
+    switch(state->op)
+    {
+        case kResolveOp_Get:
+            // It is not an error to not have permissions for a get operation.
+            // It is forgiving, so just exit here, without adding the path to the vector
+            if ((permission_bitmask & PERMIT_GET)==0)
+            {
+                return USP_ERR_OK;
+            }
+            break;
+
+        case kResolveOp_Set:
+            // kResolveOp_Set resolves to objects, not parameters
+            // So checking for permission to write is performed later in GROUP_SET_VECTOR_Add() when the parameter to set is known
+            break;
+
+        case kResolveOp_Add:
+            // Permission Errors when performing a wildcarded Add request and allow_partial=true need to be included in the AddResponse
+            // because each instance in the wildcard should be treated individually
+            if ((permission_bitmask & PERMIT_ADD)==0)
+            {
+                if ( ((state->flags & DONT_LOG_RESOLVER_ERRORS)==0) && (err_str_vec != NULL) && (err_int_vec != NULL) )
+                {
+                    USP_ERR_SetMessageIfAllowed("%s: No permission to add to %s", __FUNCTION__, path);
+                    STR_VECTOR_Add(err_str_vec, USP_ERR_GetMessage());
+                    INT_VECTOR_Add(err_int_vec, USP_ERR_PERMISSION_DENIED);
+                }
+                return USP_ERR_OK;
+            }
+            break;
+
+        case kResolveOp_Del:
+            {
+                str_vector_t child_objs;
+                char parent_path[MAX_DM_PATH];
+
+                // Exit if unable to get a vector of paths containing this object and all nested child objects to delete
+                STR_VECTOR_Init(&child_objs);
+                USP_SNPRINTF(parent_path, sizeof(parent_path), "%s.", path);
+                err = PATH_RESOLVER_ResolveDevicePath(parent_path, &child_objs, NULL, kResolveOp_Instances, FULL_DEPTH, INTERNAL_ROLE, GET_ALL_INSTANCES);
+                if (err != USP_ERR_OK)
+                {
+                    return err;
+                }
+
+                // Remove all paths which we have permission to delete, leaving only the paths that we do not have permission to delete
+                FilterPathsByPermission(&child_objs, PERMIT_DEL, PERMIT_DEL, state->combined_role);
+
+                // Exit if there isn't permission to delete this object and all nested child instances which currently exist
+                if (child_objs.num_entries > 0)
+                {
+                    USP_ERR_SetMessageIfAllowed("%s: No permission to delete %s", __FUNCTION__, child_objs.vector[0]);
+                    STR_VECTOR_Destroy(&child_objs);
+                    return USP_ERR_PERMISSION_DENIED;
+                }
+
+                STR_VECTOR_Destroy(&child_objs);
+            }
+            break;
+
+        case kResolveOp_Instances:
+            // Checking for permission to read instances of this object
+            // is performed later by DATA_MODEL_GetAllInstancePaths() or DATA_MODEL_GetInstancePaths()
+            break;
+
+        case kResolveOp_Oper:
+            if ((permission_bitmask & PERMIT_OPER)==0)
+            {
+                USP_ERR_SetMessageIfAllowed("%s: No permission to perform operation %s", __FUNCTION__, path);
+                return USP_ERR_COMMAND_FAILURE;
+            }
+            break;
+
+        case kResolveOp_Event:
+            if ((permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP)==0)
+            {
+                USP_ERR_SetMessageIfAllowed("%s: No permission to subscribe to event %s", __FUNCTION__, path);
+                return USP_ERR_PERMISSION_DENIED;
+            }
+            break;
+
+        case kResolveOp_SubsEvent:
+        case kResolveOp_SubsOper:
+            if ((permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP)==0)
+            {
+                return USP_ERR_OK;  // Ignore this path, if there is no permission
+            }
+            break;
+
+        case kResolveOp_SubsAdd:
+            if ((permission_bitmask & PERMIT_SUBS_OBJ_ADD)==0)
+            {
+                return USP_ERR_OK;  // Ignore this path, if there is no permission
+            }
+            break;
+
+        case kResolveOp_SubsDel:
+            if ((permission_bitmask & PERMIT_SUBS_OBJ_DEL)==0)
+            {
+                return USP_ERR_OK;  // Ignore this path, if there is no permission
+            }
+            break;
+
+        case kResolveOp_SubsValChange:
+            if ((permission_bitmask & PERMIT_SUBS_VAL_CHANGE)==0)
+            {
+                return USP_ERR_OK;  // Ignore this path, if there is no permission
+            }
+            break;
+
+        case kResolveOp_GetBulkData:
+            if ((permission_bitmask & PERMIT_GET)==0)
+            {
+                return USP_ERR_OK;  // Ignore this path, if there is no permission
+            }
+            break;
+
+        case kResolveOp_Any:
+        case kResolveOp_StrictRef:
+        case kResolveOp_ForgivingRef:
+            // Not applicable, as this operation just validates the expression
+            break;
+
+        default:
+            TERMINATE_BAD_CASE(state->op);
+            break;
+    }
+
     // If the code gets here, then the path should be added to the vector of resolved objects/parameters
     *add_to_vector = true;
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** FilterPathsByPermission
+**
+** Filters the paths in the specified string vector, removing those that match the specified permission value
+**
+** \param   sv - string vector of paths to filter
+** \param   permission_bitmask - bitmask of permission bits to test
+** \param   required_permission - required value of permission bits to cause removal of the path from the string vector
+** \param   combined_role - role to use when performing the filtering
+**
+** \return  None
+**
+**************************************************************************/
+void FilterPathsByPermission(str_vector_t *sv, unsigned short permission_bitmask, unsigned short required_permission, combined_role_t *combined_role)
+{
+    int i;
+    dm_node_t *node;
+    dm_instances_t inst;
+    unsigned short permission;
+
+    // Iterate over all paths
+    for (i=0; i < sv->num_entries; i++)
+    {
+        // Mark all paths which match the specified permission as NULL
+        node = DM_PRIV_GetNodeFromPath(sv->vector[i], &inst, NULL, 0);
+        permission = DM_PRIV_GetPermissions(node, &inst, combined_role, 0);
+        if ((permission & permission_bitmask) == required_permission)
+        {
+            USP_FREE(sv->vector[i]);
+            sv->vector[i] = NULL;
+        }
+    }
+
+    STR_VECTOR_RemoveUnusedEntries(sv);
 }
 
 /*********************************************************************//**

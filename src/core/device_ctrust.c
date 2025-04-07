@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2022-2024, Broadband Forum
+ * Copyright (C) 2022-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2017-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -63,6 +64,7 @@
 #include "iso8601.h"
 #include "text_utils.h"
 #include "dm_inst_vector.h"
+#include "inst_sel_vector.h"
 #include "database.h"
 
 //------------------------------------------------------------------------------
@@ -84,6 +86,7 @@ typedef struct
     bool enable;          // Device.LocalAgent.ControllerTrust.Role.{i}.Permission.{i}.Enable
     unsigned order;       // Device.LocalAgent.ControllerTrust.Role.{i}.Permission.{i}.Order. Higher order permissions override lower order permissions
     str_vector_t targets; // vector of data model paths to apply the permissions to
+    inst_sel_vector_t target_inst_selectors; // Vector containing the instance number selectors for each target. NOTE: values in target_inst_selectors and targets relate by index
     unsigned short permission_bitmask;  // Bitmask of permissions eg PERMIT_GET
 } permission_t;
 
@@ -104,6 +107,10 @@ role_t roles[MAX_CTRUST_ROLES];
 // Vector containing the instance numbers in Device.LocalAgent.ControllerTrust.Role.{i} to update with the new configuration
 // (from the role[] data structure) when the sync timer fires
 int_vector_t roles_to_update = { 0 };
+
+//------------------------------------------------------------------------------
+// Macro to return a modified permission bitmask, disallowing parameter reads, if unable to read the name of the Object in a GSDM (R-GET.1)
+#define MODIFIED_PERM(perm_bitmask)     ((perm_bitmask & PERMIT_OBJ_INFO) == 0) ? (perm_bitmask & ~PERMIT_GET) : perm_bitmask
 
 //------------------------------------------------------------------------------
 // Structure for Credential table
@@ -218,7 +225,7 @@ void ModifyCTrustPermissionNibble(permission_t *perm, char *value, unsigned shor
 void ApplyModifiedPermissions(int id);
 void ScheduleRolePermissionsUpdate(int instance);
 permission_t *FindPermissionByInstance(role_t *role, int instance);
-int ValidatePermTargetsVector(str_vector_t *targets);
+int ValidatePermTargetsVector(str_vector_t *targets, inst_sel_vector_t *perm_instances, unsigned short permission_bitmask);
 int ValidatePermOrderUnique(role_t *role, int order, int instance);
 int ValidateRoleNameUnique(char *name, int instance);
 role_t *FindUnusedRole(void);
@@ -434,6 +441,13 @@ void DEVICE_CTRUST_Stop(void)
     int i;
     role_t *role;
 
+    // Destroy the permission instance selector vector for all nodes in the data model
+    // NOTE: We do not free the entries in the vector, as they are owned by target_inst_selectors and will be freed by FreeRole() below
+    for (i=0; i<MAX_CTRUST_ROLES; i++)
+    {
+        DM_PRIV_ClearPermissionsForRole(NULL, i);
+    }
+
     // Free all roles and their associated permissions
     for (i=0; i<NUM_ELEM(roles); i++)
     {
@@ -621,6 +635,50 @@ int DEVICE_CTRUST_RoleIndexToInstance(int role_index)
 
 /*********************************************************************//**
 **
+** DEVICE_CTRUST_InstSelToPermTarget
+**
+** Gets the permission path (target) that is represented by the specified instance selector
+**
+** \param   role_index - index of the role in roles[] that the specified instance selector is associated with
+** \param   is - pointer to an instance selector. NOTE: This is typed as a void pointer to avoid problems with order of including header files
+** \return  perm_instance - pointer to variable in which to return the instance number of the permission in Device.LocalAgent.ControllerTrust.Role.{i}.Permission.{i}
+**
+** \return  target - permission path (target) that is represented by the specified instance selector, or NULL if none was found
+**
+**************************************************************************/
+char *DEVICE_CTRUST_InstSelToPermTarget(int role_index, void *is, int *perm_instance)
+{
+    int i;
+    role_t *role;
+    permission_t *perm;
+
+    USP_ASSERT((role_index >= 0) && (role_index < MAX_CTRUST_ROLES));
+
+    // Iterate over all permissions for the specified role
+    role = &roles[role_index];
+    perm = (permission_t *) role->permissions.head;
+    while (perm != NULL)
+    {
+        // Iterate over all instance selectors owned by this permission
+        for (i=0; i < perm->target_inst_selectors.num_entries; i++)
+        {
+            // Exit if the specified instance selector matches one owned by this permission
+            if (perm->target_inst_selectors.vector[i] == is)
+            {
+                *perm_instance =perm->instance;
+                return perm->targets.vector[i];
+            }
+        }
+
+        perm = (permission_t *) perm->link.next;
+    }
+
+    // If the code gets here, then no match was found
+    return NULL;
+}
+
+/*********************************************************************//**
+**
 ** DEVICE_CTRUST_SetRoleParameter
 **
 ** Ensures that the database contains the specified child parameter of the Role table with the specified value
@@ -715,6 +773,7 @@ void DEVICE_CTRUST_ApplyPermissionsToSubTree(char *path)
     dm_node_t *node;
     dm_node_t *perm_node;
     char *perm_path;
+    inst_sel_t *sel;
 
     // Exit if the path was not present in the data model
     // This could occur if a USP Service registers a path, but then does not return it in the GSDM response
@@ -737,21 +796,23 @@ void DEVICE_CTRUST_ApplyPermissionsToSubTree(char *path)
                 if (perm->enable)
                 {
                     // Iterate over all targets for this permission
+                    USP_ASSERT(perm->targets.num_entries == perm->target_inst_selectors.num_entries);
                     for (j=0; j < perm->targets.num_entries; j++)
                     {
                         perm_path = perm->targets.vector[j];
                         perm_node =  DM_PRIV_GetNodeFromPath(perm_path, NULL, NULL, DONT_LOG_ERRORS);
+                        sel = perm->target_inst_selectors.vector[j];
                         if (perm_node != NULL)  // Node maybe NULL if it relates to a USP Service that hasn't registered yet
                         {
                             if ((perm_node == node) || (DM_PRIV_IsChildNodeOf(node, perm_node)))
                             {
                                 // Case of permission applies to whole of specified subtree
-                                DM_PRIV_ApplyPermissions(node, i, perm->permission_bitmask);
+                                DM_PRIV_AddPermission(node, i, sel);
                             }
                             else if (DM_PRIV_IsChildNodeOf(perm_node, node))
                             {
                                 // Case of permission applies within the subtree
-                                DM_PRIV_ApplyPermissions(perm_node, i, perm->permission_bitmask);
+                                DM_PRIV_AddPermission(perm_node, i, sel);
                             }
                             // NOTE: if neither of these cases apply, then the permission applies outside of the specified subtree, so there's nothing more to do
                         }
@@ -950,17 +1011,18 @@ int Validate_CTrustPermOrder(dm_req_t *req, char *value)
 int Validate_CTrustPermTargets(dm_req_t *req, char *value)
 {
     int err;
-
-    // Exit if the permission targets are not a comma separated list with each list item starting 'Device.'
     str_vector_t targets;
+    inst_sel_vector_t isv;
 
     // Split the comma separated list of targets into a vector of targets
     STR_VECTOR_Init(&targets);
+    INST_SEL_VECTOR_Init(&isv);
     TEXT_UTILS_SplitString(value, &targets, ",");
 
-    err = ValidatePermTargetsVector(&targets);
+    err = ValidatePermTargetsVector(&targets, &isv, 0);  // NOTE: We don't care about the pemission bitmask to use, because it is only used in isv, which we are going to throw away
 
     STR_VECTOR_Destroy(&targets);
+    INST_SEL_VECTOR_Destroy(&isv, true);
 
     return err;
 }
@@ -1145,6 +1207,7 @@ int Notify_CTrustPermTargets(dm_req_t *req, char *value)
 {
     role_t *role;
     permission_t *perm;
+    int err;
 
     role = FindRoleByInstance(inst1);
     USP_ASSERT(role != NULL);
@@ -1154,6 +1217,10 @@ int Notify_CTrustPermTargets(dm_req_t *req, char *value)
 
     STR_VECTOR_Destroy(&perm->targets);
     TEXT_UTILS_SplitString(value, &perm->targets, ",");
+
+    // Extract the instance selectors from the targets
+    err = ValidatePermTargetsVector(&perm->targets, &perm->target_inst_selectors, perm->permission_bitmask);
+    USP_ASSERT(err == USP_ERR_OK);      // Since the targets were already checked during the validate phase
 
     ScheduleRolePermissionsUpdate(inst1);
 
@@ -1372,6 +1439,7 @@ int Process_CTrustPermAdded(role_t *role, int perm_instance)
     memset(perm, 0, sizeof(permission_t));
     perm->instance = perm_instance;
     STR_VECTOR_Init(&perm->targets);
+    INST_SEL_VECTOR_Init(&perm->target_inst_selectors);
 
     // Exit if unable to get the Enable for this Permission
     USP_SNPRINTF(path, sizeof(path), "%s.%d.Permission.%d.Enable", device_role_root, role->instance, perm_instance);
@@ -1396,21 +1464,6 @@ int Process_CTrustPermAdded(role_t *role, int perm_instance)
         goto exit;
     }
 
-    // Exit if unable to get the Targets for this Permission
-    USP_SNPRINTF(path, sizeof(path), "%s.%d.Permission.%d.Targets", device_role_root, role->instance, perm_instance);
-    err = DM_ACCESS_GetStringVector(path, &perm->targets);
-    if (err != USP_ERR_OK)
-    {
-        goto exit;
-    }
-
-    // Exit if the targets are not valid
-    err = ValidatePermTargetsVector(&perm->targets);
-    if (err != USP_ERR_OK)
-    {
-        goto exit;
-    }
-
     // Exit if unable to extract the permissions associated with this instance
     err  = ExtractPermissions(role, perm, "Param", PERMIT_GET, PERMIT_SET, PERMIT_NONE, PERMIT_SUBS_VAL_CHANGE);
     err |= ExtractPermissions(role, perm, "Obj",   PERMIT_OBJ_INFO, PERMIT_ADD, PERMIT_NONE, PERMIT_SUBS_OBJ_ADD);
@@ -1421,6 +1474,22 @@ int Process_CTrustPermAdded(role_t *role, int perm_instance)
         goto exit;
     }
 
+    // Exit if unable to get the Targets for this Permission
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.Permission.%d.Targets", device_role_root, role->instance, perm_instance);
+    err = DM_ACCESS_GetStringVector(path, &perm->targets);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if the targets are not valid. If they are valid, extract the instance selectors from the targets
+    err = ValidatePermTargetsVector(&perm->targets, &perm->target_inst_selectors, perm->permission_bitmask);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+
 exit:
     if (err == USP_ERR_OK)
     {
@@ -1430,8 +1499,7 @@ exit:
     else
     {
         // Otherwise free the permission structure
-        STR_VECTOR_Destroy(&perm->targets);
-        USP_FREE(perm);
+        FreePermission(NULL, perm);
     }
 
     return err;
@@ -1473,13 +1541,16 @@ int ValidateRoleNameUnique(char *name, int instance)
 ** ValidatePermTargetsVector
 **
 ** Validates that the targets in the specified string vector look valid and can be supported by this code
+** If they are, then the instance numbers in each target are extracted and added, as an instances selector to isv
 **
 ** \param   targets - vector of data model paths. Either partial paths or wildcarded paths
+** \param   isv - vector in which to store the permission instances of each target
+** \param   permission_bitmask - bitmask of permissions that applies to all targets. This will be stored in isv if the targets validated
 **
 ** \return  USP_ERR_OK if the targets are valid
 **
 **************************************************************************/
-int ValidatePermTargetsVector(str_vector_t *targets)
+int ValidatePermTargetsVector(str_vector_t *targets, inst_sel_vector_t *isv, unsigned short permission_bitmask)
 {
     int i, j;
     str_vector_t dm_elements;
@@ -1489,6 +1560,8 @@ int ValidatePermTargetsVector(str_vector_t *targets)
     char c;
     int err;
     bool is_valid;
+    int items_converted;
+    inst_sel_t *sel;
 
     STR_VECTOR_Init(&dm_elements);
 
@@ -1499,6 +1572,10 @@ int ValidatePermTargetsVector(str_vector_t *targets)
         goto exit;
     }
 
+    // Create default permission instances for every target
+    INST_SEL_VECTOR_Destroy(isv, true);
+    INST_SEL_VECTOR_Fill(isv, targets->num_entries, MODIFIED_PERM(permission_bitmask));
+
     // Check all of the targets in the vector
     for (i=0; i < targets->num_entries; i++)
     {
@@ -1506,7 +1583,9 @@ int ValidatePermTargetsVector(str_vector_t *targets)
         path = targets->vector[i];
         TEXT_UTILS_SplitString(path, &dm_elements, ".");
 
-        // Only allow partial paths or wildcarded paths, starting with Device.
+        sel = isv->vector[i];
+
+        // Only allow partial paths, wildcarded paths or instance number paths, starting with Device.
         for (j=0; j < dm_elements.num_entries; j++)
         {
             // Exit if the path does not start with 'Device.'
@@ -1520,13 +1599,7 @@ int ValidatePermTargetsVector(str_vector_t *targets)
                 goto exit;
             }
 
-            // Skip if this part of the path is a wildcard
-            if (strcmp(element, "*")==0)
-            {
-                continue;
-            }
-
-            // Exit if the path contains a search expression
+            // Exit if the path contains a search expression. These are not supported yet
             if ((strchr(element, '[') != NULL) || (strchr(element, ']') != NULL))
             {
                 USP_ERR_SetMessage("%s: Search expressions not supported in Target '%s'", __FUNCTION__, path);
@@ -1542,14 +1615,29 @@ int ValidatePermTargetsVector(str_vector_t *targets)
                 goto exit;
             }
 
-            // Exit if the path contains an instance number
-            // NOTE: We only check the first character of the path element, since objects and parameters are allowed to contain numbers in them (just not at the start)
+            // Skip if this part of the path is a wildcard
+            if (strcmp(element, "*")==0)
+            {
+                sel->selectors[sel->order] = WILDCARD_INSTANCE;
+                sel->order++;
+                continue;
+            }
+
+            // Skip if this part of the path contains an instance number
+            // NOTE: We only check the first character of the path element, since objects and parameters are not allowed to contain numbers in them at the start
             first_char = *element;
             if ((first_char >= '0') && (first_char <= '9'))
             {
-                USP_ERR_SetMessage("%s: Instance numbers not supported in Target '%s'", __FUNCTION__, path);
-                err = USP_ERR_INVALID_ARGUMENTS;
-                goto exit;
+                items_converted = sscanf(element, "%d", &sel->selectors[sel->order]);
+                if (items_converted != 1)
+                {
+                    USP_ERR_SetMessage("%s: Unable to convert instance number '%s'", __FUNCTION__, element);
+                    err = USP_ERR_INVALID_ARGUMENTS;
+                    goto exit;
+                }
+
+                sel->order++;
+                continue;
             }
 
             // Exit if the data model element contains any other characters which we weren't expecting in it
@@ -1573,6 +1661,11 @@ int ValidatePermTargetsVector(str_vector_t *targets)
 
 exit:
     STR_VECTOR_Destroy(&dm_elements);
+
+    if (err != USP_ERR_OK)
+    {
+        INST_SEL_VECTOR_Destroy(isv, true);
+    }
     return err;
 }
 
@@ -1758,13 +1851,14 @@ void ApplyAllPermissionsForRole(role_t *role)
     char *path;
     dm_node_t *node;
     permission_t *perm;
+    inst_sel_t *sel;
     int role_index;
 
     // Calculate the index number of the specified role in the roles[]
     role_index = role - &roles[0];
 
     // Ensure that we start from no permissions applying for this role
-    DM_PRIV_ApplyPermissions(NULL, role_index, PERMIT_NONE);
+    DM_PRIV_ClearPermissionsForRole(NULL, role_index);
 
     // Exit if role is not enabled - nothing more to do
     if ((role->instance == INVALID) || (role->enable == false))
@@ -1783,10 +1877,11 @@ void ApplyAllPermissionsForRole(role_t *role)
             for (i=0; i < perm->targets.num_entries; i++)
             {
                 path = perm->targets.vector[i];
+                sel = perm->target_inst_selectors.vector[i];
                 node =  DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
                 if (node != NULL)
                 {
-                    DM_PRIV_ApplyPermissions(node, role_index, perm->permission_bitmask);
+                    DM_PRIV_AddPermission(node, role_index, sel);
                 }
             }
         }
@@ -1888,7 +1983,7 @@ void FreeRole(role_t *role)
 **
 ** Frees all memory associated with the specified permission
 **
-** \param   role - pointer to role containing the permission to free
+** \param   role - pointer to role containing the permission to free, or NULL if the permission has not been added to a role yet
 ** \param   perm - pointer to permission to free
 **
 ** \return  USP_ERR_OK if successful
@@ -1897,7 +1992,12 @@ void FreeRole(role_t *role)
 void FreePermission(role_t *role, permission_t *perm)
 {
     STR_VECTOR_Destroy(&perm->targets);
-    DLLIST_Unlink(&role->permissions, perm);
+    INST_SEL_VECTOR_Destroy(&perm->target_inst_selectors, true);
+
+    if (role != NULL)
+    {
+        DLLIST_Unlink(&role->permissions, perm);
+    }
     USP_FREE(perm);
 }
 
@@ -1919,9 +2019,12 @@ void FreePermission(role_t *role, permission_t *perm)
 **************************************************************************/
 int ModifyCTrustPermissionNibbleFromReq(dm_req_t *req, char *value, unsigned short read_perm, unsigned short write_perm, unsigned short exec_perm, unsigned short notify_perm)
 {
+    int i;
     role_t *role;
     permission_t *perm;
+    inst_sel_t *sel;
     unsigned short old_perm_bitmask;
+    unsigned short modified_perm_bitmask;
 
     role = FindRoleByInstance(inst1);
     USP_ASSERT(role != NULL);
@@ -1937,6 +2040,14 @@ int ModifyCTrustPermissionNibbleFromReq(dm_req_t *req, char *value, unsigned sho
     if (perm->permission_bitmask == old_perm_bitmask)
     {
         goto exit;
+    }
+
+    // Update all permissions in the target_inst_selectors vector
+    modified_perm_bitmask = MODIFIED_PERM(perm->permission_bitmask);
+    for (i=0; i < perm->target_inst_selectors.num_entries; i++)
+    {
+        sel = perm->target_inst_selectors.vector[i];
+        sel->permission_bitmask = modified_perm_bitmask;
     }
 
     ScheduleRolePermissionsUpdate(inst1);
@@ -1985,7 +2096,7 @@ void ScheduleRolePermissionsUpdate(int instance)
 **
 ** Applies all modified permissions for the roles indicated by roles_to_update
 ** This function is a sync timer callback, which is called after processing a USP message,
-** and after all permissions modifications have been made to the roles[] data structure by the Notrify_CTrustXXX() functions
+** and after all permissions modifications have been made to the roles[] data structure by the Notify_CTrustXXX() functions
 **
 ** \param   id - (unused) identifier of the sync timer which caused this callback
 **

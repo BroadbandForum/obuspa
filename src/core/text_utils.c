@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -167,7 +168,7 @@ int TEXT_UTILS_StringToUnsignedLongLong(char *str, unsigned long long *value)
     // Exit if string is empty
     if (*str == '\0')
     {
-        USP_ERR_SetMessage("%s: 'Expecting an unsigned number. Got an empty string.", __FUNCTION__);
+        USP_ERR_SetMessage("%s: Expecting an unsigned number. Got an empty string.", __FUNCTION__);
         return USP_ERR_INVALID_TYPE;
     }
 
@@ -210,7 +211,7 @@ int TEXT_UTILS_StringToLongLong(char *str, long long *value)
     // Exit if string is empty
     if (*str == '\0')
     {
-        USP_ERR_SetMessage("%s: 'Expecting a signed number. Got an empty string.", __FUNCTION__);
+        USP_ERR_SetMessage("%s: Expecting a signed number. Got an empty string.", __FUNCTION__);
         return USP_ERR_INVALID_TYPE;
     }
 
@@ -253,7 +254,7 @@ int TEXT_UTILS_StringToDouble(char *str, double *value)
     // Exit if string is empty
     if (*str == '\0')
     {
-        USP_ERR_SetMessage("%s: 'Expecting a number. Got an empty string.", __FUNCTION__);
+        USP_ERR_SetMessage("%s: Expecting a number. Got an empty string.", __FUNCTION__);
         return USP_ERR_INVALID_TYPE;
     }
 

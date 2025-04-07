@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -79,7 +80,7 @@ static bool notify_subscriptions_allowed = false;
 
 //--------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
-void AddObjectInstanceIfPermitted(dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role);
+void AddObjectInstance(dm_instances_t *inst, str_vector_t *sv);
 int RefreshInstVector(dm_node_t *node);
 int RefreshInstVectorEntry(char *path);
 bool IsExistInInstVector(dm_instances_t *match, dm_instances_vector_t *div);
@@ -568,12 +569,11 @@ void DM_INST_VECTOR_Dump(dm_instances_vector_t *div)
 ** \param   inst - pointer to instance structure specifying the object's parents and their instance numbers
 ** \param   sv - pointer to structure which will be populated with paths to the instances of the object by this function
 **               NOTE: The caller must initialise this structure. This function adds to this structure, it does not initialise it.
-** \param   combined_role - role to use to check that object instances may be returned.  If set to INTERNAL_ROLE, then full permissions are always returned
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role)
+int DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv)
 {
     int i;
     int order;
@@ -607,7 +607,7 @@ int DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instances
             (memcmp(oi->nodes, inst->nodes, (order+1)*sizeof(dm_node_t *)) == 0) &&
             (memcmp(oi->instances, inst->instances, order*sizeof(int)) == 0))
         {
-            AddObjectInstanceIfPermitted(oi, sv, combined_role);
+            AddObjectInstance(oi, sv);
         }
     }
 
@@ -630,12 +630,11 @@ exit:
 ** \param   inst - pointer to instance structure specifying the object and instance numbers to match
 ** \param   sv - pointer to structure which will be populated with paths to the instances of the object by this function
 **               NOTE: The caller must initialise this structure. This function adds to this structure, it does not initialise it.
-** \param   combined_role - role to use to check that object instances may be returned.  If set to INTERNAL_ROLE, then full permissions are always returned
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role)
+int DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vector_t *sv)
 {
     int i;
     int order;
@@ -669,7 +668,7 @@ int DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vecto
             (memcmp(oi->nodes, inst->nodes, order*sizeof(dm_node_t *)) == 0) &&
             (memcmp(oi->instances, inst->instances, order*sizeof(int)) == 0))
         {
-            AddObjectInstanceIfPermitted(oi, sv, combined_role);
+            AddObjectInstance(oi, sv);
         }
     }
 
@@ -887,32 +886,24 @@ int DM_INST_VECTOR_RefreshTopLevelObjectInstances(dm_node_t *node)
 
 /*********************************************************************//**
 **
-** AddObjectInstanceIfPermitted
+** AddObjectInstance
 **
-** Adds the specified object instance, to the string vector, if the role permits its instance numbers to be read
+** Adds the specified object instance, to the string vector
 **
 ** \param   inst - pointer to instance structure specifying the object and its instance numbers
 ** \param   sv - pointer to structure which will be populated with paths to the instances of the object by this function
 **               NOTE: The caller must initialise this structure. This function adds to this structure, it does not initialise it.
-** \param   combined_role - role to use to check that object instances may be returned.  If set to INTERNAL_ROLE, then full permissions are always returned
 **
 ** \return  None
 **
 **************************************************************************/
-void AddObjectInstanceIfPermitted(dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role)
+void AddObjectInstance(dm_instances_t *inst, str_vector_t *sv)
 {
     dm_node_t *node;
-    unsigned short permission_bitmask;
     char path[MAX_DM_PATH];
     int err;
 
-    // Exit if the current role does not have permission to return this object instance in the string vector
     node = inst->nodes[inst->order-1];
-    permission_bitmask = DM_PRIV_GetPermissions(node, combined_role);
-    if ((permission_bitmask & PERMIT_GET_INST)==0)
-    {
-        return;
-    }
 
     // Convert the dm_instances_t structure into a path
     err = DM_PRIV_FormInstantiatedPath(node->path, inst, path, sizeof(path));

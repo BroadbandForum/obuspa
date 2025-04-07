@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2017-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -1042,6 +1043,7 @@ int DEVICE_SECURITY_SetALPN(SSL_CTX *ssl_ctx, char *alpn)
     unsigned char *p;
     int err;
     int i;
+    int result = USP_ERR_OK;
 
     // Exit if no ALPN options to set
     if ((alpn == NULL) || (*alpn == '\0'))
@@ -1075,14 +1077,14 @@ int DEVICE_SECURITY_SetALPN(SSL_CTX *ssl_ctx, char *alpn)
     if (err != 0)
     {
         USP_LOG_Error("%s: Failed to set ALPN in the SSL CTX", __FUNCTION__);
-        return USP_ERR_INTERNAL_ERROR;
+        result = USP_ERR_INTERNAL_ERROR;
     }
 
     // Clean up
     USP_FREE(buf);
     STR_VECTOR_Destroy(&sv);
 
-    return USP_ERR_OK;
+    return result;
 }
 
 /*********************************************************************//**

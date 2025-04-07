@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  * Copyright (C) 2022, Snom Technology GmbH
@@ -824,7 +825,7 @@ int HandleUspMessage(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc)
 
 #ifndef REMOVE_USP_SERVICE
 {
-    // Check with USP service to see if this is a response to an outgoing control message
+    // Check with USP service to see if this is a response to an outgoing control message or is an incoming notification
     bool is_handled;
     is_handled = USP_SERVICE_AsController_IsExpectedResponse(usp);
     if (is_handled)

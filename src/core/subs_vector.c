@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -137,7 +138,7 @@ void SUBS_VECTOR_Destroy(subs_vector_t *suv)
     }
 
     // Free the vector itself
-    USP_FREE(suv->vector);
+    USP_SAFE_FREE(suv->vector);
 
 exit:
     // Ensure structure is re-initialised

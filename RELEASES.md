@@ -1,5 +1,42 @@
 # Release History
 
+## Release 10.0.0
+  * USP v1.4 and TR-181 v2.18
+    * USP Services may register individual parameters, events and USP commands (previously only multi-instance objects could be registered)
+    * GSDM request may request individual parameters, events and USP commands (previously only the GSDM of objects could be requested)
+    * GSDM response can return the sets of unique keys for each multi-instance object
+    * Reason and Cause arguments have been added to Device.Reboot(), Device.FactoryReset() and Device.Boot!
+    * Get response only contains the names of objects that also have Obj read permissions (in addition to Param read permissions)
+
+  * USP Broker
+    * Optimized Get requests spanning multiple USP Services
+    * Optimized requests and subscriptions containing search expressions
+    * Event and OperationComplete subscriptions to 'Device.' have been modified so that they set subscriptions on each USP Service containing only the DM elements that were registered
+    * New CLI command for interacting directly with USP Services, when obuspa runs as a USP Broker
+      (`obuspa -c service [endpoint] [command] [path-expr] [optional: value or notify type]`)
+
+  * Misc Features
+    * Permissions containing instance numbers (see ROLES_AND_PERMISSIONS.md).
+    * Bulk Data Collection over MQTT
+    * Example vendor layer plug-in and documentation (in QUICK_START_GUIDE.md)
+    * HardwareVersion can also be specified by an environment variable (USP_BOARD_HW_VERSION)
+
+  * Bug fixes
+    * UDS MTP should be accessible by USP Services running as non root
+    * Potential memory leak in DEVICE_SECURITY_SetALPN
+    * Periodic! notifications should be sent after the Boot! event
+    * Empty string should not be interpreted as 0 by parameter value conversion functions
+    * Compilation failures when INCLUDE_PROGRAMMATIC_FACTORY_RESET is defined (GitHub PR#122)
+    * Compilation failure when building for pure USP Service
+    * OpenSSL should be initialized only once
+    * OpenSSL deprecated functions should not be used
+    * 'obuspa -c' should not crash with long command arguments
+    * Crash that could occur once at startup if the controller trust permissions table contained invalid data
+    * Subscription ID should be immutable
+    * USP Conformance test 11.11 failure: MQTT PUBLISH frames should not be sent until SUBACK frame indicates successfully subscribed
+
+
+
 ## Release 9.0.0
   * MQTT
     * Application Layer Protocol Negotiation (ALPN) support for MQTT over TLS

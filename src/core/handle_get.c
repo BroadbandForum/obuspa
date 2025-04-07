@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -141,7 +142,6 @@ void MSG_HANDLER_HandleGet(Usp__Msg *usp, char *controller_endpoint, mtp_conn_t 
     get_expr_info = USP_MALLOC(size);
     memset(get_expr_info, 0, size);
 
-    // Iterate over all input get expressions, adding them to the get_expr_info and group get vectors
     GROUP_GET_VECTOR_Init(&ggv);
 
 #ifndef REMOVE_USP_BROKER
@@ -278,6 +278,7 @@ void FormPathExprResponse(int get_expr_index, char *path_expr, get_expr_info_t *
         }
     }
 
+    // Add the optional list of paths and values to this result
     if (kvv != NULL)
     {
         for (i=0 ; i < kvv->num_entries ; i++)
@@ -539,27 +540,28 @@ void HandleDirectGet(int num_path_expr, char **path_exprs, int depth, get_expr_i
 {
     int err = USP_ERR_OK;
     combined_role_t combined_role;
-    kv_vector_t *resolved_params = NULL;
+    kv_vector_t *path_expr_resolved_params = NULL;
     int_vector_t group_ids;
     str_vector_t unresolved_params;
     int size;
-    int i; // for iterating through each path expression
+    int i;
 
+    // Allocate an array to store the resolved parameters and values for each path expression
     size = num_path_expr*sizeof(kv_vector_t);
-    resolved_params = USP_MALLOC(size);
+    path_expr_resolved_params = USP_MALLOC(size);
     MSG_HANDLER_GetMsgRole(&combined_role);
 
-    // Iterate over all input get expressions, adding them to the get_expr_info and group get vectors
-    for (i=0; i < num_path_expr; i++)
+    // Iterate over all path expressions, adding them to the get_expr_info and group get vectors
+    for (i=0; i<num_path_expr; i++)
     {
-        // if Broker is available, attmpt to directly GET all parameters from any registered USP services
-        KV_VECTOR_Init(&resolved_params[i]);
+        KV_VECTOR_Init(&path_expr_resolved_params[i]);
         STR_VECTOR_Init(&unresolved_params);
         INT_VECTOR_Init(&group_ids);
 
-        // AttemptDirectGet will return any resolved USP service parameters in resolved_params
-        // The remainder of (outstanding) parameters will be returned in unresolved_params
-        err = USP_BROKER_AttemptDirectGet(path_exprs[i], &unresolved_params, &group_ids, &resolved_params[i], &combined_role, depth);
+        // Attempt to get as much as we can of this path expression directly from the USP Services
+        // The parameters remaining (outstanding) will be returned in unresolved_params
+        // NOTE: USP_BROKER_AttemptDirectGet() applies permissions and depth to all returned parameters
+        err = USP_BROKER_AttemptDirectGet(path_exprs[i], &unresolved_params, &group_ids, &path_expr_resolved_params[i], &combined_role, depth);
         if (err != USP_ERR_OK)
         {
             get_expr_info[i].err_code = err;
@@ -570,9 +572,9 @@ void HandleDirectGet(int num_path_expr, char **path_exprs, int depth, get_expr_i
         {
             // copy remaining parameters into GGV and get_expr_info struct
             // Save the range of indexes for this path expression params
+            // NOTE: Ownership of the strings in the params vector transfers to the group get vector
             get_expr_info[i].index = ggv->num_entries;
             get_expr_info[i].num_entries = unresolved_params.num_entries;
-            // NOTE: Ownership of the strings in the params vector transfers to the group get vector
             GROUP_GET_VECTOR_AddParams(ggv, &unresolved_params, &group_ids);
             USP_SAFE_FREE(unresolved_params.vector);
             unresolved_params.vector = NULL;
@@ -587,14 +589,14 @@ void HandleDirectGet(int num_path_expr, char **path_exprs, int depth, get_expr_i
     // Iterate over all input get expressions, consulting the group get vector to form the USP Get response message
     for (i=0; i < num_path_expr; i++)
     {
-        FormPathExprResponse(i, path_exprs[i], &get_expr_info[i], ggv, &resolved_params[i], resp);
+        FormPathExprResponse(i, path_exprs[i], &get_expr_info[i], ggv, &path_expr_resolved_params[i], resp);
     }
 
     for (i=0; i < num_path_expr; i++)
     {
-        KV_VECTOR_Destroy(&resolved_params[i]);
+        KV_VECTOR_Destroy(&path_expr_resolved_params[i]);
     }
-    USP_FREE(resolved_params);
+    USP_FREE(path_expr_resolved_params);
     STR_VECTOR_Destroy(&unresolved_params);
     INT_VECTOR_Destroy(&group_ids);
 }

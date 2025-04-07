@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -53,8 +54,8 @@ int DM_INST_VECTOR_IsExist(dm_instances_t *match, bool *exists);
 int DM_INST_VECTOR_GetNextInstance(dm_node_t *node, dm_instances_t *inst, int *next_instance);
 int DM_INST_VECTOR_GetNumInstances(dm_node_t *node, dm_instances_t *inst, int *num_instances);
 int DM_INST_VECTOR_GetInstances(dm_node_t *node, dm_instances_t *inst, int_vector_t *iv);
-int DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role);
-int DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vector_t *sv, combined_role_t *combined_role);
+int DM_INST_VECTOR_GetAllInstancePaths_Unqualified(dm_node_t *node, dm_instances_t *inst, str_vector_t *sv);
+int DM_INST_VECTOR_GetAllInstancePaths_Qualified(dm_instances_t *inst, str_vector_t *sv);
 void DM_INST_VECTOR_RefreshBaselineInstances(dm_node_t *parent);
 void DM_INST_VECTOR_DumpTable(char *path);
 void DM_INST_VECTOR_Dump(dm_instances_vector_t *div);

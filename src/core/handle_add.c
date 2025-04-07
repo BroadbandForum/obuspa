@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -56,7 +57,7 @@
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
-int ResolveObjectsToAdd(Usp__Add__CreateObject *cr, group_add_vector_t *gav, combined_role_t *combined_role);
+int ResolveObjectsToAdd(Usp__Add__CreateObject *cr, group_add_vector_t *gav, combined_role_t *combined_role, bool allow_partial);
 Usp__Msg *CreateFullAddResp(char *msg_id, group_add_vector_t *gav);
 Usp__Msg *CreateBasicAddResp(char *msg_id);
 Usp__AddResp__CreatedObjectResult__OperationStatus__OperationSuccess *AddResp_OperSuccess(Usp__AddResp *add_resp, char *req_path, char *path);
@@ -155,7 +156,7 @@ Usp__Msg *ProcessAdd_AllowPartialTrue(char *msg_id, Usp__Msg *usp, combined_role
     for (i=0; i < add->n_create_objs; i++)
     {
         start_index = gav.num_entries;
-        ResolveObjectsToAdd(add->create_objs[i], &gav, combined_role);
+        ResolveObjectsToAdd(add->create_objs[i], &gav, combined_role, true);
 
         // Add all objects that have been resolved for this path expression
         for (j=start_index; j < gav.num_entries; j++)
@@ -250,13 +251,13 @@ Usp__Msg *ProcessAdd_AllowPartialFalse(char *msg_id, Usp__Msg *usp, combined_rol
     {
         // Exit if unable to resolve this path expression
         start_index = gav.num_entries;
-        err = ResolveObjectsToAdd(add->create_objs[i], &gav, combined_role);
+        err = ResolveObjectsToAdd(add->create_objs[i], &gav, combined_role, false);
         if (err != USP_ERR_OK)
         {
             DM_TRANS_Abort();
 
             DM_TRANS_Start(&trans);
-            GROUP_ADD_VECTOR_Rollback(&gav, rollback_span); // Must come after abort, as otherwise the changes it makes to instance cache would be rolled bacl
+            GROUP_ADD_VECTOR_Rollback(&gav, rollback_span); // Must come after abort, as otherwise the changes it makes to instance cache would be rolled back
             DM_TRANS_Commit();
 
             resp = CreateAddResponseError(usp->header->msg_id, &gav.vector[gav.num_entries-1]);
@@ -306,24 +307,28 @@ exit:
 ** Resolves a requested path into a set of object tables to add instances to
 ** and adds this list of objects to the group add vector, for the objects to be added later
 **
-** \param   gae - pointer to object to add
+** \param   cr - pointer to path of object (and child params) to create in the USP add request message
+** \param   gav - pointer to vector in which to add the objects to create (and objects which couldn't be created)
 ** \param   combined_role - roles to use when performing the add
-** \param   allow_partial - set to true if failures in this object do not affect all others.
-**                          If allow_partial is set then we perform a transaction at this level
+** \param   allow_partial - whether the Add message was allow_partial
 **
 ** \return  USP_ERR_OK if successful (NOTE: This includes failing to create an object if allow_partial=true)
 **
 **************************************************************************/
-int ResolveObjectsToAdd(Usp__Add__CreateObject *cr, group_add_vector_t *gav, combined_role_t *combined_role)
+int ResolveObjectsToAdd(Usp__Add__CreateObject *cr, group_add_vector_t *gav, combined_role_t *combined_role, bool allow_partial)
 {
     int i, j;
     int err;
     str_vector_t res_paths;
     int_vector_t group_ids;
+    str_vector_t err_msgs;
+    int_vector_t err_codes;
     Usp__Add__CreateParamSetting *cps;
 
     STR_VECTOR_Init(&res_paths);
     INT_VECTOR_Init(&group_ids);
+    STR_VECTOR_Init(&err_msgs);
+    INT_VECTOR_Init(&err_codes);
 
     // Exit if no expression
     if ((cr->obj_path == NULL) || (cr->obj_path[0] == '\0'))
@@ -334,22 +339,52 @@ int ResolveObjectsToAdd(Usp__Add__CreateObject *cr, group_add_vector_t *gav, com
     }
 
     // Exit if unable to resolve the path expression into a list of objects to add instances to
+    // and a list of errors, where there wasn't permission to create the object (could occur with paths containing wildcards or search expressions)
+    PATH_RESOLVER_AttachErrVector(&err_msgs, &err_codes);
     err = PATH_RESOLVER_ResolveDevicePath(cr->obj_path, &res_paths, &group_ids, kResolveOp_Add, FULL_DEPTH, combined_role, 0);
+    PATH_RESOLVER_AttachErrVector(NULL, NULL);
     if (err != USP_ERR_OK)
     {
+        GROUP_ADD_VECTOR_AddObjectNotCreated(gav, cr->obj_path, err, USP_ERR_GetMessage());
         goto exit;
     }
+    USP_ASSERT(res_paths.num_entries == group_ids.num_entries);
 
-    // Exit if no objects were resolved
-    if (res_paths.num_entries == 0)
+    if (allow_partial == false)
     {
-        USP_ERR_SetMessage("%s: Expression does not reference any objects", __FUNCTION__);
-        err = USP_ERR_INVALID_ARGUMENTS;
-        goto exit;
+        // allow_partial==false
+        // Exit if the path resolver indicated any permission errors (returning the first error)
+        if (err_msgs.num_entries > 0)
+        {
+            err = err_codes.vector[0];
+            GROUP_ADD_VECTOR_AddObjectNotCreated(gav, cr->obj_path, err, err_msgs.vector[0]);
+            goto exit;
+        }
+
+        // Exit if no objects to create
+        if (res_paths.num_entries == 0)
+        {
+            USP_ERR_SetMessage("%s: Expression does not reference any objects", __FUNCTION__);
+            err = USP_ERR_INVALID_ARGUMENTS;
+            GROUP_ADD_VECTOR_AddObjectNotCreated(gav, cr->obj_path, err, USP_ERR_GetMessage());
+            goto exit;
+        }
+    }
+    else
+    {
+        // allow_partial==true
+        // Exit if no objects to create and no permission errors indicated by the path resolver
+        // Otherwise, if there were permission errors, then continue, adding them at the end of this function
+        if ((res_paths.num_entries == 0) && (err_msgs.num_entries == 0))
+        {
+            USP_ERR_SetMessage("%s: Expression does not reference any objects", __FUNCTION__);
+            err = USP_ERR_INVALID_ARGUMENTS;
+            GROUP_ADD_VECTOR_AddObjectNotCreated(gav, cr->obj_path, err, USP_ERR_GetMessage());
+            goto exit;
+        }
     }
 
     // Add all resolved objects to the group add vector
-    USP_ASSERT(res_paths.num_entries == group_ids.num_entries);
     for (i=0; i<res_paths.num_entries; i++)
     {
         GROUP_ADD_VECTOR_AddObjectToCreate(gav, cr->obj_path, res_paths.vector[i], group_ids.vector[i]);
@@ -360,17 +395,23 @@ int ResolveObjectsToAdd(Usp__Add__CreateObject *cr, group_add_vector_t *gav, com
         }
     }
 
+    // If allow_partial==true, then add all permission errors to the group add vector, marking the requested path as in error
+    // NOTE: This could result in the Get Response indicating both success and failure for this requested path
+    if (allow_partial == true)
+    {
+        for (i=0; i < err_msgs.num_entries; i++)
+        {
+            GROUP_ADD_VECTOR_AddObjectNotCreated(gav, cr->obj_path, err_codes.vector[i], err_msgs.vector[i]);
+        }
+    }
+
     err = USP_ERR_OK;
 
 exit:
-    // If an error occurred, add the requested path to the group add vector, but mark it as in error
-    if (err != USP_ERR_OK)
-    {
-        GROUP_ADD_VECTOR_AddObjectNotCreated(gav, cr->obj_path, err, USP_ERR_GetMessage());
-    }
-
     STR_VECTOR_Destroy(&res_paths);
     INT_VECTOR_Destroy(&group_ids);
+    STR_VECTOR_Destroy(&err_msgs);
+    INT_VECTOR_Destroy(&err_codes);
     return err;
 }
 

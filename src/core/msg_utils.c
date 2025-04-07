@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2023-2024, Broadband Forum
+ * Copyright (C) 2023-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2023-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without

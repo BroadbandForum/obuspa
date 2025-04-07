@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2023-2024, Broadband Forum
+ * Copyright (C) 2023-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2023-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -198,6 +199,8 @@ int GROUP_ADD_VECTOR_CreateObject(group_add_entry_t *gae, combined_role_t *combi
     int err;
     group_vendor_hook_t *gvh;
 
+    USP_ASSERT(gae->err_code == USP_ERR_OK);
+
     // Objects that are owned by the internal data model cannot use a create vendor hook
     if (gae->group_id == NON_GROUPED)
     {
@@ -342,6 +345,7 @@ int CreateObject_WithCreateVendorHook(group_add_entry_t *gae, combined_role_t *c
     char buf[128];
     unsigned permission_bitmask;
     dm_node_t *node;
+    dm_instances_t inst;
 
     // Validate all parameters
     for (i=0; i < gae->num_params; i++)
@@ -349,7 +353,7 @@ int CreateObject_WithCreateVendorHook(group_add_entry_t *gae, combined_role_t *c
         // Skip if the parameter does not exist in the schema
         gap = &gae->params[i];
         USP_SNPRINTF(path, sizeof(path), "%s.{i}.%s", gae->res_path, gap->param_name);
-        node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
+        node = DM_PRIV_GetNodeFromPath(path, &inst, NULL, 0);
         if (node == NULL)
         {
             gap->err_code = USP_ERR_UNSUPPORTED_PARAM;
@@ -388,7 +392,7 @@ int CreateObject_WithCreateVendorHook(group_add_entry_t *gae, combined_role_t *c
         USP_ASSERT(node->type == kDMNodeType_VendorParam_ReadWrite);
 
         // Skip if no permission to write to parameter
-        permission_bitmask = DM_PRIV_GetPermissions(node, combined_role);
+        permission_bitmask = DM_PRIV_GetPermissions(node, &inst, combined_role, CALC_ADD_PERMISSIONS);
         if ((permission_bitmask & PERMIT_SET)==0)
         {
             USP_SNPRINTF(buf, sizeof(buf), "%s: No permission to write to %s", __FUNCTION__, path);

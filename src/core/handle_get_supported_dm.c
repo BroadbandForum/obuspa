@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -65,7 +66,7 @@
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void ProcessSupportedPathInstances(char *schema_path, unsigned gs_flags, Usp__GetSupportedDMResp *gs_resp);
 Usp__Msg *CreateGetSupportedDMResp(char *msg_id);
-void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResult *ror, unsigned gs_flags, combined_role_t *combined_role);
+void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResult *ror, unsigned gs_flags, combined_role_t *combined_role, dm_instances_t *inst);
 Usp__GetSupportedDMResp__RequestedObjectResult *
 AddGetSupportedDM_ReqObjResult(Usp__GetSupportedDMResp *gs_resp, char *requested_path, int err, char *err_msg, char *bbf_uri);
 Usp__GetSupportedDMResp__SupportedObjectResult *
@@ -77,7 +78,7 @@ void AddSupportedObjResult_SupportedParamResult(Usp__GetSupportedDMResp__Support
 Usp__GetSupportedDMResp__ObjAccessType  CalcDMSchemaObjAccess(bool is_add_allowed, bool is_del_allowed);
 Usp__GetSupportedDMResp__ParamAccessType  CalcDMSchemaParamAccess(bool is_read_allowed, bool is_write_allowed);
 Usp__GetSupportedDMResp__ParamValueType CalcDMSchemaParamType(dm_node_t *node);
-void AddSupportedObjResult_SingleChild(dm_node_t *child, Usp__GetSupportedDMResp__RequestedObjectResult *ror, combined_role_t *combined_role);
+void AddSupportedObjResult_SingleChild(dm_node_t *child, Usp__GetSupportedDMResp__RequestedObjectResult *ror, combined_role_t *combined_role, dm_instances_t *inst);
 void AddSupportedObjResult_SupportedUniqueKeySet(Usp__GetSupportedDMResp__SupportedObjectResult *sor, dm_node_t *node);
 
 /*********************************************************************//**
@@ -154,9 +155,10 @@ void ProcessSupportedPathInstances(char *schema_path, unsigned gs_flags, Usp__Ge
     dm_node_t *node;
     Usp__GetSupportedDMResp__RequestedObjectResult *ror;
     combined_role_t combined_role;
+    dm_instances_t inst;
 
     // Exit if unable to find a node matching the specified schema path
-    node = DM_PRIV_GetNodeFromPath(schema_path, NULL, NULL, 0);
+    node = DM_PRIV_GetNodeFromPath(schema_path, &inst, NULL, 0);
     if (node == NULL)
     {
         ror = AddGetSupportedDM_ReqObjResult(gs_resp, schema_path, USP_ERR_INVALID_PATH, USP_ERR_GetMessage(), BBF_DATA_MODEL_URI);
@@ -170,14 +172,15 @@ void ProcessSupportedPathInstances(char *schema_path, unsigned gs_flags, Usp__Ge
     // Get the role to use for permissions when walking the data model schema
     MSG_HANDLER_GetMsgRole(&combined_role);
 
+    // Recurse through the schema, building up the response
     if (IsObject(node))
     {
         // Recurse through the schema, building up the response
-        WalkSchema(node, ror, gs_flags, &combined_role);
+        WalkSchema(node, ror, gs_flags, &combined_role, &inst);
     }
     else
     {
-        AddSupportedObjResult_SingleChild(node, ror, &combined_role);
+        AddSupportedObjResult_SingleChild(node, ror, &combined_role, &inst);
     }
 }
 
@@ -191,11 +194,12 @@ void ProcessSupportedPathInstances(char *schema_path, unsigned gs_flags, Usp__Ge
 ** \param   ror - pointer to the RequestedObjResult object in the response message to add to
 ** \param   gs_flags - flags controlling which artefacts to put in the response (eg FIRST_LEVEL_ONLY, RETURN_COMMANDS)
 ** \param   combined_role - role to use for permissions when walking the schema
+** \param   inst - pointer to instances structure, filled in from parsing the path
 **
 ** \return  None
 **
 **************************************************************************/
-void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResult *ror, unsigned gs_flags, combined_role_t *combined_role)
+void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResult *ror, unsigned gs_flags, combined_role_t *combined_role, dm_instances_t *inst)
 {
     dm_node_t *child;
     Usp__GetSupportedDMResp__SupportedObjectResult *sor = NULL;
@@ -206,7 +210,7 @@ void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResul
     // Add a SupportedObjectResult for this schema object, if the controller is permitted to query its schema
     // NOTE: code that adds to the SupportedObjResult is also guarded by the same test
     USP_ASSERT(IsObject(parent));
-    parent_perm  = DM_PRIV_GetPermissions(parent, combined_role);
+    parent_perm  = DM_PRIV_GetPermissions(parent, inst, combined_role, 0);
     if (parent_perm & PERMIT_OBJ_INFO)
     {
         sor = AddReqObjResult_SupportedObjResult(ror, parent, parent_perm);
@@ -221,20 +225,19 @@ void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResul
     while (child != NULL)
     {
         // Get controller's permissions for this child
-        child_perm = DM_PRIV_GetPermissions(child, combined_role);
-
+        child_perm = DM_PRIV_GetPermissions(child, inst, combined_role, 0);
         switch(child->type)
         {
             case kDMNodeType_Object_MultiInstance:
             case kDMNodeType_Object_SingleInstance:
                 if ((gs_flags & FIRST_LEVEL_ONLY)==0)
                 {
-                    WalkSchema(child, ror, gs_flags, combined_role);
+                    WalkSchema(child, ror, gs_flags, combined_role, inst);
                 }
                 else
                 {
                     // FirstLevelOnly==true shows immediate child objects only
-                    child_perm  = DM_PRIV_GetPermissions(parent, combined_role);
+                    child_perm  = DM_PRIV_GetPermissions(parent, inst, combined_role, 0);
                     if (child_perm & PERMIT_OBJ_INFO)
                     {
                         child_sor = AddReqObjResult_SupportedObjResult(ror, child, child_perm);
@@ -438,11 +441,12 @@ AddReqObjResult_SupportedObjResult(Usp__GetSupportedDMResp__RequestedObjectResul
 ** \param   child - pointer to data model node representing schema path to add to the response message
 ** \param   ror - pointer to the RequestedObjResult object in the response message to add to
 ** \param   combined_role - role to use for permissions when walking the schema
+** \param   inst - pointer to instances structure, filled in from parsing the path
 **
 ** \return  None
 **
 **************************************************************************/
-void AddSupportedObjResult_SingleChild(dm_node_t *child, Usp__GetSupportedDMResp__RequestedObjectResult *ror, combined_role_t *combined_role)
+void AddSupportedObjResult_SingleChild(dm_node_t *child, Usp__GetSupportedDMResp__RequestedObjectResult *ror, combined_role_t *combined_role, dm_instances_t *inst)
 {
     dm_node_t *parent;
     unsigned short parent_perm;
@@ -453,16 +457,15 @@ void AddSupportedObjResult_SingleChild(dm_node_t *child, Usp__GetSupportedDMResp
     // NOTE: code that adds to the SupportedObjResult is also guarded by the same test
     parent = child->parent_node;
     USP_ASSERT(IsObject(parent));
-    parent_perm  = DM_PRIV_GetPermissions(parent, combined_role);
+    parent_perm  = DM_PRIV_GetPermissions(parent, inst, combined_role, 0);
     if (parent_perm & PERMIT_OBJ_INFO)
     {
         sor = AddReqObjResult_SupportedObjResult(ror, parent, parent_perm);
+
+        // Get controller's permissions for the child to add
+        child_perm = DM_PRIV_GetPermissions(child, inst, combined_role, 0);
+        AddSupportedObjResult_Child(sor, child, child_perm, parent_perm, RETURN_ALL);
     }
-
-    // Get controller's permissions for the child to add
-    child_perm = DM_PRIV_GetPermissions(child, combined_role);
-
-    AddSupportedObjResult_Child(sor, child, child_perm, parent_perm, RETURN_ALL);
 }
 
 /*********************************************************************//**
@@ -493,7 +496,9 @@ void AddSupportedObjResult_Child(Usp__GetSupportedDMResp__SupportedObjectResult 
         case kDMNodeType_DBParam_Secure:
         case kDMNodeType_VendorParam_ReadOnly:
         case kDMNodeType_VendorParam_ReadWrite:
-            if ((gs_flags & RETURN_PARAMS) && (parent_perm & PERMIT_OBJ_INFO))
+            if ((gs_flags & RETURN_PARAMS) &&
+                (parent_perm & PERMIT_OBJ_INFO) && (parent_perm & PERMIT_PARAM_INFO) &&
+                (child_perm & PERMIT_PARAM_INFO))
             {
                 AddSupportedObjResult_SupportedParamResult(sor, child, child_perm);
             }

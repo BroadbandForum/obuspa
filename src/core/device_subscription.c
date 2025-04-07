@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -147,6 +148,7 @@ static char *boot_event_args[] =
 {
     "CommandKey",
     "Cause",
+    "Reason",
     "FirmwareUpdated",
     "ParameterMap",
 };
@@ -207,7 +209,7 @@ void SeedLastValueChangeValues(void);
 void ProcessAllBootSubscriptions(void);
 #endif
 #if !defined(REMOVE_DEVICE_BOOT_EVENT) || !defined(REMOVE_USP_BROKER)
-void SendBootNotify(subs_t *sub, char *command_key, char *reboot_cause, char *firmware_updated);
+void SendBootNotify(subs_t *sub, char *command_key, char *reboot_cause, char *reboot_reason, char *firmware_updated);
 #endif
 
 /*********************************************************************//**
@@ -838,15 +840,19 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance, char *sub
     subs_t *sub;
     Usp__Notify *notify;
     subs_notify_t notify_type;
+    unsigned short perm;
     unsigned short perm_mask;
     char *path;
     char buf[MAX_DM_PATH];
     char msg_id[MAX_MSG_ID_LEN];
     char *command_key;
     char *reboot_cause;
+    char *reboot_reason;
     char *firmware_updated;
     int err;
     combined_role_t combined_role;
+    dm_node_t *node;
+    dm_instances_t inst;
 
     // Calculate various values which depend on the type of the received message
     notify = usp->body->request->notify;
@@ -894,7 +900,7 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance, char *sub
 
     // Find the corresponding subscription
     sub = SUBS_VECTOR_GetSubsByInstance(&subscriptions, instance);
-    USP_ASSERT(sub != NULL)
+    USP_ASSERT(sub != NULL);
     USP_ASSERT(sub->enable == true);  // The code should not have got here if the subscription is disabled, because there shouldn't have been an entry in the subscription mapping table
 
     // Exit if the notification received is not of the expected type
@@ -904,24 +910,32 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance, char *sub
         return USP_ERR_REQUEST_DENIED;
     }
 
-    // Exit if the Controller does not have permission. In this case we just silently drop the notification
-    if (HasControllerGotNotificationPermission(sub->cont_instance, path, perm_mask) == false)
+    // Exit if unable to determine role used by the controller that set this subscription. In this case, just silently drop the notification
+    err = DEVICE_CONTROLLER_GetCombinedRoleByInstance(sub->cont_instance, &combined_role);
+    if (err != USP_ERR_OK)
     {
         return USP_ERR_OK;
     }
 
+    // Exit if the DM element in the notification is not registered into the data model, dropping the notification
+    node = DM_PRIV_GetNodeFromPath(path, &inst, NULL, SUBSTITUTE_SEARCH_EXPRS);
+    if (node == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if the Controller does not have permission to receive this notification, dropping the notification
+    perm = DM_PRIV_GetPermissions(node, &inst, &combined_role, 0);
+    if ((perm & perm_mask) == 0)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if the subscribed path contains a search expression but there isn't permission to read the parameters in it
+    // In this case we just silently drop the notification
     if (TEXT_UTILS_StrStr(subscribed_path, "[") != NULL)
     {
-        // The subscribed path contains at least one search expression -
-        // check that the controller has permission to read all the parameters
-        // referenced, and silently drop the notification if not
-        err = DEVICE_CONTROLLER_GetCombinedRoleByInstance(sub->cont_instance, &combined_role);
-        if (err != USP_ERR_OK)
-        {
-            return USP_ERR_OK;
-        }
-
-        if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(subscribed_path, &combined_role)==false)
+        if (USP_BROKER_CheckPassThruPermissionsInSearchExpressions(subscribed_path, &combined_role, &inst)==false)
         {
             return USP_ERR_OK;
         }
@@ -934,9 +948,10 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance, char *sub
         // Extract arguments which we want to carry over to the new Boot! event
         command_key = ExtractNotificationEventArg(notify->event, "CommandKey");
         reboot_cause = ExtractNotificationEventArg(notify->event, "Cause");
+        reboot_reason = ExtractNotificationEventArg(notify->event, "Reason");
         firmware_updated = ExtractNotificationEventArg(notify->event, "FirmwareUpdated");
 
-        SendBootNotify(sub, command_key, reboot_cause, firmware_updated);
+        SendBootNotify(sub, command_key, reboot_cause, reboot_reason, firmware_updated);
         return USP_ERR_OK;
     }
 
@@ -1260,63 +1275,6 @@ void DEVICE_SUBSCRIPTION_UpdateVendorLayerDeviceDotSubs(int group_id, subs_notif
             StartVendorLayerDeviceDotSubsForGroup(sub, group_id);
         }
     }
-}
-
-/*********************************************************************//**
-**
-** DEVICE_SUBSCRIPTION_IsMatch
-**
-** Determines whether the specified subscription table entry contains a subscription for the specified path (and notification type)
-** This function is called to determine whether to pass through a notification from the USP Service
-** in the case of the notification being received before the registration sequence has been completed with the USP Service
-** Typically this function is called to match Device.Boot! event notifications
-**
-** \param   broker_instance - instance number of the subscription in our subscription table
-** \param   notify_type - type of the notification to check against
-** \param   path - data model path to check against
-**
-** \return  true if the specified instance contains an enabled subscription that matches, false otherwise
-**
-**************************************************************************/
-bool DEVICE_SUBSCRIPTION_IsMatch(int broker_instance, subs_notify_t notify_type, char *path)
-{
-    int i;
-    subs_t *sub;
-    char *path_spec;
-
-    // Exit if we don't have a subscription matching the specified instance number
-    sub = FindSubsByInstance(broker_instance);
-    if (sub == NULL)
-    {
-        return false;
-    }
-
-    // Exit if the subscription is not enabled
-    if (sub->enable == false)
-    {
-        return false;
-    }
-
-    // Exit if the subscription is for a different type of notification
-    if (sub->notify_type != notify_type)
-    {
-        return false;
-    }
-
-    // Iterate over all paths that the Broker's subscription is for, seeing if the path matches any of those
-    for (i=0; i < sub->path_expressions.num_entries; i++)
-    {
-        // Exit if the notification path matches that defined by the path specification in the subscription (ie wildcards and partial paths - including Device.)
-        // NOTE: This code handles subscriptions to 'Device.'
-        path_spec = sub->path_expressions.vector[i];
-        if (TEXT_UTILS_IsPathMatch(path, path_spec))
-        {
-            return true;
-        }
-    }
-
-    // If the code gets here, then no match was found
-    return false;
 }
 #endif
 
@@ -2825,7 +2783,7 @@ void ProcessAllBootSubscriptions(void)
             // Send the event, if it matches this subscription
             if (DoesSubscriptionSendNotification(sub, (char *)device_boot_event))
             {
-                SendBootNotify(sub, info.command_key, info.cause, firmware_updated);
+                SendBootNotify(sub, info.command_key, info.cause, info.reason, firmware_updated);
             }
         }
     }
@@ -3182,6 +3140,7 @@ void SendValueChangeNotify(subs_t *sub, char *path, char *value)
 **
 ** \param   sub - pointer to boot subscription
 ** \param   command_key - pointer to string containing the CommandKey argument to put into the Boot! event
+** \param   reboot_reason - pointer to string containing the Reason argument to put into the Boot! event
 ** \param   reboot_cause - pointer to string containing the Cause argument to put into the Boot! event
 ** \param   firmware_updated - pointer to string containing the FirmwareUpdated argument to put into the Boot! event
 **          NOTE: The string arguments may be NULL if the USP Broker was unable to extract the argument from the USP Service's Boot! event
@@ -3189,7 +3148,7 @@ void SendValueChangeNotify(subs_t *sub, char *path, char *value)
 ** \return  None
 **
 **************************************************************************/
-void SendBootNotify(subs_t *sub, char *command_key, char *reboot_cause, char *firmware_updated)
+void SendBootNotify(subs_t *sub, char *command_key, char *reboot_cause, char *reboot_reason, char *firmware_updated)
 {
     int err;
     int i;
@@ -3215,6 +3174,11 @@ void SendBootNotify(subs_t *sub, char *command_key, char *reboot_cause, char *fi
     if (reboot_cause != NULL)
     {
         USP_ARG_Add(&event_params, "Cause", reboot_cause);
+    }
+
+    if (reboot_reason != NULL)
+    {
+        USP_ARG_Add(&event_params, "Reason", reboot_reason);
     }
 
     if (firmware_updated != NULL)

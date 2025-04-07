@@ -1,8 +1,7 @@
-/*
- *
- * Copyright (C) 2019-2025, Broadband Forum
- * Copyright (C) 2024-2025, Vantiva Technologies SAS
- * Copyright (C) 2008-2024  CommScope, Inc
+/**
+ * \file inst_sel_vector.h
+ * Copyright (C) 2025, Broadband Forum
+ * Copyright (C) 2025, Vantiva Technologies SAS
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,11 +32,15 @@
  *
  */
 
+#ifndef INST_SEL_VECTOR_H
+#define INST_SEL_VECTOR_H
 
-/**
- * @file uri.c
- *
- * Uniform Resource Identifier utilities
- *
- */
+//-----------------------------------------------------------------------------------------
+// API
+void INST_SEL_VECTOR_Init(inst_sel_vector_t *isv);
+void INST_SEL_VECTOR_Destroy(inst_sel_vector_t *isv, bool destroy_entries);
+void INST_SEL_VECTOR_Fill(inst_sel_vector_t *isv, int num_entries, unsigned short permission_bitmask);
+void INST_SEL_VECTOR_Add(inst_sel_vector_t *isv, inst_sel_t *sel);
+unsigned short INST_SEL_VECTOR_GetPermissionForInstance(inst_sel_vector_t *isv, dm_instances_t *inst, unsigned flags);
 
+#endif

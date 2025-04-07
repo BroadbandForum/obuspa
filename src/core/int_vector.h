@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -36,9 +37,6 @@
  * \file int_vector.h
  *
  * Implements a vector of integers
- * Unlike the other vector data structures, this has been re-implemented using a maximum fixed size array,
- * as this vector is only used to collect the instance numbers of an object.
- * Using a fixed size array minimizes the number of memory allocations, speeding up the code and minimising the risk of memory leaks
  *
  */
 

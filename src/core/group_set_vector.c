@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2020-2024, Broadband Forum
+ * Copyright (C) 2020-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2020-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -95,7 +96,7 @@ void GROUP_SET_VECTOR_Destroy(group_set_vector_t *gsv)
         USP_SAFE_FREE(gse->err_msg);
         // NOTE: value does not have to be freed, as ownership of it stays with the USP request message
     }
-    USP_FREE(gsv->vector);
+    USP_SAFE_FREE(gsv->vector);
 
     gsv->vector = NULL;     // Not strictly necessary
     gsv->num_entries = 0;

@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  * Copyright (C) 2022, Snom Technology GmbH
@@ -55,6 +56,8 @@
 #define MAX_MSG_ID_LEN (256)        // Maximum number of characters in a USP message ID allocated by this Agent
 #define MAX_PATH_SEGMENTS (32)      // Maximum number of segments (eg "Device, "LocalAgent") in a path. Does not include instance numbers.
 #define MAX_COMPOUND_KEY_PARAMS 4   // Maximum number of parameters in a compound unique key
+#define MAX_SEARCH_KEYS 10          // Maximum number of parameters in a search expression
+
 #define MAX_CONTROLLERS 5           // Maximum number of controllers which may be present in the DB (Device.LocalAgent.Controller.{i})
 #define MAX_CONTROLLER_MTPS 3       // Maximum number of MTPs that a controller may have in the DB (Device.LocalAgent.Controller.{i}.MTP.{i})
 #define MAX_AGENT_MTPS (MAX_CONTROLLERS)  // Maximum number of MTPs that an agent may have in the DB (Device.LocalAgent.MTP.{i})
@@ -233,8 +236,8 @@
 
 //-----------------------------------------------------------------------------------------
 // Instance numbers of roles in Device.LocalAgent.Controller.Role.{i}
-#define ROLE_FULL_ACCESS    1   // Instance to use for trust store certs specified using the -t option
-#define ROLE_UNTRUSTED      2   // Instance to use for untrusted controllers
+#define ROLE_FULL_ACCESS    1   // Instance number of role providing full data model access for trusted controllers
+#define ROLE_UNTRUSTED      2   // Instance number of role to use for untrusted controllers
 #define ROLE_NON_SSL        ROLE_FULL_ACCESS  // Inherited role instance to use if SSL is not being used for the MTP
 #define ROLE_DEFAULT        ROLE_FULL_ACCESS  // Inherited role instance to use if the controller cert does not have an associated inherited role
 #define ROLE_UDS            ROLE_FULL_ACCESS  // Inherited role instance to use for USP requests received over UDS

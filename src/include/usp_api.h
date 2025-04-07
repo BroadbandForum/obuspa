@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -214,6 +215,9 @@ typedef enum
 
 #define PERMIT_NONE               0x0000 // Grants no capabilities
 #define PERMIT_ALL                0xFFFF // Grants all capabilities
+
+// Aliases for bits that already exist for their alternate uses
+#define PERMIT_PARAM_INFO  PERMIT_GET    // Grants the capability to read the value of the Parameter via Get and read the meta-information of the Parameter via GetSupportedDM
 
 //---------------------------------------------------------------------
 // Structure for each element of trust store array

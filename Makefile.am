@@ -37,6 +37,7 @@ SOURCES = src/core/main.c \
                     src/core/group_set_vector.c \
                     src/core/group_add_vector.c \
                     src/core/group_del_vector.c \
+                    src/core/inst_sel_vector.c \
                     src/core/proto_trace.c \
                     src/core/data_model.c \
                     src/core/error_resp.c \

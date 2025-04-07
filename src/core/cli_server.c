@@ -1,6 +1,7 @@
 /*
  *
- * Copyright (C) 2019-2024, Broadband Forum
+ * Copyright (C) 2019-2025, Broadband Forum
+ * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  *
  * Redistribution and use in source and binary forms, with or without
@@ -107,7 +108,9 @@ int ExecuteCli_Event(str_vector_t *args);
 int ExecuteCli_GetInstances(str_vector_t *args);
 int ExecuteCli_Show(str_vector_t *args);
 int ExecuteCli_Dump(str_vector_t *args);
+int ExecuteCli_Role(str_vector_t *args);
 int ExecuteCli_Perm(str_vector_t *args);
+int ExecuteCli_PermSel(str_vector_t *args);
 int ExecuteCli_DbGet(str_vector_t *args);
 int ExecuteCli_DbSet(str_vector_t *args);
 int ExecuteCli_DbDel(str_vector_t *args);
@@ -117,6 +120,7 @@ int ExecuteCli_Stop(str_vector_t *args);
 char *SplitOffTrailingNumber(char *s);
 int SplitSetExpression(char *expr, char *search_path, int search_path_len, char *param_name, int param_name_len);
 void SendCliResponse(char *fmt, ...);
+combined_role_t *CalcCliCombinedRole(void);
 
 #ifndef REMOVE_USP_SERVICE
 int ExecuteCli_Register(str_vector_t *args);
@@ -148,7 +152,7 @@ bool dump_to_cli = false;
 typedef struct
 {
     char *name;
-    int min_args;
+    int min_args;       // bash does not allow the passing of empty string args, so to allow eg SPV to an empty string, min_args allows the missing value arg, and the handler fills in the missing arg as an empty string
     int max_args;
     bool run_locally;
     int (*exec_cmd)(str_vector_t *args);
@@ -169,7 +173,9 @@ cli_cmd_t cli_commands[] =
     { "instances", 1,1, RUN_REMOTELY, ExecuteCli_GetInstances,   "instances [path-expr]" },
     { "show",      1,1, RUN_LOCALLY,  ExecuteCli_Show,  "show [ 'database' ]"},
     { "dump",      1,1, RUN_REMOTELY, ExecuteCli_Dump,  "dump ['instances' | 'datamodel' | 'memory' | 'mdelta' | 'subscriptions' ]"},
+    { "role",      1,1, RUN_REMOTELY, ExecuteCli_Role,  "role [instance]"},
     { "perm",      1,1, RUN_REMOTELY, ExecuteCli_Perm,  "perm [path]"},
+    { "permsel",   1,2, RUN_REMOTELY, ExecuteCli_PermSel,  "permsel [role] [path]"},
     { "dbget",     1,1, RUN_LOCALLY,  ExecuteCli_DbGet, "dbget [parameter]"},
     { "dbset",     1,2, RUN_LOCALLY,  ExecuteCli_DbSet, "dbset [parameter] [value]"},
     { "dbdel",     1,1, RUN_LOCALLY,  ExecuteCli_DbDel, "dbdel [parameter]"},
@@ -184,6 +190,10 @@ cli_cmd_t cli_commands[] =
 #endif
     { "stop",    0,0, RUN_REMOTELY, ExecuteCli_Stop, "stop"},
 };
+
+//------------------------------------------------------------------------------
+// Saved role to use for the CLI commands
+int cli_role_instance = 0;     // 0 denotes INTERNAL_ROLE. Other numbers denote instance number in Device.LocalAgent.ControllerTrust.Role.{i}
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -659,6 +669,7 @@ int ExecuteCli_Version(str_vector_t *args)
 **************************************************************************/
 int ExecuteCli_Get(str_vector_t *args)
 {
+    combined_role_t *combined_role;
 #ifndef REMOVE_USP_BROKER
     char *arg1;
 
@@ -666,7 +677,8 @@ int ExecuteCli_Get(str_vector_t *args)
     arg1 = args->vector[1];
 
     // Attempt to send and process a single get request to a USP Service, avoiding costly path resolution by the Broker
-    return USP_BROKER_DirectGetForCli(arg1);
+    combined_role = CalcCliCombinedRole();
+    return USP_BROKER_DirectGetForCli(arg1, combined_role);
 #else
     int i;
     int err;
@@ -682,7 +694,8 @@ int ExecuteCli_Get(str_vector_t *args)
     // Exit if unable to get a list of all parameters referenced by the expression
     STR_VECTOR_Init(&params);
     INT_VECTOR_Init(&group_ids);
-    err = PATH_RESOLVER_ResolvePath(arg1, &params, &group_ids, kResolveOp_Get, FULL_DEPTH, INTERNAL_ROLE, 0);
+    combined_role = CalcCliCombinedRole();
+    err = PATH_RESOLVER_ResolvePath(arg1, &params, &group_ids, kResolveOp_Get, FULL_DEPTH, combined_role, 0);
     if (err != USP_ERR_OK)
     {
         STR_VECTOR_Destroy(&params);
@@ -743,6 +756,8 @@ int ExecuteCli_Set(str_vector_t *args)
     str_vector_t objects;
     char param_name[MAX_DM_PATH];
     char search_path[MAX_DM_PATH];
+    combined_role_t *combined_role;
+    unsigned short permission_bitmask;
     char *arg1;
     char *arg2;
 
@@ -770,9 +785,18 @@ int ExecuteCli_Set(str_vector_t *args)
     }
 
     // Exit if unable to get a list of all objects referenced by the expression
-    err = PATH_RESOLVER_ResolvePath(search_path, &objects, NULL, kResolveOp_Set, FULL_DEPTH, INTERNAL_ROLE, 0);
+    combined_role = CalcCliCombinedRole();
+    err = PATH_RESOLVER_ResolvePath(search_path, &objects, NULL, kResolveOp_Set, FULL_DEPTH, combined_role, 0);
     if (err != USP_ERR_OK)
     {
+        goto exit;
+    }
+
+    // Exit if no objects matched
+    if (objects.num_entries == 0)
+    {
+        SendCliResponse("No objects were matched for setting\n");
+        err = USP_ERR_OBJECT_DOES_NOT_EXIST;
         goto exit;
     }
 
@@ -786,8 +810,24 @@ int ExecuteCli_Set(str_vector_t *args)
     // Iterate over all objects to set
     for (i=0; i < objects.num_entries; i++)
     {
-        // Exit if unable to set the value of the parameter
+        // Exit if failed to get the permissions for this parameter
         USP_SNPRINTF(path, sizeof(path), "%s.%s", objects.vector[i], param_name);
+        err = DATA_MODEL_GetPermissions(path, combined_role, &permission_bitmask, 0);
+        if (err != USP_ERR_OK)
+        {
+            DM_TRANS_Abort();
+            goto exit;
+        }
+
+        // Exit if the parameter is not permitted to be set
+        if ((permission_bitmask & PERMIT_SET) == 0)
+        {
+            SendCliResponse("Parameter %s is not permitted to be set\n", path);
+            DM_TRANS_Abort();
+            goto exit;
+        }
+
+        // Exit if unable to set the value of the parameter
         err = DATA_MODEL_SetParameterValue(path, arg2, CHECK_WRITABLE);
         if (err != USP_ERR_OK)
         {
@@ -845,21 +885,52 @@ int ExecuteCli_Add(str_vector_t *args)
     int instance_number;
     kv_vector_t unique_key_params;
     char *arg1;
+    str_vector_t err_msgs;
+    int_vector_t err_codes;
+    combined_role_t *combined_role;
 
-    USP_ASSERT(args->num_entries >= 2);
-    arg1 = args->vector[1];
+    // Initialise all vectors
+    STR_VECTOR_Init(&err_msgs);
+    INT_VECTOR_Init(&err_codes);
+    KV_VECTOR_Init(&unique_key_params);
+    STR_VECTOR_Init(&objects);
 
     // Split the object to add, into search path and (if one exists) instance number
     // NOTE: Trailing instance numbers may only be used on paths that do not contain complex search expressions
-    KV_VECTOR_Init(&unique_key_params);
-    STR_VECTOR_Init(&objects);
+    USP_ASSERT(args->num_entries >= 2);
+    arg1 = args->vector[1];
     instance_str = SplitOffTrailingNumber(arg1);
     search_path = arg1;
 
     // Exit if unable to get a list of all objects referenced by the expression
-    err = PATH_RESOLVER_ResolvePath(search_path, &objects, NULL, kResolveOp_Add, FULL_DEPTH, INTERNAL_ROLE, 0);
+    combined_role = CalcCliCombinedRole();
+    PATH_RESOLVER_AttachErrVector(&err_msgs, &err_codes);
+    err = PATH_RESOLVER_ResolvePath(search_path, &objects, NULL, kResolveOp_Add, FULL_DEPTH, combined_role, 0);
+    PATH_RESOLVER_AttachErrVector(NULL, NULL);
     if (err != USP_ERR_OK)
     {
+        goto exit;
+    }
+
+    // Exit if there was a permission error
+    if (err_msgs.num_entries > 0)
+    {
+        USP_ASSERT(err_msgs.vector != NULL);
+        USP_ASSERT(err_codes.vector != NULL);
+        USP_ASSERT(err_codes.num_entries > 0);
+        if (usp_log_level == kLogLevel_Off) // The error will have already been printed out to the CLI if the log level was anything higher
+        {
+            SendCliResponse("%s\n", err_msgs.vector[0]);
+        }
+        err = err_codes.vector[0];
+        goto exit;
+    }
+
+    // Exit if no objects matched
+    if (objects.num_entries == 0)
+    {
+        SendCliResponse("No objects were matched for addition\n");
+        err = USP_ERR_OBJECT_DOES_NOT_EXIST;
         goto exit;
     }
 
@@ -942,6 +1013,8 @@ int ExecuteCli_Add(str_vector_t *args)
 exit:
     KV_VECTOR_Destroy(&unique_key_params);
     STR_VECTOR_Destroy(&objects);
+    STR_VECTOR_Destroy(&err_msgs);
+    INT_VECTOR_Destroy(&err_codes);
     return err;
 }
 
@@ -963,6 +1036,7 @@ int ExecuteCli_Del(str_vector_t *args)
     dm_trans_vector_t trans;
     str_vector_t objects;
     char *arg1;
+    combined_role_t *combined_role;
 
     USP_ASSERT(args->num_entries >= 2);
     arg1 = args->vector[1];
@@ -970,9 +1044,18 @@ int ExecuteCli_Del(str_vector_t *args)
     STR_VECTOR_Init(&objects);
 
     // Exit if unable to get a list of all objects referenced by the expression
-    err = PATH_RESOLVER_ResolvePath(arg1, &objects, NULL, kResolveOp_Del, FULL_DEPTH, INTERNAL_ROLE, 0);
+    combined_role = CalcCliCombinedRole();
+    err = PATH_RESOLVER_ResolvePath(arg1, &objects, NULL, kResolveOp_Del, FULL_DEPTH, combined_role, 0);
     if (err != USP_ERR_OK)
     {
+        goto exit;
+    }
+
+    // Exit if no objects matched
+    if (objects.num_entries == 0)
+    {
+        SendCliResponse("No objects were matched for deletion\n");
+        err = USP_ERR_OBJECT_DOES_NOT_EXIST;
         goto exit;
     }
 
@@ -1042,6 +1125,7 @@ int ExecuteCli_Operate(str_vector_t *args)
     expr_op_t valid_ops[] = {kExprOp_Equals};
     expr_vector_t temp_ev;
     char *arg1;
+    combined_role_t *combined_role;
 
     USP_ASSERT(args->num_entries >= 2);
     arg1 = args->vector[1];
@@ -1086,9 +1170,18 @@ int ExecuteCli_Operate(str_vector_t *args)
     EXPR_VECTOR_ToKeyValueVector(&temp_ev, &input_args);
 
     // Exit if unable to get a list of all operations referenced by the expression
-    err = PATH_RESOLVER_ResolvePath(path, &operations, NULL, kResolveOp_Oper, FULL_DEPTH, INTERNAL_ROLE, 0);
+    combined_role = CalcCliCombinedRole();
+    err = PATH_RESOLVER_ResolvePath(path, &operations, NULL, kResolveOp_Oper, FULL_DEPTH, combined_role, 0);
     if (err != USP_ERR_OK)
     {
+        goto exit;
+    }
+
+    // Exit if no objects matched
+    if (operations.num_entries == 0)
+    {
+        SendCliResponse("No objects were matched for operate\n");
+        err = USP_ERR_OBJECT_DOES_NOT_EXIST;
         goto exit;
     }
 
@@ -1179,6 +1272,7 @@ int ExecuteCli_Event(str_vector_t *args)
     expr_op_t valid_ops[] = {kExprOp_Equals};
     expr_vector_t temp_ev;
     char *arg1;
+    combined_role_t *combined_role;
 
     USP_ASSERT(args->num_entries >= 2);
     arg1 = args->vector[1];
@@ -1229,9 +1323,18 @@ int ExecuteCli_Event(str_vector_t *args)
 
 resolved:
     // Exit if unable to get a list of all events referenced by the expression
-    err = PATH_RESOLVER_ResolvePath(arg1, &events, NULL, kResolveOp_Event, FULL_DEPTH, INTERNAL_ROLE, 0);
+    combined_role = CalcCliCombinedRole();
+    err = PATH_RESOLVER_ResolvePath(arg1, &events, NULL, kResolveOp_Event, FULL_DEPTH, combined_role, 0);
     if (err != USP_ERR_OK)
     {
+        goto exit;
+    }
+
+    // Exit if no objects matched
+    if (events.num_entries == 0)
+    {
+        SendCliResponse("No objects were matched for event\n");
+        err = USP_ERR_OBJECT_DOES_NOT_EXIST;
         goto exit;
     }
 
@@ -1268,13 +1371,15 @@ int ExecuteCli_GetInstances(str_vector_t *args)
     int err;
     str_vector_t obj_paths;
     char *arg1;
+    combined_role_t *combined_role;
 
     USP_ASSERT(args->num_entries >= 2);
     arg1 = args->vector[1];
 
     // Exit if unable to get a list of all parameters referenced by the expression
     STR_VECTOR_Init(&obj_paths);
-    err = PATH_RESOLVER_ResolvePath(arg1, &obj_paths, NULL, kResolveOp_Instances, FULL_DEPTH, INTERNAL_ROLE, GET_ALL_INSTANCES);
+    combined_role = CalcCliCombinedRole();
+    err = PATH_RESOLVER_ResolvePath(arg1, &obj_paths, NULL, kResolveOp_Instances, FULL_DEPTH, combined_role, GET_ALL_INSTANCES);
     if (err != USP_ERR_OK)
     {
         goto exit;
@@ -1388,6 +1493,57 @@ int ExecuteCli_Dump(str_vector_t *args)
 
 /*********************************************************************//**
 **
+** ExecuteCli_Role
+**
+** Executes the role CLI command
+**
+** \param   args - Entry [1] instance number of role in Device.LocalAgent.ControllerTrust.Role.{i}
+**                 or 0 if INTERNAL_ROLE should be used
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ExecuteCli_Role(str_vector_t *args)
+{
+    int items_converted;
+    int role_instance;
+    int role_index;
+
+    USP_ASSERT(args->num_entries >= 1);
+
+    // Exit if instance number cannot be parsed
+    items_converted = sscanf(args->vector[1], "%d", &role_instance);
+    if (items_converted != 1)
+    {
+        SendCliResponse("Role instance number ('%s') is not a number\n", args->vector[1]);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if role to use was the internal role
+    if (role_instance == 0)
+    {
+        SendCliResponse("CLI Role set to INTERNAL_ROLE (allow all)\n");
+        cli_role_instance = 0;
+        return USP_ERR_OK;
+    }
+
+    // Exit if unable to convert the role instance number into the internal index number
+    role_index = DEVICE_CTRUST_RoleInstanceToIndex(role_instance);
+    if (role_index == INVALID)
+    {
+        SendCliResponse("Role instance number (%d) does not match any of the entries in the Device.LocalAgent.ControllerTrust.Role table\n", role_instance);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Setup CLI to use this role for subsequent commands
+    SendCliResponse("CLI Role set to Device.LocalAgent.ControllerTrust.Role.%d\n", role_instance);
+    cli_role_instance = role_instance;
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** ExecuteCli_Perm
 **
 ** Executes the perm CLI command
@@ -1401,8 +1557,6 @@ int ExecuteCli_Perm(str_vector_t *args)
 {
     int role_index;
     unsigned short perm;
-    char path[MAX_DM_PATH];
-    char role_name[MAX_DM_SHORT_VALUE_LEN];
     combined_role_t combined_role;
     int role_instance;
     int err;
@@ -1421,14 +1575,6 @@ int ExecuteCli_Perm(str_vector_t *args)
             continue;
         }
 
-        // Get the name of the role
-        USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.ControllerTrust.Role.%d.Name", role_instance);
-        err = DATA_MODEL_GetParameterValue(path, role_name, sizeof(role_name), DONT_LOG_NO_INSTANCE_ERROR);
-        if (err != USP_ERR_OK)
-        {
-            continue;
-        }
-
         // Get the permissions for the specified parameter or object
         combined_role.inherited_index = role_index;
         combined_role.assigned_index = role_index;
@@ -1440,9 +1586,8 @@ int ExecuteCli_Perm(str_vector_t *args)
 
         // Since successful, send back the permissions for the parameter
         #define PERMISSION_CHAR(bitmask, c, mask) ( ((bitmask & mask) == 0) ? '-' : c )
-        SendCliResponse("Role.%d (Name=%s) : Param(%c%c-%c) Obj(%c%c-%c) InstantiatedObj(%c%c-%c) CommandEvent(%c-%c%c)\n",
+        SendCliResponse("Role.%d   Param(%c%c-%c) Obj(%c%c-%c) InstantiatedObj(%c%c-%c) CommandEvent(%c-%c%c)\n",
                          role_instance,
-                         role_name,
                          PERMISSION_CHAR(perm, 'r', PERMIT_GET),
                          PERMISSION_CHAR(perm, 'w', PERMIT_SET),
                          PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_VAL_CHANGE),
@@ -1458,6 +1603,91 @@ int ExecuteCli_Perm(str_vector_t *args)
                          PERMISSION_CHAR(perm, 'r', PERMIT_CMD_INFO),
                          PERMISSION_CHAR(perm, 'x', PERMIT_OPER),
                          PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_EVT_OPER_COMP) );
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** ExecuteCli_PermSel
+**
+** Executes the permsel CLI command
+**
+** \param   args - Entry [1] instance number of role to get the permission selectors for
+**                 Entry [2] data model path of parameter or object to get the permission selectors for
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ExecuteCli_PermSel(str_vector_t *args)
+{
+    int i;
+    int role_instance;
+    int role_index;
+    dm_node_t *node;
+    inst_sel_vector_t *isv;
+    inst_sel_t *is;
+    unsigned short perm;
+    int items_converted;
+    int perm_instance;
+    char *perm_target;
+
+    // Exit if instance number cannot be parsed
+    items_converted = sscanf(args->vector[1], "%d", &role_instance);
+    if (items_converted != 1)
+    {
+        SendCliResponse("Role instance number ('%s') is invalid\n", args->vector[1], MAX_CTRUST_ROLES);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if role instance number does not exist
+    role_index = DEVICE_CTRUST_RoleInstanceToIndex(role_instance);
+    if (role_index == INVALID)
+    {
+        SendCliResponse("Role instance number (%d) does not exist\n", args->vector[1], role_instance);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if unable to find the path in the data model
+    node = DM_PRIV_GetNodeFromPath(args->vector[2], NULL, NULL, 0);
+    if (node == NULL)
+    {
+        SendCliResponse("Unknown data model path '%s'\n", args->vector[2]);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Iterate over all instance selectors, logging them
+    isv = &node->permissions[role_index];
+    for (i=0; i < isv->num_entries; i++)
+    {
+        // Write the instance number of this permission into a buffer
+        is = isv->vector[i];
+        perm_target = DEVICE_CTRUST_InstSelToPermTarget(role_index, is, &perm_instance);
+        USP_ASSERT(perm_target != NULL);
+        SendCliResponse("Permission.%d", perm_instance);
+
+        // Write the permissions associated with the instance selector into a buffer
+        perm = is->permission_bitmask;
+        SendCliResponse("   Param(%c%c-%c) Obj(%c%c-%c) InstantiatedObj(%c%c-%c) CommandEvent(%c-%c%c)",
+                     PERMISSION_CHAR(perm, 'r', PERMIT_GET),
+                     PERMISSION_CHAR(perm, 'w', PERMIT_SET),
+                     PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_VAL_CHANGE),
+
+                     PERMISSION_CHAR(perm, 'r', PERMIT_OBJ_INFO),
+                     PERMISSION_CHAR(perm, 'w', PERMIT_ADD),
+                     PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_OBJ_ADD),
+
+                     PERMISSION_CHAR(perm, 'r', PERMIT_GET_INST),
+                     PERMISSION_CHAR(perm, 'w', PERMIT_DEL),
+                     PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_OBJ_DEL),
+
+                     PERMISSION_CHAR(perm, 'r', PERMIT_CMD_INFO),
+                     PERMISSION_CHAR(perm, 'x', PERMIT_OPER),
+                     PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_EVT_OPER_COMP) );
+
+        // Write the target of the permission into the buffer
+        SendCliResponse("  %s\n", perm_target);
     }
 
     return USP_ERR_OK;
@@ -1914,6 +2144,45 @@ int SplitSetExpression(char *expr, char *search_path, int search_path_len, char 
     }
 
     return USP_ERR_OK;
+}
+
+
+/*********************************************************************//**
+**
+** CalcCliCombinedRole
+**
+** Calculates the combined_role to use when executing a CLI command
+**
+** \param   None
+**
+** \return  pointer to combined_role structure to use, or INTERNAL_ROLE if no permissions should be used
+**
+**************************************************************************/
+combined_role_t *CalcCliCombinedRole(void)
+{
+    static combined_role_t cli_combined_role;
+    int role_index;
+
+    // Exit if role to use was the internal role
+    if (cli_role_instance == 0)
+    {
+        return INTERNAL_ROLE;
+    }
+
+    // Exit if unable to convert the role instance number into the current internal index number
+    role_index = DEVICE_CTRUST_RoleInstanceToIndex(cli_role_instance);
+    if (role_index == INVALID)
+    {
+        SendCliResponse("CLI Role instance number (%d) does not match any of the entries in the Device.LocalAgent.ControllerTrust.Role table\n", cli_role_instance);
+        SendCliResponse("Using INTERNAL_ROLE (allow all) instead\n");
+        return INTERNAL_ROLE;
+    }
+
+    // Return a combined role that uses the role_index of the specified CLI role
+    SendCliResponse("Executing CLI command using Role.%d\n", cli_role_instance);
+    cli_combined_role.inherited_index = role_index;
+    cli_combined_role.assigned_index = role_index;
+    return &cli_combined_role;
 }
 
 /*********************************************************************//**
