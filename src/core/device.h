@@ -197,6 +197,11 @@ typedef struct
 } mtp_conn_t;
 
 //------------------------------------------------------------------------------
+// Define for the which_controller argument of DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions() to denote that
+// we should send the event to all controllers which have enabled subscriptions
+#define ALL_CONTROLLERS   (-1)
+
+//------------------------------------------------------------------------------
 // Data model components API
 #ifndef REMOVE_DEVICE_TIME
 int DEVICE_TIME_Init(void);
@@ -267,7 +272,7 @@ void DEVICE_SUBSCRIPTION_ResolveObjectCreationPaths(void);
 void DEVICE_SUBSCRIPTION_ResolveObjectDeletionPaths(void);
 void DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(char *obj_path, subs_notify_t notify_type);
 void DEVICE_SUBSCRIPTION_ProcessAllObjectLifeEventSubscriptions(void);
-void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, kv_vector_t *output_args);
+void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, kv_vector_t *output_args, int which_controller);
 void DEVICE_SUBSCRIPTION_SendPeriodicEvent(int cont_instance);
 void DEVICE_SUBSCRIPTION_NotifyControllerDeleted(int cont_instance);
 int DEVICE_SUBSCRIPTION_GetControllerInstance(int instance);
@@ -317,6 +322,7 @@ int DEVICE_BULKDATA_Init(void);
 int DEVICE_BULKDATA_Start(void);
 void DEVICE_BULKDATA_Stop(void);
 void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
+void DEVICE_BULKDATA_NotifyControllerDeleted(int cont_instance);
 #ifndef REMOVE_SELF_TEST_DIAG_EXAMPLE
 int DEVICE_SELF_TEST_Init(void);
 #endif

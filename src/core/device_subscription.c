@@ -463,11 +463,12 @@ void DEVICE_SUBSCRIPTION_ProcessAllOperationCompleteSubscriptions(char *command,
 **
 ** \param   event_name - name of the event
 ** \param   output_args - arguments associated with of the event. NULL indicates no output arguments.
+** \param   cont_instance - instance number of subscribed controller which is allowed to receive this USP event, or ALL_CONTROLLERS if all subscribed controllers are allowed to
 **
 ** \return  None - This code must handle any errors
 **
 **************************************************************************/
-void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, kv_vector_t *output_args)
+void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, kv_vector_t *output_args, int cont_instance)
 {
     int i;
     subs_t *sub;
@@ -498,7 +499,8 @@ void DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(char *event_name, 
     for (i=0; i < subscriptions.num_entries; i++)
     {
         sub = &subscriptions.vector[i];
-        if ((sub->enable) && (sub->notify_type == kSubNotifyType_Event))
+        if ( (sub->enable) && (sub->notify_type == kSubNotifyType_Event) &&
+             ((cont_instance == ALL_CONTROLLERS) || (sub->cont_instance==cont_instance)) )
         {
             // Send the event, if it matches this subscription
             if (DoesSubscriptionSendNotification(sub, event_name))

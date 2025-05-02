@@ -245,7 +245,7 @@ void bulkdata_process_profile_http(bulkdata_profile_t *bp);
 void bulkdata_process_profile_usp_event(bulkdata_profile_t *bp);
 bulkdata_profile_t *bulkdata_find_free_profile(void);
 bulkdata_profile_t *bulkdata_find_profile(int profile_id);
-int bulkdata_calc_report_map(bulkdata_profile_t *bp, kv_vector_t *report_map);
+int bulkdata_calc_report_map(bulkdata_profile_t *bp, kv_vector_t *report_map, combined_role_t *combined_role);
 int bulkdata_reduce_to_alt_name(char *spec, char *path, char *alt_name, char *out_buf, int buf_len);
 char *bulkdata_generate_json_report(bulkdata_profile_t *bp, char *report_timestamp);
 unsigned char *bulkdata_compress_report(profile_ctrl_params_t *ctrl, char *input_buf, int input_len, int *p_output_len);
@@ -260,8 +260,10 @@ int bulkdata_platform_get_uri_query_name_map(int profile_id, kv_vector_t *name_m
 int bulkdata_platform_calc_uri_query_escaped_map(kv_vector_t *name_map, kv_vector_t *escaped_map);
 char *bulkdata_platform_calc_uri_query_string(kv_vector_t *escaped_map);
 int bulkdata_platform_get_param_refs(int profile_id, param_ref_vector_t *param_refs);
-void bulkdata_expand_param_ref(param_ref_entry_t *pr, group_get_vector_t *ggv);
+int bulkdata_platform_calc_combined_role(int instance, combined_role_t **bulkdata_role, combined_role_t *combined_role, int *cont_instance);
+void bulkdata_expand_param_ref(param_ref_entry_t *pr, group_get_vector_t *ggv, combined_role_t *combined_role);
 void bulkdata_append_to_result_map(param_ref_entry_t *pr, group_get_vector_t *ggv, kv_vector_t *report_map);
+int GetAuto_BulkDataController(dm_req_t *req, char *buf, int len);
 #ifdef ENABLE_MQTT
 int Validate_BulkDataMqttReference(dm_req_t *req, char *value);
 void bulkdata_process_profile_mqtt(bulkdata_profile_t *bp);
@@ -317,6 +319,7 @@ int DEVICE_BULKDATA_Init(void)
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.EncodingType", BULKDATA_ENCODING_TYPE, Validate_BulkDataEncodingType, NULL, DM_STRING);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.ReportingInterval", "86400", Validate_BulkDataReportingInterval, NotifyChange_BulkDataReportingInterval, DM_UINT);
     err |= USP_REGISTER_DBParam_ReadWrite("Device.BulkData.Profile.{i}.TimeReference", UNKNOWN_TIME_STR, NULL, NotifyChange_BulkDataTimeReference, DM_DATETIME);
+    err |= USP_REGISTER_DBParam_ReadOnlyAuto("Device.BulkData.Profile.{i}.Controller", GetAuto_BulkDataController, DM_STRING);
 
     // Device.BulkData.Profile.{i}.Parameter.{i}
     err |= USP_REGISTER_Object("Device.BulkData.Profile.{i}.Parameter.{i}", NULL, NULL, NULL,
@@ -520,6 +523,76 @@ void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bdc_transfer_result_t 
 
     // Uncomment the next line to see how much memory is in use by USP Agent after each post
     //USP_MEM_PrintSummary();
+}
+
+/*********************************************************************//**
+**
+** DEVICE_BULKDATA_NotifyControllerDeleted
+**
+** Deletes all bulk data profiles that were created by the specified controller, after the controller has been deleted
+**
+** \param   cont_instance - instance number of the controller in Device.LocalAgent.Controller.{i}
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_BULKDATA_NotifyControllerDeleted(int cont_instance)
+{
+    int i;
+    int err;
+    int instance;
+    bulkdata_profile_t *bp;
+    char path[MAX_DM_PATH];
+    char controller_path[MAX_DM_PATH];
+    char *p;
+
+    // Iterate over all bulk data profiles, deleting all that were created by the specified controller
+    for (i=0; i<BULKDATA_MAX_PROFILES; i++)
+    {
+        bp = &bulkdata_profiles[i];
+
+        // Skip if this profile is not in use
+        if (bp->profile_id == INVALID)
+        {
+            continue;
+        }
+
+        // Skip if unable to get Controller (value = reference to row in controller table). NOTE: This should never happen
+        USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d.Controller", bp->profile_id);
+        err = DATA_MODEL_GetParameterValue(path, controller_path, sizeof(controller_path), 0);
+        if (err != USP_ERR_OK)
+        {
+            continue;
+        }
+
+        // Skip if no controller specified. This may occur when using a USP DB that was created prior to the Profile.{i}.Controller parameter being supported
+        if (controller_path[0] == '\0')
+        {
+            continue;
+        }
+
+        // Skip if unable to extract the instance number of the controller that created this profile. NOTE: This should not happen
+        // NOTE: We cannot use DM_ACCESS_ValidateReference() to convert the reference to an instance number, because it checks that
+        // the controller instance in the reference still exists, and it doesn't by this time
+        p = strrchr(controller_path, '.');
+        if (p == NULL)
+        {
+            continue;
+        }
+
+        instance = atoi(&p[1]);
+        if (instance==0)
+        {
+            continue;
+        }
+
+        // Delete this profile, since the controller which created it was deleted
+        if (instance == cont_instance)
+        {
+            USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d", bp->profile_id);
+            DATA_MODEL_DeleteInstance(path, 0);        // NOTE: This will cascade to delete from bulkdata_profiles[] via the delete hook callback
+        }
+    }
 }
 
 /*********************************************************************//**
@@ -868,6 +941,30 @@ int Validate_BulkDataMqttReference(dm_req_t *req, char *value)
     return err;
 }
 #endif
+
+/*********************************************************************//**
+**
+** GetAuto_BulkDataController
+**
+** Function called when adding a new profile row, to auto populate the name of the controller that created this profile
+** (This will be a reference to the controller who posted the AddRequest that caused this function to be called)
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   buf - pointer to buffer in which to return the auto populated value
+** \param   len - length of return buffer
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int GetAuto_BulkDataController(dm_req_t *req, char *buf, int len)
+{
+    int instance;
+
+    instance = MSG_HANDLER_GetMsgControllerInstance();
+    USP_SNPRINTF(buf, len, "Device.LocalAgent.Controller.%d", instance);
+
+    return USP_ERR_OK;
+}
 
 /*********************************************************************//**
 **
@@ -1721,11 +1818,12 @@ char *bulkdata_platform_calc_uri_query_string(kv_vector_t *escaped_map)
 ** \param   context - pointer to global bulkdata context
 ** \param   bp - pointer to bulk data profile to get the report map for
 ** \param   report_map - initialised map in which to return the report map
+** \param   combined_role - role to use for permissions when resolving the path expressions
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int bulkdata_calc_report_map(bulkdata_profile_t *bp, kv_vector_t *report_map)
+int bulkdata_calc_report_map(bulkdata_profile_t *bp, kv_vector_t *report_map, combined_role_t *combined_role)
 {
     int err;
     int i;
@@ -1752,7 +1850,7 @@ int bulkdata_calc_report_map(bulkdata_profile_t *bp, kv_vector_t *report_map)
     GROUP_GET_VECTOR_Init(&ggv);
     for (i=0; i < param_refs.num_entries; i++)
     {
-        bulkdata_expand_param_ref(&param_refs.vector[i], &ggv);
+        bulkdata_expand_param_ref(&param_refs.vector[i], &ggv, combined_role);
     }
 
     // Get all parameters
@@ -1874,11 +1972,12 @@ exit:
 **
 ** \param   pr - pointer to parameter reference to expand
 ** \param   ggv - pointer to vector to add params found in this path expression to
+** \param   combined_role - role to use for permissions when resolving the path expression
 **
 ** \return  None
 **
 **************************************************************************/
-void bulkdata_expand_param_ref(param_ref_entry_t *pr, group_get_vector_t *ggv)
+void bulkdata_expand_param_ref(param_ref_entry_t *pr, group_get_vector_t *ggv, combined_role_t *combined_role)
 {
     int err;
     str_vector_t params;
@@ -1888,8 +1987,7 @@ void bulkdata_expand_param_ref(param_ref_entry_t *pr, group_get_vector_t *ggv)
     INT_VECTOR_Init(&group_ids);
 
     // Exit if unable to get the resolved paths
-    // NOTE: This uses the full access role because the Bulk Data Collector is not a Controller and hence not subject to ControllerTrust permissions
-    err = PATH_RESOLVER_ResolveDevicePath(pr->path_expr, &params, &group_ids, kResolveOp_GetBulkData, FULL_DEPTH, INTERNAL_ROLE, DONT_LOG_RESOLVER_ERRORS);
+    err = PATH_RESOLVER_ResolveDevicePath(pr->path_expr, &params, &group_ids, kResolveOp_GetBulkData, FULL_DEPTH, combined_role, DONT_LOG_RESOLVER_ERRORS);
     if (err != USP_ERR_OK)
     {
         STR_VECTOR_Destroy(&params);
@@ -2092,6 +2190,66 @@ int bulkdata_platform_get_profile_control_params(bulkdata_profile_t *bp, profile
     }
 }
 #endif
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+**  bulkdata_platform_calc_combined_role
+**
+**  Calculates the combined role of the controller in Device.BulkData.Profile.{i}.Controller
+**
+** \param   instance - instance number in Device.BulkData.Profile.{i}
+** \param   bulkdata_role - pointer to variable in which to return a pointer to the role to use
+** \param   combined_role - pointer to variable in which to store the calculated role (if it's not INTERNAL_ROLE)
+** \param   cont_instance - pointer to variable in which to return the controller instance number in Device.BulkData.Profile.{i}.Controller
+**
+** \return  USP_ERR_OK if operation completed successfully
+**
+**************************************************************************/
+int bulkdata_platform_calc_combined_role(int instance, combined_role_t **bulkdata_role, combined_role_t *combined_role, int *cont_instance)
+{
+    int err;
+    char path[MAX_DM_PATH];
+    char controller_path[MAX_DM_PATH];
+
+    // Default, if no controller specified. This is needed to cope with data model parameters configured before the Controller parameter was added
+
+    // Exit if unable to get Controller (value = reference to row in controller table)
+    USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d.Controller", instance);
+    err = DATA_MODEL_GetParameterValue(path, controller_path, sizeof(controller_path), 0);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if no controller specified. This may occur when using a USP DB that was created prior to the Profile.{i}.Controller parameter being supported
+    // In this case, the old behaviour was to apply no permissions, so honour that behaviour for backwards compatibility
+    if (controller_path[0] == '\0')
+    {
+        *bulkdata_role = INTERNAL_ROLE;
+        *cont_instance = ALL_CONTROLLERS;  // Allow the old behaviour for sending Push! events was to any subscribed controller, not just the one specified by the Profile.{i}.Controller
+        return USP_ERR_OK;
+    }
+
+    // Exit if unable to extract the instance number of the controller that created this profile
+    // NOTE: If the controller is deleted, then this profile should have been deleted
+    err = DM_ACCESS_ValidateReference(controller_path, "Device.LocalAgent.Controller.{i}", cont_instance);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit if unable to calculate the role associated with this controller
+    err = DEVICE_CONTROLLER_GetCombinedRoleByInstance(*cont_instance, combined_role);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Role has been successfuly calculated in combined_role, so return that as the role to use
+    *bulkdata_role = combined_role;
 
     return USP_ERR_OK;
 }
@@ -2339,9 +2497,19 @@ void bulkdata_process_profile_http(bulkdata_profile_t *bp)
     unsigned char *compressed_report;
     int compressed_len;
     char buf[48];
+    combined_role_t *bulkdata_role;
+    combined_role_t combined_role;
+    int cont_instance;
 
     // Exit if unable to obtain the control parameters for this profile
     err = bulkdata_platform_get_profile_control_params(bp, &ctrl);
+    if (err != USP_ERR_OK)
+    {
+        return;
+    }
+
+    // Exit if unable to calculate the role to use when getting the parameters
+    err = bulkdata_platform_calc_combined_role(bp->profile_id, &bulkdata_role, &combined_role, &cont_instance);
     if (err != USP_ERR_OK)
     {
         return;
@@ -2363,7 +2531,7 @@ void bulkdata_process_profile_http(bulkdata_profile_t *bp)
         KV_VECTOR_Init(&cur_report->report_map);
 
         // Exit if unable to get the map containing the report contents
-        err = bulkdata_calc_report_map(bp, &cur_report->report_map);
+        err = bulkdata_calc_report_map(bp, &cur_report->report_map, bulkdata_role);
         if (err != USP_ERR_OK)
         {
             USP_ERR_SetMessage("%s: bulkdata_calc_report_map failed", __FUNCTION__);
@@ -2424,12 +2592,22 @@ void bulkdata_process_profile_usp_event(bulkdata_profile_t *bp)
     report_t *cur_report;
     char *json_report;
     char report_timestamp[33];
+    combined_role_t *bulkdata_role;
+    combined_role_t combined_role;
+    int cont_instance;
 
     // Exit if the MTP has not been connected to successfully after bootup
     // This is to prevent BDC events being enqueued before the Boot! event is sent (the Boot! event is only sent after successfully connecting to the MTP).
     if (DM_EXEC_IsNotificationsEnabled() == false)
     {
         goto exit;
+    }
+
+    // Exit if unable to calculate the role to use when getting the parameters
+    err = bulkdata_platform_calc_combined_role(bp->profile_id, &bulkdata_role, &combined_role, &cont_instance);
+    if (err != USP_ERR_OK)
+    {
+        return;
     }
 
     // Exit if unable to get ReportTimestamp
@@ -2448,7 +2626,7 @@ void bulkdata_process_profile_usp_event(bulkdata_profile_t *bp)
     KV_VECTOR_Init(&cur_report->report_map);
 
     // Exit if unable to get the map containing the report contents
-    err = bulkdata_calc_report_map(bp, &cur_report->report_map);
+    err = bulkdata_calc_report_map(bp, &cur_report->report_map, bulkdata_role);
     if (err != USP_ERR_OK)
     {
         USP_ERR_SetMessage("%s: bulkdata_calc_report_map failed", __FUNCTION__);
@@ -2473,7 +2651,7 @@ void bulkdata_process_profile_usp_event(bulkdata_profile_t *bp)
     event_args.num_entries = 1;
 
     USP_SNPRINTF(path, sizeof(path), "Device.BulkData.Profile.%d.Push!", bp->profile_id);
-    DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(path, &event_args);
+    DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(path, &event_args, cont_instance);
 
     // Free the report. No need to free the event_args as json_report is the only thing dynamically allocated in it
     free(json_report);      // The report is not allocated via USP_MALLOC
@@ -2514,9 +2692,19 @@ void bulkdata_process_profile_mqtt(bulkdata_profile_t *bp)
     char *report;
     profile_ctrl_params_t ctrl;
     char buf[48];
+    combined_role_t *bulkdata_role;
+    combined_role_t combined_role;
+    int cont_instance;
 
     // Exit if unable to obtain the control parameters for this profile
     err = bulkdata_platform_get_profile_control_params(bp, &ctrl);
+    if (err != USP_ERR_OK)
+    {
+        return;
+    }
+
+    // Exit if unable to calculate the role to use when getting the parameters
+    err = bulkdata_platform_calc_combined_role(bp->profile_id, &bulkdata_role, &combined_role, &cont_instance);
     if (err != USP_ERR_OK)
     {
         return;
@@ -2538,7 +2726,7 @@ void bulkdata_process_profile_mqtt(bulkdata_profile_t *bp)
         KV_VECTOR_Init(&cur_report->report_map);
 
         // Exit if unable to get the map containing the report contents
-        err = bulkdata_calc_report_map(bp, &cur_report->report_map);
+        err = bulkdata_calc_report_map(bp, &cur_report->report_map, bulkdata_role);
         if (err != USP_ERR_OK)
         {
             USP_ERR_SetMessage("%s: bulkdata_calc_report_map failed", __FUNCTION__);

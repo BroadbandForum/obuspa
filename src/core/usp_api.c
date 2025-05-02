@@ -316,7 +316,7 @@ int USP_DM_InformDataModelEvent(char *event_name, kv_vector_t *output_args)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(event_name, output_args);
+    DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(event_name, output_args, ALL_CONTROLLERS);
 
     return USP_ERR_OK;
 }

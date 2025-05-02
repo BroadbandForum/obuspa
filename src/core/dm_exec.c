@@ -1808,7 +1808,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
 
         case kDmExecMsg_EventComplete:
             ecm = &msg.params.event_complete;
-            DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(ecm->event_name, ecm->output_args);
+            DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(ecm->event_name, ecm->output_args, ALL_CONTROLLERS);
             break;
 
         case kDmExecMsg_OperStatus:

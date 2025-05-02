@@ -1342,7 +1342,7 @@ resolved:
     for (i=0; i < events.num_entries; i++)
     {
         SendCliResponse("Event (%s) being signalled\n", events.vector[i]);
-        DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(events.vector[i], &event_args);
+        DEVICE_SUBSCRIPTION_ProcessAllEventCompleteSubscriptions(events.vector[i], &event_args, ALL_CONTROLLERS);
     }
 
     err = USP_ERR_OK;
