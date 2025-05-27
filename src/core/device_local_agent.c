@@ -1180,7 +1180,7 @@ int Start_ScheduleTimer(dm_req_t *req, kv_vector_t *input_args, int instance)
     if (cond->delay_seconds == INVALID_DELAY_SECONDS)
     {
         USP_ERR_SetMessage("%s: DelaySeconds argument not specified", __FUNCTION__);
-        err = USP_ERR_COMMAND_FAILURE;
+        err = USP_ERR_INVALID_COMMAND_ARGS;
         goto exit;
     }
 
@@ -1210,7 +1210,7 @@ exit:
     if (err != USP_ERR_OK)
     {
         USP_FREE(cond);
-        return USP_ERR_COMMAND_FAILURE;
+        return err;
     }
 
     // Ownership of the input conditions has passed to the thread

@@ -2576,7 +2576,9 @@ int Notify_ControllerDeleted(dm_req_t *req)
 
     // Delete all subscriptions and bulk data profiles owned by this controller
     DEVICE_SUBSCRIPTION_NotifyControllerDeleted(inst1);
+#ifndef REMOVE_DEVICE_BULKDATA
     DEVICE_BULKDATA_NotifyControllerDeleted(inst1);
+#endif
 
 #ifdef ENABLE_MQTT
     DEVICE_MQTT_UpdateControllerTopics();

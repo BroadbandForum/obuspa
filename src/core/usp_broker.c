@@ -3477,14 +3477,16 @@ unsigned UpdateEventsAndCommands(usp_service_t *us)
     STR_VECTOR_Init(&commands);
 
     // Iterate over all paths registered by the USP Service, finding all events and async commands underneath them
+    // NOTE: If the path was not in the GSDM response, then it may be registered, but not present in the data model
     for (i=0; i < us->registered_paths.num_entries; i++)
     {
         node = DM_PRIV_GetNodeFromPath(us->registered_paths.vector[i], NULL, NULL, 0);
-        USP_ASSERT(node != NULL);
-
-        // NOTE: There is no need to check group_id, as USP 1.4 specification ensures that all DM elements underneath a
-        // registered object are owned by the same USP Service as the registered object
-        DM_PRIV_GetAllEventsAndCommands(node, &events, &commands);
+        if (node != NULL)
+        {
+            // NOTE: There is no need to check group_id, as USP 1.4 specification ensures that all DM elements underneath a
+            // registered object are owned by the same USP Service as the registered object
+            DM_PRIV_GetAllEventsAndCommands(node, &events, &commands);
+        }
     }
 
     change_flags |= UpdateDeviceDotNotificationList(&events, &us->events, EVENTS_LIST_CHANGED);
