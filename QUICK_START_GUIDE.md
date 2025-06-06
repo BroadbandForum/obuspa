@@ -197,7 +197,33 @@ For example, to query the value of all parameters in the DeviceInfo object when 
 $ obuspa -c get "Device.DeviceInfo."
 ```
 
-The CLI mode also supports adding and deleting instances of data model objects and running USP commands.
+* For example to add a bulk data profile use:
+```
+$ obuspa -c add "Device.BulkData.Profile."
+```
+
+* For example to delete a bulk data profile using a search expression use:
+```
+$ obuspa -c del "Device.BulkData.Profile.[Alias==\"cpe-1\"]."
+```
+
+* For example to initiate a reboot, specifying input arguments use:
+```
+$ obuspa -c operate "Device.Reboot(Cause='LocalReboot',Reason='WebUI')"
+```
+
+* For example to force OBUSPA to generate a Boot! event with arguments for testing purposes (assuming a subscription has also been setup) use:
+```
+$ obuspa -c event "Device.Boot!(CommandKey='R1', Cause='LocalReboot', FirmwareUpdated='false', ParameterMap='{\"Device.DeviceInfo.SerialNumber\":\"SN0001\"}' )"
+```
+
+IMPORTANT: When using USP CLI commands you must be aware of the rules that the Bash shell places on command lines.
+In particular, each argument to the USP CLI command usually needs to be enclosed by double-quotes, 
+and double-quotes within the CLI command's arguments must be escaped with a backslash character.
+
+
+
+
 
 ## OB-USP-AGENT Source Tree
 The /src directory contains the following subdirectories:

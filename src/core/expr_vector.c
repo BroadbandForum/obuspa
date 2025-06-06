@@ -410,11 +410,15 @@ int ParseExprComponent(char *buf, char **p_relative_path, expr_op_t *p_op, char 
         return USP_ERR_INVALID_PATH_SYNTAX;
     }
 
-    // Exit if the expression constant still contains speech marks
-    if (strchr(expr_const, '\"') != NULL)
+    // Exit if the expression constant still contains speech marks. This is an error according to USP Spec Data Model Path Grammar BNF
+    // However we allow it for CLI initiated USP command and event arguments, as they may contain JSON formatted data
+    if (is_cli_parser == false)
     {
-        USP_ERR_SetMessage("%s: Expression constant '%s' is not valid", __FUNCTION__, expr_const);
-        return USP_ERR_INVALID_PATH_SYNTAX;
+        if (strchr(expr_const, '\"') != NULL)
+        {
+            USP_ERR_SetMessage("%s: Expression constant '%s' is not valid", __FUNCTION__, expr_const);
+            return USP_ERR_INVALID_PATH_SYNTAX;
+        }
     }
 
     // Convert % escaped characters in the expression constant to their equivalent value

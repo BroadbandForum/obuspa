@@ -740,7 +740,20 @@ exit:
         }
     }
 
-    // Reset the flag that prevents us resolving the subscription paths more than one per DM_EXEC processing cycle
+
+    // Clear the skip_obj_notifications flag for all subscriptions. This flag will have prevented notifications being generated above
+    // for the baseline set of instances that existed when the subscription was first enabled.
+    // So now we can reset it, as it's served it's purpose. The subscription should fire for all further matching object life events
+    for (i=0; i < subscriptions.num_entries; i++)
+    {
+        sub = &subscriptions.vector[i];
+        if (sub->skip_obj_notifications)
+        {
+            sub->skip_obj_notifications = false;
+        }
+    }
+
+    // Reset the flag that prevents us resolving the subscription paths more than once per DM_EXEC processing cycle
     object_creation_paths_resolved = false;
     object_deletion_paths_resolved = false;
 }
@@ -2847,7 +2860,6 @@ void ProcessObjectLifeEventSubscription(subs_t *sub)
     // obtaining a baseline set of objects (and hence should not fire any notifications from this subscription, but may fire notifications from others)
     if (sub->skip_obj_notifications)
     {
-        sub->skip_obj_notifications = false; // Reset the flag, so that the subscription will fire notifications subsequently
         return;
     }
 
