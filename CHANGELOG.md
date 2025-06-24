@@ -1,5 +1,10 @@
 # OB-USP-AGENT Changelog since Release 10.0.0
 
+## 2025-06-24 v10.0.4
+### Fixed
+- ControllerTrust Permission Order uniqueness should be enforced when Add request with allow_partial=false adds multiple permissions with the same Order
+- GSDM response should not contain unique keys for child objects when first_level_only=true
+
 ## 2025-06-06 v10.0.3
 ### Fixed
 - First object creation notification after bootup may be missed

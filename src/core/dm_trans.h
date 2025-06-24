@@ -63,11 +63,12 @@ typedef enum
 typedef struct
 {
     dm_op_t op;         // Operation (add/delete/set)
-    char *path;         // full data model path to parameter or objet to notify
+    char *path;         // full data model path to parameter or object to notify
     char *value;        // value of parameter (only used by kTransType_Set)
     dm_node_t *node;    // Node in the data model representing the parameter or object
     dm_req_instances_t inst;    // Instance array containing the instance numbers in the path
     dm_val_union_t val_union;  // Stores the native value of the parameter (only used by kTransType_Set). If the parameter is a string, then it will point to the 'value' parameter in this structure
+    bool is_part_of_add; // (only used by kTransType_Set) Flag specifying whether the set was part of an add object. This is used to prevent the notify functions being called for parameter sets when the parameter set was part of an object Add
 } dm_trans_t;
 
 //-----------------------------------------------------------------------
@@ -85,5 +86,6 @@ void DM_TRANS_Add(dm_op_t op, char *path, char *value, dm_val_union_t *val_union
 int DM_TRANS_Commit(void);
 int DM_TRANS_Abort(void);
 bool DM_TRANS_IsWithinTransaction(void);
+void DM_TRANS_GetParamWritesByPathSpec(char *path_spec, kv_vector_t *kvv);
 
 #endif

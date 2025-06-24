@@ -66,6 +66,7 @@
 #include "dm_inst_vector.h"
 #include "inst_sel_vector.h"
 #include "database.h"
+#include "dm_trans.h"
 
 //------------------------------------------------------------------------------
 // Location of the controller trust tables within the data model
@@ -989,11 +990,41 @@ int Validate_CTrustRoleName(dm_req_t *req, char *value)
 int Validate_CTrustPermOrder(dm_req_t *req, char *value)
 {
     role_t *role;
+    kv_vector_t uncommitted_params;
+    kv_pair_t *kv;
+    int i;
+    int err;
+    char path_spec[MAX_DM_PATH];
 
     role = FindRoleByInstance(inst1);
     USP_ASSERT(role != NULL);
 
-    return ValidatePermOrderUnique(role, val_uint, inst2);
+    // Exit if this order is not unique amongst permissions which have successfully committed to the database
+    err = ValidatePermOrderUnique(role, val_uint, inst2);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Get a list of 'Order' parameters which have been set but not yet committed to the database (for this role)
+    KV_VECTOR_Init(&uncommitted_params);
+    USP_SNPRINTF(path_spec, sizeof(path_spec), "%s.%d.Permission.*.Order", device_role_root, inst1);
+    DM_TRANS_GetParamWritesByPathSpec(path_spec, &uncommitted_params);
+
+    // Exit if any of the uncommitted 'Order' parameters match the order which we're validating for uniqueness
+    for (i=0; i < uncommitted_params.num_entries; i++)
+    {
+        kv = &uncommitted_params.vector[i];
+        if (strcmp(kv->value, value)==0)
+        {
+            USP_ERR_SetMessage("%s: Order(%s) not unique (already used by %s)", __FUNCTION__, value, kv->key);
+            KV_VECTOR_Destroy(&uncommitted_params);
+            return USP_ERR_INVALID_ARGUMENTS;
+        }
+    }
+
+    KV_VECTOR_Destroy(&uncommitted_params);
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**

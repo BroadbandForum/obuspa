@@ -203,7 +203,6 @@ void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResul
 {
     dm_node_t *child;
     Usp__GetSupportedDMResp__SupportedObjectResult *sor = NULL;
-    Usp__GetSupportedDMResp__SupportedObjectResult *child_sor;
     unsigned short parent_perm;
     unsigned short child_perm;
 
@@ -240,11 +239,7 @@ void WalkSchema(dm_node_t *parent, Usp__GetSupportedDMResp__RequestedObjectResul
                     child_perm  = DM_PRIV_GetPermissions(parent, inst, combined_role, 0);
                     if (child_perm & PERMIT_OBJ_INFO)
                     {
-                        child_sor = AddReqObjResult_SupportedObjResult(ror, child, child_perm);
-                        if (gs_flags & RETURN_KEYS)
-                        {
-                            AddSupportedObjResult_SupportedUniqueKeySet(child_sor, child);
-                        }
+                        (void)AddReqObjResult_SupportedObjResult(ror, child, child_perm);
                     }
                 }
                 break;
