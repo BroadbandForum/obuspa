@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    env:
+      BUILD_DIR: build_folder
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          build-essential \
+          libssl-dev \
+          libcurl4-openssl-dev \
+          libsqlite3-dev \
+          zlib1g-dev \
+          libwebsockets-dev \
+          libmosquitto-dev \
+          pkg-config
+
+    - name: Configure with CMake
+      run: |
+        cmake -B $BUILD_DIR -S . \
+          -DENABLE_STOMP=ON \
+          -DENABLE_MQTT=ON \
+          -DENABLE_COAP=ON \
+          -DENABLE_WEBSOCKETS=ON
+
+    - name: Build with CMake
+      run: cmake --build $BUILD_DIR --parallel
+
+    - name: Install
+      run: sudo cmake --install $BUILD_DIR
