@@ -51,6 +51,7 @@ void DM_INST_VECTOR_Destroy(dm_instances_vector_t *div);
 int DM_INST_VECTOR_Add(dm_instances_t *inst);
 void DM_INST_VECTOR_Remove(dm_instances_t *inst);
 int DM_INST_VECTOR_IsExist(dm_instances_t *match, bool *exists);
+bool DM_INST_VECTOR_DoesFirstLevelInstanceExist(dm_node_t *top_node, int instance);
 int DM_INST_VECTOR_GetNextInstance(dm_node_t *node, dm_instances_t *inst, int *next_instance);
 int DM_INST_VECTOR_GetNumInstances(dm_node_t *node, dm_instances_t *inst, int *num_instances);
 int DM_INST_VECTOR_GetInstances(dm_node_t *node, dm_instances_t *inst, int_vector_t *iv);

@@ -78,6 +78,7 @@
 #include "stomp.h"
 #include "group_get_vector.h"
 #include "bdc_exec.h"
+#include "se_cache.h"
 
 #ifndef REMOVE_USP_SERVICE
 #include "usp_service.h"
@@ -956,6 +957,7 @@ int ExecuteCli_Add(str_vector_t *args)
                 DM_TRANS_Abort();
                 goto exit;
             }
+            instance_number = atoi(instance_str);
         }
         else
         {
@@ -986,6 +988,8 @@ int ExecuteCli_Add(str_vector_t *args)
             goto exit;
         }
 
+        // Fixup all search expression based permissions which match these instances
+        SE_CACHE_NotifyInstanceAdded(path, &unique_key_params);
     }
 
     // Exit if unable to commit the transaction
@@ -1037,6 +1041,7 @@ int ExecuteCli_Del(str_vector_t *args)
     str_vector_t objects;
     char *arg1;
     combined_role_t *combined_role;
+    char *path;
 
     USP_ASSERT(args->num_entries >= 2);
     arg1 = args->vector[1];
@@ -1088,7 +1093,8 @@ int ExecuteCli_Del(str_vector_t *args)
     // Since successful, print out the list of objects deleted
     for (i=0; i < objects.num_entries; i++)
     {
-        SendCliResponse("Deleted %s\n", objects.vector[i]);
+        path = objects.vector[i];
+        SendCliResponse("Deleted %s\n", path);
     }
 
     err = USP_ERR_OK;
@@ -1232,6 +1238,14 @@ int ExecuteCli_Operate(str_vector_t *args)
         {
             goto exit;
         }
+
+        // Fixup any search expression based permissions which were waiting for the request table instance to be created
+        if (instance != INVALID)
+        {
+            USP_SNPRINTF(path, sizeof(path), "%s.%d", device_req_root, instance);
+            SE_CACHE_NotifyInstanceAdded(path, NULL);
+        }
+
         KV_VECTOR_Destroy(&output_args);
 
         // Activate all STOMP reconnects or scheduled exits
@@ -1585,7 +1599,6 @@ int ExecuteCli_Perm(str_vector_t *args)
         }
 
         // Since successful, send back the permissions for the parameter
-        #define PERMISSION_CHAR(bitmask, c, mask) ( ((bitmask & mask) == 0) ? '-' : c )
         SendCliResponse("Role.%d   Param(%c%c-%c) Obj(%c%c-%c) InstantiatedObj(%c%c-%c) CommandEvent(%c-%c%c)\n",
                          role_instance,
                          PERMISSION_CHAR(perm, 'r', PERMIT_GET),
@@ -1622,16 +1635,9 @@ int ExecuteCli_Perm(str_vector_t *args)
 **************************************************************************/
 int ExecuteCli_PermSel(str_vector_t *args)
 {
-    int i;
     int role_instance;
-    int role_index;
-    dm_node_t *node;
-    inst_sel_vector_t *isv;
-    inst_sel_t *is;
-    unsigned short perm;
     int items_converted;
-    int perm_instance;
-    char *perm_target;
+    int err;
 
     // Exit if instance number cannot be parsed
     items_converted = sscanf(args->vector[1], "%d", &role_instance);
@@ -1641,56 +1647,8 @@ int ExecuteCli_PermSel(str_vector_t *args)
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Exit if role instance number does not exist
-    role_index = DEVICE_CTRUST_RoleInstanceToIndex(role_instance);
-    if (role_index == INVALID)
-    {
-        SendCliResponse("Role instance number (%d) does not exist\n", args->vector[1], role_instance);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Exit if unable to find the path in the data model
-    node = DM_PRIV_GetNodeFromPath(args->vector[2], NULL, NULL, 0);
-    if (node == NULL)
-    {
-        SendCliResponse("Unknown data model path '%s'\n", args->vector[2]);
-        return USP_ERR_INTERNAL_ERROR;
-    }
-
-    // Iterate over all instance selectors, logging them
-    isv = &node->permissions[role_index];
-    for (i=0; i < isv->num_entries; i++)
-    {
-        // Write the instance number of this permission into a buffer
-        is = isv->vector[i];
-        perm_target = DEVICE_CTRUST_InstSelToPermTarget(role_index, is, &perm_instance);
-        USP_ASSERT(perm_target != NULL);
-        SendCliResponse("Permission.%d", perm_instance);
-
-        // Write the permissions associated with the instance selector into a buffer
-        perm = is->permission_bitmask;
-        SendCliResponse("   Param(%c%c-%c) Obj(%c%c-%c) InstantiatedObj(%c%c-%c) CommandEvent(%c-%c%c)",
-                     PERMISSION_CHAR(perm, 'r', PERMIT_GET),
-                     PERMISSION_CHAR(perm, 'w', PERMIT_SET),
-                     PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_VAL_CHANGE),
-
-                     PERMISSION_CHAR(perm, 'r', PERMIT_OBJ_INFO),
-                     PERMISSION_CHAR(perm, 'w', PERMIT_ADD),
-                     PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_OBJ_ADD),
-
-                     PERMISSION_CHAR(perm, 'r', PERMIT_GET_INST),
-                     PERMISSION_CHAR(perm, 'w', PERMIT_DEL),
-                     PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_OBJ_DEL),
-
-                     PERMISSION_CHAR(perm, 'r', PERMIT_CMD_INFO),
-                     PERMISSION_CHAR(perm, 'x', PERMIT_OPER),
-                     PERMISSION_CHAR(perm, 'n', PERMIT_SUBS_EVT_OPER_COMP) );
-
-        // Write the target of the permission into the buffer
-        SendCliResponse("  %s\n", perm_target);
-    }
-
-    return USP_ERR_OK;
+    err = DEVICE_CTRUST_DumpPermissionSelectors(role_instance, args->vector[2]);
+    return err;
 }
 
 /*********************************************************************//**

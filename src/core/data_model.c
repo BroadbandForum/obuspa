@@ -59,6 +59,7 @@
 #include "group_get_vector.h"
 #include "inst_sel_vector.h"
 #include "plugin.h"
+#include "se_cache.h"
 
 #ifdef ENABLE_COAP
 #include "usp_coap.h"
@@ -407,6 +408,9 @@ int DATA_MODEL_Start(void)
     {
         DM_TRANS_Abort(); // Ignore error from this - we want to return the error from the body of this function instead
     }
+
+    // Attempt to resolve the search expression based permissions
+    SE_CACHE_StartSEResolution();
 
     return err;
 }
@@ -1428,6 +1432,10 @@ int DATA_MODEL_NotifyInstanceDeleted(char *path)
     }
     STR_VECTOR_Destroy(&child_objs);
 
+    // Update SE based permissions which previously matched this instance
+    // NOTE: We don't need to do this for child instances of this path, as SE based permissions currently only support first instance number in a path
+    SE_CACHE_NotifyInstanceDeleted(path);
+
     // Remove this instance (and all children) from the data model cache
     DM_INST_VECTOR_Remove(&inst);
 
@@ -1461,6 +1469,7 @@ int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_
     bool exists;
     bool is_qualified_instance;
     dm_oper_info_t *info;
+    char *existing_time_ref;
 
     // Setup default return values
     KV_VECTOR_Init(output_args);
@@ -1561,7 +1570,12 @@ int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_
             // Add a time reference to the input args for the time at which this operation was issued
             // This is necessary so that when restarting an interrupted operation after a reboot
             // the correct absolute times are calculated, if the input args contained relative time args (eg 'delay')
-            USP_ARG_AddDateTime(input_args, SAVED_TIME_REF_ARG_NAME, time(NULL));
+            // NOTE: Only add the time reference once (if was invoked with a USP command path containing a wildcard)
+            existing_time_ref = USP_ARG_Get(input_args, SAVED_TIME_REF_ARG_NAME, NULL);
+            if (existing_time_ref == NULL)
+            {
+                USP_ARG_AddDateTime(input_args, SAVED_TIME_REF_ARG_NAME, time(NULL));
+            }
 
             // Persist the input arguments (if this operation might be restarted at bootup)
             if (info->restart_cb != NULL)
@@ -1787,12 +1801,6 @@ unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role
     }
     flags |= PP_EXISTS_IN_SCHEMA;
 
-    // Setup permissions to return
-    if (permission_bitmask != NULL)
-    {
-        *permission_bitmask = DM_PRIV_GetPermissions(node, &inst, combined_role, exec_flags);
-    }
-
     // Determine whether path is to a parameter or an object, and also whether the parameter is writable
     switch(node->type)
     {
@@ -1868,8 +1876,21 @@ unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role
         }
     }
 
-    // Exit if unable to determine if the specified object instances of the parameter/object exist
+    // Determine if the specified object instances of the parameter/object exist
+    // NOTE: The instances might not exist if the USP Service has disconnected.
+    // In this case we still want to calculate the permissions before returning, so the return value of DM_INST_VECTOR_IsExist() is tested later in this function, rather than here
+    // This is needed for the case of sending an OperationComplete indicating failure when a USP Service disconnects whist a USP command is active
     err = DM_INST_VECTOR_IsExist(&inst, &exists);
+
+    // Setup permissions to return
+    // NOTE: This is calculated after (potentially) refreshing the instances of the object (performed above by DM_INST_VECTOR_IsExist)
+    // as refreshing the instances also attempts to resolve any SE based permissions on the table
+    if (permission_bitmask != NULL)
+    {
+        *permission_bitmask = DM_PRIV_GetPermissions(node, &inst, combined_role, exec_flags);
+    }
+
+    // Exit if unable to determine if the specified object instances of the parameter/object exist
     if (err != USP_ERR_OK)
     {
         return err;
@@ -2863,6 +2884,67 @@ int DATA_MODEL_DeRegisterPath(char *schema_path)
 
 /*********************************************************************//**
 **
+** DATA_MODEL_RefreshSePermissions
+**
+** This function is called to update the SE based permissions before a USP notification is processed
+** NOTE: Only necessary for non-USP services owned tables that use the refresh instances vendor hook (this function checks if it's applicable)
+**
+** \param   path - Path of the USP event or USP command identifying the table upon which
+**                 we want to update SE permissions, before deciding whether to send the notification
+**
+** \return  None
+**
+**************************************************************************/
+void DATA_MODEL_RefreshSePermissions(char *path)
+{
+    dm_node_t *node;
+    dm_node_t *table_node;
+
+    // Exit if unable to determine the data model node representing this path
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
+    if (node == NULL)
+    {
+        return;
+    }
+
+    // Exit if this DM element isn't a descendant of a DM table
+    if (node->order == 0)
+    {
+        return;
+    }
+
+#ifndef REMOVE_USP_BROKER
+    // Exit if the node is owned by a USP Service. In this case the SE cache uses object creation/deletion subscriptions
+    // on the USP Service to avoid having to keep resolving the SE based permissions instance numbers
+    if (USP_BROKER_IsUspService(node->group_id) == true)
+    {
+        return;
+    }
+#endif
+
+    // Calculate the node representing the table owning this DM element
+    table_node = node->instance_nodes[0];
+    USP_ASSERT(table_node != NULL); // Since we checked the node's order, instance_nodes[0] should be filled in
+    USP_ASSERT(table_node->type == kDMNodeType_Object_MultiInstance); // Since all nodes in instance_nodes[] are tables
+
+    // Exit if the top level table owning this DM element doesn't use refresh instances
+    if (table_node->registered.object_info.refresh_instances_cb == NULL)
+    {
+        return;
+    }
+
+    // Exit if this table does not have any SE based permissions on it
+    if (SE_CACHE_IsWatchingNode(table_node)==false)
+    {
+        return;
+    }
+
+    // Refresh the instances on the table, which will also update all SE based permissions on the table
+    DM_INST_VECTOR_RefreshTopLevelObjectInstances(table_node);
+}
+
+/*********************************************************************//**
+**
 ** DM_PRIV_InitSetRequest
 **
 ** Fills in the dm_req_t structure for a Parameter set, converting the new_value from a string to it's native type
@@ -3501,7 +3583,7 @@ int DM_PRIV_FormInstantiatedPath(char *schema_path, dm_instances_t *inst, char *
         }
     }
 
-    // Exit if not all instance numbers have not been consumed
+    // Exit if we haven't consumed all instance numbers
     if (i != inst->order)
     {
         *buf = '\0';
@@ -3722,6 +3804,8 @@ void DM_PRIV_ClearPermissionsForRole(dm_node_t *node, int role_index)
     }
 
     // Clear the permissions on this node
+    // NOTE: This intentionally doesn't unwatch any SE based permissions (as that would lead to subscriptions being deleted/re-added
+    // on USP Services every time a permission changed). Instead ApplyAllPermissionsForRole() fixes up the watch on SE based permissions
     INST_SEL_VECTOR_Destroy(&node->permissions[role_index], false);
 
     // Iterate over list of children
@@ -4940,6 +5024,17 @@ void DestroyNode(dm_node_t *node)
     inst_sel_vector_t *isv;
     dm_node_t *parent;
 
+    // Unwatch all search expression based permissions on this node
+    // NOTE: If a selector was for a partial path, it will be present on multiple nodes, however the code ensures that it is only unwatched once
+    // NOTE: Whilst the selector can be on multiple nodes, it isn't possible with the USP 1.4 rules for dynamic registration/deregistration
+    // for us to be removing the selector from one node but not all others. So it's safe to unwatch the selector if any of the nodes
+    // that the selector is on are deleted
+    for (i=0; i<MAX_CTRUST_ROLES; i++)
+    {
+        isv = &node->permissions[i];
+        INST_SEL_VECTOR_Unwatch(isv);
+    }
+
     // Remove it from the NodeMap
     UnlinkFromNodeMap(node);
 
@@ -4999,6 +5094,7 @@ void DestroyNode(dm_node_t *node)
 
     // Free permissions vectors
     // NOTE: Ownership of the entries within the permissions vectors stay with permission_t
+    // NOTE: No need to unwatch SE based permissions as that has already been done at the start of this function
     for (i=0; i<MAX_CTRUST_ROLES; i++)
     {
         isv = &node->permissions[i];

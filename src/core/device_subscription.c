@@ -3564,8 +3564,8 @@ bool DoesSubscriptionMatchEvent(subs_t *sub, char *event_name)
         char *path_spec;
 
         // Iterate over all path expressions, seeing if the USP Command matches the path expression
-        // NOTE: This simpler method is only possible because we limit the path expressions for OperComplete & Events
-        // to only absolute or wildcarded in a USP Broker. If the path expression is more complicated than this, then the NORMAL method is used
+        // NOTE: This simpler method can only be used if the path expressions for OperComplete & Events
+        // are absolute or wildcarded. If the path expression is more complicated than this, then the NORMAL method is used
         for (i=0; i < sub->path_expressions.num_entries; i++)
         {
             path_spec = sub->path_expressions.vector[i];
@@ -3595,6 +3595,7 @@ bool DoesSubscriptionMatchEvent(subs_t *sub, char *event_name)
                 }
 
                 // Exit if the controller does not have permission to receive the notification
+                // NOTE: DATA_MODEL_GetPathProperties() will refresh instances if necessary, resolving SE based permissions on the table in the process
                 if ((permission_bitmask & PERMIT_SUBS_EVT_OPER_COMP)==0)
                 {
                     return false;
@@ -3608,6 +3609,7 @@ bool DoesSubscriptionMatchEvent(subs_t *sub, char *event_name)
 #endif
 
     // NORMAL method for determining whether the subscription matches the specified event
+    // NOTE: This method ensures that any SE based permissions (affecting sending of the event) are resolved (since ResolveAllPathExpressions refreshes the instances, resulting in permissions being resolved)
     // Determine the operation to be resolved by the path resolver
     USP_ASSERT((sub->notify_type == kSubNotifyType_OperationComplete) || (sub->notify_type == kSubNotifyType_Event));
     op = (sub->notify_type == kSubNotifyType_Event) ? kResolveOp_SubsEvent : kResolveOp_SubsOper;
@@ -3658,7 +3660,7 @@ bool HasControllerGotNotificationPermission(int cont_instance, char *path, unsig
 
     // Determine permissions that this controller has for the notification that occurred
     // NOTE: Ignoring error message. If the path is not present in the data model, then the controller will not have permissions anyway
-    DATA_MODEL_GetPermissions(path, &combined_role, &perm, 0);
+    DATA_MODEL_GetPermissions(path, &combined_role, &perm, DONT_LOG_ERRORS);
 
     // Exit if controller has permission for this notification
     if (perm & mask)

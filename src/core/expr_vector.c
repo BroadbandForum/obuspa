@@ -236,7 +236,7 @@ void EXPR_VECTOR_Dump(expr_vector_t *ev)
 ** checking that the operator in the expression matches one of those in a list supplied to this function
 ** NOTE: Substrings are trimmed of whitespace at the start and end
 **
-** \param   str - string containing comma-delimited substrings
+** \param   str - string containing separator-delimited substrings
 ** \param   ev - pointer to vector to return expressions in
 ** \param   separator - pointer to string containing separator of expressions
 ** \param   valid_ops - pointer to array of operators which are accepted in the expression
@@ -282,7 +282,7 @@ int EXPR_VECTOR_SplitExpressions(char *str, expr_vector_t *ev, char *separator, 
         is_accepted = IsOperatorInArray(expr_op, valid_ops, num_valid_ops);
         if (is_accepted == false)
         {
-            USP_ERR_SetMessage("%s: Expression '%s' contains invalid operator '%s'", __FUNCTION__, key_expressions.vector[i], expr_op_2_str[expr_op] );
+            USP_ERR_SetMessage("%s: Expression after '%s' contains invalid or unsupported operator '%s'", __FUNCTION__, key_expressions.vector[i], expr_op_2_str[expr_op] );
             err = USP_ERR_INVALID_PATH_SYNTAX;
             goto exit;
         }

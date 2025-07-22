@@ -734,9 +734,8 @@ void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance)
 **
 ** DEVICE_MTP_GetUdsReference
 **
-** Gets the instance number in the STOMP connection table by dereferencing the specified path
-** NOTE: If the path is invalid, or the instance does not exist, then INVALID is
-**       returned for the instance number, along with an error
+** Gets the specified parameter containing a reference to an instance of the Device.UnixDomainSockets.UnixDomainSocket.{i} table,
+** then validates the reference (checking that it's to the right table and that the instance in the reference exists)
 **
 ** \param   path - path of parameter which contains the reference
 ** \param   uds_connection_instance - pointer to variable in which to return the instance number in the UDS connection table
@@ -1182,8 +1181,17 @@ int NotifyChange_AgentMtpEnable(dm_req_t *req, char *value)
             }
             break;
 #endif
+
+#ifdef ENABLE_UDS
+        case kMtpProtocol_UDS:
+            // Store the new value
+            mtp->enable = val_bool;
+            // NOTE: Nothing else to do, since UDS clients and servers are enabled based on an entry in the UnixDomainSocket table
+            break;
+#endif
+
         default:
-            TERMINATE_BAD_CASE(mtp->protocol);
+            mtp->enable = val_bool;
             break;
     }
 
@@ -1947,6 +1955,12 @@ int Get_MtpStatus(dm_req_t *req, char *buf, int len)
             case kMtpProtocol_WebSockets:
                 // NOTE: The code allows only one Websocket server to be enabled
                 status = WSSERVER_GetMtpStatus();
+                break;
+#endif
+
+#ifdef ENABLE_UDS
+            case kMtpProtocol_UDS:
+                status = UDS_GetMtpStatus(mtp->uds_connection_instance);
                 break;
 #endif
 

@@ -1079,6 +1079,58 @@ char *UDS_PathTypeToString(uds_path_t path_type)
     return str;
 }
 
+/*********************************************************************//**
+**
+** UDS_GetMtpStatus
+**
+** Function called to get the value of Device.LocalAgent.MTP.{i}.Status for a UDS connection
+**
+** \param   instance - instance number of the connection in Device.UnixDomainSockets.UnixDomainSocket.{i}
+**
+** \return  Status of the UDS connection
+**
+**************************************************************************/
+mtp_status_t UDS_GetMtpStatus(int instance)
+{
+    int i;
+    mtp_status_t status;
+    uds_connection_t *uc;
+    uds_server_t *us;
+
+    OS_UTILS_LockMutex(&uds_access_mutex);
+
+    // Exit, returning the status, if this instance is a server
+    for (i=0; i<NUM_ELEM(uds_servers); i++)
+    {
+        us = &uds_servers[i];
+        if ((us->instance != INVALID) && (us->instance == instance))
+        {
+            // NOTE: At startup, the USP Broker exits if any UDS servers fail to start. So it's not currently possible to
+            // return kMtpStatus_Down. The code below will cope if this changes in the future.
+            status = (us->listen_sock == INVALID) ? kMtpStatus_Down : kMtpStatus_Up;
+            goto exit;
+        }
+    }
+
+    // Exit, returning the status, if this instance is a client
+    for (i=0; i<NUM_ELEM(uds_connections); i++)
+    {
+        uc = &uds_connections[i];
+        if ((uc->instance != INVALID) && (uc->instance == instance) && (uc->type==kUdsConnType_Client))
+        {
+            status = (uc->socket == INVALID) ? kMtpStatus_Down : kMtpStatus_Up;
+            goto exit;
+        }
+    }
+
+    // If the code gets here, then no matching entry was found
+    status = kMtpStatus_Error;
+
+exit:
+    OS_UTILS_UnlockMutex(&uds_access_mutex);
+    return status;
+}
+
 
 /*********************************************************************//**
 **
@@ -1171,7 +1223,7 @@ exit:
     if ((err != USP_ERR_OK) && (us->listen_sock != INVALID))
     {
         close(us->listen_sock);
-        us->listen_sock = INVALID;      // Mark the slot as unused
+        us->listen_sock = INVALID;      // Mark the slot status as 'Error'
     }
 
     return err;
@@ -1482,7 +1534,7 @@ void CloseUdsConnection(uds_connection_t *uc, bool retry)
         // retry state is special and indicates a valid client connection instance that is currently disconnected
         // No packets will be sent or received in this state or until the state returns to kUdsConnType_Client
         // which can only happen after a successful reconnection to a server.
-        // delay must be betwee 1 and 5 seconds
+        // delay must be between 1 and 5 seconds
         delay = (rand() % (MAX_RETRY_INTERVAL-MIN_RETRY_INTERVAL)) + MIN_RETRY_INTERVAL;
         uc->retry_timeout =  time(NULL) + delay;
         USP_LOG_Info("%s: Retrying connection in %d seconds for %s", __FUNCTION__, delay, UDS_PathTypeToString(uc->path_type));

@@ -3252,6 +3252,7 @@ void SubscribeToAll(mqtt_client_t *client)
     str_vector_t subscribed_topics;
     char *response_topic;
     int index;
+    char buf[128];
 
     STR_VECTOR_Init(&subscribed_topics);
 
@@ -3277,7 +3278,11 @@ void SubscribeToAll(mqtt_client_t *client)
     }
     else
     {
-        USP_LOG_Error("%s: No response topic configured (or set by the CONNACK)", __FUNCTION__);
+        // Exit if no agent response topic configured (or set by the CONNACK)
+        USP_SNPRINTF(buf, sizeof(buf), "%s: No response topic configured (or set by the CONNACK)", __FUNCTION__);
+        USP_LOG_Error("%s", buf);
+        HandleMqttError(client, kMqttFailure_Misconfigured, buf);
+        return;
     }
 
     // Subscribe to all subscriptions configured in Device.MQTT.Client.{i}.Subscription.{i}

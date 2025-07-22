@@ -339,6 +339,73 @@ Usp__Msg *MSG_UTILS_Create_AddReq(char *msg_id, char *path, group_add_param_t *p
 
 /*********************************************************************//**
 **
+** MSG_UTILS_Extend_AddReq
+**
+** Adds another object to create, to a USP Add request message
+**
+** \param   msg - pointer to USP message structure to add to
+** \param   path - unqualified path of the object to add an instance to
+** \param   params - Array containing initial values of the object's child parameters, or NULL if there are none to set
+** \param   num_params - Number of child parameters to set
+**
+** \return  None
+**          NOTE: If out of memory, USP Agent is terminated
+**
+**************************************************************************/
+void MSG_UTILS_Extend_AddReq(Usp__Msg *msg, char *path, group_add_param_t *params, int num_params)
+{
+    Usp__Add *add;
+    Usp__Add__CreateObject *create_obj;
+    Usp__Add__CreateParamSetting *cps;
+    group_add_param_t *p;
+    int i;
+    int index;
+    int new_size;
+
+    USP_ASSERT((msg != NULL) && (msg->body != NULL) && (msg->body->request != NULL));
+    add = msg->body->request->add;
+    USP_ASSERT(add != NULL);
+
+    // Extend the Add object with an extra create object
+    index = add->n_create_objs;
+    add->n_create_objs++;
+    new_size = add->n_create_objs * sizeof(void *);
+    add->create_objs = USP_REALLOC(add->create_objs, new_size);
+
+    // Fill in the new create object
+    create_obj = USP_MALLOC(sizeof(Usp__Add__CreateObject));
+    usp__add__create_object__init(create_obj);
+    add->create_objs[index] = create_obj;
+
+    create_obj->obj_path = USP_STRDUP(path);
+
+    // Exit if there are no parameters to set in this object
+    if ((params==NULL) || (num_params == 0))
+    {
+        create_obj->n_param_settings = 0;
+        create_obj->param_settings = NULL;
+        return;
+    }
+
+    // Add all of the objects parameters initial values
+    create_obj->n_param_settings = num_params;
+    create_obj->param_settings = USP_MALLOC(num_params * sizeof(void *));
+
+    for (i=0; i<num_params; i++)
+    {
+        cps = USP_MALLOC(sizeof(Usp__Add__CreateParamSetting));
+        usp__add__create_param_setting__init(cps);
+        create_obj->param_settings[i] = cps;
+
+        p = &params[i];
+        cps->param = USP_STRDUP(p->param_name);
+        cps->value = USP_STRDUP(p->value);
+        cps->required = p->is_required;
+    }
+}
+
+/*********************************************************************//**
+**
 ** MSG_UTILS_Create_DeleteReq
 **
 ** Create a USP Delete request message containing multiple instances to delete

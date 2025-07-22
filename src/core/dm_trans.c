@@ -53,6 +53,7 @@
 #include "dm_inst_vector.h"
 #include "vendor_api.h"
 #include "text_utils.h"
+#include "se_cache.h"
 
 
 
@@ -226,6 +227,12 @@ int DM_TRANS_Commit(void)
     dm_trans_vector_t *trans;
     dm_trans_vector_t cascade_trans;
     dm_vendor_commit_trans_cb_t   commit_trans_cb;
+    dm_node_t *node;
+    dm_notify_set_cb_t notify_set_cb;
+    dm_notify_add_cb_t notify_add_cb;
+    dm_notify_add_cb_t notify_del_cb;
+    dm_req_t req;
+    dm_trans_t *dt;
 
     USP_ASSERT(cur_transaction != NULL);
 
@@ -269,14 +276,6 @@ int DM_TRANS_Commit(void)
     // Call the notify function for all operations
     for (i=0; i < trans->num_entries; i++)
     {
-        // Declare local variables here, so that they are not filling up the stack if this function is called recursively
-        dm_node_t *node;
-        dm_notify_set_cb_t notify_set_cb;
-        dm_notify_add_cb_t notify_add_cb;
-        dm_notify_add_cb_t notify_del_cb;
-        dm_req_t req;
-        dm_trans_t *dt;
-
         dt = &trans->vector[i];
         node = dt->node;
 
@@ -322,6 +321,9 @@ int DM_TRANS_Commit(void)
 
                 // Notify external controllers
                 DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(dt->path, kSubNotifyType_ObjectDeletion);
+
+                // Update SE based permissions which previously matched this instance
+                SE_CACHE_NotifyInstanceDeleted(dt->path);
                 break;
 
             default:

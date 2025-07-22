@@ -193,6 +193,9 @@ Usp__Msg *ProcessAdd_AllowPartialTrue(char *msg_id, Usp__Msg *usp, combined_role
         // NOTE: Intentionally ignoring any errors, as allow_partial=true
     }
 
+    // Fixup all search expression based permissions which match these instances
+    GROUP_ADD_VECTOR_FixupSECacheInstanceNumbers(&gav);
+
     // Create the add response from the results stored in the group add vector
     resp = CreateFullAddResp(usp->header->msg_id, &gav);
 
@@ -293,6 +296,10 @@ Usp__Msg *ProcessAdd_AllowPartialFalse(char *msg_id, Usp__Msg *usp, combined_rol
         goto exit;
     }
 
+    // Fixup all search expression based permissions which match these instances
+    GROUP_ADD_VECTOR_FixupSECacheInstanceNumbers(&gav);
+
+    // Create the add response from the results stored in the group add vector
     resp = CreateFullAddResp(usp->header->msg_id, &gav);
 
 exit:

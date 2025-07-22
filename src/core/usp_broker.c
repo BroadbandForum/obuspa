@@ -34,7 +34,7 @@
  */
 
 /**
- * \file device_usp_service.c
+ * \file device_usp_broker.c
  *
  * Implements Device.USPServices
  *
@@ -59,6 +59,7 @@
 #include "expr_vector.h"
 #include "cli.h"
 #include "group_get_vector.h"
+#include "se_cache.h"
 
 #ifndef REMOVE_USP_BROKER
 
@@ -77,6 +78,7 @@ static char *subs_partial_path = "Device.LocalAgent.Subscription.";
 //------------------------------------------------------------------------------
 // String to use in all messages and subscription ID's allocated by the Broker
 static char *broker_unique_str = "BROKER";
+static char watch_subs_prefix = 'W';
 
 //------------------------------------------------------------------------------
 // Structure mapping the instance in the Broker's subscription table with the subscription table in the USP Service
@@ -227,7 +229,7 @@ int Broker_SyncOperate(dm_req_t *req, char *command_key, kv_vector_t *input_args
 int Broker_AsyncOperate(dm_req_t *req, kv_vector_t *input_args, int instance);
 int Broker_RefreshInstances(int group_id, char *path, int *expiry_period);
 int CalcFailureIndex(Usp__Msg *resp, kv_vector_t *params, int *modified_err);
-int ProcessAddResponse(Usp__Msg *resp, char *path, int *instance, kv_vector_t *unique_keys, group_add_param_t *params, int num_params);
+int ProcessAddResponse(Usp__Msg *resp, char *path, int *instance, int num_instances, kv_vector_t *unique_keys, group_add_param_t *params, int num_params);
 int ProcessSetResponse(Usp__Msg *resp, kv_vector_t *params, int *failure_index);
 void LogSetResponse_OperFailure(Usp__SetResp__UpdatedObjectResult__OperationStatus__OperationFailure *oper_failure);
 bool CheckSetResponse_OperSuccess(Usp__SetResp__UpdatedObjectResult__OperationStatus__OperationSuccess *oper_success, kv_vector_t *params);
@@ -293,6 +295,7 @@ unsigned UpdateEventsAndCommands(usp_service_t *us);
 unsigned UpdateDeviceDotNotificationList(str_vector_t *sv, char **p_list, unsigned flags);
 void UspService_GetAllParamsForPath( usp_service_t *us, str_vector_t *usp_service_paths, kv_vector_t *usp_service_values, int depth);
 void GetAllPathsForOptimizedUspService(dm_node_t *node, str_vector_t usp_service_paths[], int usp_remaining_depth[], str_vector_t *non_usp_service_params, int_vector_t *non_usp_service_group_ids, combined_role_t *combined_role, int depth_remaining);
+int HandleWatchNotification(Usp__Notify *notify, usp_service_t *us);
 
 
 /*********************************************************************//**
@@ -341,6 +344,15 @@ int USP_BROKER_Init(void)
         us = &usp_services[i];
         us->instance = INVALID;
     }
+
+    // Check that two protobuf structures are equivalent, so that we can cast between them in USP_BROKER_HandleNotification()
+    Usp__Notify__ObjectCreation__UniqueKeysEntry oc_unique_key;
+    Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry *ci_unique_key  = (Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry *) &oc_unique_key;
+
+    USP_ASSERT(sizeof(Usp__Notify__ObjectCreation__UniqueKeysEntry) == sizeof(Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry));
+    USP_ASSERT(&oc_unique_key.base == &ci_unique_key->base);
+    USP_ASSERT(&oc_unique_key.key == &ci_unique_key->key);
+    USP_ASSERT(&oc_unique_key.value == &ci_unique_key->value);
 
     // If the code gets here, then registration was successful
     return USP_ERR_OK;
@@ -638,6 +650,8 @@ exit:
     // If any paths were accepted, then kick off a query to get the supported data model of the registered paths
     if (accepted_paths.num_entries > 0)
     {
+        USP_ASSERT(us != NULL);  // This must be the case, because we only add to accepted_paths if the USP service is known
+
         // Exit if unable to queue the GSDM request
         err = QueueGetSupportedDMToUspService(us, &accepted_paths);
         if (err != USP_ERR_OK)
@@ -850,11 +864,11 @@ void USP_BROKER_HandleGetSupportedDMResp(Usp__Msg *usp, char *endpoint_id, mtp_c
     }
     STR_VECTOR_Destroy(&us->gsdm_paths);
 
-    // Apply permissions to the nodes that have just been added
-    ApplyPermissionsToPaths(&perm_paths);
-
     // Ensure that the USP Service contains only the subscriptions which it is supposed to
     SyncSubscriptions(us);
+
+    // Apply permissions to the nodes that have just been added
+    ApplyPermissionsToPaths(&perm_paths);
 
     // Get a baseline set of instances for this USP Service into the instance cache
     // This is necessary, otherwise an Object creation subscription that uses the legacy polling mechanism (via refresh instances vendor hook)
@@ -920,6 +934,13 @@ void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t 
     {
         USP_ERR_SetMessage("%s: Notification is from an unexpected endpoint (%s)", __FUNCTION__, endpoint_id);
         err = USP_ERR_REQUEST_DENIED;
+        goto exit;
+    }
+
+    // Exit if the notification was from a table watch subscription, processing the notification to update any search expression based permissions
+    if (notify->subscription_id[0] == watch_subs_prefix)
+    {
+        err = HandleWatchNotification(notify, us);
         goto exit;
     }
 
@@ -1367,6 +1388,8 @@ mtp_conn_t *USP_BROKER_GetNotifyDestForEndpoint(char *endpoint_id, Usp__Header__
 ** USP_BROKER_GroupIdToEndpointId
 **
 ** Determines the endpoint_id of the USP Service, given a group_id
+** NOTE: This function is currently only called by CLI initiated introspection functions, so does not have to be very efficient
+**       If it needs to be made more efficient, then RegisterBrokerVendorHooks/DeRegisterBrokerVendorHooks could maintain endpoint_id in an array indexed by group_id
 **
 ** \param   group_id - Identifies the USP service to return the endpoint_id of
 **
@@ -1385,6 +1408,36 @@ char *USP_BROKER_GroupIdToEndpointId(int group_id)
     }
 
     return us->endpoint_id;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_IsUspService
+**
+** Determines whether the specified group_id is a USP Service
+**
+** \param   group_id - Identifies the software component owning a group of data model elements
+**
+** \return  true if the group_id is a USP Service, false otherwise
+**
+**************************************************************************/
+bool USP_BROKER_IsUspService(int group_id)
+{
+    // Exit if the DM elements were not using a grouped software component
+    if (group_id == NON_GROUPED)
+    {
+        return false;
+    }
+
+    // Exit if the DM elements were owned by a grouped software component that was a USP Service
+    USP_ASSERT((group_id >=0) && (group_id < MAX_VENDOR_PARAM_GROUPS));
+    if (group_vendor_hooks[group_id].get_group_cb == Broker_GroupGet)
+    {
+        return true;
+    }
+
+    // The DM elements were owned by a grouped software component, but it wasn't a USP Service
+    return false;
 }
 
 /*********************************************************************//**
@@ -1467,13 +1520,13 @@ bool USP_BROKER_AttemptPassthru(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mt
 **
 ** USP_BROKER_DirectGetForCli
 **
-** This function sees if it's possible to perform a CLI initiated Get, without resolving the path on the Broker first
-** This is similar to performing a passthru optimization for CLI initiated Gets
+** This function performs a CLI initiated Get in an optimized fashion fort USP Services
+** (performing top level GETs using partial paths on each USP Service)
 **
 ** \param   path - path expression to get
 ** \param   combined_role - role used to determine the permissions of the originating controller. If set to INTERNAL_ROLE, then permissions are ignored (used internally)
 **
-** \return  true if the get has been handled here, false if the caller should perform path resolution and the get
+** \return  USP_ERR_OK if successful or an error code
 **
 **************************************************************************/
 int USP_BROKER_DirectGetForCli(char *path, combined_role_t *combined_role)
@@ -1784,9 +1837,6 @@ bool USP_BROKER_CheckPassThruPermissionsInSearchExpressions(char *path, combined
                 goto exit_bad;
             }
 
-            // Path should be owned by the Broker's internal data model, rather than a USP Service (the caller will already have checked this)
-            USP_ASSERT (node->group_id != NON_GROUPED);
-
             // Return false if the path is not a param
             if (IsParam(node)==false)
             {
@@ -1892,6 +1942,263 @@ int USP_BROKER_ExecuteCli_Service(str_vector_t *args)
     // Free the get response, since we've finished with it
     usp__msg__free_unpacked(resp, pbuf_allocator);
     return err;
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_WatchTable
+**
+** Subscribes to object creation and deletion notifications on the specified table
+** This is used to update search expression based permissions, when instances are added (and hence might match the search expression) and deleted
+**
+** \param   table - data model table owned by the USP Service to add subscriptions to (excluding trailing dot and no {i})
+** \param   subs_instances - array in which to return the instance numbers of the object creation and object deletion subscriptions on the USP service
+**
+** \return  None
+**
+**************************************************************************/
+void USP_BROKER_WatchTable(char *table, int *subs_instances)
+{
+    dm_node_t *node;
+    usp_service_t *us;
+    int err;
+    Usp__Msg *req;
+    Usp__Msg *resp;
+    char subscription_id[MAX_DM_SHORT_VALUE_LEN];
+    char msg_id[MAX_MSG_ID_LEN];
+    char obj_path[MAX_DM_PATH] = {0};
+    char notify_type_str[20];
+
+    // Exit if this table is not yet registered into the data model
+    node = DM_PRIV_GetNodeFromPath(table, NULL, NULL, DONT_LOG_ERRORS);
+    if (node == NULL)
+    {
+        return;
+    }
+
+    // Exit if this table is owned by the core data model
+    if (node->group_id == NON_GROUPED)
+    {
+        return;
+    }
+
+    // Exit if this table was registered as grouped, but is not owned by a USP service
+    us = FindUspServiceByGroupId(node->group_id);
+    if (us == NULL)
+    {
+        return;
+    }
+
+    // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
+    if (us->controller_mtp.protocol == kMtpProtocol_None)
+    {
+        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Connection dropped", __FUNCTION__, us->endpoint_id);
+        return;
+    }
+
+    // Form the defaults for the parameters to set in each of the subscriptions
+    USP_SNPRINTF(obj_path, sizeof(obj_path), "%s.", table);
+    USP_SNPRINTF(subscription_id, sizeof(subscription_id), "%c%c-%s-%s", watch_subs_prefix, 'A', broker_unique_str, table);
+    USP_SNPRINTF(notify_type_str, sizeof(notify_type_str), "ObjectCreation");
+    group_add_param_t params[] = {
+                           // Name,             value,              is_required, err_code, err_msg
+                           {"NotifType",        notify_type_str,    true, USP_ERR_OK, NULL },
+                           {"ReferenceList",    obj_path,           true, USP_ERR_OK, NULL },
+                           {"ID",               subscription_id,    true, USP_ERR_OK, NULL },
+                           {"Persistent",       "false",            true, USP_ERR_OK, NULL },
+                           {"TimeToLive",       "0",                true, USP_ERR_OK, NULL },
+                           {"NotifRetry",       "false",            true, USP_ERR_OK, NULL },
+                           {"NotifExpiration",  "0",                true, USP_ERR_OK, NULL },
+                           {"Enable",           "true",             true, USP_ERR_OK, NULL }
+                         };
+
+    // Form the USP Add Request message containing the two subscriptions to add
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_AddReq(msg_id, subs_partial_path, params, NUM_ELEM(params));
+
+    USP_SNPRINTF(subscription_id, sizeof(subscription_id), "%c%c-%s-%s", watch_subs_prefix, 'D', broker_unique_str, table);
+    USP_SNPRINTF(notify_type_str, sizeof(notify_type_str), "ObjectDeletion");
+    MSG_UTILS_Extend_AddReq(req, subs_partial_path, params, NUM_ELEM(params));
+
+    // Send the request and wait for a response
+    // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
+    resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp,
+                                                 USP__HEADER__MSG_TYPE__ADD_RESP,
+                                                 RESPONSE_TIMEOUT);
+
+    // Exit if timed out waiting for a response
+    if (resp == NULL)
+    {
+        return;
+    }
+
+    // Process the add response, extracting the instance number of the created subscription in the USP Service's subscription table
+    err = ProcessAddResponse(resp, subs_partial_path, subs_instances, 2, NULL, NULL, 0);
+    usp__msg__free_unpacked(resp, pbuf_allocator);  // Free the response message
+    if (err != USP_ERR_OK)
+    {
+        return;
+    }
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_UnwatchTable
+**
+** Deletes the specified subscription on the specified table
+**
+** \param   table - data model table owned by the USP Service to delete the subscription from (excluding trailing dot and no {i})
+** \param   subs_instances - array containing the instance numbers of the object creation and object deletion watch subscriptions to delete
+**
+** \return  None
+**
+**************************************************************************/
+void USP_BROKER_UnwatchTable(char *table, int *subs_instances)
+{
+    dm_node_t *node;
+    usp_service_t *us;
+    char watch_creation_path[MAX_DM_PATH];
+    char watch_deletion_path[MAX_DM_PATH];
+    str_vector_t paths;
+    char *paths_to_del[2];
+
+    // Exit if this table has been deregistered from the data model
+    // This could occur if the USP Service disconnected or deregistered part of its data model
+    node = DM_PRIV_GetNodeFromPath(table, NULL, NULL, DONT_LOG_ERRORS);
+    if (node == NULL)
+    {
+        return;
+    }
+
+    // Exit if this table is owned by the core data model
+    if (node->group_id == NON_GROUPED)
+    {
+        return;
+    }
+
+    // Exit if this table was registered as grouped, but is not owned by a USP service
+    us = FindUspServiceByGroupId(node->group_id);
+    if (us == NULL)
+    {
+        return;
+    }
+
+    // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
+    if (us->controller_mtp.protocol == kMtpProtocol_None)
+    {
+        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Connection dropped", __FUNCTION__, us->endpoint_id);
+        return;
+    }
+
+    // Form a statically allocated string vector containing the instances to delete (containing a trailing dot)
+    USP_SNPRINTF(watch_creation_path, sizeof(watch_creation_path), "%s%d.", subs_partial_path, subs_instances[0]);
+    USP_SNPRINTF(watch_deletion_path, sizeof(watch_deletion_path), "%s%d.", subs_partial_path, subs_instances[1]);
+    paths.num_entries = 2;
+    paths.vector = paths_to_del;
+    paths_to_del[0] = watch_creation_path;
+    paths_to_del[1] = watch_deletion_path;
+
+    // Send the Delete request and process the Delete response
+    (void)UspService_DeleteInstances(us, false, &paths, NULL);
+}
+
+/*********************************************************************//**
+**
+** USP_BROKER_ResolveSeInstance
+**
+** Attempts to resolve a search expression to an instance number using a Get request
+**
+** \param   group_id - Identifies the USP Service owning the table
+** \param   table - name of the table to watch (excluding trailing dot and no {i})
+** \param   param - name of the unique key parameter to match the instance number of
+** \param   value - name of the unique key parameter's value to match the instance number of
+**
+** \return  resolved instance number, or INVALID if not resolved
+**
+**************************************************************************/
+int USP_BROKER_ResolveSeInstance(int group_id, char *table, char *param, char *value)
+{
+    int err;
+    kv_vector_t kvv;
+    kv_pair_t *kv;
+    char buf[MAX_DM_PATH];
+    dm_node_t *node;
+    dm_instances_t inst;
+    int instance = INVALID;
+    Usp__Msg *req;
+    Usp__Msg *resp;
+    usp_service_t *us;
+    char msg_id[MAX_MSG_ID_LEN];
+
+    // Find USP Service associated with the group_id
+    us = FindUspServiceByGroupId(group_id);
+    USP_ASSERT(us != NULL);
+
+    // Exit if there is no connection to the USP Service anymore (this could occur if the socket disconnected in the meantime)
+    if (us->controller_mtp.protocol == kMtpProtocol_None)
+    {
+        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Connection dropped", __FUNCTION__, us->endpoint_id);
+        goto exit;
+    }
+
+    // Form KV vector of params to get. We get the value of the parameter in the SE, for the instance identified by the SE
+    USP_SNPRINTF(buf, sizeof(buf), "%s.[%s==\"%s\"].%s", table, param, value, param);
+    KV_VECTOR_Init(&kvv);
+    KV_VECTOR_Add(&kvv, buf, NULL);
+
+    // Form the USP Get Request message
+    CalcBrokerMessageId(msg_id, sizeof(msg_id));
+    req = MSG_UTILS_Create_GetReq(msg_id, &kvv, FULL_DEPTH);
+    KV_VECTOR_Destroy(&kvv);
+
+    // Send the request and wait for a response
+    // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
+    resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp,
+                                                 USP__HEADER__MSG_TYPE__GET_RESP,
+                                                 RESPONSE_TIMEOUT);
+
+    // Exit if timed out waiting for a response
+    if (resp == NULL)
+    {
+        goto exit;
+    }
+
+    // Process the get response, retrieving the parameter values and putting them into the key-value-vector output argument
+    err = MSG_UTILS_ProcessUspService_GetResponse(resp, &kvv);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Free the get response
+    usp__msg__free_unpacked(resp, pbuf_allocator);
+
+    // Exit if the instance doesn't exist yet on the USP Service
+    if ((kvv.num_entries == 0) || (kvv.vector[0].value == NULL))
+    {
+        goto exit;
+    }
+
+    // Exit if the value of the parameter we asked for doesn't match that expected
+    // NOTE: This would only happen if the USP Service's implementation was faulty, so it should never occur
+    kv = &kvv.vector[0];
+    if (strcmp(value, kv->value) != 0)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to extract the instance number from the path
+    node = DM_PRIV_GetNodeFromPath(kv->key, &inst, NULL, 0);
+    if ((node == NULL) || (inst.order == 0))
+    {
+        goto exit;
+    }
+
+    instance = inst.instances[0];
+
+exit:
+    KV_VECTOR_Destroy(&kvv);
+    return instance;
 }
 
 /*********************************************************************//**
@@ -2122,7 +2429,7 @@ Usp__Msg *CreateCliInitiatedRequest(cli_service_cmd_t cmd, char *path, char *opt
             group_add_param_t subs_params[] = {   {"ReferenceList", path,        true, 0, NULL},
                                                   {"NotifType",     notify_type, true, 0, NULL},
                                                   {"Enable",        "true",      true, 0, NULL} };
-            req = MSG_UTILS_Create_AddReq(msg_id, "Device.LocalAgent.Subscription.", subs_params, NUM_ELEM(subs_params));
+            req = MSG_UTILS_Create_AddReq(msg_id, subs_partial_path, subs_params, NUM_ELEM(subs_params));
             *resp_type = USP__HEADER__MSG_TYPE__ADD_RESP;
             break;
 
@@ -2982,7 +3289,7 @@ int Broker_GroupAdd(int group_id, char *path, int *instance)
     }
 
     // Process the add response, determining if it was successful or not
-    err = ProcessAddResponse(resp, obj_path, instance, NULL, NULL, 0);
+    err = ProcessAddResponse(resp, obj_path, instance, 1, NULL, NULL, 0);
 
     // Free the add response, since we've finished with it
     usp__msg__free_unpacked(resp, pbuf_allocator);
@@ -3141,7 +3448,7 @@ int Broker_CreateObj(int group_id, char *path, group_add_param_t *params, int nu
     }
 
     // Process the add response, determining if it was successful or not
-    err = ProcessAddResponse(resp, obj_path, instance, unique_keys, params, num_params);
+    err = ProcessAddResponse(resp, obj_path, instance, 1, unique_keys, params, num_params);
 
     // Free the add response, since we've finished with it
     usp__msg__free_unpacked(resp, pbuf_allocator);
@@ -3326,7 +3633,6 @@ int Broker_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notif
     char subscription_id[MAX_DM_SHORT_VALUE_LEN];
     char *persistent_str = (persistent) ? "true" : "false";
     static unsigned id_count = 1;
-    char *obj_path = "Device.LocalAgent.Subscription.";
     char msg_id[MAX_MSG_ID_LEN];
     char subs_id_type = 'S';
     char *notify_type_str;
@@ -3371,7 +3677,7 @@ int Broker_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notif
 
     // Form the USP Add Request message
     CalcBrokerMessageId(msg_id, sizeof(msg_id));
-    req = MSG_UTILS_Create_AddReq(msg_id, obj_path, params, NUM_ELEM(params));
+    req = MSG_UTILS_Create_AddReq(msg_id, subs_partial_path, params, NUM_ELEM(params));
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
@@ -3386,7 +3692,7 @@ int Broker_GroupSubscribe(int broker_instance, int group_id, subs_notify_t notif
     }
 
     // Process the add response, saving it's details in the subscription mapping table, if successful
-    err = ProcessAddResponse(resp, obj_path, &service_instance, NULL, NULL, 0);
+    err = ProcessAddResponse(resp, subs_partial_path, &service_instance, 1, NULL, NULL, 0);
     if (err == USP_ERR_OK)
     {
         SubsMap_Add(&us->subs_map, service_instance, path, notify_type, subscription_id, broker_instance);
@@ -3439,7 +3745,7 @@ int Broker_GroupUnsubscribe(int broker_instance, int group_id, subs_notify_t not
     }
 
     // Form a statically allocated string vector containing a single instance
-    USP_SNPRINTF(obj_path, sizeof(obj_path), "Device.LocalAgent.Subscription.%d.", smap->service_instance);
+    USP_SNPRINTF(obj_path, sizeof(obj_path), "%s%d.", subs_partial_path, smap->service_instance);
     paths.num_entries = 1;
     paths.vector = &single_path;
     single_path = obj_path;
@@ -3599,7 +3905,9 @@ int SyncSubscriptions(usp_service_t *us)
     // Free the get response, since we've finished with it
     usp__msg__free_unpacked(resp, pbuf_allocator);
 
+    // Start all subscriptions on the USP Service (that don't already exist)
     DEVICE_SUBSCRIPTION_StartAllVendorLayerSubsForGroup(us->group_id);
+    SE_CACHE_WatchAllUniqueKeysOnUspService(us->group_id);
 
     return err;
 }
@@ -3753,9 +4061,12 @@ void ProcessGetSubsResponse_ResolvedPathResult(usp_service_t *us, Usp__GetResp__
         return;
     }
 
-    // Exit if the USP Service's Subscription ID was not created by the Broker
-    if (strstr(subscription_id, broker_unique_str) == NULL)
+    // Exit if the USP Service's Subscription ID was not created by the Broker to shadow a subscription on the broker
+    // In this case delete it, as we won't be able to process any notifications from it anyway
+    // NOTE: We also delete all Broker created table watch subscriptions here, as whilst these are non-persistent, they could exist on the USP Service in the case of the USP Broker crashing and restarting
+    if ((strstr(subscription_id, broker_unique_str) == NULL) || (subscription_id[0] == watch_subs_prefix))
     {
+        STR_VECTOR_Add(subs_to_delete, res->resolved_path);
         return;
     }
 
@@ -4104,6 +4415,66 @@ char *GetParamValueFromResolvedPathResult(Usp__GetResp__ResolvedPathResult *res,
 
 /*********************************************************************//**
 **
+** HandleWatchNotification
+**
+** Processes a search expression watch notification from a USP Service
+**
+** \param   notify - pointer to notify part of parsed protobuf USP message
+** \param   us - USP Service that sent the notification
+**
+** \return  USP_ERR_OK if processed successfully
+**
+**************************************************************************/
+int HandleWatchNotification(Usp__Notify *notify, usp_service_t *us)
+{
+    Usp__Notify__ObjectCreation *noc;
+    Usp__Notify__ObjectDeletion *nod;
+    Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry **unique_keys;
+    dm_node_t *node;
+    char *path;
+
+    switch(notify->notification_case)
+    {
+        case USP__NOTIFY__NOTIFICATION_OBJ_CREATION:
+            // Exit if path is not owned by USP service
+            noc = notify->obj_creation;
+            path = noc->obj_path;
+            node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
+            if ((node == NULL) || (node->group_id != us->group_id))
+            {
+                USP_ERR_SetMessage("%s: Path %s in creation notify not owned by %s", __FUNCTION__, path, us->endpoint_id);
+                return USP_ERR_REQUEST_DENIED;
+            }
+
+            unique_keys = (Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry **) noc->unique_keys; // NOTE: It's safe to do this cast, because we checked it in USP_BROKER_Init()
+            ProcessUniqueKeys(path, unique_keys, noc->n_unique_keys); // NOTE: This calls SE_CACHE_NotifyInstanceAdded()
+            break;
+
+        case USP__NOTIFY__NOTIFICATION_OBJ_DELETION:
+            // Exit if path is not owned by USP service
+            nod = notify->obj_deletion;
+            path = nod->obj_path;
+            node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, 0);
+            if ((node == NULL) || (node->group_id != us->group_id))
+            {
+                USP_ERR_SetMessage("%s: Path %s in deletion notify not owned by %s", __FUNCTION__, path, us->endpoint_id);
+                return USP_ERR_REQUEST_DENIED;
+            }
+
+            SE_CACHE_NotifyInstanceDeleted(path);
+            break;
+
+        default:
+            USP_ERR_SetMessage("%s: Unexpected notification type for subs_id=%s", __FUNCTION__, notify->subscription_id);
+            return USP_ERR_REQUEST_DENIED;
+            break;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
 ** ProcessGetResponse
 **
 ** Processes a Get Response that we have received from a USP Service
@@ -4432,7 +4803,10 @@ int CalcFailureIndex(Usp__Msg *resp, kv_vector_t *params, int *modified_err)
 **
 ** \param   resp - USP response message in protobuf-c structure
 ** \param   path - path of the object in the data model that we requested an instance to be added to
-** \param   instance - pointer to variable in which to return instance number of object that was added
+** \param   instance - pointer to array in which to return instance number of objects that were added
+** \param   num_instances - expected number of objects that are expected in the add response
+**
+**  The following arguments may only be used if the expected number of instances was 1
 ** \param   unique_keys - pointer to key-value vector in which to return the name and values of the unique keys for the object, or NULL if this info is not required
 ** \param   params - pointer to array containing the child parameters and their input and output arguments or NULL if not used
 **                   This function fills in the err_code and err_msg output arguments if a parameter failed to set
@@ -4441,9 +4815,9 @@ int CalcFailureIndex(Usp__Msg *resp, kv_vector_t *params, int *modified_err)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int ProcessAddResponse(Usp__Msg *resp, char *path, int *instance, kv_vector_t *unique_keys, group_add_param_t *params, int num_params)
+int ProcessAddResponse(Usp__Msg *resp, char *path, int *instance, int num_instances, kv_vector_t *unique_keys, group_add_param_t *params, int num_params)
 {
-    int i;
+    int i, j;
     int err;
     Usp__AddResp *add;
     Usp__AddResp__CreatedObjectResult *created_obj_result;
@@ -4453,6 +4827,11 @@ int ProcessAddResponse(Usp__Msg *resp, char *path, int *instance, kv_vector_t *u
     Usp__AddResp__CreatedObjectResult__OperationStatus__OperationSuccess__UniqueKeysEntry *uk;
     Usp__AddResp__ParameterError *pe;
     char *param_errs_path;
+
+    // Check that caller is not expecting unique keys or error params to be returned, if there is more than one instance expected
+    // in the response (as the API of this function does not support that use case)
+    USP_ASSERT((num_instances==1) || (unique_keys == NULL));
+    USP_ASSERT((num_instances==1) || (params == NULL));
 
     // Exit if the Message body contained an Error response, or the response failed to validate
     err = MSG_UTILS_ValidateUspResponse(resp, USP__RESPONSE__RESP_TYPE_ADD_RESP, &param_errs_path);
@@ -4470,75 +4849,78 @@ int ProcessAddResponse(Usp__Msg *resp, char *path, int *instance, kv_vector_t *u
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Exit if there isn't exactly 1 created_obj_result (since we only requested one object to be created)
-    if (add->n_created_obj_results != 1)
+    // Exit if there isn't the expected number of created_obj_results (since we know how many we requested to be created)
+    if (add->n_created_obj_results != num_instances)
     {
-        USP_ERR_SetMessage("%s: Unexpected number of objects created (%d)", __FUNCTION__, (int)add->n_created_obj_results);
+        USP_ERR_SetMessage("%s: Unexpected number of objects created (got %d, expected %d)", __FUNCTION__, (int)add->n_created_obj_results, num_instances);
         return USP_ERR_INTERNAL_ERROR;
     }
 
     // Exit if this response seems to be for a different requested path
-    created_obj_result = add->created_obj_results[0];
-    if (strcmp(created_obj_result->requested_path, path) != 0)
+    for (i=0; i<num_instances; i++)
     {
-        USP_ERR_SetMessage("%s: Unexpected requested path in AddResponse (got=%s, expected=%s)", __FUNCTION__, created_obj_result->requested_path, path);
-        return USP_ERR_INTERNAL_ERROR;
-    }
+        created_obj_result = add->created_obj_results[i];
+        if (strcmp(created_obj_result->requested_path, path) != 0)
+        {
+            USP_ERR_SetMessage("%s: Unexpected requested path in AddResponse (got=%s, expected=%s)", __FUNCTION__, created_obj_result->requested_path, path);
+            return USP_ERR_INTERNAL_ERROR;
+        }
 
-    // Determine whether the object was created successfully or failed
-    oper_status = created_obj_result->oper_status;
-    switch(oper_status->oper_status_case)
-    {
-        case USP__ADD_RESP__CREATED_OBJECT_RESULT__OPERATION_STATUS__OPER_STATUS_OPER_FAILURE:
-            oper_failure = oper_status->oper_failure;
-            USP_ERR_SetMessage("%s", oper_failure->err_msg);
-            err = oper_failure->err_code;
-            if (err == USP_ERR_OK)      // Since this result is indicated as a failure, return a failure code to the caller
-            {
-                err = USP_ERR_INTERNAL_ERROR;
-            }
-            break;
-
-        case USP__ADD_RESP__CREATED_OBJECT_RESULT__OPERATION_STATUS__OPER_STATUS_OPER_SUCCESS:
-            oper_success = oper_status->oper_success;
-            // Determine the instance number of the object that was added (validating that it is for the requested path)
-            err = ValidateAddResponsePath(path, oper_success->instantiated_path, instance);
-            if (err != USP_ERR_OK)
-            {
-                goto exit;
-            }
-
-            if (oper_success->n_unique_keys > 0)
-            {
-                // Register the unique keys for this object, if they haven't been already
-                USP_ASSERT(&((Usp__AddResp__CreatedObjectResult__OperationStatus__OperationSuccess__UniqueKeysEntry *)0)->key == &((Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry *)0)->key);  // Checks that Usp__AddResp__CreatedObjectResult__OperationStatus__OperationSuccess__UniqueKeysEntry is same structure as Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry
-                ProcessUniqueKeys(oper_success->instantiated_path, (Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry **)oper_success->unique_keys, oper_success->n_unique_keys);
-
-                // Copy the unique keys into the key-value vector to be returned
-                if (unique_keys != NULL)
+        // Determine whether the object was created successfully or failed
+        oper_status = created_obj_result->oper_status;
+        switch(oper_status->oper_status_case)
+        {
+            case USP__ADD_RESP__CREATED_OBJECT_RESULT__OPERATION_STATUS__OPER_STATUS_OPER_FAILURE:
+                oper_failure = oper_status->oper_failure;
+                USP_ERR_SetMessage("%s", oper_failure->err_msg);
+                err = oper_failure->err_code;
+                if (err == USP_ERR_OK)      // Since this result is indicated as a failure, return a failure code to the caller
                 {
-                    for (i=0; i < oper_success->n_unique_keys; i++)
+                    err = USP_ERR_INTERNAL_ERROR;
+                }
+                break;
+
+            case USP__ADD_RESP__CREATED_OBJECT_RESULT__OPERATION_STATUS__OPER_STATUS_OPER_SUCCESS:
+                oper_success = oper_status->oper_success;
+                // Determine the instance number of the object that was added (validating that it is for the requested path)
+                err = ValidateAddResponsePath(path, oper_success->instantiated_path, &instance[i]);
+                if (err != USP_ERR_OK)
+                {
+                    goto exit;
+                }
+
+                if (oper_success->n_unique_keys > 0)
+                {
+                    // Register the unique keys for this object, if they haven't been already
+                    USP_ASSERT(&((Usp__AddResp__CreatedObjectResult__OperationStatus__OperationSuccess__UniqueKeysEntry *)0)->key == &((Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry *)0)->key);  // Checks that Usp__AddResp__CreatedObjectResult__OperationStatus__OperationSuccess__UniqueKeysEntry is same structure as Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry
+                    ProcessUniqueKeys(oper_success->instantiated_path, (Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry **)oper_success->unique_keys, oper_success->n_unique_keys);
+
+                    // Copy the unique keys into the key-value vector to be returned
+                    if (unique_keys != NULL)
                     {
-                        uk = oper_success->unique_keys[i];
-                        KV_VECTOR_Add(unique_keys, uk->key, uk->value);
+                        for (j=0; j < oper_success->n_unique_keys; j++)
+                        {
+                            uk = oper_success->unique_keys[j];
+                            KV_VECTOR_Add(unique_keys, uk->key, uk->value);
+                        }
                     }
                 }
-            }
 
-            if (params != NULL)
-            {
-                // Copy across all param errs from the USP response back into the caller's params array
-                for (i=0; i < oper_success->n_param_errs; i++)
+                if (params != NULL)
                 {
-                    pe = oper_success->param_errs[i];
-                    PropagateParamErr(pe->param, pe->err_code, pe->err_msg, params, num_params);
+                    // Copy across all param errs from the USP response back into the caller's params array
+                    for (j=0; j < oper_success->n_param_errs; j++)
+                    {
+                        pe = oper_success->param_errs[j];
+                        PropagateParamErr(pe->param, pe->err_code, pe->err_msg, params, num_params);
+                    }
                 }
-            }
 
-            break;
+                break;
 
-        default:
-            TERMINATE_BAD_CASE(oper_status->oper_status_case);
+            default:
+                TERMINATE_BAD_CASE(oper_status->oper_status_case);
+        }
     }
 
 exit:
@@ -5059,6 +5441,8 @@ int CompareGetInstances_CurInst(const void *entry1, const void *entry2)
 ** ProcessUniqueKeys
 **
 ** Registers the specified unique keys with the specified object, if relevant, and not already registered
+** Also updates any search expression based permission selectors with matching instance number
+** NOTE: This function is called when processing an add response and also when processing an object creation notification
 **
 ** \param   path - Instantiated data model model path of the object
 ** \param   unique_keys - pointer to unique keys to process
@@ -5072,6 +5456,9 @@ void ProcessUniqueKeys(char *path, Usp__GetInstancesResp__CurrInstance__UniqueKe
     int i;
     dm_node_t *node;
     char *key_names[MAX_COMPOUND_KEY_PARAMS];  // NOTE: Ownership if the key names stays with the caller, rather than being transferred to tis array
+    kv_vector_t kvv;
+    kv_pair_t kv_pairs[MAX_COMPOUND_KEY_PARAMS];
+    kv_pair_t *kv;
 
     // Exit if path does not exist in the data model
     node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, DONT_LOG_ERRORS);
@@ -5088,26 +5475,52 @@ void ProcessUniqueKeys(char *path, Usp__GetInstancesResp__CurrInstance__UniqueKe
         return;
     }
 
-    // Exit if the unique keys are already registered for the node. This is likely to be the case if this function has been called before for the table
-    if (node->registered.object_info.unique_keys.num_entries != 0)
+    // Register the unique keys for the node, if not already registered
+    // They will have been registered if this function has been called before for the table
+    if (node->registered.object_info.unique_keys.num_entries == 0)
+    {
+        // Truncate the list of unique keys to register if it's more than we can cope with
+        if (num_unique_keys > MAX_COMPOUND_KEY_PARAMS)
+        {
+            USP_LOG_Error("%s: Truncating the number of unique keys registered for object %s. Increase MAX_COMPOUND_KEY_PARAMS to %d", __FUNCTION__, path, num_unique_keys);
+            num_unique_keys = MAX_COMPOUND_KEY_PARAMS;
+        }
+
+        // Form array of unique key parameter names to register
+        for (i=0; i < num_unique_keys; i++)
+        {
+            key_names[i] = unique_keys[i]->key;
+        }
+
+        USP_REGISTER_Object_UniqueKey(path, key_names, num_unique_keys); // Intentionally ignoring the error
+    }
+
+    // Exit if this is not a top level multi-instance object, as the rest of the function
+    // is to update search expression based permissions - and these are only present on top level objects
+    if (node->order != 1)
     {
         return;
     }
 
-    // Truncate the list of unique keys to register if it's more than we can cope with
-    if (num_unique_keys > MAX_COMPOUND_KEY_PARAMS)
-    {
-        USP_LOG_Error("%s: Truncating the number of unique keys registered for object %s. Increase MAX_COMPOUND_KEY_PARAMS to %d", __FUNCTION__, path, num_unique_keys);
-        num_unique_keys = MAX_COMPOUND_KEY_PARAMS;
-    }
-
-    // Form array of unique key parameter names to register
+    // Form key value vector of unique key values
+    // NOTE: Ownership of the key names and values stays with the USP message structure
     for (i=0; i < num_unique_keys; i++)
     {
-        key_names[i] = unique_keys[i]->key;
+        kv = &kv_pairs[i];
+        kv->key = unique_keys[i]->key;
+        kv->value = unique_keys[i]->value;
     }
+    kvv.vector = kv_pairs;
+    kvv.num_entries = num_unique_keys;
 
-    USP_REGISTER_Object_UniqueKey(path, key_names, num_unique_keys); // Intentionally ignoring the error
+    // Update all unresolved search expression permissions affected by this instance
+    // NOTE: We don't do this for those parts of the data model that overlap (but are not part of) that of the USP Broker
+    // because that could cause SE based permissions on the Broker's subscription table to be resolved by additions to the USP Service's subscription table
+    #define DEVICE_LOCALAGENT "Device.LocalAgent."
+    if (strncmp(path, DEVICE_LOCALAGENT, sizeof(DEVICE_LOCALAGENT)-1) != 0)
+    {
+        SE_CACHE_NotifyInstanceAdded(path, &kvv);
+    }
 }
 
 /*********************************************************************//**
@@ -5942,6 +6355,10 @@ void HandleUspServiceAgentDisconnect(usp_service_t *us, unsigned flags)
     // If the USP Service hadn't crashed, but had just restarted the UDS connection, then sent the expected response,
     // the response would be discarded as it wouldn't match any that would be in the us->msg_map after the USP Service had reconnected
     MsgMap_Destroy(&us->msg_map);
+
+    // Remove all table watches on search expression based permissions
+    // NOTE: For efficiency purposes, this is done before DATA_MODEL_DeRegisterPath()
+    SE_CACHE_HandleUspServiceDisconnect(us->group_id);
 
     // Remove all paths owned by the USP Service from the supported data model (the instance cache for these objects is also removed)
     for (i=0; i < us->registered_paths.num_entries; i++)
@@ -6995,6 +7412,12 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
         return false;
     }
 
+    // Exit if this is a watch notification for a search expression based permission (these are always handled by the normal handler)
+    if (*notify->subscription_id == watch_subs_prefix)
+    {
+        return false;
+    }
+
     // Exit if the notification is for Operation Complete. These need to write to the Request table in the Broker, which requires a
     // USP database transaction, which cannot be performed in passthru (because a database transaction is probably already in progress
     // before calling the vendor hook that is allowing the passthru to occur whilst blocked waiting for a response from a USP Service)
@@ -7026,6 +7449,7 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
     }
 
     // Exit if the Subscription ID was not created by the Broker
+    // or was a table watch subscription for search expression based permissions (these are not processed asynchronously, as updating permissions whist processing a response could possibly lead to issues)
     if (strstr(notify->subscription_id, broker_unique_str) == NULL)
     {
         return false;

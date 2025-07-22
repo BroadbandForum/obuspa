@@ -180,7 +180,6 @@ int DEVICE_REQUEST_Add(char *path, char *command_key, int *instance)
     return USP_ERR_OK;
 }
 
-
 /*********************************************************************//**
 **
 ** DEVICE_REQUEST_OperationComplete
@@ -245,6 +244,9 @@ void DEVICE_REQUEST_OperationComplete(int instance, int err_code, char *err_msg,
     {
         return;
     }
+
+    // Ensure that SE based permissions are updated if this OperationComplete was from a (non USP Services owned) table that uses the refresh instances vendor hook
+    DATA_MODEL_RefreshSePermissions(command);
 
     // Send operation complete events to all subscribers
     DEVICE_SUBSCRIPTION_ProcessAllOperationCompleteSubscriptions(command, command_key, err_code, err_msg, output_args);
@@ -444,6 +446,7 @@ int DEVICE_REQUEST_PersistOperationArgs(int instance, kv_vector_t *args, char *p
     char path[MAX_DM_PATH];
 
     // Exit if unable to create the shadow request instance object
+    // NOTE: This function does not have to call SE_CACHE_NotifyInstanceAdded(), because you can't set permissions on Internal. nodes
     USP_SNPRINTF(path, sizeof(path), "Internal.Request.%d", instance);
     err = DATA_MODEL_AddInstance(path, NULL, 0);
     if (err != USP_ERR_OK)
@@ -501,7 +504,6 @@ int DEVICE_REQUEST_CountMatchingRequests(char *command_path)
 {
     int_vector_t iv;
     dm_instances_t inst;
-    bool is_qualified_instance;
     dm_node_t *command_node;
     dm_node_t *node;
     int err;
@@ -518,7 +520,7 @@ int DEVICE_REQUEST_CountMatchingRequests(char *command_path)
     USP_ASSERT(command_node != NULL);
 
     // Find node representing the request table
-    node = DM_PRIV_GetNodeFromPath(DEVICE_REQ_ROOT ".{i}", &inst, &is_qualified_instance, 0);
+    node = DM_PRIV_GetNodeFromPath(DEVICE_REQ_ROOT, &inst, NULL, 0);
     USP_ASSERT(node != NULL);
 
     // Get an array of instances for in the request table

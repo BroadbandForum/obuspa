@@ -62,6 +62,7 @@
 #include "subs_retry.h"
 #include "usp_broker.h"
 #include "os_utils.h"
+#include "se_cache.h"
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_defs.h"
@@ -1469,7 +1470,11 @@ update:
         // NOTE: Ths will chain to updating the controllers[] data structure, and allow the MTP to be added
         DM_TRANS_Commit();
 
-        // Ensure that cont points to the controller whcih we jsut added
+        // Fixup any search expression based permissions which were waiting for this instance to be created
+        USP_SNPRINTF(path, sizeof(path), "%s.%d", device_cont_root, cont_instance);
+        SE_CACHE_NotifyInstanceAdded(path, NULL);
+
+        // Ensure that cont points to the controller which we just added
         cont = FindControllerByInstance(cont_instance);
         USP_ASSERT(cont != NULL);           // Because we just added it (when the commit chained to updating controllers[])
     }
@@ -1534,6 +1539,10 @@ update:
         // Commit the transaction for adding/updating the controller MTP
         // NOTE: Ths will chain to updating the controllers[] data structure
         DM_TRANS_Commit();
+
+        // Fixup any search expression based permissions which were waiting for this instance to be created
+        USP_SNPRINTF(path, sizeof(path), "%s.%d.MTP.%d", device_cont_root, cont_instance, mtp_instance);
+        SE_CACHE_NotifyInstanceAdded(path, NULL);
     }
 
     // If the code gets here, everything was successful

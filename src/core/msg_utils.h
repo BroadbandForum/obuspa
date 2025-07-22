@@ -66,5 +66,6 @@ int MSG_UTILS_ProcessUspService_DeleteResponse(Usp__Msg *resp, char *path);
 int MSG_UTILS_ProcessUspService_OperateResponse(Usp__Msg *resp, char *path, kv_vector_t *output_args);
 int MSG_UTILS_ProcessUspService_GetInstancesResponse(Usp__Msg *resp, str_vector_t *sv);
 int MSG_UTILS_ProcessUspService_GetSupportedDMResponse(Usp__Msg *usp, kv_vector_t *kv);
+void MSG_UTILS_Extend_AddReq(Usp__Msg *msg, char *path, group_add_param_t *params, int num_params);
 
 #endif

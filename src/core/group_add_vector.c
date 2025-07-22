@@ -46,6 +46,7 @@
 #include "group_add_vector.h"
 #include "group_set_vector.h"
 #include "data_model.h"
+#include "se_cache.h"
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -322,6 +323,36 @@ void GROUP_ADD_VECTOR_Rollback(group_add_vector_t *gav, int rollback_span)
 
 /*********************************************************************//**
 **
+** GROUP_ADD_VECTOR_FixupSECacheInstanceNumbers
+**
+** Updates the instance numbers in all search expression based permissions which match
+** the instances which have been successfully created in the group add vector
+**
+** \param   gav - pointer to vector containing the objects that have been added
+**
+** \return  None
+**
+**************************************************************************/
+void GROUP_ADD_VECTOR_FixupSECacheInstanceNumbers(group_add_vector_t *gav)
+{
+    int i;
+    group_add_entry_t *gae;
+    char path[MAX_DM_PATH];
+
+    // Iterate over all instances that we attempted to add, fixing up only the ones that were successfully added
+    for (i=0; i < gav->num_entries; i++)
+    {
+        gae = &gav->vector[i];
+        if (gae->err_code == USP_ERR_OK)
+        {
+            USP_SNPRINTF(path, sizeof(path), "%s.%d", gae->res_path, gae->instance);
+            SE_CACHE_NotifyInstanceAdded(path, &gae->unique_keys);
+        }
+    }
+}
+
+/*********************************************************************//**
+**
 ** CreateObject_WithCreateVendorHook
 **
 ** Creates the specified object using the settings previously setup in the group add vector
@@ -509,10 +540,12 @@ int CreateObject_WithoutCreateVendorHook(group_add_entry_t *gae, combined_role_t
 
     // If the code gets here, then all required parameters for this object have been successfully set
     // So now we need to get the values of all parameters used as unique keys
+    // NOTE: The unique keys are obtained using the INTERNAL_ROLE because they may be needed to resolve SE based permissions,
+    // and also because there is no permission bit which applies ('Param r---' permission only applies to Get and GSDM)
 
     // Exit if unable to get the parameter values of the unique keys for this object
     full_path[len] = '\0';
-    err = DATA_MODEL_GetUniqueKeyParams(full_path, &gae->unique_keys, combined_role);
+    err = DATA_MODEL_GetUniqueKeyParams(full_path, &gae->unique_keys, INTERNAL_ROLE);
     if (err != USP_ERR_OK)
     {
         RollbackGroupAddEntry(gae);

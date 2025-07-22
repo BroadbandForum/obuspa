@@ -246,6 +246,11 @@
 #define MAX_CTRUST_ROLES    8  // Maximum number of roles that can be present in Device.LocalAgent.ControllerTrust.Role.{i}
 
 //-----------------------------------------------------------------------------------------
+// Comma separated list of parameters which are supported in search expression based permissions
+// Each parameter must be a unique key in the table referenced by the permission (as the search expression must resolve to a single instance)
+#define ALLOWED_PARAMS_FOR_SE_BASED_PERMS "Alias, Name"
+
+//-----------------------------------------------------------------------------------------
 // Tests for incompatible build defines
 #ifdef REMOVE_DEVICE_SECURITY
 #if !defined(DISABLE_STOMP) || defined(ENABLE_COAP) || defined(ENABLE_MQTT) || defined(ENABLE_WEBSOCKETS) || !defined(REMOVE_DEVICE_BULKDATA)

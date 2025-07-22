@@ -342,6 +342,7 @@ Usp__Msg *ProcessDel_AllowPartialFalse(char *msg_id, del_expr_info_t *del_expr_i
         goto exit;
     }
 
+    // If the code gets here, then all instances were deleted successfully
     // Create the delete response from the results stored in the group del vector
     resp = CreateFullDeleteResp(msg_id, del_expr_info, num_del_expr, gdv);
 

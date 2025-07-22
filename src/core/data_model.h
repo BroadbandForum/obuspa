@@ -121,16 +121,26 @@ typedef struct
     int order;                                  // Number of instance selectors in instances[] that apply
     int selectors[MAX_DM_INSTANCE_ORDER];       // Value of each instance number in the permission's target to apply this permission to
     unsigned short permission_bitmask;          // Bitmask of permissions that apply for the above instance numbers.
-                                                // NOTE: This is modified from the permission bitmask in permission_t because if there is no permission to read instance numbers, then there's no permission to read parameters either
+                                                // NOTE: This is modified from the permission bitmask in permission_t because if there
+                                                // is no permission to read the meta-information of the object, then there's no permission to read parameters either
+
+    bool is_watching;                           // Set to true if the selector contains a search expression and the SE cache is watching for changes to the instance number
+
 } inst_sel_t;
 
 #define WILDCARD_INSTANCE  (-1)   // Special value instance number to denote wildcard (i.e. any) instance
+#define UNKNOWN_INSTANCE   (-2)   // Special value instance number to denote that the instance number is defined by a
+                                  // search expression that doesn't match any instances yet
+
 //-----------------------------------------------------------------------------------------
 // Vector of permission instances
 // - When used in permission_t, this vector has one entry for each permission target and the vector owns the entries
 // - When used in perm_inst_roles_t, this vector is a table of permission instances to match on the node,
-//   from lowest order permission to highest order permission (highest order overrides lowest order) and
-//   the vector does not own the entries (the entries are owned by vectors in permission_t)
+//   from lowest order permission to highest order permission (highest order overrides lowest order)
+//   and the vector does not own the entries (the entries are owned by vectors in permission_t)
+// - When used in se_watch_term_inst_roles_t, this vector is a table of permissions containing search expressions that
+//   are all matching the same unique key in the same table
+//   and the vector does not own the entries (the entries are owned by vectors in permission_t)
 typedef struct
 {
     inst_sel_t **vector;
@@ -349,7 +359,7 @@ extern int dm_root_len;
 #define DONT_LOG_ERRORS         0x00000001  // Suppresses logging of errors when calling the function - because errors may be expected
 #define SUBSTITUTE_SEARCH_EXPRS 0x00000002  // Any search expressions in the path are replaced with "{i}" in the hash calculation
 
-// Additional definitions for flags used in DM_PRIV_GetPermissions()
+// Additional definitions for flags used in DM_PRIV_GetPermissions() and DATA_MODEL_GetPermissions()
 #define CALC_ADD_PERMISSIONS    0x00000004  // Calculates the permissions to be used when adding an instance to a table
                                             // This requires a special exception to be made in the permission calculating code. See DoPermissionInstancesMatch() for details.
 
@@ -385,6 +395,7 @@ char DATA_MODEL_GetJSONParameterType(char *path);
 int DATA_MODEL_SetParameterInDatabase(char *path, char *value);
 int DATA_MODEL_FindUnusedGroupId(void);
 int DATA_MODEL_DeRegisterPath(char *schema_path);
+void DATA_MODEL_RefreshSePermissions(char *path);
 
 int DM_PRIV_InitSetRequest(dm_req_t *req, dm_node_t *node, char *path, dm_instances_t *inst, char *new_value);
 void DM_PRIV_RequestInit(dm_req_t *req, dm_node_t *node, char *path, dm_instances_t *inst);

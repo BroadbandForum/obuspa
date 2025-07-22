@@ -95,6 +95,7 @@ add_library(core
     usp_record.c
     sar_vector.c
     e2e_context.c
+    se_cache.c
     device_uds.c
     uds.c
     plugin.c

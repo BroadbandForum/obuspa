@@ -307,9 +307,11 @@ int DEVICE_CTRUST_GetCertInheritedRole(int cert_instance);
 int DEVICE_CTRUST_RoleInstanceToIndex(int role_instance);
 int DEVICE_CTRUST_RoleIndexToInstance(int role_index);
 void DEVICE_CTRUST_ApplyPermissionsToSubTree(char *path);
+int DEVICE_CTRUST_InstSelToRoleInstance(void *sel, int *perm_instance);
 char *DEVICE_CTRUST_InstSelToPermTarget(int role_index, void *is, int *perm_instance);
 int DEVICE_CTRUST_SetRoleParameter(int instance, char *param_name, char *new_value);
 int DEVICE_CTRUST_SetPermissionParameter(int instance1, int instance2, char *param_name, char *new_value);
+int DEVICE_CTRUST_DumpPermissionSelectors(int role_instance, char *path);
 int DEVICE_REQUEST_Init(void);
 int DEVICE_REQUEST_Add(char *path, char *command_key, int *instance);
 void DEVICE_REQUEST_OperationComplete(int instance, int err_code, char *err_msg, kv_vector_t *output_args);
@@ -365,6 +367,12 @@ void DEVICE_CONTROLLER_AddController_UDS(char *endpoint_id, int uds_instance);
 #ifndef REMOVE_USP_SERVICE
 char *DEVICE_CONTROLLER_FindFirstControllerEndpoint(void);
 #endif
+
+// Uncomment the following line to enable cross checking between structures in device_ctrust and se_cache
+//#define CROSS_CHECK_SE_CACHE
+#ifdef CROSS_CHECK_SE_CACHE
+void DEVICE_CTRUST_CrossCheckSECache(void);
+#endif
 //------------------------------------------------------------------------------
 // Tables used to convert to/from an enumeration to/from a string
 extern const enum_entry_t mtp_protocols[kMtpProtocol_Max];
@@ -374,6 +382,10 @@ extern const enum_entry_t mqtt_protocol[kMqttProtocol_Max];
 //------------------------------------------------------------------------------
 // Pointers to strings containing paths in the data model
 extern char *device_req_root;
+
+//-----------------------------------------------------------------------------------------------
+// Help macroer to convert a ControllerTrust permission bit to a character
+#define PERMISSION_CHAR(bitmask, c, mask) ( ((bitmask & mask) == 0) ? '-' : c )
 
 //-----------------------------------------------------------------------------------------------
 // Global variables set by command line

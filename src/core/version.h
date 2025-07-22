@@ -41,4 +41,4 @@
  */
 
  /* Lines below main version may include patch version numbers */
-#define AGENT_SOFTWARE_VERSION  "10.0.4"
+#define AGENT_SOFTWARE_VERSION  "10.0.5"

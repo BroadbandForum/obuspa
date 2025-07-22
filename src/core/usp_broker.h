@@ -76,5 +76,9 @@ int USP_BROKER_DirectGetForCli(char *path, combined_role_t *combined_role);
 int USP_BROKER_ExecuteCli_Service(str_vector_t *args);
 int USP_BROKER_AttemptDirectGet(char *path, str_vector_t *non_usp_params, int_vector_t *group_ids, kv_vector_t *kvv_resp, combined_role_t *combined_role, int depth);
 bool USP_BROKER_CheckPassThruPermissionsInSearchExpressions(char *path, combined_role_t *combined_role, dm_instances_t *inst);
+void USP_BROKER_WatchTable(char *table, int *subs_instances);
+void USP_BROKER_UnwatchTable(char *table, int *subs_instances);
+int USP_BROKER_ResolveSeInstance(int group_id, char *table, char *param, char *value);
+bool USP_BROKER_IsUspService(int group_id);
 
 #endif

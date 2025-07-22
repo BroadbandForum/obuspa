@@ -1,5 +1,5 @@
-/**
- * \file inst_sel_vector.c
+/*
+ *
  * Copyright (C) 2025, Broadband Forum
  * Copyright (C) 2025, Vantiva Technologies SAS
  *
@@ -32,9 +32,20 @@
  *
  */
 
+/**
+ * \file inst_sel_vector.c
+ *
+ * Implements a vector of instance number based selectors
+ * This is used to implement instance based permissions
+ *
+ */
+#include <stdlib.h>
+#include <string.h>
+
 #include "common_defs.h"
 #include "data_model.h"
 #include "inst_sel_vector.h"
+#include "se_cache.h"
 
 
 //------------------------------------------------------------------------------
@@ -66,7 +77,7 @@ void INST_SEL_VECTOR_Init(inst_sel_vector_t *isv)
 **
 ** \param   isv - pointer to structure to free
 ** \param   destroy_entries - flag to determine whether to destroy the individual entries in the vector.
-**                            If set to false, they are not owned by this vector and must not be freed
+**                            If set to false, they are not owned by this vector and must not be freed or unwatched
 **
 ** \return  None
 **
@@ -74,6 +85,7 @@ void INST_SEL_VECTOR_Init(inst_sel_vector_t *isv)
 void INST_SEL_VECTOR_Destroy(inst_sel_vector_t *isv, bool destroy_entries)
 {
     int i;
+    inst_sel_t *sel;
 
     // Exit if vector is already empty
     if (isv->vector == NULL)
@@ -81,12 +93,18 @@ void INST_SEL_VECTOR_Destroy(inst_sel_vector_t *isv, bool destroy_entries)
         goto exit;
     }
 
-    // Free all entries, but only if they are owned by this vector
+    // Free and unwatch all entries, but only if they are owned by this vector
+    // NOTE: Unwatching of SE based permissions is done outside of this function to prevent unnecessary unwatch/rewatch when permissions are modified
     if (destroy_entries)
     {
         for (i=0; i < isv->num_entries; i++)
         {
-            USP_FREE(isv->vector[i]);
+            sel = isv->vector[i];
+            if (sel->is_watching)
+            {
+                SE_CACHE_UnwatchUniqueKey(sel);
+            }
+            USP_FREE(sel);
         }
     }
 
@@ -99,6 +117,31 @@ exit:
     isv->num_entries = 0;
 }
 
+/*********************************************************************//**
+**
+** INST_SEL_VECTOR_Unwatch
+**
+** Unwatches all selectors which are currently being watched in the specified permission instance vector
+**
+** \param   isv - pointer to structure containing selectors to unwatch
+**
+** \return  None
+**
+**************************************************************************/
+void INST_SEL_VECTOR_Unwatch(inst_sel_vector_t *isv)
+{
+    int i;
+    inst_sel_t *sel;
+
+    for (i=0; i < isv->num_entries; i++)
+    {
+        sel = isv->vector[i];
+        if (sel->is_watching)
+        {
+            SE_CACHE_UnwatchUniqueKey(sel);
+        }
+    }
+}
 
 /*********************************************************************//**
 **
@@ -134,6 +177,7 @@ void INST_SEL_VECTOR_Fill(inst_sel_vector_t *isv, int num_entries, unsigned shor
         // Initialize each entry
         memset(sel, 0, sizeof(inst_sel_t));
         sel->permission_bitmask = permission_bitmask;
+        sel->is_watching = false;
     }
 }
 
@@ -143,7 +187,7 @@ void INST_SEL_VECTOR_Fill(inst_sel_vector_t *isv, int num_entries, unsigned shor
 **
 ** Adds the specified permission instance selector to the specified vector
 **
-** \param   isv - pointer to structure to initialise
+** \param   isv - pointer to structure to add the selector to
 ** \param   sel - instance selector to add to the vector
 **                NOTE: The vector contains only a pointer to the instance selector, rather than a copy of it
 **
@@ -158,6 +202,80 @@ void INST_SEL_VECTOR_Add(inst_sel_vector_t *isv, inst_sel_t *sel)
     isv->vector = USP_REALLOC(isv->vector, new_num_entries*sizeof(inst_sel_t *));
     isv->vector[ isv->num_entries ] = sel;
     isv->num_entries = new_num_entries;
+}
+
+/*********************************************************************//**
+**
+** INST_SEL_VECTOR_Remove
+**
+** Removes the specified entry from the vector
+**
+** \param   sev - vector to remove the entry from
+** \param   index - index of the entry to remove
+** \param   destroy_entries - flag to determine whether to destroy the individual entries in the vector.
+**                            If set to false, they are not owned by this vector and must not be freed
+**
+** \return  pointer to entry that has been added
+**
+**************************************************************************/
+void INST_SEL_VECTOR_Remove(inst_sel_vector_t *isv, int index, bool destroy_entries)
+{
+    int size;
+    inst_sel_t **p_sel;
+
+    // Free the memory owned by the entry
+    p_sel = &isv->vector[index];
+    if (destroy_entries)
+    {
+        USP_FREE(*p_sel);
+    }
+
+    // Move down the rest of the entries
+    size = (isv->num_entries-index-1)*sizeof(inst_sel_t *);
+    if (size > 0)
+    {
+        memmove(p_sel, &p_sel[1], size);
+    }
+
+    // Realloc the array
+    isv->num_entries--;
+    size = (isv->num_entries)*sizeof(inst_sel_t *);
+    if (size > 0)
+    {
+        isv->vector = USP_REALLOC(isv->vector, size);
+    }
+    else
+    {
+        USP_SAFE_FREE(isv->vector);
+    }
+}
+
+/*********************************************************************//**
+**
+** INST_SEL_VECTOR_Find
+**
+** Finds the specified permission instance selector in the specified vector
+**
+** \param   isv - pointer to structure to find the selector in
+** \param   sel - instance selector to add to the vector
+**                NOTE: The vector contains only a pointer to the instance selector, rather than a copy of it
+**
+** \return  Index of selector in the vector or INVALID if no match found
+**
+**************************************************************************/
+int INST_SEL_VECTOR_Find(inst_sel_vector_t *isv, inst_sel_t *sel)
+{
+    int i;
+
+    for (i=0; i < isv->num_entries; i++)
+    {
+        if (isv->vector[i] == sel)
+        {
+            return i;
+        }
+    }
+
+    return INVALID;
 }
 
 /*********************************************************************//**
@@ -202,12 +320,15 @@ unsigned short INST_SEL_VECTOR_GetPermissionForInstance(inst_sel_vector_t *isv, 
     }
 
     // Exit if at least one permission matched a selector
-    if (was_matched != false)
+    if (again==false)
     {
+        USP_ASSERT(was_matched == true);
         return cumulative_permissions;
     }
 
-    // If none of the permissions match, then the default is for no permissions
+    // If none of the permissions matched exactly, then the default is for no permissions
+    // NOTE: This case includes the case of the path being a partial path and the selector being for a specific instance number
+    //       In this case, the permission of the selector does not apply, and if no lower order selectors apply to all instances, then the code gets here
     return 0;
 }
 

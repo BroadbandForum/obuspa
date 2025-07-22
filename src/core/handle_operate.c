@@ -53,6 +53,7 @@
 #include "proto_trace.h"
 #include "device.h"
 #include "usp_broker.h"
+#include "se_cache.h"
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -90,6 +91,7 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_con
     char *oper_path;
     int instance;
     combined_role_t combined_role;
+    char req_path[MAX_DM_PATH];
 
     // Initialise all structures that may be freed on exit
     KV_VECTOR_Init(&input_args);
@@ -196,6 +198,13 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_con
 
             // Commit the transaction
             DM_TRANS_Commit();
+
+            // Fixup any search expression based permissions which were waiting for the request table instance to be created
+            if (instance != INVALID)
+            {
+                USP_SNPRINTF(req_path, sizeof(req_path), "%s.%d", device_req_root, instance);
+                SE_CACHE_NotifyInstanceAdded(req_path, NULL);
+            }
         }
 
         KV_VECTOR_Destroy(&output_args);

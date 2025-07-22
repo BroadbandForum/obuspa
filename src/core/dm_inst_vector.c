@@ -48,6 +48,8 @@
 #include "data_model.h"
 #include "int_vector.h"
 #include "dm_inst_vector.h"
+#include "se_cache.h"
+#include "usp_broker.h"
 
 
 //--------------------------------------------------------------------
@@ -247,7 +249,7 @@ void DM_INST_VECTOR_Remove(dm_instances_t *inst)
 **
 ** DM_INST_VECTOR_IsExist
 **
-** Determines whether the specified object instance exists in the data model
+** Determines whether the specified object instance exists in the data model, performing a refresh instances if necessary
 **
 ** \param   match - pointer to instances structure describing the instances to match against
 **                 contained within this structure is the top level multi-instance node which holds the dm_instances_vector
@@ -286,6 +288,36 @@ int DM_INST_VECTOR_IsExist(dm_instances_t *match, bool *exists)
     *exists = IsExistInInstVector(match, div);
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DM_INST_VECTOR_DoesFirstLevelInstanceExist
+**
+** Determines whether the specified instance exists for the specified top level table
+** IMPORTANT: Does not perform a refresh instances
+**
+** \param   match - pointer to instances structure describing the instances to match against
+**                 contained within this structure is the top level multi-instance node which holds the dm_instances_vector
+** \param   exists - pointer to boolean in which to return whether the object exists or not
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+bool DM_INST_VECTOR_DoesFirstLevelInstanceExist(dm_node_t *top_node, int instance)
+{
+    dm_instances_t inst;
+    dm_instances_vector_t *div;
+
+    USP_ASSERT(top_node->type == kDMNodeType_Object_MultiInstance);
+    USP_ASSERT(top_node->order == 1);
+
+    inst.order = 1;
+    inst.instances[0] = instance;
+    inst.nodes[0] = top_node;
+    div = &top_node->registered.object_info.inst_vector;
+
+    return IsExistInInstVector(&inst, div);
 }
 
 /*********************************************************************//**
@@ -1084,6 +1116,7 @@ int RefreshInstVector(dm_node_t *top_node)
             err = DM_PRIV_FormInstantiatedPath(node->path, inst, path, sizeof(path));
             if (err == USP_ERR_OK)
             {
+                // Queue object life events for this object
                 DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(path, kSubNotifyType_ObjectDeletion);
             }
         }
@@ -1094,6 +1127,14 @@ exit:
     DM_INST_VECTOR_Destroy(&info->inst_vector);
     memcpy(&info->inst_vector, &refreshed_instances_vector, sizeof(dm_instances_vector_t));
     refresh_instances_top_node = NULL;
+
+    // Refresh SE based permissions on this table for this message processing cycle (only if non-USP Service owned, as USP Services use object creation/deletion notifications instead)
+#ifndef REMOVE_USP_BROKER
+    if (USP_BROKER_IsUspService(top_node->group_id) == false)
+#endif
+    {
+        SE_CACHE_RefreshPermissions(top_node);
+    }
 
     return USP_ERR_OK;
 }

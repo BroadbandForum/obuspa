@@ -80,6 +80,7 @@ SOURCES = src/core/main.c \
                     src/core/os_utils.c \
                     src/core/device_request.c \
                     src/core/dllist.c \
+                    src/core/se_cache.c \
                     src/libjson/ccan/json/json.c \
                     src/protobuf-c/usp-msg.pb-c.c \
                     src/protobuf-c/usp-record.pb-c.c \

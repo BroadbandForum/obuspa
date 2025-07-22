@@ -1091,7 +1091,7 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     expr_op_t valid_ops[] = {kExprOp_Equal, kExprOp_NotEqual, kExprOp_LessThanOrEqual, kExprOp_GreaterThanOrEqual, kExprOp_LessThan, kExprOp_GreaterThan};
 
     // Exit if unable to find the end of the unique key
-    p = strchr(unresolved, ']');
+    p = TEXT_UTILS_StrStr(unresolved, "]");
     if (p == NULL)
     {
         USP_ERR_SetMessage("%s: Unterminated Unique Key (%s) in search path", __FUNCTION__, unresolved);

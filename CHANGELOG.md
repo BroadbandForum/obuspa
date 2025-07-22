@@ -1,5 +1,16 @@
 # OB-USP-AGENT Changelog since Release 10.0.0
 
+## 2025-07-22 v10.0.5
+### Added
+- Support for permission Targets containing search expressions (configured by ALLOWED_PARAMS_FOR_SE_BASED_PERMS in vendor_defs.h)
+
+### Fixed
+- MQTT client should disconnect if no Response Topic
+- Changing LocalAgent.MTP.Enable should not assert when Protocol is UDS
+- LocalAgent.MTP.{i}.Status is not working for UDS MTP
+- Async Operation max concurrency limit regression (broken in v10.0.0)
+
+
 ## 2025-06-24 v10.0.4
 ### Fixed
 - ControllerTrust Permission Order uniqueness should be enforced when Add request with allow_partial=false adds multiple permissions with the same Order

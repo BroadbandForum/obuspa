@@ -33,26 +33,33 @@
  */
 
 /**
- * \file inst_sel_vector.h
+ * \file se_cache.h
  *
- * Implements a vector of instance number based selectors
- * This is used to implement instance based permissions
+ * Implements and maintains a cache of instance numbers matching a unique key search expression
  *
  */
-#ifndef INST_SEL_VECTOR_H
-#define INST_SEL_VECTOR_H
 
-#include "data_model.h"
 
-//-----------------------------------------------------------------------------------------
+#ifndef SE_CACHE_H
+#define SE_CACHE_H
+
+#include "inst_sel_vector.h"
+
+//-------------------------------------------------------------------------
 // API
-void INST_SEL_VECTOR_Init(inst_sel_vector_t *isv);
-void INST_SEL_VECTOR_Destroy(inst_sel_vector_t *isv, bool destroy_entries);
-void INST_SEL_VECTOR_Unwatch(inst_sel_vector_t *isv);
-void INST_SEL_VECTOR_Fill(inst_sel_vector_t *isv, int num_entries, unsigned short permission_bitmask);
-void INST_SEL_VECTOR_Add(inst_sel_vector_t *isv, inst_sel_t *sel);
-void INST_SEL_VECTOR_Remove(inst_sel_vector_t *isv, int index, bool destroy_entries);
-int INST_SEL_VECTOR_Find(inst_sel_vector_t *isv, inst_sel_t *sel);
-unsigned short INST_SEL_VECTOR_GetPermissionForInstance(inst_sel_vector_t *isv, dm_instances_t *inst, unsigned flags);
+void SE_CACHE_Init(void);
+void SE_CACHE_Destroy(void);
+void SE_CACHE_WatchUniqueKey(dm_node_t *node, char *table, char *param, char *value, inst_sel_t *sel);
+void SE_CACHE_UnwatchUniqueKey(inst_sel_t *sel);
+void SE_CACHE_StartSEResolution(void);
+void SE_CACHE_WatchAllUniqueKeysOnUspService(int group_id);
+void SE_CACHE_NotifyInstanceAdded(char *path, kv_vector_t *keys);
+void SE_CACHE_NotifyInstanceDeleted(char *path);
+void SE_CACHE_RefreshPermissions(dm_node_t *node);
+void SE_CACHE_HandleUspServiceDisconnect(int group_id);
+void SE_CACHE_Dump(void);
+bool SE_CACHE_IsWatchingSelector(inst_sel_t *sel);
+bool SE_CACHE_IsWatchingNode(dm_node_t *node);
+bool SE_CACHE_IsSelectorInstanceStale(dm_node_t *node, inst_sel_t *sel);
 
 #endif

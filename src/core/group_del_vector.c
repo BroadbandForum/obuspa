@@ -266,3 +266,4 @@ group_del_entry_t *GROUP_DEL_VECTOR_FindFirstFailureIfAllFailed(group_del_vector
     // Only if all of the objects failed to delete should a failure be indicated
     return first_failure;
 }
+
