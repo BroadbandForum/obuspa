@@ -1274,6 +1274,79 @@ int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsign
 
 /*********************************************************************//**
 **
+** DATA_MODEL_IsDeletePermitted
+**
+** Determines whether the specified path instance (and all nested child table instances) are permitted to be deleted
+**
+** \param   obj_path - instance to delete
+** \param   combined_role - roles to use when performing the delete
+**
+** \return  USP_ERR_OK if the instance is permiteed to be deleted, or an error otherwise
+**
+**************************************************************************/
+int DATA_MODEL_IsDeletePermitted(char *obj_path, combined_role_t *combined_role)
+{
+    int i;
+    int err;
+    str_vector_t child_objs;
+    dm_instances_t inst;
+    dm_node_t *node;
+    unsigned short perm;
+    char *path;
+
+    STR_VECTOR_Init(&child_objs);
+
+    // Exit if unable to determine the node representing the path
+    node = DM_PRIV_GetNodeFromPath(obj_path, &inst, NULL, 0);
+    if (node == NULL)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if this object is a non-table object. These cannot be deleted
+    if (node->type != kDMNodeType_Object_MultiInstance)
+    {
+        USP_ERR_SetMessage("%s: Cannot delete instances of %s. Not a multi-instance object.", __FUNCTION__, obj_path);
+        return USP_ERR_OBJECT_NOT_CREATABLE;
+    }
+
+    // Exit if unable to determine all child instances
+    err = DM_INST_VECTOR_GetAllInstancePaths_Qualified(&inst, &child_objs);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Iterate over all child paths, checking that we have permission
+    for (i=0; i < child_objs.num_entries; i++)
+    {
+        path = child_objs.vector[i];
+        err = DATA_MODEL_GetPermissions(path, combined_role, &perm, 0);
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
+
+        // Exit if there are any objects which we do not have permission to delete
+        if ((perm & PERMIT_DEL) == 0)
+        {
+            USP_ERR_SetMessage("%s: No permission to delete %s", __FUNCTION__, path);
+            STR_VECTOR_Destroy(&child_objs);
+            err = USP_ERR_PERMISSION_DENIED;
+            goto exit;
+        }
+    }
+
+    // If the code gets here, then we're permitted to delete all instances
+    err = USP_ERR_OK;
+
+exit:
+    STR_VECTOR_Destroy(&child_objs);
+    return err;
+}
+
+/*********************************************************************//**
+**
 ** DATA_MODEL_NotifyInstanceAdded
 **
 ** Called if a vendor thread signals that an instance has been added

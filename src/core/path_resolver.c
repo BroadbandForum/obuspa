@@ -2461,32 +2461,8 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
             break;
 
         case kResolveOp_Del:
-            {
-                str_vector_t child_objs;
-                char parent_path[MAX_DM_PATH];
-
-                // Exit if unable to get a vector of paths containing this object and all nested child objects to delete
-                STR_VECTOR_Init(&child_objs);
-                USP_SNPRINTF(parent_path, sizeof(parent_path), "%s.", path);
-                err = PATH_RESOLVER_ResolveDevicePath(parent_path, &child_objs, NULL, kResolveOp_Instances, FULL_DEPTH, INTERNAL_ROLE, GET_ALL_INSTANCES);
-                if (err != USP_ERR_OK)
-                {
-                    return err;
-                }
-
-                // Remove all paths which we have permission to delete, leaving only the paths that we do not have permission to delete
-                FilterPathsByPermission(&child_objs, PERMIT_DEL, PERMIT_DEL, state->combined_role);
-
-                // Exit if there isn't permission to delete this object and all nested child instances which currently exist
-                if (child_objs.num_entries > 0)
-                {
-                    USP_ERR_SetMessageIfAllowed("%s: No permission to delete %s", __FUNCTION__, child_objs.vector[0]);
-                    STR_VECTOR_Destroy(&child_objs);
-                    return USP_ERR_PERMISSION_DENIED;
-                }
-
-                STR_VECTOR_Destroy(&child_objs);
-            }
+            // Permission checks are performed by the caller
+            // (in order to cope with wildcarded delete being unable to delete all instances with allow_partial)
             break;
 
         case kResolveOp_Instances:

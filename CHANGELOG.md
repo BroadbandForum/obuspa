@@ -1,5 +1,12 @@
 # OB-USP-AGENT Changelog since Release 10.0.0
 
+## 2025-08-04 v10.0.6
+### Fixed
+- Wildcarded delete response with allow_partial=true incorrect if one instance not permitted to be deleted
+- MQTT connection not retried if TLS handshake fails and libmoquitto version<2.0.13
+- MQTT Send message queue gets stuck if packet too large
+
+
 ## 2025-07-22 v10.0.5
 ### Added
 - Support for permission Targets containing search expressions (configured by ALLOWED_PARAMS_FOR_SE_BASED_PERMS in vendor_defs.h)

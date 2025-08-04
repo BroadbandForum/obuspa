@@ -52,6 +52,7 @@
 #include "device.h"
 #include "text_utils.h"
 #include "group_del_vector.h"
+#include "dm_inst_vector.h"
 
 
 //------------------------------------------------------------------------------
@@ -216,20 +217,24 @@ Usp__Msg *ProcessDel_AllowPartialTrue(char *msg_id, del_expr_info_t *del_expr_in
     for (i=0; i < gdv->num_entries; i++)
     {
         gde = &gdv->vector[i];
-        err = DM_TRANS_Start(&trans);
+        err = DATA_MODEL_IsDeletePermitted(gde->path, combined_role);
         if (err == USP_ERR_OK)
         {
-            // Delete the specified object
-            err = DATA_MODEL_DeleteInstance(gde->path, CHECK_DELETABLE);
-
-            // Commit or abort the transaction based on whether the object deleted successfully
+            err = DM_TRANS_Start(&trans);
             if (err == USP_ERR_OK)
             {
-                err = DM_TRANS_Commit();
-            }
-            else
-            {
-                DM_TRANS_Abort();
+                // Delete the specified object
+                err = DATA_MODEL_DeleteInstance(gde->path, CHECK_DELETABLE);
+
+                // Commit or abort the transaction based on whether the object deleted successfully
+                if (err == USP_ERR_OK)
+                {
+                    err = DM_TRANS_Commit();
+                }
+                else
+                {
+                    DM_TRANS_Abort();
+                }
             }
         }
 
@@ -273,6 +278,7 @@ Usp__Msg *ProcessDel_AllowPartialFalse(char *msg_id, del_expr_info_t *del_expr_i
     int outer_err;
     int group_id;
     char *failed_path = NULL;
+    char path[MAX_DM_PATH];
 
     // Exit if any of the paths failed to resolve
     for (i=0; i < num_del_expr; i++)
@@ -284,6 +290,25 @@ Usp__Msg *ProcessDel_AllowPartialFalse(char *msg_id, del_expr_info_t *del_expr_i
             resp = ERROR_RESP_Create(msg_id, outer_err, USP_ERR_GetMessage());
             ERROR_RESP_AddParamError(resp, di->req_path, di->err_code, USP_ERR_GetMessage());
             goto exit;
+        }
+    }
+
+    // Exit if any of the resolved paths are not permitted to be deleted
+    for (i=0; i < num_del_expr; i++)
+    {
+        di = &del_expr_info[i];
+        for (j=di->index; j < di->index + di->num_objects; j++)
+        {
+            gde = &gdv->vector[j];
+            err = DATA_MODEL_IsDeletePermitted(gde->path, combined_role);
+            if (err != USP_ERR_OK)
+            {
+                USP_SNPRINTF(path, sizeof(path), "%s.", gde->path);
+                outer_err = ERROR_RESP_CalcOuterErrCode(err);
+                resp = ERROR_RESP_Create(msg_id, outer_err, USP_ERR_GetMessage());
+                ERROR_RESP_AddParamError(resp, path, err, USP_ERR_GetMessage());
+                goto exit;
+            }
         }
     }
 

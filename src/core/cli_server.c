@@ -1074,8 +1074,19 @@ int ExecuteCli_Del(str_vector_t *args)
     // Iterate over all objects to delete
     for (i=0; i < objects.num_entries; i++)
     {
+        // Skip this object if it is not permitted to delete it, marking it as not deleted by setting it to NULL in the vector
+        path = objects.vector[i];
+        err = DATA_MODEL_IsDeletePermitted(path, combined_role);
+        if (err != USP_ERR_OK)
+        {
+            USP_FREE(path);
+            objects.vector[i] = NULL;
+            SendCliResponse("%s\n", USP_ERR_GetMessage());
+            continue;
+        }
+
         // Exit if unable to delete the specified instance
-        err = DATA_MODEL_DeleteInstance(objects.vector[i], CHECK_DELETABLE);  // We need the check, otherwise the validate function is not called for a vendor object
+        err = DATA_MODEL_DeleteInstance(path, CHECK_DELETABLE);  // We need the check, otherwise the validate function is not called for a vendor object
         if (err != USP_ERR_OK)
         {
             DM_TRANS_Abort();
@@ -1094,7 +1105,10 @@ int ExecuteCli_Del(str_vector_t *args)
     for (i=0; i < objects.num_entries; i++)
     {
         path = objects.vector[i];
-        SendCliResponse("Deleted %s\n", path);
+        if (path != NULL)
+        {
+            SendCliResponse("Deleted %s\n", path);
+        }
     }
 
     err = USP_ERR_OK;

@@ -375,6 +375,7 @@ int DATA_MODEL_GetAllInstancePaths(char *path, str_vector_t *sv);
 int DATA_MODEL_AddInstance(char *path, int *instance, unsigned flags);
 int DATA_MODEL_DeleteInstance(char *path, unsigned flags);
 int DATA_MODEL_GetPermissions(char *path, combined_role_t *combined_role, unsigned short *perm, unsigned flags);
+int DATA_MODEL_IsDeletePermitted(char *obj_path, combined_role_t *combined_role);
 int DATA_MODEL_NotifyInstanceAdded(char *path);
 int DATA_MODEL_NotifyInstanceDeleted(char *path);
 int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags);

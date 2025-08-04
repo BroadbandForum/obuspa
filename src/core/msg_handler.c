@@ -797,6 +797,130 @@ Usp__Msg *MSG_HANDLER_CreateUspMsg(char *msg_id, Usp__Header__MsgType header_typ
 
 /*********************************************************************//**
 **
+** MSG_HANDLER_ShouldDropFailedMessage
+**
+** Determines whether a message that failed to send should be dropped, or whether to replace it with a USP Error message
+** If is is to be replaced, this function replaces it
+** IMPORTANT: This function is called by MTP threads
+**
+** \param   item - MTP send item containing the protobuf that failed to send and associated information
+** \param   cause - pointer to string containing cause of the send failure, to put in the Error response
+**
+** \return  true if the item should be removed from the send queue
+**          false if the item should remain in the send queue (as it has been replaced with an error response)
+**
+**************************************************************************/
+bool MSG_HANDLER_ShouldDropFailedMessage(mtp_send_item_t *item, char *cause)
+{
+    bool is_response_message;
+    Usp__Header__MsgType usp_msg_type;
+    UspRecord__Record *rec;
+    ProtobufCBinaryData *payload;
+    Usp__Msg *usp;
+    Usp__Msg *err_msg;
+    uint8_t *out_msg;
+    size_t out_msg_len;
+    uint8_t *out_rec;
+    size_t out_rec_len;
+    size_t size;
+
+    // If no item is provided, then it cannot be removed from the send queue (as it isn't in it)
+    if (item == NULL)
+    {
+        return false;
+    }
+
+    // Determine if the message which failed to send was a USP response message (in which case the controller was expecting it)
+    usp_msg_type = item->usp_msg_type;
+    is_response_message = (usp_msg_type == USP__HEADER__MSG_TYPE__GET_RESP) ||
+                          (usp_msg_type == USP__HEADER__MSG_TYPE__SET_RESP) ||
+                          (usp_msg_type == USP__HEADER__MSG_TYPE__OPERATE_RESP) ||
+                          (usp_msg_type == USP__HEADER__MSG_TYPE__ADD_RESP) ||
+                          (usp_msg_type == USP__HEADER__MSG_TYPE__DELETE_RESP) ||
+                          (usp_msg_type == USP__HEADER__MSG_TYPE__GET_SUPPORTED_DM_RESP) ||
+                          (usp_msg_type == USP__HEADER__MSG_TYPE__GET_INSTANCES_RESP) ||
+                          (usp_msg_type == USP__HEADER__MSG_TYPE__NOTIFY_RESP) ||
+                          (usp_msg_type == USP__HEADER__MSG_TYPE__GET_SUPPORTED_PROTO_RESP) ||
+                          (usp_msg_type == USP__HEADER__MSG_TYPE__REGISTER_RESP) ||
+                          (usp_msg_type == USP__HEADER__MSG_TYPE__DEREGISTER_RESP);
+
+    // Drop the packet, if it wasn't a USP message or it wasn't a USP response message
+    if ((item->content_type != kMtpContentType_UspMessage) || (is_response_message == false))
+    {
+        USP_LOG_Error("%s: Failed to send %s. Dropping message.", __FUNCTION__, MtpSendItemToString(item));
+        return true;
+    }
+
+    // Exit if unable to unpack the USP record that failed to send
+    USP_ASSERT(item->pbuf != NULL);
+    rec = usp_record__record__unpack(pbuf_allocator, item->pbuf_len, item->pbuf);
+    if (rec == NULL)
+    {
+        USP_LOG_Error("%s: usp_record__record__unpack failed. Ignoring USP Record", __FUNCTION__);
+        return true;
+    }
+
+    // Exit if this USP Record contained session context or a USP Connect record
+    if (rec->record_type_case != USP_RECORD__RECORD__RECORD_TYPE_NO_SESSION_CONTEXT)
+    {
+        USP_LOG_Error("%s: Cannot replace USP message in USP Record type %d with ERROR message", __FUNCTION__, rec->record_type_case);
+        usp_record__record__free_unpacked(rec, pbuf_allocator);
+        return true;
+    }
+
+    // Get a pointer to the payload wihin the input USP record
+    USP_ASSERT(rec->no_session_context != NULL);
+    payload = &rec->no_session_context->payload;
+    USP_ASSERT(payload != NULL);
+
+    // Exit if unable to unpack the encapsulated USP message that failed to send
+    usp = usp__msg__unpack(pbuf_allocator, payload->len, payload->data);
+    if (usp == NULL)
+    {
+        USP_LOG_Error("%s: usp__msg__unpack failed. Ignoring USP Message", __FUNCTION__);
+        usp_record__record__free_unpacked(rec, pbuf_allocator);
+        return true;
+    }
+
+    // Form USP Error message
+    USP_ASSERT(usp->header != NULL);
+    USP_ASSERT(cause != NULL);
+    err_msg = ERROR_RESP_Create(usp->header->msg_id, USP_ERR_INTERNAL_ERROR, cause);
+
+    // Serialize the USP error message into a buffer
+    out_msg_len = usp__msg__get_packed_size(err_msg);
+    out_msg = USP_MALLOC(out_msg_len);
+    size = usp__msg__pack(err_msg, out_msg);
+    USP_ASSERT(size == out_msg_len);          // If these are not equal, then we may have had a buffer overrun, so terminate
+
+    // In the USP record that failed to send, replace the encapsulated USP message with the USP error message
+    USP_SAFE_FREE(payload->data);
+    payload->data = out_msg;
+    payload->len = out_msg_len;
+
+    // Serialize the replacement USP record into a buffer
+    out_rec_len = usp_record__record__get_packed_size(rec);
+    out_rec = USP_MALLOC(out_rec_len);
+    size = usp_record__record__pack(rec, out_rec);
+    USP_ASSERT(size == out_rec_len);  // If these are not equal, then we may have had a buffer overrun, so terminate
+
+    // Free all memory dynamically allocated by this function
+    usp_record__record__free_unpacked(rec, pbuf_allocator);   // Frees out_msg
+    usp__msg__free_unpacked(usp, pbuf_allocator);
+    usp__msg__free_unpacked(err_msg, pbuf_allocator);
+
+    // Replace the pbuf to send in the MQTT send item with the error response
+    USP_LOG_Error("%s: Failed to send %s. Replacing with ERROR and retrying", __FUNCTION__, MSG_HANDLER_UspMsgTypeToString(usp_msg_type));
+    item->usp_msg_type = USP__HEADER__MSG_TYPE__ERROR;
+    USP_SAFE_FREE(item->pbuf);
+    item->pbuf = out_rec;
+    item->pbuf_len = out_rec_len;
+
+    return false;
+}
+
+/*********************************************************************//**
+**
 ** HandleUspMessage
 **
 ** Main entry point to handling a message
