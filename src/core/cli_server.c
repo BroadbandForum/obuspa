@@ -52,6 +52,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sqlite3.h>
 #include <zlib.h>

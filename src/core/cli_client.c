@@ -60,6 +60,9 @@
 
 
 //------------------------------------------------------------------------
+// Boolean set if we are executing a CLI command
+bool is_running_cli_command = false;
+
 // If this executable is running a local CLI command (eg dbset), then it performs some aspects of initialisation, but not others
 bool is_running_cli_local_command = false;
 
@@ -99,6 +102,9 @@ int CLI_CLIENT_ExecCommand(int argc, char *argv[], char *db_file)
         USP_LOG_Error("ERROR: command name not specified");
         return USP_ERR_INVALID_ARGUMENTS;
     }
+
+    // Set flag to indicate that we are executing a CLI command
+    is_running_cli_command = true;
 
     // Form the command to send in a buffer
     len = 0;

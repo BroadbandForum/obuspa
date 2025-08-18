@@ -2894,7 +2894,10 @@ int DATA_MODEL_FindUnusedGroupId(void)
     for (i=0; i<MAX_VENDOR_PARAM_GROUPS; i++)
     {
         gvh = &group_vendor_hooks[i];
-        if (gvh->get_group_cb == NULL)
+        if ((gvh->get_group_cb == NULL) && (gvh->set_group_cb == NULL) &&
+            (gvh->add_group_cb == NULL) && (gvh->del_group_cb == NULL) &&
+            (gvh->subscribe_cb == NULL) && (gvh->unsubscribe_cb == NULL) &&
+            (gvh->create_obj_cb == NULL) && (gvh->multi_del_cb == NULL))
         {
             return i;
         }

@@ -975,7 +975,7 @@ int DEVICE_CTRUST_DumpPermissionSelectors(int role_instance, char *path)
     inst_sel_vector_t *isv;
     inst_sel_t *sel;
     unsigned short perm;
-    int perm_instance;
+    int perm_instance = INVALID;
     char *perm_target;
     int instance;
     int len;

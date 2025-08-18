@@ -1841,6 +1841,14 @@ int ResolvePartialPath(char *path, resolver_state_t *state)
     // Exit if the object instances in the path do not exist
     if (exists == false)
     {
+        // If the path didn't contain a search path, then according to R-GET.0, it should return an error
+        if (state->is_search_path == false)
+        {
+            USP_ERR_SetMessage("%s: Invalid instance numbers in path %s", __FUNCTION__, path);
+            return USP_ERR_INVALID_PATH;
+        }
+
+        // Otherwise, the path did contain a search path, so gracefully ignore this resolved path
         return USP_ERR_OK;
     }
 

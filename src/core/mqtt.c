@@ -3282,7 +3282,6 @@ void SubscribeToAll(mqtt_client_t *client)
     str_vector_t subscribed_topics;
     char *response_topic;
     int index;
-    char buf[128];
 
     STR_VECTOR_Init(&subscribed_topics);
 
@@ -3308,11 +3307,7 @@ void SubscribeToAll(mqtt_client_t *client)
     }
     else
     {
-        // Exit if no agent response topic configured (or set by the CONNACK)
-        USP_SNPRINTF(buf, sizeof(buf), "%s: No response topic configured (or set by the CONNACK)", __FUNCTION__);
-        USP_LOG_Error("%s", buf);
-        HandleMqttError(client, kMqttFailure_Misconfigured, buf);
-        return;
+        USP_LOG_Warning("%s: No response topic configured (or set by the CONNACK)", __FUNCTION__);
     }
 
     // Subscribe to all subscriptions configured in Device.MQTT.Client.{i}.Subscription.{i}
@@ -3775,6 +3770,9 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
     int err = USP_ERR_OK;
     char buf[512];
     int mosq_err;
+    char escaped_agent_topic[MAX_TOPIC_LEN];
+    char topic[2*MAX_TOPIC_LEN+10];             // Plus 10 to allow for '/reply-to='
+
 
     USP_ASSERT(client != NULL);
     USP_ASSERT(msg != NULL);
@@ -3790,14 +3788,18 @@ int Publish(mqtt_client_t *client, mqtt_send_item_t *msg)
     }
     else
     {
-        char escaped_agent_topic[MAX_TOPIC_LEN];
-        char topic[2*MAX_TOPIC_LEN+10];             // Plus 10 to allow for '/reply-to='
-
         if (msg->item.content_type != kMtpContentType_BulkDataReport)
         {
-            USP_ASSERT((client->response_subscription.topic!= NULL) && (client->response_subscription.topic[0] != '\0')); // SubscribeToAll() should have prevented the code getting here
-            TEXT_UTILS_ReplaceCharInString(client->response_subscription.topic, '/', "%2F", escaped_agent_topic, sizeof(escaped_agent_topic));
-            USP_SNPRINTF(topic, sizeof(topic), "%s/reply-to=%s", msg->topic, escaped_agent_topic);
+            if ((client->response_subscription.topic != NULL) && (client->response_subscription.topic[0] != '\0'))
+            {
+                TEXT_UTILS_ReplaceCharInString(client->response_subscription.topic, '/', "%2F", escaped_agent_topic, sizeof(escaped_agent_topic));
+                USP_SNPRINTF(topic, sizeof(topic), "%s/reply-to=%s", msg->topic, escaped_agent_topic);
+            }
+            else
+            {
+                USP_LOG_Error("%s: Sending %s without a ResponseTopic", __FUNCTION__, MSG_HANDLER_UspMsgTypeToString(msg->item.usp_msg_type));
+                USP_STRNCPY(topic, msg->topic, sizeof(topic));
+            }
         }
         else
         {
@@ -3857,16 +3859,25 @@ int PublishV5(mqtt_client_t *client, mqtt_send_item_t *msg)
     FRAME_TRACE_ADD(client, "content_type: %s", content_type);
 
     // Exit if unable to set response topic in the frame
+    // NOTE: It is possible for no response topic to be either configured or specified in the CONNACK
+    // In this case we send the message, but without a ResponseTopic. This is a problem for USP notifications
+    // that require a notify response from the Controller, as the Controller doesn't know where to send it
     if (msg->item.content_type != kMtpContentType_BulkDataReport)
     {
-        USP_ASSERT((client->response_subscription.topic!= NULL) && (client->response_subscription.topic[0] != '\0')); // SubscribeToAll() should have prevented the code getting here
-        if (mosquitto_property_add_string(&proplist, RESPONSE_TOPIC, client->response_subscription.topic) != MOSQ_ERR_SUCCESS)
+        if ((client->response_subscription.topic != NULL) && (client->response_subscription.topic[0] != '\0'))
         {
-            SaveMqttPublishErrMsg("%s: Failed to add response topic string", __FUNCTION__);
-            err = USP_ERR_INTERNAL_ERROR;
-            goto error;
+            if (mosquitto_property_add_string(&proplist, RESPONSE_TOPIC, client->response_subscription.topic) != MOSQ_ERR_SUCCESS)
+            {
+                SaveMqttPublishErrMsg("%s: Failed to add response topic string", __FUNCTION__);
+                err = USP_ERR_INTERNAL_ERROR;
+                goto error;
+            }
+            FRAME_TRACE_ADD(client, "response_topic: %s", client->response_subscription.topic);
         }
-        FRAME_TRACE_ADD(client, "response_topic: %s", client->response_subscription.topic);
+        else
+        {
+            USP_LOG_Error("%s: Sending %s without a ResponseTopic", __FUNCTION__, MSG_HANDLER_UspMsgTypeToString(msg->item.usp_msg_type));
+        }
     }
 
     // Exit if property check failed

@@ -1,5 +1,14 @@
 # OB-USP-AGENT Changelog since Release 10.0.0
 
+## 2025-08-18 v10.0.7
+### Fixed
+- Suppress annoying warnings when using OBUSPA CLI commands
+- MQTT client should not disconnect if no Response Topic
+- R-GET.0 not applied for partial paths
+- USP Services should not reuse group_ids registered by internal data model providers
+- Crash if object creation notification contains too many keys
+
+
 ## 2025-08-04 v10.0.6
 ### Fixed
 - Wildcarded delete response with allow_partial=true incorrect if one instance not permitted to be deleted
@@ -12,7 +21,7 @@
 - Support for permission Targets containing search expressions (configured by ALLOWED_PARAMS_FOR_SE_BASED_PERMS in vendor_defs.h)
 
 ### Fixed
-- MQTT client should disconnect if no Response Topic
+- MQTT client should not assert if no Response Topic
 - Changing LocalAgent.MTP.Enable should not assert when Protocol is UDS
 - LocalAgent.MTP.{i}.Status is not working for UDS MTP
 - Async Operation max concurrency limit regression (broken in v10.0.0)

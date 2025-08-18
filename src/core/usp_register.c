@@ -916,9 +916,16 @@ int USP_REGISTER_Object_UniqueKey(char *path, char **params, int num_params)
     int match_count;
 
     // Exit if calling arguments are specified incorrectly
-    if ((path==NULL) || (params==NULL) || (num_params < 1) || (num_params > MAX_COMPOUND_KEY_PARAMS))
+    if ((path==NULL) || (params==NULL))
     {
         USP_ERR_SetMessage(usp_err_invalid_param_str, __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if number of params in the unique key is invalid
+    if ((num_params < 1) || (num_params > MAX_COMPOUND_KEY_PARAMS))
+    {
+        USP_ERR_SetMessage("%s: Invalid number of unique keys %d (expected 1..%d)", __FUNCTION__, num_params, MAX_COMPOUND_KEY_PARAMS);
         return USP_ERR_INTERNAL_ERROR;
     }
 

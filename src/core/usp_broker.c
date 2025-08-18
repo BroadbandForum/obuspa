@@ -293,7 +293,7 @@ bool IsWantedGsdmObject(char *obj_path, str_vector_t *accepted_paths, bool *want
 void CalcCommonAncestorObject(str_vector_t *paths, char *ancestor, int ancestor_len);
 unsigned UpdateEventsAndCommands(usp_service_t *us);
 unsigned UpdateDeviceDotNotificationList(str_vector_t *sv, char **p_list, unsigned flags);
-void UspService_GetAllParamsForPath( usp_service_t *us, str_vector_t *usp_service_paths, kv_vector_t *usp_service_values, int depth);
+int UspService_GetAllParamsForPath( usp_service_t *us, str_vector_t *usp_service_paths, kv_vector_t *usp_service_values, int depth);
 void GetAllPathsForOptimizedUspService(dm_node_t *node, str_vector_t usp_service_paths[], int usp_remaining_depth[], str_vector_t *non_usp_service_params, int_vector_t *non_usp_service_group_ids, combined_role_t *combined_role, int depth_remaining);
 int HandleWatchNotification(Usp__Notify *notify, usp_service_t *us);
 
@@ -1705,7 +1705,12 @@ int USP_BROKER_AttemptDirectGet(char *path, str_vector_t *unresolved_params, int
         {
             us = FindUspServiceByGroupId(i);
             USP_ASSERT(us != NULL);     // Since we only put the path into usp_service_paths[] if the path was owned by a USP service
-            UspService_GetAllParamsForPath(us, &usp_service_paths[i], &usp_service_values, group_max_depth[i] );
+            err = UspService_GetAllParamsForPath(us, &usp_service_paths[i], &usp_service_values, group_max_depth[i] );
+            if (err == USP_ERR_INVALID_PATH)
+            {
+                // Exit returning an error for this path if the path was invalid according to R-GET.0
+                goto exit;
+            }
         }
     }
 
@@ -4330,13 +4335,14 @@ int UspService_RefreshInstances(usp_service_t *us, str_vector_t *paths, bool wit
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-void UspService_GetAllParamsForPath(usp_service_t *us, str_vector_t *usp_service_paths, kv_vector_t *usp_service_values, int depth)
+int UspService_GetAllParamsForPath(usp_service_t *us, str_vector_t *usp_service_paths, kv_vector_t *usp_service_values, int depth)
 {
     kv_vector_t kvv_req;
     Usp__Msg *req;
     Usp__Msg *resp = NULL;
     int i;
     char msg_id[MAX_MSG_ID_LEN];
+    int err = USP_ERR_OK;
 
     KV_VECTOR_Init(&kvv_req);
 
@@ -4370,17 +4376,14 @@ void UspService_GetAllParamsForPath(usp_service_t *us, str_vector_t *usp_service
         goto exit;
     }
 
-    // Exit if unable to process the get response, retrieving the parameter values and adding them to the key-value-vector output argument
-    if (MSG_UTILS_ProcessUspService_GetResponse(resp, usp_service_values) != USP_ERR_OK)
-    {
-        USP_LOG_Warning("%s: WARNING: Failed to process GET response from UspService=%s", __FUNCTION__, us->endpoint_id);
-        goto exit;
-    }
+    // Process the get response, retrieving the parameter values and adding them to the key-value-vector output argument
+    err = MSG_UTILS_ProcessUspService_GetResponse(resp, usp_service_values);
 
 exit:
     KV_VECTOR_Destroy(&kvv_req);
     usp__msg__free_unpacked(resp, pbuf_allocator);
     resp = NULL;
+    return err;
 }
 
 /*********************************************************************//**
@@ -5457,7 +5460,6 @@ void ProcessUniqueKeys(char *path, Usp__GetInstancesResp__CurrInstance__UniqueKe
     dm_node_t *node;
     char *key_names[MAX_COMPOUND_KEY_PARAMS];  // NOTE: Ownership if the key names stays with the caller, rather than being transferred to tis array
     kv_vector_t kvv;
-    kv_pair_t kv_pairs[MAX_COMPOUND_KEY_PARAMS];
     kv_pair_t *kv;
 
     // Exit if path does not exist in the data model
@@ -5502,25 +5504,34 @@ void ProcessUniqueKeys(char *path, Usp__GetInstancesResp__CurrInstance__UniqueKe
         return;
     }
 
+    // Exit if there are no unique keys associated with this instance (in which case, no need to update SE cache)
+    if (num_unique_keys == 0)
+    {
+        return;
+    }
+
+    // Exit if the notification is for parts of the data model that overlap by path name (but are not part of) that of the USP Broker
+    // because that could cause SE based permissions on the Broker's subscription table to be resolved by additions to the USP Service's subscription table
+    #define DEVICE_LOCALAGENT "Device.LocalAgent."
+    if (strncmp(path, DEVICE_LOCALAGENT, sizeof(DEVICE_LOCALAGENT)-1) == 0)
+    {
+        return;
+    }
+
     // Form key value vector of unique key values
     // NOTE: Ownership of the key names and values stays with the USP message structure
+    kvv.vector = USP_MALLOC(num_unique_keys*sizeof(kv_pair_t));
+    kvv.num_entries = num_unique_keys;
     for (i=0; i < num_unique_keys; i++)
     {
-        kv = &kv_pairs[i];
+        kv = &kvv.vector[i];
         kv->key = unique_keys[i]->key;
         kv->value = unique_keys[i]->value;
     }
-    kvv.vector = kv_pairs;
-    kvv.num_entries = num_unique_keys;
 
     // Update all unresolved search expression permissions affected by this instance
-    // NOTE: We don't do this for those parts of the data model that overlap (but are not part of) that of the USP Broker
-    // because that could cause SE based permissions on the Broker's subscription table to be resolved by additions to the USP Service's subscription table
-    #define DEVICE_LOCALAGENT "Device.LocalAgent."
-    if (strncmp(path, DEVICE_LOCALAGENT, sizeof(DEVICE_LOCALAGENT)-1) != 0)
-    {
-        SE_CACHE_NotifyInstanceAdded(path, &kvv);
-    }
+    SE_CACHE_NotifyInstanceAdded(path, &kvv);
+    USP_FREE(kvv.vector);
 }
 
 /*********************************************************************//**

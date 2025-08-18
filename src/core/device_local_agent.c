@@ -61,6 +61,7 @@
 #include "iso8601.h"
 #include "os_utils.h"
 #include "bdc_exec.h"
+#include "cli.h"
 
 
 
@@ -836,7 +837,11 @@ int GetDefaultSerialNumber(char *buf, int len)
     if (err != USP_ERR_OK)
     {
         // If unable to get the WAN interface's MAC address, then set serial number to 'undefined'
-        USP_LOG_Warning("%s: WARNING: Unable to determine a serial number for this device", __FUNCTION__);
+        // Avoid annoying warning if WAN interface is unknown (as it's unnecessary to specify it when using CLI commands)
+        if (is_running_cli_command == false)
+        {
+            USP_LOG_Warning("%s: WARNING: Unable to determine a serial number for this device", __FUNCTION__);
+        }
         USP_STRNCPY(buf, "undefined", len);
         return USP_ERR_OK;
     }
