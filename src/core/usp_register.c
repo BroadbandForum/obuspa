@@ -1332,11 +1332,21 @@ int USP_REGISTER_OperationArguments(char *path, char **input_arg_names, int num_
     info = &node->registered.oper_info;
     if (input_arg_names != NULL)
     {
+        // Check if the input arguments vector is already been initialized
+        if (info->input_args.vector != NULL)
+        {
+            STR_VECTOR_Destroy(&info->input_args);
+        }
         STR_VECTOR_Clone(&info->input_args, input_arg_names, num_input_arg_names);
     }
 
     if (output_arg_names != NULL)
     {
+        // Check if the output arguments vector is already been initialized
+        if (info->output_args.vector != NULL)
+        {
+            STR_VECTOR_Destroy(&info->output_args);
+        }
         STR_VECTOR_Clone(&info->output_args, output_arg_names, num_output_arg_names);
     }
 
@@ -1436,6 +1446,12 @@ int USP_REGISTER_EventArguments(char *path, char **event_arg_names, int num_even
     info = &node->registered.event_info;
     if (event_arg_names != NULL)
     {
+        // Check if the event arguments vector is already been initialized
+        if (info->event_args.vector != NULL)
+        {
+            STR_VECTOR_Destroy(&info->event_args);
+        }
+
         STR_VECTOR_Clone(&info->event_args, event_arg_names, num_event_arg_names);
     }
 
