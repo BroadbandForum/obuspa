@@ -85,12 +85,12 @@
 // Maximum number of bytes allowed in a USP protobuf message.
 // This is not used to size any arrays, just used as a security measure to prevent rogue controllers crashing
 // the agent process with out of memory
-#define MAX_USP_MSG_LEN (64*1024)
+#define MAX_USP_MSG_LEN (5*1024*1024)
 
 // Maximum number of bytes allowed in a UDS MTP frame payload
 // This limits the UDS payload length as a security measure to prevent rogue controllers crashing the agent process by consuming too much memory
-// UDS could be receiving a large response to a USP message so the default is quite large (1 megabyte)
-#define MAX_UDS_FRAME_PAYLOAD_LEN (1024*1024)
+// UDS could be receiving a large response to a USP message so the default is quite large
+#define MAX_UDS_FRAME_PAYLOAD_LEN (MAX_USP_MSG_LEN)
 
 // Period of time (in seconds) between polling values that have value change notification enabled on them
 #define VALUE_CHANGE_POLL_PERIOD  (15)

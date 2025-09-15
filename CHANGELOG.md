@@ -1,5 +1,16 @@
 # OB-USP-AGENT Changelog since Release 10.0.0
 
+## 2025-09-15 v10.0.8
+### Added
+- Functions to access the data model from vendor threads (USP_PROCESS_DoWorkSync, USP_PROCESS_DM_GetParameterValue, USP_PROCESS_DM_SetParameterValue)
+- Configure option (--enable-hardening) to enable compiler hardening flags (disabled by default)
+
+### Fixed
+- Concurrent CLI invocations can get stuck
+
+### Modified
+- Maximum allowed MTP frame size received has been increased to 5MB (from 64K)
+
 ## 2025-08-18 v10.0.7
 ### Fixed
 - Suppress annoying warnings when using OBUSPA CLI commands

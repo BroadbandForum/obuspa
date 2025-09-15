@@ -488,6 +488,12 @@ int USP_SIGNAL_ObjectDeleted(char *path);
 // The callback may call any of the USP_DM_XXX set of functions
 typedef void (*do_work_cb_t)(void *arg1, void *arg2);
 int USP_PROCESS_DoWork(do_work_cb_t do_work_cb, void *arg1, void *arg2);
+int USP_PROCESS_DoWorkSync(do_work_cb_t do_work_cb, void *arg1, void *arg2);
+
+//------------------------------------------------------------------------------
+// Functions that may be called from worker threads to access the data model
+int USP_PROCESS_DM_GetParameterValue(char *path, char *buf, int len, char *err_msg, int err_msg_len);
+int USP_PROCESS_DM_SetParameterValue(char *path, char *new_value, char *err_msg, int err_msg_len);
 
 //------------------------------------------------------------------------------
 // Functions for argument list data structure

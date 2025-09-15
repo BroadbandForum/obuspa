@@ -1,3 +1,4 @@
+ACLOCAL_AMFLAGS = -I m4 -I m4-extra
 AM_CPPFLAGS = -I$(top_srcdir)/src \
               -I$(top_srcdir)/src/core \
               -I$(top_srcdir)/src/protobuf-c \
@@ -11,6 +12,11 @@ AM_CPPFLAGS = -I$(top_srcdir)/src \
 #         AM_CFLAGS += -Wno-error
 # as necessary.
 AM_CFLAGS = -Wall -Wfatal-errors
+AM_LDFLAGS =
+
+# Hardening
+AM_CFLAGS += $(CFLAGS_HARDENING)
+AM_LDFLAGS += $(LDFLAGS_HARDENING)
 
 bin_PROGRAMS = obuspa
 
@@ -116,12 +122,10 @@ obuspa_CPPFLAGS +=  $(AM_CPPFLAGS) \
 # NOTE: In order for GCC to check for uninitialised variables, you need to turn optimisation on i.e. "-O2"
 
 # Turn on rdynamic linker flags so that backtrace_symbols() call works
-obuspa_LDFLAGS = -rdynamic
+obuspa_LDFLAGS = $(AM_LDFLAGS) -rdynamic
 
 obuspa_LDADD = -lm -ldl -lpthread -lrt
 obuspa_LDADD += $(openssl_LIBS) $(sqlite3_LIBS) $(libcurl_LIBS) $(zlib_LIBS) $(libmosquitto_LIBS) $(libwebsockets_LIBS)
-
-obuspa_LDFLAGS += -Wl,-rpath=/usr/local/lib
 
 # Create obuspa directory for usp.db etc on install
 # This depends on your prefix setting (default localstatedir=/usr/local/var/)

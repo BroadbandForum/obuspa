@@ -239,6 +239,44 @@ typedef struct
     void *arg2;
 } do_work_msg_t;
 
+// Context of a function performing work on the data model thread
+typedef struct
+{
+    // Input
+    void *arg1;
+    void *arg2;
+
+    // Synchronization
+    bool done;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+} work_sync_ctx_t;
+
+// Context of a USP_DM_GetParameterValue call being performed on the data model thread
+typedef struct
+{
+    // Input
+    char *path;
+
+    // Output
+    int err;
+    char usp_error[USP_ERR_MAXLEN];
+    char *buf;
+    int len;
+} work_dm_get_t;
+
+// Context of a USP_DM_SetParameterValue call being performed on the data model thread
+typedef struct
+{
+    // Input
+    char *path;
+    char *new_value;
+
+    // Output
+    int err;
+    char usp_error[USP_ERR_MAXLEN];
+} work_dm_set_t;
+
 // Management IP address changed parameters in data model message
 typedef struct
 {
@@ -318,6 +356,9 @@ void UpdateSockSet(socket_set_t *set);
 void ProcessSocketActivity(socket_set_t *set);
 void ProcessMessageQueueSocketActivity(socket_set_t *set);
 void FreeDmExecMessageArguments(dm_exec_msg_t *msg);
+void DoWorkSyncCallback(void *arg1, void *arg2);
+void GetParameterValueCallback(void *arg1, void *arg2);
+void SetParameterValueCallback(void *arg1, void *arg2);
 #ifndef REMOVE_USP_BROKER
 void ForwardPendingMessagesOnFilterQueue(socket_set_t *set);
 Usp__Msg *IsMatchingMsgId(dm_exec_msg_t *msg, char *msg_id, char *responder, Usp__Header__MsgType header_type, bool *is_handled);
@@ -718,6 +759,159 @@ int USP_PROCESS_DoWork(do_work_cb_t do_work_cb, void *arg1, void *arg2)
     }
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** USP_PROCESS_DoWorkSync
+**
+** Executes a callback function on the data model thread and waits for completion.
+** This function is synchronous and blocks until the callback returns. It is used
+** to safely invoke USP_DM functions from outside the data model thread.
+**
+** \param   do_work_cb - function that will be called back from the data model thread
+** \param   arg1 - first argument to pass to the callback (optional)
+** \param   arg2 - second argument to pass to the callback (optional)
+**
+** \return  USP_ERR_OK if successful, or an error code from USP_PROCESS_DoWork
+**
+**************************************************************************/
+int USP_PROCESS_DoWorkSync(do_work_cb_t do_work_cb, void *arg1, void *arg2)
+{
+    int err;
+    work_sync_ctx_t ctx = {0};
+
+    // Exit if called from the data model thread
+    // The pthread_cond_wait function cannot be called from the data model thread, as that will cause deadlock
+    if (OS_UTILS_IsDataModelThread(__FUNCTION__, DONT_PRINT_WARNING))
+    {
+        USP_LOG_Error("%s: cannot be called from data model thread (would cause deadlock)", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Initialize context and synchronization variables
+    ctx.arg1 = arg1;
+    ctx.arg2 = arg2;
+    ctx.done = false;
+    pthread_mutex_init(&ctx.mutex, NULL);
+    pthread_cond_init(&ctx.cond, NULL);
+
+    // Invoke callback function on data model thread
+    err = USP_PROCESS_DoWork(DoWorkSyncCallback, &ctx, (void *)do_work_cb);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Wait for condition variable to signal done
+    pthread_mutex_lock(&ctx.mutex);
+    while (!ctx.done)
+    {
+        err = pthread_cond_wait(&ctx.cond, &ctx.mutex);
+        if (err != 0)
+        {
+            USP_ERR_ERRNO("pthread_cond_wait", err);
+            err = USP_ERR_INTERNAL_ERROR;
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&ctx.mutex);
+
+exit:
+    // Clean up synchronization variables
+    pthread_cond_destroy(&ctx.cond);
+    pthread_mutex_destroy(&ctx.mutex);
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** USP_PROCESS_DM_GetParameterValue
+**
+** Gets a single named parameter from the data model by executing the request in the data model thread.
+**
+** \param   path - pointer to string containing complete data model path to the parameter
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+** \param   err_msg - pointer to buffer in which to return an error message (only used if error code is failed)
+** \param   err_msg_len - length of buffer in which to return an error message (only used if error code is failed)
+**
+** \return  USP_ERR_OK if successful, or error code on failure
+**
+**************************************************************************/
+int USP_PROCESS_DM_GetParameterValue(char *path, char *buf, int len, char *err_msg, int err_msg_len)
+{
+    int err;
+    work_dm_get_t get = {0};
+
+    // Exit if any of the input arguments are invalid
+    if ((path==NULL) || (buf==NULL) || (len==0))
+    {
+        USP_LOG_Error("%s: Invalid arguments", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Set input variables
+    get.path = path;
+    get.buf = buf;
+    get.len = len;
+
+    err = USP_PROCESS_DoWorkSync(GetParameterValueCallback, &get, NULL);
+    if (err != USP_ERR_OK)
+    {
+        if (err_msg != NULL)
+        {
+            USP_STRNCPY(err_msg, get.usp_error, err_msg_len);
+        }
+        return err;
+    }
+
+    return get.err;
+}
+
+/*********************************************************************//**
+**
+** USP_PROCESS_DM_SetParameterValue
+**
+** Sets a single named parameter in the data model by executing the request in the data model thread.
+**
+** \param   path - pointer to string containing complete data model path to the parameter
+** \param   new_value - pointer to buffer containing value to set
+** \param   err_msg - pointer to buffer in which to return an error message (only used if error code is failed)
+** \param   err_msg_len - length of buffer in which to return an error message (only used if error code is failed)
+**
+** \return  USP_ERR_OK if successful, or error code on failure
+**
+**************************************************************************/
+int USP_PROCESS_DM_SetParameterValue(char *path, char *new_value, char *err_msg, int err_msg_len)
+{
+    int err;
+    work_dm_set_t set = {0};
+
+    // Exit if any of the input arguments are invalid
+    if ((path==NULL) || (new_value==NULL))
+    {
+        USP_LOG_Error("%s: Invalid arguments", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Set input variables
+    set.path = path;
+    set.new_value = new_value;
+
+    err = USP_PROCESS_DoWorkSync(SetParameterValueCallback, &set, NULL);
+    if (err != USP_ERR_OK)
+    {
+        if (err_msg != NULL)
+        {
+            USP_STRNCPY(err_msg, set.usp_error, err_msg_len);
+        }
+        return err;
+    }
+
+    return set.err;
 }
 
 /*********************************************************************//**
@@ -2318,5 +2512,92 @@ exit:
 
     return NULL;
 }
-#endif  // REMOVE_USP_BROKER
 
+/*********************************************************************//**
+**
+** DoWorkSyncCallback
+**
+** Internal callback used by USP_PROCESS_DoWorkSync to invoke a blocking
+** callback function on the data model thread and signal completion.
+**
+** \param   arg1 - pointer to a work_sync_ctx_t containing input arguments and output result
+** \param   arg2 - pointer to the user-defined callback function
+**
+** \return  None
+**
+**************************************************************************/
+void DoWorkSyncCallback(void *arg1, void *arg2)
+{
+    work_sync_ctx_t *ctx;
+    do_work_cb_t cb;
+
+    // Get context and user-defined callback function
+    ctx = (work_sync_ctx_t *)arg1;
+    cb = (do_work_cb_t)arg2;
+
+    // Invoke callback function in data model thread
+    cb(ctx->arg1, ctx->arg2);
+
+    // Signal done to worker thread
+    pthread_mutex_lock(&ctx->mutex);
+    ctx->done = true;
+    pthread_cond_signal(&ctx->cond);
+    pthread_mutex_unlock(&ctx->mutex);
+}
+
+/*********************************************************************//**
+**
+** GetParameterValueCallback
+**
+** Internal callback used by USP_PROCESS_DM_GetParameterValue to invoke
+** USP_DM_GetParameterValue on the data model thread.
+** Used as a callback for USP_PROCESS_DoWorkSync.
+**
+** \param   arg1 - pointer to a string containing the parameter path
+** \param   arg2 - unused
+**
+** \return  None
+**
+**************************************************************************/
+void GetParameterValueCallback(void *arg1, void *arg2)
+{
+    work_dm_get_t *get;
+
+    USP_ASSERT(arg1 != NULL);
+    get = (work_dm_get_t *)arg1;
+
+    get->err = USP_DM_GetParameterValue(get->path, get->buf, get->len);
+    if (get->err != USP_ERR_OK)
+    {
+        USP_STRNCPY(get->usp_error, USP_ERR_GetMessage(), sizeof(get->usp_error));
+    }
+}
+
+/*********************************************************************//**
+**
+** SetParameterValueCallback
+**
+** Internal callback used by USP_PROCESS_DM_SetParameterValue to invoke
+** USP_DM_SetParameterValue on the data model thread.
+** Used as a callback for USP_PROCESS_DoWorkSync.
+**
+** \param   arg1 - pointer to a string containing the parameter path
+** \param   arg2 - unused
+**
+** \return  None
+**
+**************************************************************************/
+void SetParameterValueCallback(void *arg1, void *arg2)
+{
+    work_dm_set_t *set;
+
+    USP_ASSERT(arg1 != NULL);
+    set = (work_dm_set_t *)arg1;
+    set->err = USP_DM_SetParameterValue(set->path, set->new_value);
+    if (set->err != USP_ERR_OK)
+    {
+        USP_STRNCPY(set->usp_error, USP_ERR_GetMessage(), sizeof(set->usp_error));
+    }
+}
+
+#endif  // REMOVE_USP_BROKER

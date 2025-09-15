@@ -13,3 +13,8 @@ Thank you for your interest in contributing! Please refer to [CONTRIBUTING.md](h
 ## Wiki Access
 
 Please also see our [WIKI](https://github.com/BroadbandForum/obuspa/wiki) for more details about the project.
+
+## Integrated by the following solutions
+
+1. prpl Foundation's prplWare
+2. RDK's RDK-B

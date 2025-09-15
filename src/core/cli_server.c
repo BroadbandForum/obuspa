@@ -335,7 +335,7 @@ void CLI_SERVER_ProcessSocketActivity(socket_set_t *set)
     char *cmd_end;
 
     // Accept remote connections from CLI clients
-    if (cli_listen_sock != INVALID)
+    if ((cli_listen_sock != INVALID) && (cli_server_sock==INVALID))
     {
         if (SOCKET_SET_IsReadyToRead(cli_listen_sock, set))
         {
