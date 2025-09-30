@@ -20,6 +20,6 @@ missing
 ylwrap
 *.Po
 *.o
-/*.m4
+*.m4
 .dirstamp
 *.swp

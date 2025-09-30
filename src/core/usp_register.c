@@ -1328,8 +1328,15 @@ int USP_REGISTER_OperationArguments(char *path, char **input_arg_names, int num_
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Copy the input and output arguments into the data model
+    // Exit if arguments have already been registered for this USP command
     info = &node->registered.oper_info;
+    if ((info->input_args.vector != NULL) || (info->output_args.vector != NULL))
+    {
+        USP_ERR_SetMessage("%s: Arguments already registered for %s", __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Copy the input and output arguments into the data model
     if (input_arg_names != NULL)
     {
         STR_VECTOR_Clone(&info->input_args, input_arg_names, num_input_arg_names);
@@ -1432,8 +1439,15 @@ int USP_REGISTER_EventArguments(char *path, char **event_arg_names, int num_even
         return USP_ERR_INTERNAL_ERROR;
     }
 
-    // Copy the arguments into the data model
+    // Exit if arguments have already been registered for this USP command
     info = &node->registered.event_info;
+    if (info->event_args.vector != NULL)
+    {
+        USP_ERR_SetMessage("%s: Arguments already registered for %s", __FUNCTION__, path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Copy the arguments into the data model
     if (event_arg_names != NULL)
     {
         STR_VECTOR_Clone(&info->event_args, event_arg_names, num_event_arg_names);

@@ -1,4 +1,3 @@
-ACLOCAL_AMFLAGS = -I m4 -I m4-extra
 AM_CPPFLAGS = -I$(top_srcdir)/src \
               -I$(top_srcdir)/src/core \
               -I$(top_srcdir)/src/protobuf-c \
@@ -17,6 +16,11 @@ AM_LDFLAGS =
 # Hardening
 AM_CFLAGS += $(CFLAGS_HARDENING)
 AM_LDFLAGS += $(LDFLAGS_HARDENING)
+
+# Sanitizers
+AM_CPPFLAGS += $(CPPFLAGS_SANITIZER)
+AM_CFLAGS += $(CFLAGS_SANITIZER)
+AM_LDFLAGS += $(LDFLAGS_SANITIZER)
 
 bin_PROGRAMS = obuspa
 
@@ -141,3 +145,80 @@ uninstall-local:
 
 # Import vendor makefile
 include src/vendor/vendor.am
+
+# Include files
+public_includedir = $(includedir)/obuspa/include
+public_include_HEADERS = \
+    src/include/compiler.h \
+    src/include/usp_api.h \
+    src/include/usp_err_codes.h \
+    src/include/vendor_api.h \
+    src/vendor/vendor_defs.h
+
+private_core_includedir = $(includedir)/obuspa/core
+private_core_include_HEADERS = \
+    src/core/bdc_exec.h \
+    src/core/cli.h \
+    src/core/common_defs.h \
+    src/core/data_model.h \
+    src/core/database.h \
+    src/core/device.h \
+    src/core/dllist.h \
+    src/core/dm_access.h \
+    src/core/dm_exec.h \
+    src/core/dm_inst_vector.h \
+    src/core/dm_trans.h \
+    src/core/e2e_context.h \
+    src/core/e2e_defs.h \
+    src/core/expr_vector.h \
+    src/core/group_add_vector.h \
+    src/core/group_del_vector.h \
+    src/core/group_get_vector.h \
+    src/core/group_set_vector.h \
+    src/core/inst_sel_vector.h \
+    src/core/int_vector.h \
+    src/core/iso8601.h \
+    src/core/kv_vector.h \
+    src/core/mqtt.h \
+    src/core/msg_handler.h \
+    src/core/msg_utils.h \
+    src/core/mtp_exec.h \
+    src/core/nu_ipaddr.h \
+    src/core/nu_macaddr.h \
+    src/core/os_utils.h \
+    src/core/path_resolver.h \
+    src/core/plugin.h \
+    src/core/proto_trace.h \
+    src/core/retry_wait.h \
+    src/core/rfc1123.h \
+    src/core/sar_vector.h \
+    src/core/se_cache.h \
+    src/core/socket_set.h \
+    src/core/stomp.h \
+    src/core/str_vector.h \
+    src/core/subs_retry.h \
+    src/core/subs_vector.h \
+    src/core/sync_timer.h \
+    src/core/text_utils.h \
+    src/core/uds.h \
+    src/core/uptime.h \
+    src/core/uri.h \
+    src/core/usp_broker.h \
+    src/core/usp_coap.h \
+    src/core/usp_err.h \
+    src/core/usp_log.h \
+    src/core/usp_mem.h \
+    src/core/usp_record.h \
+    src/core/usp_service.h \
+    src/core/version.h \
+    src/core/wsclient.h \
+    src/core/wsserver.h
+
+private_libjson_includedir = $(includedir)/obuspa/libjson
+private_libjson_include_HEADERS = src/libjson/ccan/json/json.h
+
+private_protobuf_includedir = $(includedir)/obuspa/protobuf-c
+private_protobuf_include_HEADERS = \
+    src/protobuf-c/protobuf-c.h \
+    src/protobuf-c/usp-msg.pb-c.h \
+    src/protobuf-c/usp-record.pb-c.h

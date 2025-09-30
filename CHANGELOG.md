@@ -1,5 +1,19 @@
 # OB-USP-AGENT Changelog since Release 10.0.0
 
+## 2025-09-30 v10.0.9
+### Added
+- Device.Security.Certificate may be removed from OBUSPA's data model using the define REMOVE_DEVICE_SECURITY_CERTIFICATE in vendor_defs.h.
+This does not affect  Device.LocalAgent.Certificate, which still reports the trust store certificates.
+- Configure options to enable address sanitizer (--enable-asan) and thread sanitizer builds (--enable-tsan) have been added. These options are disabled by default.
+- To support compilation of OBUSPA data model plug-ins, the build process now installs header files to $(includedir)/obuspa
+
+### Fixed
+- USP Command and Event arguments should not be allowed to be registered more than once
+
+### Modified
+- 'obuspa -c' output has been made cleaner, containing only logs from the data model thread
+- The m4-extra directory and AX_CHECK_XXX autotools macros (added in v10.0.8) have been removed, as they filter rather than stop the build if unsupported compiler options are used.
+
 ## 2025-09-15 v10.0.8
 ### Added
 - Functions to access the data model from vendor threads (USP_PROCESS_DoWorkSync, USP_PROCESS_DM_GetParameterValue, USP_PROCESS_DM_SetParameterValue)

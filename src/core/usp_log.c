@@ -63,6 +63,7 @@
 #include "cli.h"
 #include "usp_api.h"
 #include "data_model.h"  // for vendor_hook_callbacks
+#include "os_utils.h"
 
 //------------------------------------------------------------------------------------
 // File to send logging output to
@@ -435,7 +436,7 @@ void USP_LOG_Puts(log_level_t log_level, log_type_t log_type, const char *str)
     switch(log_type)
     {
         case kLogType_Debug:
-            if (dump_to_cli)
+            if ((OS_UTILS_IsDataModelThread(__FUNCTION__, DONT_PRINT_WARNING)) && (dump_to_cli))
             {
                 CLI_SERVER_SendResponse(str);
                 CLI_SERVER_SendResponse("\n");
@@ -447,7 +448,7 @@ void USP_LOG_Puts(log_level_t log_level, log_type_t log_type, const char *str)
             break;
 
         case kLogType_Dump:
-            if (dump_to_cli)
+            if ((OS_UTILS_IsDataModelThread(__FUNCTION__, DONT_PRINT_WARNING)) && (dump_to_cli))
             {
                 CLI_SERVER_SendResponse(str);
                 CLI_SERVER_SendResponse("\n");

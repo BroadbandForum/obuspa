@@ -22,6 +22,8 @@ AC_ARG_ENABLE(websockets, [AS_HELP_STRING([--enable-websockets], [enable WebSock
 AC_ARG_ENABLE(uds, [AS_HELP_STRING([--enable-uds], [enable UDS MTP Message support])],,enable_uds=yes)
 AC_ARG_ENABLE(bulkdata, [AS_HELP_STRING([--enable-bulkdata], [enable Bulk Data Collection support])],,enable_bulkdata=yes)
 AC_ARG_ENABLE(hardening, [AS_HELP_STRING([--enable-hardening], [enable compiler hardening flags])],,enable_hardening=no)
+AC_ARG_ENABLE(asan, [AS_HELP_STRING([--enable-asan], [enable address sanitizer])],,enable_asan=no)
+AC_ARG_ENABLE(tsan, [AS_HELP_STRING([--enable-tsan], [enable thread sanitizer])],,enable_tsan=no)
 
 # Checks for libraries.
 # This also defines autotools magic variables for use in the .am files
@@ -68,22 +70,42 @@ AS_IF([test "x$enable_bulkdata" = "xyes"], [
 ])
 
 AS_IF([test "x$enable_hardening" = "xyes"], [
-    # Print better error message if these macros are not defined
-    m4_pattern_forbid([AX_CHECK_COMPILE_FLAG])dnl
-    m4_pattern_forbid([AX_CHECK_LINK_FLAG])dnl
-
     # Enable compiler hardening flags - do not touch CFLAGS or LDFLAGS directly
-    AX_CHECK_COMPILE_FLAG([-fstack-protector-strong], [CFLAGS_HARDENING="$CFLAGS_HARDENING -fstack-protector-strong"])
-    AX_CHECK_COMPILE_FLAG([-fPIE], [CFLAGS_HARDENING="$CFLAGS_HARDENING -fPIE"])
-    AX_CHECK_LINK_FLAG([-pie], [LDFLAGS_HARDENING="$LDFLAGS_HARDENING -pie"])
-    AX_CHECK_LINK_FLAG([-Wl,-z,relro], [LDFLAGS_HARDENING="$LDFLAGS_HARDENING -Wl,-z,relro"])
-    AX_CHECK_LINK_FLAG([-Wl,-z,now], [LDFLAGS_HARDENING="$LDFLAGS_HARDENING -Wl,-z,now"])
-    AX_CHECK_LINK_FLAG([-Wl,-z,noexecstack], [LDFLAGS_HARDENING="$LDFLAGS_HARDENING -Wl,-z,noexecstack"])
+    CFLAGS_HARDENING="$CFLAGS_HARDENING -fstack-protector-strong"
+    CFLAGS_HARDENING="$CFLAGS_HARDENING -fPIE"
+    LDFLAGS_HARDENING="$LDFLAGS_HARDENING -pie"
+    LDFLAGS_HARDENING="$LDFLAGS_HARDENING -Wl,-z,relro"
+    LDFLAGS_HARDENING="$LDFLAGS_HARDENING -Wl,-z,now"
+    LDFLAGS_HARDENING="$LDFLAGS_HARDENING -Wl,-z,noexecstack"
 
     # Fortify requires optimization
     CFLAGS_HARDENING="$CFLAGS_HARDENING -O2 -D_FORTIFY_SOURCE=2"
     AC_SUBST([CFLAGS_HARDENING])
     AC_SUBST([LDFLAGS_HARDENING])
+])
+
+# Enable compiler sanitizer flags - do not touch CPPFLAGS, CFLAGS, or LDFLAGS directly
+# Sanitizer builds can sometimes trigger erroneous string truncation warnings, so silence them in CPPFLAGS
+if test "x$enable_asan" = "xyes" && test "x$enable_tsan" = "xyes"; then
+    AC_MSG_ERROR([--enable-asan and --enable-tsan are mutually exclusive. Please enable only one.])
+fi
+
+AS_IF([test "x$enable_asan" = "xyes"], [
+    CPPFLAGS_SANITIZER="-Wno-stringop-truncation"
+    CFLAGS_SANITIZER="-g -O1 -fsanitize=address -fno-omit-frame-pointer -fno-common"
+    LDFLAGS_SANITIZER="-fsanitize=address"
+    AC_SUBST([CPPFLAGS_SANITIZER])
+    AC_SUBST([CFLAGS_SANITIZER])
+    AC_SUBST([LDFLAGS_SANITIZER])
+])
+
+AS_IF([test "x$enable_tsan" = "xyes"], [
+    CPPFLAGS_SANITIZER="-Wno-stringop-truncation"
+    CFLAGS_SANITIZER="-g -O2 -fsanitize=thread -fno-omit-frame-pointer -fno-common"
+    LDFLAGS_SANITIZER="-fsanitize=thread"
+    AC_SUBST([CPPFLAGS_SANITIZER])
+    AC_SUBST([CFLAGS_SANITIZER])
+    AC_SUBST([LDFLAGS_SANITIZER])
 ])
 
 # Check which flavour of strerror_r is available on the target

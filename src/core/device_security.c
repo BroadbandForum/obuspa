@@ -82,8 +82,10 @@ char *usp_trust_store_file = NULL;
 
 //------------------------------------------------------------------------------
 // Location of the Device.Security.Certificate table within the data model
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
 #define DEVICE_CERT_ROOT "Device.Security.Certificate"
 static const char device_cert_root[] = DEVICE_CERT_ROOT;
+#endif
 
 //------------------------------------------------------------------------------
 // Location of the Device.LocalAgent.Certificate table within the data model
@@ -114,7 +116,9 @@ typedef enum
 {
     kCertUsage_TrustCert,
     kCertUsage_ClientCert,
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
     kCertUsage_SystemCert,
+#endif
 } cert_usage_t;
 
 //------------------------------------------------------------------------------
@@ -123,7 +127,9 @@ const enum_entry_t cert_usages[] =
 {
     { kCertUsage_TrustCert,     "TrustCerts" },
     { kCertUsage_ClientCert,    "ClientCert" },
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
     { kCertUsage_SystemCert,    "SystemCerts" },
+#endif
 };
 
 //------------------------------------------------------------------------------
@@ -195,8 +201,9 @@ static char *fp_output_args[] =
 void LoadCerts_FromPath(char *path, cert_usage_t cert_usage, int role_instance);
 void LoadCerts_FromFile(char *file_path, cert_usage_t cert_usage, int role_instance);
 void LoadCerts_FromDir(char *dir_path, cert_usage_t cert_usage, int role_instance);
-int Get_NumCerts(dm_req_t *req, char *buf, int len);
 int Get_NumTrustCerts(dm_req_t *req, char *buf, int len);
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
+int Get_NumCerts(dm_req_t *req, char *buf, int len);
 int GetCert_LastModif(dm_req_t *req, char *buf, int len);
 int GetCert_SerialNumber(dm_req_t *req, char *buf, int len);
 int GetCert_Issuer(dm_req_t *req, char *buf, int len);
@@ -205,9 +212,10 @@ int GetCert_NotAfter(dm_req_t *req, char *buf, int len);
 int GetCert_Subject(dm_req_t *req, char *buf, int len);
 int GetCert_SubjectAlt(dm_req_t *req, char *buf, int len);
 int GetCert_SignatureAlgorithm(dm_req_t *req, char *buf, int len);
+cert_t *Find_SecurityCertByReq(dm_req_t *req);
+#endif
 int GetLaCert_SerialNumber(dm_req_t *req, char *buf, int len);
 int GetLaCert_Issuer(dm_req_t *req, char *buf, int len);
-cert_t *Find_SecurityCertByReq(dm_req_t *req);
 cert_t *Find_LocalAgentCertByReq(dm_req_t *req);
 cert_t *Find_LocalAgentCertByHash(cert_hash_t hash);
 cert_t *Find_CertByHash(cert_hash_t hash);
@@ -250,8 +258,11 @@ int Operate_GetFingerprint(dm_req_t *req, char *command_key, kv_vector_t *input_
 int DEVICE_SECURITY_Init(void)
 {
     int err = USP_ERR_OK;
+    char *unique_keys[] = { "SerialNumber", "Issuer" };
+    char *alias_unique_key[] = { "Alias" };
 
     // Register Device.Security.Certificate parameters
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.Security.CertificateNumberOfEntries", Get_NumCerts, DM_UINT);
     err |= USP_REGISTER_Object(DEVICE_CERT_ROOT ".{i}", USP_HOOK_DenyAddInstance, NULL, NULL,   // This table is read only
                                                         USP_HOOK_DenyDeleteInstance, NULL, NULL);
@@ -263,6 +274,8 @@ int DEVICE_SECURITY_Init(void)
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.Subject", GetCert_Subject, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.SubjectAlt", GetCert_SubjectAlt, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_CERT_ROOT ".{i}.SignatureAlgorithm", GetCert_SignatureAlgorithm, DM_STRING);
+    err |= USP_REGISTER_Object_UniqueKey(DEVICE_CERT_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
+#endif
 
     // Register Device.LocalAgent.Certificate parameters
     err |= USP_REGISTER_Object(DEVICE_LA_CERT_ROOT ".{i}", USP_HOOK_DenyAddInstance, NULL, NULL,   // This table is read only
@@ -280,9 +293,6 @@ int DEVICE_SECURITY_Init(void)
     err |= USP_REGISTER_Param_SupportedList("Device.LocalAgent.SupportedFingerprintAlgorithms", fp_algs, NUM_ELEM(fp_algs));
 
     // Register unique keys for tables
-    char *unique_keys[] = { "SerialNumber", "Issuer" };
-    char *alias_unique_key[] = { "Alias" };
-    err |= USP_REGISTER_Object_UniqueKey(DEVICE_CERT_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_LA_CERT_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_LA_CERT_ROOT ".{i}", alias_unique_key, NUM_ELEM(alias_unique_key));
 
@@ -386,8 +396,10 @@ exit:
         SSL_CTX_free(temp_ssl_ctx);
     }
 
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
     // Load the certificates contained in the system cert directory
     LoadCerts_FromPath(SYSTEM_CERT_PATH, kCertUsage_SystemCert, INVALID);
+#endif
 
     return err;
 }
@@ -1691,6 +1703,7 @@ int AddClientCert(SSL_CTX *ctx)
     return USP_ERR_OK;
 }
 
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
 /*********************************************************************//**
 **
 ** Get_NumCerts
@@ -1904,6 +1917,48 @@ int GetCert_SignatureAlgorithm(dm_req_t *req, char *buf, int len)
 
 /*********************************************************************//**
 **
+** Find_SecurityCertByReq
+**
+** Returns a pointer to the certificate with the specified Device.Security.Certificate instance number
+**
+** \param   req - pointer to structure identifying the instance
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+cert_t *Find_SecurityCertByReq(dm_req_t *req)
+{
+    int i;
+    cert_t *ct;
+    int index;
+
+    // Normally the certificates are arranged in instance order in the vector
+    // Exit, if this is the case. NOTE: This is a speedup to avoid having to iterate over all certs (as later on in this function)
+    index = inst1 - 1;
+    USP_ASSERT((index >= 0) && (index < num_all_certs));
+    ct = &all_certs[index];
+    if (ct->instance == inst1)
+    {
+        return ct;
+    }
+
+    // If the certificates are not arranged in instance order, then iterate over all certs,
+    // finding the one with matching instance number
+    for (i=0; i<num_all_certs; i++)
+    {
+        ct = &all_certs[i];
+        if (ct->instance == inst1)
+        {
+            return ct;
+        }
+    }
+
+    return NULL;
+}
+#endif  // REMOVE_DEVICE_SECURITY_CERTIFICATE
+
+/*********************************************************************//**
+**
 ** Get_NumTrustCerts
 **
 ** Gets the value of Device.LocalAgent.CertificateNumberOfEntries
@@ -1967,47 +2022,6 @@ int GetLaCert_Issuer(dm_req_t *req, char *buf, int len)
     USP_ASSERT(ct != NULL);
     USP_SNPRINTF(buf, len, "%s", ct->issuer);
     return USP_ERR_OK;
-}
-
-/*********************************************************************//**
-**
-** Find_SecurityCertByReq
-**
-** Returns a pointer to the certificate with the specified Device.Security.Certificate instance number
-**
-** \param   req - pointer to structure identifying the instance
-**
-** \return  USP_ERR_OK if successful
-**
-**************************************************************************/
-cert_t *Find_SecurityCertByReq(dm_req_t *req)
-{
-    int i;
-    cert_t *ct;
-    int index;
-
-    // Normally the certificates are arranged in instance order in the vector
-    // Exit, if this is the case. NOTE: This is a speedup to avoid having to iterate over all certs (as later on in this function)
-    index = inst1 - 1;
-    USP_ASSERT((index >= 0) && (index < num_all_certs));
-    ct = &all_certs[index];
-    if (ct->instance == inst1)
-    {
-        return ct;
-    }
-
-    // If the certificates are not arranged in instance order, then iterate over all certs,
-    // finding the one with matching instance number
-    for (i=0; i<num_all_certs; i++)
-    {
-        ct = &all_certs[i];
-        if (ct->instance == inst1)
-        {
-            return ct;
-        }
-    }
-
-    return NULL;
 }
 
 /*********************************************************************//**
@@ -2202,18 +2216,21 @@ int AddCert(X509 *cert, cert_usage_t cert_usage, int role_instance)
             ct->la_instance = INVALID;
             break;
 
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
         case kCertUsage_SystemCert:
             // System certs are not saved into the vector, but instead freed (consumed) here
             X509_free(cert);
             ct->cert = NULL;
             ct->la_instance = INVALID;
             break;
+#endif
 
         default:
             TERMINATE_BAD_CASE(cert_usage);
             break;
     }
 
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
     // Exit if unable to add the instance into the Device.Security.Certificate table
     USP_SNPRINTF(path, sizeof(path), "%s.%d", device_cert_root, ct->instance);
     err = DATA_MODEL_InformInstance(path);
@@ -2221,6 +2238,7 @@ int AddCert(X509 *cert, cert_usage_t cert_usage, int role_instance)
     {
         return err;
     }
+#endif
 
     // Trust store certs additionally populate the Device.LocalAgent.Certificate and Device.LocalAgent.ControllerTrust.Credential tables
     if (cert_usage == kCertUsage_TrustCert)
@@ -3123,4 +3141,3 @@ int Operate_GetFingerprint(dm_req_t *req, char *command_key, kv_vector_t *input_
 }
 
 #endif // REMOVE_DEVICE_SECURITY
-
