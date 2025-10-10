@@ -562,6 +562,48 @@ int DEVICE_CTRUST_AddCertRole(int cert_instance, int role_instance, bool signal_
     return USP_ERR_OK;
 }
 
+#ifdef ADD_CERT_SUPPORT
+/*********************************************************************//**
+**
+** DEVICE_CTRUST_DeleteCertRole
+**
+** Called when a certificate has been deleted to delete out the entry in the ControllerTrust.Credential table
+**
+** \param   cert_instance - instance number of the certificate in Device.LocalAgent.Certificate.{i} table which has been deleted
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_CTRUST_DeleteCertRole(int cert_instance)
+{
+    credential_t *cp;
+    int index;
+    int items_to_move;
+    char path[MAX_DM_PATH];
+
+    // Exit if no matching certificate found
+    // NOTE: This should never happen as the code ensures that the cert and credentials tables stay in step with one another
+    cp = FindCredentialByCertInstance(cert_instance);
+    if (cp == NULL)
+    {
+        return;
+    }
+
+    // Remove instance from the data model
+    USP_SNPRINTF(path, sizeof(path), "Device.LocalAgent.ControllerTrust.Credential.%d", cert_instance);
+    USP_SIGNAL_ObjectDeleted(path);
+
+    // Remove this credential from the vector
+    index = cp - credentials;   // NOTE: size of these pointers is credential_t
+    items_to_move = num_credentials - index - 1;
+    if (items_to_move > 0)
+    {
+        memmove(&credentials[index], &credentials[index+1], items_to_move*sizeof(credential_t));
+    }
+    num_credentials--;
+    credentials = USP_REALLOC(credentials, num_credentials*sizeof(credential_t));
+}
+#endif
 
 /*********************************************************************//**
 **

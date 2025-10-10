@@ -1205,6 +1205,9 @@ void AttemptWsclientConnect(wsclient_t *wc)
     char percent_encoded_eid[PATH_MAX];
     char uri_path[PATH_MAX];
 
+    (void)interface;      // Stop clang static analyser incorrectly complaining about unnecessary variable initialization
+                          // (It needs to be initialized for the case of CONNECT_ONLY_OVER_WAN_INTERFACE not defined)
+
     // Check that structure is not part of a linked list owned by libwebsockets anymore
     AssertRetryCallbackNotInUse(&wc->retry_timer);
     memset(&wc->retry_timer, 0, sizeof(wc->retry_timer));

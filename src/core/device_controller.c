@@ -1839,6 +1839,10 @@ void AllowConnectOnAllMtpClients(void)
 #ifdef ENABLE_WEBSOCKETS
     WSCLIENT_AllowConnect();
 #endif
+
+#ifndef REMOVE_DEVICE_BULKDATA
+    DEVICE_BULKDATA_AllowConnect();
+#endif
 }
 
 /*********************************************************************//**

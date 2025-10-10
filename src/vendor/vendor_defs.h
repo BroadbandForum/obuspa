@@ -265,4 +265,17 @@
 #endif
 #endif
 
+//-----------------------------------------------------------------------------------------
+// Comment out the following line to remove the AddCertificate() and Delete() certificate support
+#define ADD_CERT_SUPPORT
+
+// Location of directory used to store trust store certificates which are capable of being added/deleted by a USP Controller
+// NOTE: As the certs need to be stored persistently, this should be changed to a directory which is not cleared on boot up
+#define MUTABLE_CERT_DIR   OBUSPA_LOCAL_STATE_DIR "/mutable_certs"
+
+// Range of instance numbers used for certificates which are capable of being added/deleted by a USP Controller
+// The instance number is the same in both tables (Device.LocalAgent.Certificate and Device.Security.Certificate)
+// and starts from the value below. This number must be larger than the number of certificates added by all other methods
+#define MUTABLE_CERT_FIRST_INSTANCE (1000)
+
 #endif // VENDOR_DEFS_H

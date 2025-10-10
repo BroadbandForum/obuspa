@@ -1301,6 +1301,9 @@ void StartStompConnection(stomp_connection_t *sc)
     char *mgmt_interface = "any";   // Used only for debug purposes
     bool allowed;
 
+    (void)mgmt_interface;      // Stop clang static analyser incorrectly complaining about unnecessary variable initialization
+                               // (It needs to be initialized for the case of CONNECT_ONLY_OVER_WAN_INTERFACE not defined)
+
     // Copy across the next connection parameters to use into the working state
     CopyStompConnParamsFromNext(sc);
 

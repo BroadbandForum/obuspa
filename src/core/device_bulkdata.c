@@ -597,6 +597,39 @@ void DEVICE_BULKDATA_NotifyControllerDeleted(int cont_instance)
 
 /*********************************************************************//**
 **
+** DEVICE_BULKDATA_AllowConnect
+**
+** Called after acquiring NTP time to resync the times at which the reports should be generated
+**
+** \param   None
+**
+** \return  None
+**
+**************************************************************************/
+void DEVICE_BULKDATA_AllowConnect(void)
+{
+    int i;
+    bulkdata_profile_t *bp;
+
+    // Exit if bulk data is disabled
+    if (global_enable == false)
+    {
+        return;
+    }
+
+    // Iterate over all profiles, resyncing all enabled profiles
+    for (i=0; i<BULKDATA_MAX_PROFILES; i++)
+    {
+        bp = &bulkdata_profiles[i];
+        if ((bp->profile_id != INVALID) && (bp->is_enabled))
+        {
+            bulkdata_resync_profile(bp, NULL);
+        }
+    }
+}
+
+/*********************************************************************//**
+**
 ** Validate_AddBulkDataProfile
 **
 ** Checks that an extra instance can be added to Device.BulkData.Profile.{i}
@@ -2439,12 +2472,21 @@ void bulkdata_process_profile(int id)
     int err;
     bdc_protocol_t protocol;
     char path[MAX_DM_PATH];
+    bool allowed;
 
     // Exit if unable to find the profile
     // NOTE: This should never occur if the software is working correctly
     bp = bulkdata_find_profile(id);
     if (bp == NULL)
     {
+        return;
+    }
+
+    // Exit if MTPs should not be connected to yet. Bulk Data reports will be generated at the next reporting interval after MTPs can be connected to.
+    allowed = DEVICE_CONTROLLER_CanMtpConnect();
+    if (allowed == false)
+    {
+        bulkdata_resync_profile(bp, NULL);
         return;
     }
 

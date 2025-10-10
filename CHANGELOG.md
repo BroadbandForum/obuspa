@@ -1,5 +1,15 @@
 # OB-USP-AGENT Changelog since Release 10.0.0
 
+## 2025-10-10 v10.0.10
+### Added
+- Device.LocalAgent.AddCertificate() support. See QUICK_START_GUIDE.md for how to use this feature.
+- can_mtp_connect vendor hook should also control Bulk Data Collection report generation
+
+### Fixed
+- Compilation failure with recent USP_PROCESS_DoWorkSync changes when REMOVE_USP_BROKER is defined
+- Removed Clang static analyzer false positives
+
+
 ## 2025-09-30 v10.0.9
 ### Added
 - Device.Security.Certificate may be removed from OBUSPA's data model using the define REMOVE_DEVICE_SECURITY_CERTIFICATE in vendor_defs.h.

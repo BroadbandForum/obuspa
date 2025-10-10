@@ -509,4 +509,17 @@ obuspa -p -v 4 -r factory_reset_example.txt -i eth0 -x examples/plugin/.libs/plu
 ```
  OB-USP-AGENT supports the loading of multiple plug-ins at start-up, each one specified using a '-x' command line switch.
 
+ ## Adding and deleting Trust Store certificates
+OBUSPA supports adding and deleting certificates using the `Device.LocalAgent.AddCertificate()` and `Device.LocalAgent.Certificate.{i}.Delete()` commands.
 
+The certificates are persisted in a directory (specified as MUTABLE_CERT_DIR in vendor_defs.h) using an augmented pem format, and a file naming convention to encode the instance number of the certificate. 
+
+Certificates added to the trust store using this method are in addition to those added using other methods, but only certificates registered using this method are capable of being added and deleted.
+
+To avoid instance number collision (with certificates registered using other methods), a range of valid instance numbers is defined. In vendor_defs.h, the MUTABLE_CERT_FIRST_INSTANCE define sets the lowest instance number which may be used for certificates registered using this method.
+
+The file name of each certificate file must follow the convention of a number suffixed by ".pem". The number is the instance number of the certificate in both the Device.LocalAgent.Certificate and Device.Security.Certificate tables.
+
+Each certificate file contains a single PEM formatted public certificate, prefixed by a line specifying the value of the Alias parameter for the certificate (e.g., `Alias:DigiCertGlobalRootCA`).
+
+When adding a certificate using the `AddCertificate()` command, the Certificate argument contains the certificate in PEM format. An embedded newline character (‘\n’) must be used to separate ‘-----BEGIN CERTIFICATE-----’ and ‘-----END CERTIFICATE-----’ from the certificate data.

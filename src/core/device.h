@@ -303,6 +303,9 @@ int DEVICE_CTRUST_Init(void);
 int DEVICE_CTRUST_Start(void);
 void DEVICE_CTRUST_Stop(void);
 int DEVICE_CTRUST_AddCertRole(int cert_instance, int role_instance, bool signal_event);
+#ifdef ADD_CERT_SUPPORT
+void DEVICE_CTRUST_DeleteCertRole(int cert_instance);
+#endif
 int DEVICE_CTRUST_GetCertInheritedRole(int cert_instance);
 int DEVICE_CTRUST_RoleInstanceToIndex(int role_instance);
 int DEVICE_CTRUST_RoleIndexToInstance(int role_index);
@@ -325,6 +328,7 @@ int DEVICE_BULKDATA_Start(void);
 void DEVICE_BULKDATA_Stop(void);
 void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
 void DEVICE_BULKDATA_NotifyControllerDeleted(int cont_instance);
+void DEVICE_BULKDATA_AllowConnect(void);
 #ifndef REMOVE_SELF_TEST_DIAG_EXAMPLE
 int DEVICE_SELF_TEST_Init(void);
 #endif

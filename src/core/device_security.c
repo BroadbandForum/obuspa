@@ -139,6 +139,9 @@ typedef struct
 {
     int instance;               // Instance number of this certificate in Device.Security.Certificate
     int la_instance;            // Instance number of this certificate in Device.LocalAgent.Certificate (if applicable)
+#ifdef ADD_CERT_SUPPORT
+    char *alias;                // Value of Device.LocalAgent.Certificate.{i}.Alias or NULL if this is not a trust store cert
+#endif
 
     cert_usage_t cert_usage;    // Defines what the cert is used for
     X509 *cert;                 // Points to a copy of the certificate (only if this is a trust store cert, NULL otherwise)
@@ -243,6 +246,17 @@ void LogCertChain(STACK_OF(X509) *cert_chain);
 void LogTrustCerts(void);
 void LogCert_DER(X509 *cert);
 int Operate_GetFingerprint(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
+#ifdef ADD_CERT_SUPPORT
+int GetCertFromString(char *buf, X509 **p_cert);
+void LoadTrustStore_FromMutableCertDir(void);
+int AddMutableCert(X509 *cert, int instance, char *alias, char *filename, bool signal_event);
+int Operate_AddCertificate(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
+int Operate_DeleteCertificate(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args);
+int CalcNextMutableCertInstance(void);
+int GetAliasFromMutableCertFile(char *file_path, char *buf, int len);
+int GetCert_Alias(dm_req_t *req, char *buf, int len);
+cert_t *Find_LocalAgentCertByAlias(char *alias);
+#endif
 
 /*********************************************************************//**
 **
@@ -282,7 +296,11 @@ int DEVICE_SECURITY_Init(void)
                                                         USP_HOOK_DenyDeleteInstance, NULL, NULL);
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.LocalAgent.CertificateNumberOfEntries", Get_NumTrustCerts, DM_UINT);
 
+#ifdef ADD_CERT_SUPPORT
+    err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_LA_CERT_ROOT ".{i}.Alias", GetCert_Alias, DM_STRING);
+#else
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_LA_CERT_ROOT ".{i}.Alias", DM_ACCESS_PopulateAliasParam, DM_STRING);
+#endif
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_LA_CERT_ROOT ".{i}.SerialNumber", GetLaCert_SerialNumber, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_LA_CERT_ROOT ".{i}.Issuer", GetLaCert_Issuer, DM_STRING);
 
@@ -296,6 +314,14 @@ int DEVICE_SECURITY_Init(void)
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_LA_CERT_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
     err |= USP_REGISTER_Object_UniqueKey(DEVICE_LA_CERT_ROOT ".{i}", alias_unique_key, NUM_ELEM(alias_unique_key));
 
+#ifdef ADD_CERT_SUPPORT
+    // Register add and delete certificate commands
+    // NOTE: Delete command does not take any input arguments
+    char *add_cert_input_args[] = { "Alias", "Certificate" };
+    err |= USP_REGISTER_SyncOperation("Device.LocalAgent.AddCertificate()", Operate_AddCertificate);
+    err |= USP_REGISTER_OperationArguments("Device.LocalAgent.AddCertificate()", add_cert_input_args, NUM_ELEM(add_cert_input_args), NULL, 0);
+    err |= USP_REGISTER_SyncOperation(DEVICE_LA_CERT_ROOT ".{i}.Delete()", Operate_DeleteCertificate);
+#endif
     // Exit if any errors occurred
     if (err != USP_ERR_OK)
     {
@@ -384,6 +410,10 @@ int DEVICE_SECURITY_Start(void)
         goto exit;
     }
 
+#ifdef ADD_CERT_SUPPORT
+    // Add the certificates which can be added/deleted
+    LoadTrustStore_FromMutableCertDir();
+#endif
     // The trust store and client cert has been successfully cached in this module
     err = USP_ERR_OK;
 
@@ -1932,6 +1962,30 @@ cert_t *Find_SecurityCertByReq(dm_req_t *req)
     cert_t *ct;
     int index;
 
+#ifdef ADD_CERT_SUPPORT
+    // Apart from mutable certs, the certificates are arranged in instance order in the vector
+    // Exit, if this is the case. NOTE: This is a speedup to avoid having to iterate over all certs (as later on in this function)
+    index = inst1 - 1;
+    if ((index >= 0) && (index < num_all_certs))
+    {
+        ct = &all_certs[index];
+        if (ct->instance == inst1)
+        {
+            return ct;
+        }
+    }
+
+    // If the certificates are not arranged in instance order, then iterate over all certs,
+    // finding the one with matching instance number
+    for (i=num_all_certs-1; i>0; i--)
+    {
+        ct = &all_certs[i];
+        if (ct->instance == inst1)
+        {
+            return ct;
+        }
+    }
+#else
     // Normally the certificates are arranged in instance order in the vector
     // Exit, if this is the case. NOTE: This is a speedup to avoid having to iterate over all certs (as later on in this function)
     index = inst1 - 1;
@@ -1953,6 +2007,7 @@ cert_t *Find_SecurityCertByReq(dm_req_t *req)
         }
     }
 
+#endif
     return NULL;
 }
 #endif  // REMOVE_DEVICE_SECURITY_CERTIFICATE
@@ -2041,6 +2096,30 @@ cert_t *Find_LocalAgentCertByReq(dm_req_t *req)
     cert_t *ct;
     int index;
 
+#ifdef ADD_CERT_SUPPORT
+    // Apart from mutable certs, the certificates are arranged in instance order in the vector
+    // Exit, if this is the case. NOTE: This is a speedup to avoid having to iterate over all certs (as later on in this function)
+    index = inst1 - 1;
+    if ((index >= 0) && (index < num_all_certs))
+    {
+        ct = &all_certs[index];
+        if (ct->la_instance == inst1)
+        {
+            return ct;
+        }
+    }
+
+    // If the certificates are not arranged in instance order, then iterate over all certs,
+    // finding the one with matching instance number
+    for (i=num_all_certs-1; i>=0; i--)
+    {
+        ct = &all_certs[i];
+        if (ct->la_instance == inst1)
+        {
+            return ct;
+        }
+    }
+#else
     // Normally the certificates are arranged in instance order in the vector
     // Exit, if this is the case. NOTE: This is a speedup to avoid having to iterate over all certs (as later on in this function)
     index = inst1 - 1;
@@ -2061,6 +2140,7 @@ cert_t *Find_LocalAgentCertByReq(dm_req_t *req)
             return ct;
         }
     }
+#endif
 
     return NULL;
 }
@@ -2169,6 +2249,14 @@ int AddCert(X509 *cert, cert_usage_t cert_usage, int role_instance)
         return USP_ERR_OK;
     }
 
+#ifdef ADD_CERT_SUPPORT
+    // Exit if adding this certificate would conflict with the instance number range reserved for mutable certs
+    if (num_all_certs+1 >= MUTABLE_CERT_FIRST_INSTANCE)
+    {
+        USP_LOG_Error("%s: Unable to add certificate as instance number is >= %d. Increase MUTABLE_CERT_FIRST_INSTANCE", __FUNCTION__, MUTABLE_CERT_FIRST_INSTANCE);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+#endif
     // Certificate is not in the vector, so add it
     // Increase the size of the vector, and initialise the new entry to default values
     new_num_entries = num_all_certs + 1;
@@ -2208,6 +2296,14 @@ int AddCert(X509 *cert, cert_usage_t cert_usage, int role_instance)
             num_trust_certs++;
             ct->cert = cert;
             ct->la_instance = num_trust_certs;
+#ifdef ADD_CERT_SUPPORT
+{
+            // Fill in the auto-assigned alias parameter
+            char alias[64];
+            USP_SNPRINTF(alias, sizeof(alias), DEFAULT_ALIAS_PREFIX "%d", ct->la_instance);
+            ct->alias = USP_STRDUP(alias);
+}
+#endif
             break;
 
         case kCertUsage_ClientCert:
@@ -2287,6 +2383,9 @@ void DestroyCert(cert_t *ct)
 
     USP_SAFE_FREE(ct->subject_alt);
     USP_SAFE_FREE(ct->signature_algorithm);
+#ifdef ADD_CERT_SUPPORT
+    USP_SAFE_FREE(ct->alias);
+#endif
 
     // Since all member variables have been freed, zero out their pointers
     memset(ct, 0, sizeof(cert_t));
@@ -3140,4 +3239,731 @@ int Operate_GetFingerprint(dm_req_t *req, char *command_key, kv_vector_t *input_
     return USP_ERR_OK;
 }
 
+#ifdef ADD_CERT_SUPPORT
+/*********************************************************************//**
+**
+** LoadTrustStore_FromMutableCertDir
+**
+** Called to load all trust store certificates that are capable of being added/removed into the Device.LocalAgent.Certificate table
+** The filenames must be of the form NNNN.pem (where NNNN is the instance number of the cert)
+**
+** \param   None
+**
+** \return  None - errors are ignored
+**
+**************************************************************************/
+void LoadTrustStore_FromMutableCertDir(void)
+{
+    char *dir_path = MUTABLE_CERT_DIR;
+    DIR *dir;
+    struct dirent *entry;
+    struct stat info;
+    int err;
+    char file_path[PATH_MAX];
+    char alias[65];
+    char *filename;
+    mode_t type;
+    X509 *cert;
+    char *endptr;
+    int instance;
+    cert_t *ct;
+    dm_req_t req = {0};
+    dm_req_instances_t inst = {0};
+
+    // Exit if no mutable cert directory has been specified - no certs to load
+    if ((dir_path==NULL) || (dir_path[0] == '\0'))
+    {
+        return;
+    }
+
+    // Exit if mutable cert dir does not exist (no certs to load)
+    err = stat(dir_path, &info);
+    if ((err != 0) && (errno == ENOENT))
+    {
+        // Since mutable cert dir does not exist, attempt to create it
+        USP_LOG_Warning("%s: Creating mutable cert dir(=%s)", __FUNCTION__, dir_path);
+        err = mkdir(dir_path, S_IRWXU | S_IRWXG | S_IRWXO);
+        if (err != 0)
+        {
+            USP_ERR_ERRNO("mkdir", errno);
+        }
+        return;
+    }
+
+    // Exit if unable to open the specified directory to read
+    dir = opendir(dir_path);
+    if (dir == NULL)
+    {
+        USP_ERR_ERRNO("opendir", errno);
+        return;
+    }
+
+    // Iterate over all entries in the directory
+    while (FOREVER)
+    {
+        // Exit loop if unable to retrieve the next entry in the directory
+        errno = 0;
+        entry = readdir(dir);
+        if (errno != 0)
+        {
+            USP_ERR_ERRNO("readdir", errno);
+            break;
+        }
+
+        // Exit loop if iterated over all entries in the directory
+        if (entry == NULL)
+        {
+            break;
+        }
+
+        // Skip this entry, if unable to determine whether this entry is a file
+        filename = entry->d_name;
+        USP_SNPRINTF(file_path, sizeof(file_path), "%s/%s", dir_path, filename);
+        err = stat(file_path, &info);
+        if (err != 0)
+        {
+            USP_ERR_ERRNO(file_path, err);
+            continue;
+        }
+
+        // Skip this entry if it's not a file or symbolic link
+        type = info.st_mode & S_IFMT;
+        if ((type != S_IFREG) && (type != S_IFLNK))
+        {
+            continue;
+        }
+
+        // Skip this entry, if unable to determine the certificate instance number it represents (i.e. file is incorrectly named)
+        instance = (int) strtol(filename, &endptr, 10);
+        if ((endptr == filename) || (strcmp(endptr, ".pem") != 0))
+        {
+            USP_LOG_Warning("%s: Ignoring incorrectly named mutable cert file (%s) in %s", __FUNCTION__, filename, dir_path);
+            continue;
+        }
+
+        // Skip this entry, if instance number is outside of the range allowed for mutable certs (and consequently may conflict with other instances already in the tables)
+        if (instance < MUTABLE_CERT_FIRST_INSTANCE)
+        {
+            USP_LOG_Warning("%s: Ignoring incorrectly numbered mutable cert file (%s < %d) in %s", __FUNCTION__, filename, MUTABLE_CERT_FIRST_INSTANCE, dir_path);
+            continue;
+        }
+
+        // Skip this entry if instance number conflicts with a cert which has already been inserted
+        req.inst = &inst;
+        inst.order = 1;
+        inst.instances[0] = instance;
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
+        ct = Find_SecurityCertByReq(&req);
+        if (ct != NULL)
+        {
+            USP_LOG_Warning("%s: Ignoring mutable cert file (%s) as certificate instance number already in use (%s.%d)", __FUNCTION__, filename, DEVICE_CERT_ROOT, ct->instance);
+            continue;
+        }
+#endif
+
+        ct = Find_LocalAgentCertByReq(&req);  // NOTE: This should not be necessary, as all LA certs are in Security cert anyway
+        if (ct != NULL)
+        {
+            USP_LOG_Warning("%s: Ignoring mutable cert file (%s) as certificate instance number already in use (%s.%d)", __FUNCTION__, filename, DEVICE_LA_CERT_ROOT, ct->la_instance);
+            continue;
+        }
+
+        // Skip this file if unable to retrieve the certificate's alias stored in the file
+        err = GetAliasFromMutableCertFile(file_path, alias, sizeof(alias));
+        if (err != USP_ERR_OK)
+        {
+            USP_LOG_Warning("%s: Ignoring mutable cert file (%s) as failed when reading file", __FUNCTION__, filename);
+            continue;
+        }
+
+        // Skip this file if the Alias is not unique
+        // NOTE: We don't have to check for uniqueness in Device.Security.Certificate table, as that table does not contain Alias
+        ct = Find_LocalAgentCertByAlias(alias);
+        if (ct != NULL)
+        {
+            USP_LOG_Warning("%s: Ignoring mutable cert file (%s) as Alias ('%s') is not unique (used by Device.LocalAgent.Certificate.%d)", __FUNCTION__, filename, alias, ct->la_instance);
+            continue;
+        }
+
+        // Skip this file if unable to retrieve the certificate (file must be in PEM format)
+        err = GetCertFromFile(file_path, &cert, NULL);
+        if (err != USP_ERR_OK)
+        {
+            continue;
+        }
+
+        // Skip this file if unable to add the certificate
+        // NOTE: Ownership of the X509 cert passes to AddCert(), so no need to free it in this function
+        err = AddMutableCert(cert, instance, alias, filename, false);
+        if (err != USP_ERR_OK)
+        {
+            continue;
+        }
+    }
+
+    // Close the directory
+    closedir(dir);
+}
+
+/*********************************************************************//**
+**
+** Operate_AddCertificate
+**
+** Sync Operation handler for the Device.LocalAgent.AddCertificate() command
+**
+** \param   req - pointer to structure identifying the operation in the data model
+** \param   command_key - pointer to string containing the command key for this operation
+** \param   input_args - vector containing input arguments and their values (unused)
+** \param   output_args - vector to return output arguments in
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Operate_AddCertificate(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args)
+{
+    int err;
+    char *pem_cert;
+    char *alias;
+    X509 *cert;
+    cert_hash_t hash;
+    cert_t *ct;
+    int instance;
+    char path[PATH_MAX];
+    char buf[256];
+    char default_alias[64];
+    FILE *fp;
+    int elements_written;
+    char *dir_path = MUTABLE_CERT_DIR;
+
+    // Exit if no mutable cert directory has been specified
+    if ((dir_path==NULL) || (dir_path[0] == '\0'))
+    {
+        USP_ERR_SetMessage("%s: No MUTABLE_CERT_DIR defined", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Determine instance number to use for the certificate
+    instance = CalcNextMutableCertInstance();
+
+    // Extract Alias input arg. NOTE: This arg is optional, so may not be present - in which case a default is used
+    USP_SNPRINTF(default_alias, sizeof(default_alias), DEFAULT_ALIAS_PREFIX "%d", instance);
+    alias = KV_VECTOR_Get(input_args, "Alias", default_alias, 0);
+
+    // Exit if the alias is already used by another cert
+    // NOTE: We don't have to check for uniqueness in Device.Security.Certificate table, as that table does not contain Alias
+    ct = Find_LocalAgentCertByAlias(alias);
+    if (ct != NULL)
+    {
+        USP_ERR_SetMessage("%s: 'Alias' value is already used by %s.%d", __FUNCTION__, device_la_cert_root, ct->la_instance);
+        return USP_ERR_UNIQUE_KEY_CONFLICT;
+    }
+
+    // Exit if no certificate supplied
+    pem_cert = KV_VECTOR_Get(input_args, "Certificate", NULL, 0);
+    if (pem_cert == NULL)
+    {
+        USP_ERR_SetMessage("%s: 'Certificate' input argument not specified", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // If the PEM cert string contains the two literal characters '\' and 'n', replace them with the single LF character
+    // This is done to support testing using strings for the operate argument (which cannot contain embedded newlines)
+    if (strstr(pem_cert, "\\n") != NULL)
+    {
+        char *in = pem_cert;
+        char *out = pem_cert;
+        while (*in != '\0')
+        {
+            if ((*in == '\\') && (in[1] == 'n'))
+            {
+                in += 2;        // Skip '\' and 'n' characters
+                *out++ = '\n';  // Replace by LF character in output
+            }
+            else
+            {
+                *out++ = *in++; // Copy down rest of characters
+            }
+        }
+        *out = '\0'; // Ensure string is terminated at new (truncated) ending
+    }
+
+    // Exit if certificate string does not contain begin/end certificate as separate lines
+    if ((strstr(pem_cert, "-----BEGIN CERTIFICATE-----\n")==NULL) ||
+        (strstr(pem_cert, "\n-----END CERTIFICATE-----")==NULL))
+    {
+        USP_ERR_SetMessage("%s: Missing BEGIN CERTIFICATE header, or END CERTIFICATE footer, or cert data on the same line as header/footer", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if unable to extract the certificate from the input argument string
+    err = GetCertFromString(pem_cert, &cert);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_SetMessage("%s: 'Certificate' input argument is not a PEM formatted string", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if unable to calculate the hash of the certificate
+    err = CalcCertHash(cert, &hash);
+    if (err != USP_ERR_OK)
+    {
+        X509_free(cert);
+        return err;
+    }
+
+    // Exit if the certificate is already present in the data model
+    ct = Find_CertByHash(hash);
+    if (ct != NULL)
+    {
+        X509_free(cert);
+        if (ct->la_instance != INVALID)
+        {
+            USP_ERR_SetMessage("%s: Certificate is already present at %s.%d", __FUNCTION__, device_la_cert_root, ct->la_instance);
+        }
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
+        else
+        {
+            USP_ERR_SetMessage("%s: Certificate is already present (as a non-trust store cert) at %s.%d, so cannot be added to %s", __FUNCTION__, device_cert_root, ct->instance, device_la_cert_root);
+        }
+#endif
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if unable to open a file to persist the certificate
+    USP_SNPRINTF(path, sizeof(path), "%s/%d.pem", dir_path, instance);
+    fp = fopen(path, "w");
+    if (fp == NULL)
+    {
+        X509_free(cert);
+        USP_ERR_ERRNO("fopen", errno);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if unable to write the file
+    // NOTE: First line of file contains value of Alias
+    USP_SNPRINTF(buf, sizeof(buf), "Alias:%s\n", alias);
+    elements_written = fwrite(buf, strlen(buf), 1, fp);
+    elements_written += fwrite(pem_cert, strlen(pem_cert), 1, fp);
+    if (elements_written != 2)
+    {
+        USP_ERR_ERRNO("fwrite", errno);
+        X509_free(cert);
+        fclose(fp);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+    fclose(fp);
+
+    // NOTE: Ownership of the X509 cert passes to AddCert(), so no need to free it in this function
+    err = AddMutableCert(cert, instance, alias, path, true);
+    if (err != USP_ERR_OK)
+    {
+        // Delete the file persisting the certificate. if we failed to add it internally
+        unlink(path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Operate_DeleteCertificate
+**
+** Sync Operation handler for the Device.LocalAgent.Certificate.{i}.Delete() command
+**
+** \param   req - pointer to structure identifying the operation in the data model
+** \param   command_key - pointer to string containing the command key for this operation
+** \param   input_args - vector containing input arguments and their values (unused)
+** \param   output_args - vector to return output arguments in
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Operate_DeleteCertificate(dm_req_t *req, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args)
+{
+    cert_t *ct;
+    int instance;
+    int index;
+    int items_to_move;
+    char file_path[PATH_MAX];
+    char path[MAX_DM_PATH];
+    char *dir_path = MUTABLE_CERT_DIR;
+
+    // Exit if the cert's instance number is not in the range of instance numbers which are allowed to be deleted
+    instance = inst1;
+    if (instance < MUTABLE_CERT_FIRST_INSTANCE)
+    {
+        USP_ERR_SetMessage("%s: Certificate %s.%d cannot be deleted", __FUNCTION__, device_la_cert_root, instance);
+        return USP_ERR_OBJECT_NOT_DELETABLE;
+    }
+
+    // Exit if unable to find the certificate
+    // NOTE: It should not be possible for this to happen, as the data structure should match instance numbers in the DM inst vector
+    ct = Find_LocalAgentCertByReq(req);
+    if (ct == NULL)
+    {
+        USP_ERR_SetMessage("%s: Certificate %s.%d cannot be deleted, as it is not present", __FUNCTION__, device_la_cert_root, instance);
+        return USP_ERR_OBJECT_NOT_DELETABLE;
+    }
+
+    // Exit if no mutable cert directory defined
+    // NOTE: It should not be possible for the code to get here if the directory does not exist, as there wouldn't be a cert that could be deleted
+    if ((dir_path==NULL) || (dir_path[0] == '\0'))
+    {
+        USP_ERR_SetMessage("%s: No MUTABLE_CERT_DIR defined", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Delete the file persisting the certificate
+    USP_SNPRINTF(file_path, sizeof(file_path), "%s/%d.pem", dir_path, instance);
+    unlink(file_path);
+
+    // Destroy all memory owned by the certificate in the data structure
+    DestroyCert(ct);
+
+    // Remove the instance number from the data structure
+    index = ct - all_certs;     // NOTE: size of these pointers is cert_t
+    items_to_move = num_all_certs - index - 1;
+    if (items_to_move > 0)
+    {
+        memmove(&all_certs[index], &all_certs[index+1], items_to_move*sizeof(cert_t));
+    }
+    num_all_certs--;
+    all_certs = USP_REALLOC(all_certs, num_all_certs*sizeof(cert_t));
+    num_trust_certs--;
+
+    // Remove both instances from the data model (Device.LocalAgent.Certificate and Device.Security.Certificate)
+    USP_SNPRINTF(path, sizeof(path), "%s.%d", device_la_cert_root, instance);
+    USP_SIGNAL_ObjectDeleted(path);
+
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
+    USP_SNPRINTF(path, sizeof(path), "%s.%d", device_cert_root, instance);
+    USP_SIGNAL_ObjectDeleted(path);
+#endif
+
+    // Zero out the entry in Device.LocalAgent.ControllerTrust.Credential.{i}.Credential
+    DEVICE_CTRUST_DeleteCertRole(instance);
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** AddMutableCert
+**
+** Used to add mutable certs (ones which can be added/deleted by a USP Controller) into a vector, along with its parsed details
+** NOTE: This function is only called at startup. It is not called as part of the AddCertificate() USP command
+**
+** \param   cert - pointer to the certificate to trust store cert to add
+**                 NOTE: Ownership of the cert passes to the vector
+** \param   instance - Instance number of certificate in both Device.LocalAgent.Security and Device.Security.Certificate tables
+** \param   alias - value
+** \param   filename - Name of file containing the cert which is being added (used only for debug)
+** \param   signal_event - Set to true, if the Agent should signal the object creation (set to false when called at startup)
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int AddMutableCert(X509 *cert, int instance, char *alias, char *filename, bool signal_event)
+{
+    int new_num_entries;
+    cert_hash_t hash;
+    cert_t *ct;
+    int err;
+    char path[MAX_DM_PATH];
+
+    // Exit if unable to calculate the hash of the certificate
+    err = CalcCertHash(cert, &hash);
+    if (err != USP_ERR_OK)
+    {
+        USP_LOG_Warning("%s: Ignoring mutable cert file (%s) as unable to calculate hash", __FUNCTION__, filename);
+        X509_free(cert);
+        return err;
+    }
+
+    // Exit if the certificate is already present in our vector
+    ct = Find_CertByHash(hash);
+    if (ct != NULL)
+    {
+        if (ct->la_instance != INVALID)
+        {
+            USP_LOG_Warning("%s: Ignoring mutable cert file (%s) as certificate is already present at %s.%d", __FUNCTION__, filename, device_la_cert_root, ct->la_instance);
+        }
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
+        else
+        {
+            USP_LOG_Warning("%s: Ignoring mutable cert file (%s) as certificate is already present at %s.%d", __FUNCTION__, filename, device_cert_root, ct->instance);
+        }
+#endif
+        X509_free(cert);
+        return USP_ERR_OK;
+    }
+
+    // Certificate is not in the vector, so add it
+    // Increase the size of the vector, and initialise the new entry to default values
+    new_num_entries = num_all_certs + 1;
+    all_certs = USP_REALLOC(all_certs, new_num_entries*sizeof(cert_t));
+
+    ct = &all_certs[ num_all_certs ];
+    memset(ct, 0, sizeof(cert_t));
+
+    // Extract the details of the specified certificate
+    err = USP_ERR_OK;
+    err |= ParseCert_Subject(cert, &ct->subject);
+    err |= ParseCert_Issuer(cert, &ct->issuer);
+    err |= ParseCert_LastModif(cert, &ct->last_modif);
+    err |= ParseCert_SerialNumber(cert, &ct->serial_number);
+    err |= ParseCert_NotBefore(cert, ct->not_before, sizeof(ct->not_before));
+    err |= ParseCert_NotAfter(cert, ct->not_after, sizeof(ct->not_after));
+    err |= ParseCert_SubjectAlt(cert, &ct->subject_alt);
+    err |= ParseCert_SignatureAlg(cert, &ct->signature_algorithm);
+    ct->hash = hash;
+
+    // Exit if any error occurred when parsing
+    if (err != USP_ERR_OK)
+    {
+        err = USP_ERR_INTERNAL_ERROR;
+        goto exit;
+    }
+
+    // Fill in the other member variables of the certificate structure
+    num_all_certs = new_num_entries;
+    ct->cert_usage = kCertUsage_TrustCert;
+    ct->instance = instance;
+    ct->cert = cert;
+    ct->la_instance = instance;
+    ct->alias = USP_STRDUP(alias);
+    num_trust_certs++;
+
+#ifndef REMOVE_DEVICE_SECURITY_CERTIFICATE
+    // Exit if unable to add the instance into the Device.Security.Certificate table
+    USP_SNPRINTF(path, sizeof(path), "%s.%d", device_cert_root, ct->instance);
+    if (signal_event)
+    {
+        err = USP_SIGNAL_ObjectAdded(path);
+    }
+    else
+    {
+        err = DATA_MODEL_InformInstance(path);
+    }
+
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+#endif
+
+    // Exit if unable to add the instance into the Device.LocalAgent.Certificate table
+    USP_SNPRINTF(path, sizeof(path), "%s.%d", device_la_cert_root, ct->la_instance);
+    if (signal_event)
+    {
+        err = USP_SIGNAL_ObjectAdded(path);
+    }
+    else
+    {
+        err = DATA_MODEL_InformInstance(path);
+    }
+
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if unable to add the certificate to the Device.LocalAgent.ControllerTrust.Credential table
+    err = DEVICE_CTRUST_AddCertRole(ct->la_instance, ROLE_TRUST_STORE_DEFAULT, signal_event);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Certificate was successfully added
+    err = USP_ERR_OK;
+
+exit:
+    if (err != USP_ERR_OK)
+    {
+        DestroyCert(ct);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** GetCertFromString
+**
+** Gets a certificate from a PEM formatted string
+**
+** \param   buf - pointer to string containing cert in PEM format
+** \param   p_cert - pointer to variable in which to return a pointer to the client cert
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int GetCertFromString(char *buf, X509 **p_cert)
+{
+    BIO *bio = NULL;
+    X509 *cert = NULL;
+    int err = USP_ERR_INTERNAL_ERROR;
+
+    // Exit if unable to create a bio to read from the string
+    bio = BIO_new_mem_buf(buf, -1);
+    if (bio == NULL)
+    {
+        USP_ERR_SetMessage("%s: BIO_new() failed", __FUNCTION__);
+        goto exit;
+    }
+
+    // Exit if unable to parse an X509 structure from the buffer
+    cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
+    if (cert == NULL)
+    {
+        USP_ERR_SetMessage("%s: PEM_read_bio_X509() failed", __FUNCTION__);
+        goto exit;
+    }
+
+    // Public cert retrieved successfully
+    *p_cert = cert;
+
+
+    // If the code gets here, then it was successful
+    err = USP_ERR_OK;
+
+exit:
+    if (bio != NULL)
+    {
+        BIO_free(bio);
+    }
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** GetAliasFromMutableCertFile
+**
+** Gets the value of Alias stored in an mutable cert file
+**
+** \param   file_path - file containing the cert
+** \param   buf - pointer to buffer in which to return the Alias parameter value
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int GetAliasFromMutableCertFile(char *file_path, char *buf, int len)
+{
+    FILE *fp;
+    int num_items;
+
+    // Exit if unable to open the file
+    fp = fopen(file_path, "r");
+    if (fp == NULL)
+    {
+        USP_ERR_ERRNO("fopen", errno);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if unable to read the first line of the file
+    // NOTE: First line of file contains value of Alias
+    USP_ASSERT(len >= 64);
+    memset(buf, 0, len);
+    num_items = fscanf(fp, "Alias:%64s", buf);
+    if (num_items != 1)
+    {
+        USP_LOG_Warning("%s: Failed to read 'Alias' parameter from file (%s)", __FUNCTION__, file_path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    fclose(fp);
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** GetCert_Alias
+**
+** Gets the value of Device.LocalAgent.Certificate.{i}.Alias
+**
+** \param   req - pointer to structure identifying the parameter
+** \param   buf - pointer to buffer into which to return the value of the parameter (as a textual string)
+** \param   len - length of buffer in which to return the value of the parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int GetCert_Alias(dm_req_t *req, char *buf, int len)
+{
+    cert_t *ct;
+
+    // Write the value into the return buffer
+    ct = Find_LocalAgentCertByReq(req);
+    USP_ASSERT(ct != NULL);
+    USP_ASSERT(ct->alias != NULL);
+    USP_STRNCPY(buf, ct->alias, len);
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** CalcNextMutableCertInstance
+**
+** Determines the next instance number to use for a mutable cert
+**
+** \param   None
+**
+** \return  Next instance number to use for a certificate
+**
+**************************************************************************/
+int CalcNextMutableCertInstance(void)
+{
+    int i;
+    cert_t *ct;
+    int instance = MUTABLE_CERT_FIRST_INSTANCE;
+
+    // Iterate over all certificates in our trust store, finding the next highest mutable cert instance
+    for (i=0; i<num_all_certs; i++)
+    {
+        ct = &all_certs[i];
+        if (ct->instance >= instance)
+        {
+            instance = ct->instance + 1;
+        }
+    }
+
+    return instance;
+}
+
+/*********************************************************************//**
+**
+** Find_LocalAgentCertByAlias
+**
+** Returns a pointer to the certificate with the specified Device.LocalAgent.Certificate.{i}.Alias
+**
+** \param   alias - value of Alias parameter to match
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+cert_t *Find_LocalAgentCertByAlias(char *alias)
+{
+    int i;
+    cert_t *ct;
+
+    // If the certificates are not arranged in instance order, then iterate over all certs,
+    // finding the one with matching instance number
+    for (i=0; i<num_all_certs; i++)
+    {
+        ct = &all_certs[i];
+        if ((ct->alias != NULL) && (strcmp(ct->alias, alias)==0))
+        {
+            USP_ASSERT(ct->la_instance != INVALID);
+            return ct;
+        }
+    }
+
+    return NULL;
+}
+
+#endif // ADD_CERT_SUPPORT
 #endif // REMOVE_DEVICE_SECURITY

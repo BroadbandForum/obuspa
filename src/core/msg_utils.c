@@ -1190,9 +1190,13 @@ int MSG_UTILS_ProcessUspService_GetSupportedDMResponse(Usp__Msg *usp, kv_vector_
 ** \return  string representing parameter type
 **
 **************************************************************************/
-char * ParamTypeToUspServiceString(Usp__GetSupportedDMResp__ParamValueType value_type)
+char *ParamTypeToUspServiceString(Usp__GetSupportedDMResp__ParamValueType value_type)
 {
     char *ret = "\0";
+
+    (void)ret;      // Stop clang static analyser complaining about unnecessary variable initialization
+                    // Whilst it should be unnecessary in this case, some other static analysers and compilers complain if ret is not
+                    // initialized, since they examine the case of nothing matching in the switch statement
 
     switch(value_type)
     {

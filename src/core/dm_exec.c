@@ -2512,6 +2512,7 @@ exit:
 
     return NULL;
 }
+#endif  // REMOVE_USP_BROKER
 
 /*********************************************************************//**
 **
@@ -2600,4 +2601,3 @@ void SetParameterValueCallback(void *arg1, void *arg2)
     }
 }
 
-#endif  // REMOVE_USP_BROKER

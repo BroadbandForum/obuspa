@@ -3238,6 +3238,7 @@ protobuf_c_message_unpack(const ProtobufCMessageDescriptor *desc,
 	/* allocate space for repeated fields, also check that all required fields have been set */
 	for (f = 0; f < desc->n_fields; f++) {
 		const ProtobufCFieldDescriptor *field = desc->fields + f;
+		assert(field != NULL);
 		if (field->label == PROTOBUF_C_LABEL_REPEATED) {
 			size_t siz =
 			    sizeof_elt_in_repeated_array(field->type);
