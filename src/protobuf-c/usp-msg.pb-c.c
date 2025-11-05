@@ -1816,7 +1816,7 @@ static const ProtobufCFieldDescriptor usp__body__field_descriptors[3] =
     offsetof(Usp__Body, request),
     &usp__request__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1828,7 +1828,7 @@ static const ProtobufCFieldDescriptor usp__body__field_descriptors[3] =
     offsetof(Usp__Body, response),
     &usp__response__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1840,7 +1840,7 @@ static const ProtobufCFieldDescriptor usp__body__field_descriptors[3] =
     offsetof(Usp__Body, error),
     &usp__error__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
@@ -1880,7 +1880,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, get),
     &usp__get__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1892,7 +1892,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, get_supported_dm),
     &usp__get_supported_dm__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1904,7 +1904,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, get_instances),
     &usp__get_instances__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1916,7 +1916,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, set),
     &usp__set__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1928,7 +1928,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, add),
     &usp__add__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1940,7 +1940,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, delete_),
     &usp__delete__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1952,7 +1952,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, operate),
     &usp__operate__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1964,7 +1964,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, notify),
     &usp__notify__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1976,7 +1976,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, get_supported_protocol),
     &usp__get_supported_protocol__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -1988,7 +1988,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, register_),
     &usp__register__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2000,7 +2000,7 @@ static const ProtobufCFieldDescriptor usp__request__field_descriptors[11] =
     offsetof(Usp__Request, deregister),
     &usp__deregister__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
@@ -2048,7 +2048,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, get_resp),
     &usp__get_resp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2060,7 +2060,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, get_supported_dm_resp),
     &usp__get_supported_dmresp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2072,7 +2072,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, get_instances_resp),
     &usp__get_instances_resp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2084,7 +2084,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, set_resp),
     &usp__set_resp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2096,7 +2096,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, add_resp),
     &usp__add_resp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2108,7 +2108,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, delete_resp),
     &usp__delete_resp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2120,7 +2120,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, operate_resp),
     &usp__operate_resp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2132,7 +2132,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, notify_resp),
     &usp__notify_resp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2144,7 +2144,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, get_supported_protocol_resp),
     &usp__get_supported_protocol_resp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2156,7 +2156,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, register_resp),
     &usp__register_resp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -2168,7 +2168,7 @@ static const ProtobufCFieldDescriptor usp__response__field_descriptors[11] =
     offsetof(Usp__Response, deregister_resp),
     &usp__deregister_resp__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
@@ -4059,7 +4059,7 @@ static const ProtobufCFieldDescriptor usp__add_resp__created_object_result__oper
     offsetof(Usp__AddResp__CreatedObjectResult__OperationStatus, oper_failure),
     &usp__add_resp__created_object_result__operation_status__operation_failure__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -4071,7 +4071,7 @@ static const ProtobufCFieldDescriptor usp__add_resp__created_object_result__oper
     offsetof(Usp__AddResp__CreatedObjectResult__OperationStatus, oper_success),
     &usp__add_resp__created_object_result__operation_status__operation_success__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
@@ -4416,7 +4416,7 @@ static const ProtobufCFieldDescriptor usp__delete_resp__deleted_object_result__o
     offsetof(Usp__DeleteResp__DeletedObjectResult__OperationStatus, oper_failure),
     &usp__delete_resp__deleted_object_result__operation_status__operation_failure__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -4428,7 +4428,7 @@ static const ProtobufCFieldDescriptor usp__delete_resp__deleted_object_result__o
     offsetof(Usp__DeleteResp__DeletedObjectResult__OperationStatus, oper_success),
     &usp__delete_resp__deleted_object_result__operation_status__operation_success__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
@@ -4888,7 +4888,7 @@ static const ProtobufCFieldDescriptor usp__set_resp__updated_object_result__oper
     offsetof(Usp__SetResp__UpdatedObjectResult__OperationStatus, oper_failure),
     &usp__set_resp__updated_object_result__operation_status__operation_failure__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -4900,7 +4900,7 @@ static const ProtobufCFieldDescriptor usp__set_resp__updated_object_result__oper
     offsetof(Usp__SetResp__UpdatedObjectResult__OperationStatus, oper_success),
     &usp__set_resp__updated_object_result__operation_status__operation_success__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
@@ -5538,7 +5538,7 @@ static const ProtobufCFieldDescriptor usp__operate_resp__operation_result__field
     offsetof(Usp__OperateResp__OperationResult, req_obj_path),
     NULL,
     &protobuf_c_empty_string,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -5550,7 +5550,7 @@ static const ProtobufCFieldDescriptor usp__operate_resp__operation_result__field
     offsetof(Usp__OperateResp__OperationResult, req_output_args),
     &usp__operate_resp__operation_result__output_args__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -5562,7 +5562,7 @@ static const ProtobufCFieldDescriptor usp__operate_resp__operation_result__field
     offsetof(Usp__OperateResp__OperationResult, cmd_failure),
     &usp__operate_resp__operation_result__command_failure__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
@@ -6123,7 +6123,7 @@ static const ProtobufCFieldDescriptor usp__notify__operation_complete__field_des
     offsetof(Usp__Notify__OperationComplete, req_output_args),
     &usp__notify__operation_complete__output_args__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -6135,7 +6135,7 @@ static const ProtobufCFieldDescriptor usp__notify__operation_complete__field_des
     offsetof(Usp__Notify__OperationComplete, cmd_failure),
     &usp__notify__operation_complete__command_failure__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
@@ -6278,7 +6278,7 @@ static const ProtobufCFieldDescriptor usp__notify__field_descriptors[8] =
     offsetof(Usp__Notify, event),
     &usp__notify__event__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -6290,7 +6290,7 @@ static const ProtobufCFieldDescriptor usp__notify__field_descriptors[8] =
     offsetof(Usp__Notify, value_change),
     &usp__notify__value_change__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -6302,7 +6302,7 @@ static const ProtobufCFieldDescriptor usp__notify__field_descriptors[8] =
     offsetof(Usp__Notify, obj_creation),
     &usp__notify__object_creation__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -6314,7 +6314,7 @@ static const ProtobufCFieldDescriptor usp__notify__field_descriptors[8] =
     offsetof(Usp__Notify, obj_deletion),
     &usp__notify__object_deletion__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -6326,7 +6326,7 @@ static const ProtobufCFieldDescriptor usp__notify__field_descriptors[8] =
     offsetof(Usp__Notify, oper_complete),
     &usp__notify__operation_complete__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -6338,7 +6338,7 @@ static const ProtobufCFieldDescriptor usp__notify__field_descriptors[8] =
     offsetof(Usp__Notify, on_board_req),
     &usp__notify__on_board_request__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
@@ -6599,7 +6599,7 @@ static const ProtobufCFieldDescriptor usp__register_resp__registered_path_result
     offsetof(Usp__RegisterResp__RegisteredPathResult__OperationStatus, oper_failure),
     &usp__register_resp__registered_path_result__operation_status__operation_failure__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -6611,7 +6611,7 @@ static const ProtobufCFieldDescriptor usp__register_resp__registered_path_result
     offsetof(Usp__RegisterResp__RegisteredPathResult__OperationStatus, oper_success),
     &usp__register_resp__registered_path_result__operation_status__operation_success__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
@@ -6866,7 +6866,7 @@ static const ProtobufCFieldDescriptor usp__deregister_resp__deregistered_path_re
     offsetof(Usp__DeregisterResp__DeregisteredPathResult__OperationStatus, oper_failure),
     &usp__deregister_resp__deregistered_path_result__operation_status__operation_failure__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -6878,7 +6878,7 @@ static const ProtobufCFieldDescriptor usp__deregister_resp__deregistered_path_re
     offsetof(Usp__DeregisterResp__DeregisteredPathResult__OperationStatus, oper_success),
     &usp__deregister_resp__deregistered_path_result__operation_status__operation_success__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };

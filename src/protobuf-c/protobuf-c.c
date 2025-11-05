@@ -1,7 +1,6 @@
 // Copyright 2022-2024 BroadBand Forum
-
 /*
- * Copyright (c) 2008-2015, Dave Benson and the protobuf-c authors.
+ * Copyright (c) 2008-2025, Dave Benson and the protobuf-c authors.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,14 +29,14 @@
  */
 
 /*! \file
- * Support library for `protoc-c` generated code.
+ * Support library for `protoc-gen-c` generated code.
  *
  * This file implements the public API used by the code generated
- * by `protoc-c`.
+ * by `protoc-gen-c`.
  *
  * \authors Dave Benson and the protobuf-c authors
  *
- * \copyright 2008-2014. Licensed under the terms of the [BSD-2-Clause] license.
+ * \copyright 2008-2025. Licensed under the terms of the [BSD-2-Clause] license.
  */
 
 /**
@@ -318,9 +317,8 @@ int32_size(int32_t v)
 static inline uint32_t
 zigzag32(int32_t v)
 {
-	// Note:  the right-shift must be arithmetic
-	// Note:  left shift must be unsigned because of overflow
-	return ((uint32_t)(v) << 1) ^ (uint32_t)(v >> 31);
+	// Note:  Using unsigned types prevents undefined behavior
+	return ((uint32_t)v << 1) ^ -((uint32_t)v >> 31);
 }
 
 /**
@@ -382,9 +380,8 @@ uint64_size(uint64_t v)
 static inline uint64_t
 zigzag64(int64_t v)
 {
-	// Note:  the right-shift must be arithmetic
-	// Note:  left shift must be unsigned because of overflow
-	return ((uint64_t)(v) << 1) ^ (uint64_t)(v >> 63);
+	// Note:  Using unsigned types prevents undefined behavior
+	return ((uint64_t)v << 1) ^ -((uint64_t)v >> 63);
 }
 
 /**
@@ -804,7 +801,8 @@ uint32_pack(uint32_t value, uint8_t *out)
 }
 
 /**
- * Pack a signed 32-bit integer and return the number of bytes written.
+ * Pack a signed 32-bit integer and return the number of bytes written,
+ * passed as unsigned to avoid implementation-specific behavior.
  * Negative numbers are encoded as two's complement 64-bit integers.
  *
  * \param value
@@ -815,14 +813,14 @@ uint32_pack(uint32_t value, uint8_t *out)
  *      Number of bytes written to `out`.
  */
 static inline size_t
-int32_pack(int32_t value, uint8_t *out)
+int32_pack(uint32_t value, uint8_t *out)
 {
-	if (value < 0) {
+	if ((int32_t)value < 0) {
 		out[0] = value | 0x80;
 		out[1] = (value >> 7) | 0x80;
 		out[2] = (value >> 14) | 0x80;
 		out[3] = (value >> 21) | 0x80;
-		out[4] = (value >> 28) | 0x80;
+		out[4] = (value >> 28) | 0xf0;
 		out[5] = out[6] = out[7] = out[8] = 0xff;
 		out[9] = 0x01;
 		return 10;
@@ -1891,7 +1889,6 @@ pack_buffer_packed_payload(const ProtobufCFieldDescriptor *field,
 		for (i = 0; i < count; i++) {
 			unsigned len = boolean_pack(((protobuf_c_boolean *) array)[i], scratch);
 			buffer->append(buffer, len, scratch);
-			rv += len;
 		}
 		return count;
 	default:
@@ -1926,7 +1923,7 @@ repeated_field_pack_to_buffer(const ProtobufCFieldDescriptor *field,
 		buffer->append(buffer, rv, scratch);
 		tmp = pack_buffer_packed_payload(field, count, array, buffer);
 		assert(tmp == payload_len);
-		(void)tmp; // Keep cmake production build happy
+		(void)tmp;
 		return rv + payload_len;
 	} else {
 		size_t siz;
@@ -2428,7 +2425,7 @@ static inline int32_t
 unzigzag32(uint32_t v)
 {
 	// Note:  Using unsigned types prevents undefined behavior
-	return (int32_t)((v >> 1) ^ (~(v & 1) + 1));
+	return (int32_t)((v >> 1) ^ -(v & 1));
 }
 
 static inline uint32_t
@@ -2470,7 +2467,7 @@ static inline int64_t
 unzigzag64(uint64_t v)
 {
 	// Note:  Using unsigned types prevents undefined behavior
-	return (int64_t)((v >> 1) ^ (~(v & 1) + 1));
+	return (int64_t)((v >> 1) ^ -(v & 1));
 }
 
 static inline uint64_t
@@ -2560,7 +2557,7 @@ parse_required_member(ScannedMember *scanned_member,
 
 		if (maybe_clear && *pstr != NULL) {
 			const char *def = scanned_member->field->default_value;
-			if (*pstr != NULL && *pstr != def)
+			if (*pstr != def)
 				do_free(allocator, *pstr);
 		}
 		*pstr = do_alloc(allocator, len - pref_len + 1);
@@ -2607,10 +2604,13 @@ parse_required_member(ScannedMember *scanned_member,
 			return FALSE;
 
 		def_mess = scanned_member->field->default_value;
-		subm = protobuf_c_message_unpack(scanned_member->field->descriptor,
-						 allocator,
-						 len - pref_len,
-						 data + pref_len);
+		if (len >= pref_len)
+			subm = protobuf_c_message_unpack(scanned_member->field->descriptor,
+							 allocator,
+							 len - pref_len,
+							 data + pref_len);
+		else
+			subm = NULL;
 
 		if (maybe_clear &&
 		    *pmessage != NULL &&
@@ -3238,7 +3238,9 @@ protobuf_c_message_unpack(const ProtobufCMessageDescriptor *desc,
 	/* allocate space for repeated fields, also check that all required fields have been set */
 	for (f = 0; f < desc->n_fields; f++) {
 		const ProtobufCFieldDescriptor *field = desc->fields + f;
-		assert(field != NULL);
+		if (field == NULL) {
+			continue;
+		}
 		if (field->label == PROTOBUF_C_LABEL_REPEATED) {
 			size_t siz =
 			    sizeof_elt_in_repeated_array(field->type);
@@ -3283,6 +3285,8 @@ protobuf_c_message_unpack(const ProtobufCMessageDescriptor *desc,
 					      n_unknown * sizeof(ProtobufCMessageUnknownField));
 		if (rv->unknown_fields == NULL)
 			goto error_cleanup;
+	} else {
+		rv->unknown_fields = NULL;
 	}
 
 	/* do real parsing */

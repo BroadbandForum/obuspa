@@ -3872,6 +3872,7 @@ int GetAliasFromMutableCertFile(char *file_path, char *buf, int len)
     if (num_items != 1)
     {
         USP_LOG_Warning("%s: Failed to read 'Alias' parameter from file (%s)", __FUNCTION__, file_path);
+        fclose(fp);
         return USP_ERR_INTERNAL_ERROR;
     }
 

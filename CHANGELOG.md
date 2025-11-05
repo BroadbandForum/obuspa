@@ -1,5 +1,13 @@
 # OB-USP-AGENT Changelog since Release 10.0.0
 
+## 2025-11-05 v10.0.11
+### Updated
+- Code has been updated to use the latest v1.5.2 release of protobuf-c
+
+### Fixed
+- A certificate file in the MUTABLE_CERT_DIR that did not contain Alias could be left open. Note: This cannot occur if the certificate was added using Device.LocalAgent.AddCertificate().
+
+
 ## 2025-10-10 v10.0.10
 ### Added
 - Device.LocalAgent.AddCertificate() support. See QUICK_START_GUIDE.md for how to use this feature.

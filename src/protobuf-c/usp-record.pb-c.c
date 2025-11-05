@@ -478,7 +478,7 @@ static const ProtobufCFieldDescriptor usp_record__record__field_descriptors[13] 
     offsetof(UspRecord__Record, no_session_context),
     &usp_record__no_session_context_record__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -490,7 +490,7 @@ static const ProtobufCFieldDescriptor usp_record__record__field_descriptors[13] 
     offsetof(UspRecord__Record, session_context),
     &usp_record__session_context_record__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -502,7 +502,7 @@ static const ProtobufCFieldDescriptor usp_record__record__field_descriptors[13] 
     offsetof(UspRecord__Record, websocket_connect),
     &usp_record__web_socket_connect_record__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -514,7 +514,7 @@ static const ProtobufCFieldDescriptor usp_record__record__field_descriptors[13] 
     offsetof(UspRecord__Record, mqtt_connect),
     &usp_record__mqttconnect_record__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -526,7 +526,7 @@ static const ProtobufCFieldDescriptor usp_record__record__field_descriptors[13] 
     offsetof(UspRecord__Record, stomp_connect),
     &usp_record__stompconnect_record__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -538,7 +538,7 @@ static const ProtobufCFieldDescriptor usp_record__record__field_descriptors[13] 
     offsetof(UspRecord__Record, disconnect),
     &usp_record__disconnect_record__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
   {
@@ -550,7 +550,7 @@ static const ProtobufCFieldDescriptor usp_record__record__field_descriptors[13] 
     offsetof(UspRecord__Record, uds_connect),
     &usp_record__udsconnect_record__descriptor,
     NULL,
-    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+    PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
     0,NULL,NULL    /* reserved1,reserved2, etc */
   },
 };
