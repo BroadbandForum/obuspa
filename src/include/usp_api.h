@@ -482,6 +482,7 @@ int USP_SIGNAL_DataModelEvent(char *event_name, kv_vector_t *output_args);
 int USP_SIGNAL_OperationStatus(int instance, char *status);
 int USP_SIGNAL_ObjectAdded(char *path);
 int USP_SIGNAL_ObjectDeleted(char *path);
+int USP_SIGNAL_Reboot(int request_instance, char *command_key, char *reboot_cause, char *reboot_reason);
 
 //------------------------------------------------------------------------------
 // Function to perform work in the data model thread via a callback
@@ -540,16 +541,19 @@ void USP_LOG_String(log_level_t log_level, log_type_t log_type, char *str);
 void USP_LOG_Puts(log_level_t log_level, log_type_t log_type, const char *str);
 void USP_LOG_HexBuffer(const char *title, const unsigned char *buf, int len);
 void USP_LOG_Callstack(void);
+log_level_t USP_LOG_GetLogLevel();
+void USP_LOG_SetLogLevel(log_level_t new_log_level);
+
+// Global variables set by command line
+extern bool enable_callstack_debug;
 
 //------------------------------------------------------------------------------------
 // Macros used for normal debug logging
-extern log_level_t usp_log_level;
-
-#define USP_LOG_Error(...)       if (usp_log_level >= kLogLevel_Error)   { USP_LOG_Printf(kLogLevel_Error, kLogType_Debug, __VA_ARGS__); if (enable_callstack_debug) { USP_LOG_Callstack(); } }
-#define USP_LOG_Warning(...)     if (usp_log_level >= kLogLevel_Warning) { USP_LOG_Printf(kLogLevel_Warning, kLogType_Debug, __VA_ARGS__); }
-#define USP_LOG_Info(...)        if (usp_log_level >= kLogLevel_Info)    { USP_LOG_Printf(kLogLevel_Info, kLogType_Debug, __VA_ARGS__); }
-#define USP_LOG_Debug(...)       if (usp_log_level >= kLogLevel_Debug)   { USP_LOG_Printf(kLogLevel_Debug, kLogType_Debug, __VA_ARGS__); }
-#define USP_LOG_Trace(...)       if (usp_log_level >= kLogLevel_Trace)   { USP_LOG_Printf(kLogLevel_Trace, kLogType_Debug, __VA_ARGS__); }
+#define USP_LOG_Error(...)       if (USP_LOG_GetLogLevel() >= kLogLevel_Error)   { USP_LOG_Printf(kLogLevel_Error, kLogType_Debug, __VA_ARGS__); if (enable_callstack_debug) { USP_LOG_Callstack(); } }
+#define USP_LOG_Warning(...)     if (USP_LOG_GetLogLevel() >= kLogLevel_Warning) { USP_LOG_Printf(kLogLevel_Warning, kLogType_Debug, __VA_ARGS__); }
+#define USP_LOG_Info(...)        if (USP_LOG_GetLogLevel() >= kLogLevel_Info)    { USP_LOG_Printf(kLogLevel_Info, kLogType_Debug, __VA_ARGS__); }
+#define USP_LOG_Debug(...)       if (USP_LOG_GetLogLevel() >= kLogLevel_Debug)   { USP_LOG_Printf(kLogLevel_Debug, kLogType_Debug, __VA_ARGS__); }
+#define USP_LOG_Trace(...)       if (USP_LOG_GetLogLevel() >= kLogLevel_Trace)   { USP_LOG_Printf(kLogLevel_Trace, kLogType_Debug, __VA_ARGS__); }
 
 //-------------------------------------------------------------------------
 // Functions used when registering validate_add and validate_delete vendor hooks, if the multi-instance object is read only

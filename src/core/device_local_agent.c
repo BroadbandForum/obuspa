@@ -435,7 +435,6 @@ void DEVICE_LOCAL_AGENT_Stop(void)
 #endif
 }
 
-#if !defined(REMOVE_DEVICE_REBOOT) || !defined(REMOVE_DEVICE_FACTORY_RESET)
 /*********************************************************************//**
 **
 ** DEVICE_LOCAL_AGENT_ScheduleReboot
@@ -492,7 +491,6 @@ int DEVICE_LOCAL_AGENT_ScheduleReboot(exit_action_t exit_action, char *reboot_ca
     MTP_EXEC_ScheduleExit();
     return USP_ERR_OK;
 }
-#endif
 
 /*********************************************************************//**
 **

@@ -132,9 +132,6 @@ extern int USP_SNPRINTF(char *dest, size_t size, const char *fmt, ...) __attribu
 #define MODIFY_BITS(n, m, x, v) x = (x & (~ (((1 <<  (n-m+1)) - 1) << m )) ) | (((v)  & ((1 <<  (n-m+1)) - 1)) << m); // NOTE: n must be greater than m
 
 //-----------------------------------------------------------------------------------------------
-// Global variables set by command line
-extern bool enable_callstack_debug;
-
 #ifndef REMOVE_USP_SERVICE
 // String specified using the '-R' option. Contains the data model paths to register
 extern char *usp_service_objects;

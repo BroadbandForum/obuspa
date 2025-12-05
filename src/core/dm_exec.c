@@ -48,6 +48,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <stdatomic.h>
 
 #include "common_defs.h"
 #include "mtp_exec.h"
@@ -70,6 +72,7 @@
 #include "uds.h"
 #include "usp_broker.h"
 #include "se_cache.h"
+#include "bdc_exec.h"
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_context.h"
@@ -143,8 +146,17 @@ typedef enum
     kDmExecMsg_UdsHandshakeComplete, // Sent from UDS MTP on successful connection to another UDS endpoint
     kDmExecMsg_UdsDisconnected,    // Sent from UDS MTP after a UDS endpoint disconnects
 #endif
+    kDmExecMsg_Reboot, // Sent from a thread performing an operation to signal that a scheduled exit and reboot should be performed
 } dm_exec_msg_type_t;
 
+// Reboot parameters in data model handler message
+typedef struct
+{
+    int instance; // Instance from the Device.LocalAgent.Request table
+    char *command_key;
+    char *reboot_cause;
+    char *reboot_reason;
+} reboot_msg_t;
 
 // Operation complete parameters in data model handler message
 typedef struct
@@ -313,6 +325,7 @@ typedef struct
     dm_exec_msg_type_t type;
     union
     {
+        reboot_msg_t reboot;
         oper_complete_msg_t oper_complete;
         event_complete_msg_t event_complete;
         oper_status_msg_t oper_status;
@@ -334,6 +347,11 @@ typedef struct
     } params;
 
 } dm_exec_msg_t;
+
+//------------------------------------------------------------------------------
+// Boolean which is set when a signal has been caught in SigTermHandler
+// The purpose of this flag is to trigger a scheduled exit in the DM_EXEC_Main main loop
+volatile sig_atomic_t dm_exit_scheduled = false;
 
 //------------------------------------------------------------------------------------
 // Mutex used to protect access to this component
@@ -367,6 +385,7 @@ Usp__Msg *IsMatchingMsgId(dm_exec_msg_t *msg, char *msg_id, char *responder, Usp
 void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigned conn_id);
 void HandleUdsDisconnected(char *endpoint_id, uds_path_t path_type);
 #endif
+void SigTermHandler(int sig);
 
 /*********************************************************************//**
 **
@@ -382,6 +401,7 @@ void HandleUdsDisconnected(char *endpoint_id, uds_path_t path_type);
 int DM_EXEC_Init(void)
 {
     int err;
+    struct sigaction sa = {0};
 
     // Exit if unable to initialize the socket pair used to implement the main message queue
     err = socketpair(AF_UNIX, SOCK_DGRAM, 0, main_mq_sockets);
@@ -406,6 +426,14 @@ int DM_EXEC_Init(void)
     if (err != USP_ERR_OK)
     {
         return err;
+    }
+
+    // Exit if unable to create signal handler
+    sa.sa_handler = SigTermHandler;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGTERM, &sa, NULL) == -1)
+    {
+        return USP_ERR_INTERNAL_ERROR;
     }
 
     return USP_ERR_OK;
@@ -697,6 +725,66 @@ int USP_SIGNAL_ObjectDeleted(char *path)
         char buf[USP_ERR_MAXLEN];
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         USP_LOG_Error("%s: Unable to send kDmExecMsg_ObjDeleted (path=%s)", __FUNCTION__, path);
+        FreeDmExecMessageArguments(&msg);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** USP_SIGNAL_Reboot
+**
+** Posts a reboot message on the data model's message queue
+** NOTE: Error messages in this function are only logged rather than writing in the error message buffer (USP_ERR_SetMessage())
+**       because this function is normally called from a non core thread and if they did write, this might cause corruption of
+**       the core agent error message buffer
+**
+** \param   request_instance - instance number of operation in Device.LocalAgent.Request table, or INVALID if reboot was not initiated by an operation
+** \param   command_key - pointer to string containing the command key for this operation
+** \param   reboot_cause - cause of reboot
+** \param   reboot_reason - reason for reboot
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int USP_SIGNAL_Reboot(int request_instance, char *command_key, char *reboot_cause, char *reboot_reason)
+{
+    dm_exec_msg_t msg;
+    reboot_msg_t *rm;
+    int bytes_sent;
+
+    // Exit if this function has been called with invalid parameters
+    if (reboot_cause == NULL || reboot_reason == NULL || command_key == NULL)
+    {
+        USP_LOG_Error("%s: Input arguments must point to strings", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Exit if message queue is not setup yet
+    if (main_mq_tx_socket == -1)
+    {
+        USP_LOG_Error("%s is being called before data model has been initialised", __FUNCTION__);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Form message
+    memset(&msg, 0, sizeof(msg));
+    msg.type = kDmExecMsg_Reboot;
+    rm = &msg.params.reboot;
+    rm->instance = request_instance;
+    rm->command_key = USP_STRDUP(command_key);
+    rm->reboot_cause = USP_STRDUP(reboot_cause);
+    rm->reboot_reason = USP_STRDUP(reboot_reason);
+
+    // Send the message - blocks if queue is full, unless calling from the data model thread (in which case discards the message)
+    bytes_sent = send(main_mq_tx_socket, &msg, sizeof(msg), BLOCK_UNLESS_DM_THREAD);
+    if (bytes_sent != sizeof(msg))
+    {
+        char buf[USP_ERR_MAXLEN];
+        USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+        USP_LOG_Error("%s: Unable to send kDmExecMsg_Reboot (instance=%d, command_key=%s, reboot_cause=%s, reboot_reason=%s)", __FUNCTION__, request_instance, command_key, reboot_cause, reboot_reason);
         FreeDmExecMessageArguments(&msg);
         return USP_ERR_INTERNAL_ERROR;
     }
@@ -1147,6 +1235,7 @@ void DM_EXEC_PostUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, u
     dm_exec_msg_t  msg;
     uds_complete_msg_t *ucm;
     int bytes_sent;
+    int mq_tx_socket = main_mq_tx_socket;
 
     // Form message
     memset(&msg, 0, sizeof(msg));
@@ -1156,8 +1245,18 @@ void DM_EXEC_PostUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, u
     ucm->path_type = path_type;
     ucm->conn_id = conn_id;
 
+#ifndef REMOVE_USP_BROKER
+    // Send this message to the filter queue first, if the data model is waiting for a particular response msg_id
+    // This is necessary to ensure that disconnect and handshake messages are always processed in the correct order
+    // (Since disconnect messages must be sent to the filter queue, handshake messages must be sent too to ensure correct ordering)
+    if (divert_to_filter_queue)
+    {
+        mq_tx_socket = filter_mq_tx_socket;
+    }
+#endif
+
     // Send the message - does not block if the queue is full, discards the message instead
-    bytes_sent = send(main_mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
+    bytes_sent = send(mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
     if (bytes_sent != sizeof(msg))
     {
         char buf[USP_ERR_MAXLEN];
@@ -1196,6 +1295,8 @@ void DM_EXEC_PostUdsDisconnected(char *endpoint_id, uds_path_t path_type)
 
 #ifndef REMOVE_USP_BROKER
     // Send this message to the filter queue first, if the data model is waiting for a particular response msg_id
+    // Disconnect messages are sent to the filter queue because we want the Broker's sync handler to know if
+    // a USP Service that it's waiting for a response from has disconnected.
     if (divert_to_filter_queue)
     {
         mq_tx_socket = filter_mq_tx_socket;
@@ -1830,6 +1931,19 @@ void *DM_EXEC_Main(void *args)
         // Cross check the structures in device_ctrust against the structures in the SE cache
         DEVICE_CTRUST_CrossCheckSECache();
 #endif
+
+        if (dm_exit_scheduled)
+        {
+            // Reset flag so this routine only runs once
+            dm_exit_scheduled = false;
+
+            // Signal that USP Agent should stop, once no queued messages to send
+#ifndef REMOVE_DEVICE_BULKDATA
+            BDC_EXEC_ScheduleExit();
+#endif
+            MTP_EXEC_ScheduleExit();
+            MTP_EXEC_ActivateScheduledActions();
+        }
     }
 }
 
@@ -1919,6 +2033,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
     do_work_msg_t *dwm;
     process_usp_record_msg_t *pur;
     mtp_thread_exited_msg_t *tem;
+    reboot_msg_t *rm;
     unsigned all_mtp_exited = 0;
     mtp_conn_t *mtpc;
 
@@ -2097,6 +2212,29 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
             break;
         }
 #endif
+
+        case kDmExecMsg_Reboot:
+        {
+            dm_trans_vector_t trans;
+            rm = &msg.params.reboot;
+
+            err = DM_TRANS_Start(&trans);
+            if (err == USP_ERR_OK)
+            {
+                err = DEVICE_LOCAL_AGENT_ScheduleReboot(kExitAction_Reboot, rm->reboot_cause, rm->reboot_reason, rm->command_key, rm->instance);
+                if (err != USP_ERR_OK)
+                {
+                    DM_TRANS_Abort();
+                }
+                else
+                {
+                    DM_TRANS_Commit();
+                }
+
+                MTP_EXEC_ActivateScheduledActions();
+            }
+        }
+            break;
 
         default:
             TERMINATE_BAD_CASE(msg.type);
@@ -2323,6 +2461,12 @@ void FreeDmExecMessageArguments(dm_exec_msg_t *msg)
         case kDmExecMsg_E2eSessionEvent:
             break;
 #endif
+
+        case kDmExecMsg_Reboot:
+            USP_SAFE_FREE(msg->params.reboot.command_key);
+            USP_SAFE_FREE(msg->params.reboot.reboot_cause);
+            USP_SAFE_FREE(msg->params.reboot.reboot_reason);
+            break;
 
         default:
             TERMINATE_BAD_CASE(msg->type);
@@ -2601,3 +2745,20 @@ void SetParameterValueCallback(void *arg1, void *arg2)
     }
 }
 
+/*********************************************************************//**
+**
+** SigTermHandler
+**
+** Sets a flag to schedule exit of threads and cleanly exit
+**
+** \param   sig - signal which caused this handler to be called (not used)
+**
+** \return  None
+**
+**************************************************************************/
+void SigTermHandler(int sig)
+{
+    (void)sig;
+
+    dm_exit_scheduled = true;
+}

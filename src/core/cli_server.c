@@ -877,9 +877,10 @@ exit:
 **************************************************************************/
 int ExecuteCli_Add(str_vector_t *args)
 {
-    int i;
+    int i, j;
     int err;
     char path[MAX_DM_PATH];
+    char param[MAX_DM_PATH];
     dm_trans_vector_t trans;
     str_vector_t objects;
     char *instance_str;
@@ -890,17 +891,55 @@ int ExecuteCli_Add(str_vector_t *args)
     str_vector_t err_msgs;
     int_vector_t err_codes;
     combined_role_t *combined_role;
+    char *bracket_start;
+    char *bracket_end;
+    kv_vector_t input_args;
+    expr_vector_t temp_ev;
+    unsigned short permission_bitmask;
+    expr_op_t valid_ops[] = {kExprOp_Equals};
+
+    USP_ASSERT(args->num_entries >= 2);
+    arg1 = args->vector[1];
 
     // Initialise all vectors
     STR_VECTOR_Init(&err_msgs);
     INT_VECTOR_Init(&err_codes);
     KV_VECTOR_Init(&unique_key_params);
     STR_VECTOR_Init(&objects);
+    KV_VECTOR_Init(&input_args);
+    EXPR_VECTOR_Init(&temp_ev);
+
+    // Extract the child parameters if CLI argument contains an opening bracket
+    bracket_start = TEXT_UTILS_StrStr(arg1, "(");
+    if (bracket_start != NULL)
+    {
+        // Exit if argument does not contain a closing bracket
+        bracket_end = TEXT_UTILS_StrStr(bracket_start, ")");
+        if (bracket_end == NULL)
+        {
+            SendCliResponse("Missing closing bracket\n");
+            err = USP_ERR_INVALID_ARGUMENTS;
+            goto exit;
+        }
+
+        // Split off the input arguments for the operation
+        *bracket_start = '\0';
+        *bracket_end= '\0';
+        USP_SNPRINTF(path, sizeof(path), "%s()", arg1);
+
+        // Exit if unable to extract the input args into a temporary expression vector
+        err = EXPR_VECTOR_SplitExpressions(&bracket_start[1], &temp_ev, ",", valid_ops, NUM_ELEM(valid_ops), EXPR_FROM_CLI);
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
+
+        // Convert the expression vector to a key-value vector, destroying the expression vector
+        EXPR_VECTOR_ToKeyValueVector(&temp_ev, &input_args);
+    }
 
     // Split the object to add, into search path and (if one exists) instance number
     // NOTE: Trailing instance numbers may only be used on paths that do not contain complex search expressions
-    USP_ASSERT(args->num_entries >= 2);
-    arg1 = args->vector[1];
     instance_str = SplitOffTrailingNumber(arg1);
     search_path = arg1;
 
@@ -920,7 +959,7 @@ int ExecuteCli_Add(str_vector_t *args)
         USP_ASSERT(err_msgs.vector != NULL);
         USP_ASSERT(err_codes.vector != NULL);
         USP_ASSERT(err_codes.num_entries > 0);
-        if (usp_log_level == kLogLevel_Off) // The error will have already been printed out to the CLI if the log level was anything higher
+        if (USP_LOG_GetLogLevel() == kLogLevel_Off) // The error will have already been printed out to the CLI if the log level was anything higher
         {
             SendCliResponse("%s\n", err_msgs.vector[0]);
         }
@@ -973,6 +1012,35 @@ int ExecuteCli_Add(str_vector_t *args)
             USP_SNPRINTF(path, sizeof(path), "%s.%d", objects.vector[i], instance_number);
         }
 
+        // Iterate over all child parameters to set
+        for (j=0; j < input_args.num_entries; j++)
+        {
+            // Exit if failed to get the permissions for this parameter
+            USP_SNPRINTF(param, sizeof(param), "%s.%s", path, input_args.vector[j].key);
+            err = DATA_MODEL_GetPermissions(param, combined_role, &permission_bitmask, 0);
+            if (err != USP_ERR_OK)
+            {
+                DM_TRANS_Abort();
+                goto exit;
+            }
+
+            // Exit if the parameter is not permitted to be set
+            if ((permission_bitmask & PERMIT_SET) == 0)
+            {
+                SendCliResponse("Parameter %s is not permitted to be set\n", param);
+                DM_TRANS_Abort();
+                goto exit;
+            }
+
+            // Exit if unable to set the value of the parameter
+            err = DATA_MODEL_SetParameterValue(param, input_args.vector[j].value, CHECK_WRITABLE);
+            if (err != USP_ERR_OK)
+            {
+                DM_TRANS_Abort();
+                goto exit;
+            }
+        }
+
         // Exit if unable to retrieve the parameters used as unique keys for this object
         err = DATA_MODEL_GetUniqueKeyParams(path, &unique_key_params, INTERNAL_ROLE);
         if (err != USP_ERR_OK)
@@ -1020,6 +1088,8 @@ exit:
     STR_VECTOR_Destroy(&objects);
     STR_VECTOR_Destroy(&err_msgs);
     INT_VECTOR_Destroy(&err_codes);
+    KV_VECTOR_Destroy(&input_args);
+    EXPR_VECTOR_Destroy(&temp_ev);
     return err;
 }
 
@@ -1834,7 +1904,7 @@ int ExecuteCli_Verbose(str_vector_t *args)
     }
     else
     {
-        usp_log_level = level;
+        USP_LOG_SetLogLevel(level);
         SendCliResponse("Verbosity level set to %d\n", level);
     }
 
@@ -2250,4 +2320,3 @@ void TestSplitOffTrailingNumber(void)
     }
 }
 #endif
-

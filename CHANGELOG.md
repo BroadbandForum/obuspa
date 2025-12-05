@@ -1,5 +1,19 @@
 # OB-USP-AGENT Changelog since Release 10.0.0
 
+## 2025-12-05 v10.0.12
+### Added
+- 'obuspa -c add' CLI command now supports setting child parameters. Example:
+ `obuspa -c add 'Device.LocalAgent.Subscription.(NotifType=Event,ReferenceList="Device.",Enable=true)'`
+- SIGTERM signal handler to cleanly shutdown
+- USP_SIGNAL_Reboot API function to initiate shutting down, then rebooting the device
+- USP_LOG_GetLogLevel and USP_LOG_SetLogLevel API functions to atomically access the log level at runtime
+
+### Fixed
+- Compilation failure when #include'ing only usp_api.h (enable_callstack_debug should be declared in usp_api.h)
+- Race hazard preventing graceful shutdown. Occurs if re-initiating shutdown whilst in the process of shutting down
+- Race hazard causing USP Broker to reject all messages from a USP Service. Occurs when USP Service disconnects, then immediately reconnects over UDS MTP, whilst USP Broker is waiting for a synchronous USP response
+
+
 ## 2025-11-05 v10.0.11
 ### Updated
 - Code has been updated to use the latest v1.5.2 release of protobuf-c

@@ -120,7 +120,7 @@ void USP_ERR_SetMessage(char *fmt, ...)
     va_end(ap);
 
     // Log the message, if log level permits it
-    if (usp_log_level >= kLogLevel_Error)
+    if (USP_LOG_GetLogLevel() >= kLogLevel_Error)
     {
         USP_LOG_Puts(kLogLevel_Error, kLogType_Debug, buf_to_use);
     }
@@ -428,7 +428,7 @@ void USP_ERR_ReplaceEmptyMessage(char *fmt, ...)
     usp_error[sizeof(usp_error)-1] = '\0';
     va_end(ap);
 
-    if (usp_log_level >= kLogLevel_Error)
+    if (USP_LOG_GetLogLevel() >= kLogLevel_Error)
     {
         USP_LOG_Puts(kLogLevel_Error, kLogType_Debug, usp_error);
     }
@@ -471,7 +471,7 @@ void USP_ERR_Terminate(char *fmt, ...)
     usp_error[sizeof(usp_error)-1] = '\0';
     va_end(ap);
 
-    if (usp_log_level >= kLogLevel_Error)
+    if (USP_LOG_GetLogLevel() >= kLogLevel_Error)
     {
         USP_LOG_Puts(kLogLevel_Error, kLogType_Debug, usp_error);
         USP_LOG_Callstack();

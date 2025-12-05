@@ -358,7 +358,11 @@ void MTP_EXEC_MqttWakeup(void)
 **************************************************************************/
 void MTP_EXEC_ScheduleExit(void)
 {
-    mtp_exit_scheduled = kScheduledAction_Signalled;
+    // Only initiate graceful shutdown if it hasn't already been initiated (re-initiating causes it to get stuck)
+    if (mtp_exit_scheduled == kScheduledAction_Off)
+    {
+        mtp_exit_scheduled = kScheduledAction_Signalled;
+    }
 }
 
 /*********************************************************************//**

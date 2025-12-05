@@ -54,6 +54,7 @@
 #include <syslog.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <stdatomic.h>
 
 #ifdef HAVE_EXECINFO_H
 #include <execinfo.h>
@@ -71,8 +72,8 @@ static FILE *log_fd;
 
 //------------------------------------------------------------------------------------
 // Global variables controlling logging
-log_level_t usp_log_level = kLogLevel_Error;    // Verbosity level
-bool enable_protocol_trace = false;             // Whether protocol tracing should be sent out or not
+_Atomic log_level_t usp_log_level = kLogLevel_Error; // Verbosity level
+bool enable_protocol_trace = false;                  // Whether protocol tracing should be sent out or not
 
 //------------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -466,6 +467,38 @@ void USP_LOG_Puts(log_level_t log_level, log_type_t log_type, const char *str)
             }
             break;
     }
+}
+
+/*********************************************************************//**
+**
+** USP_LOG_GetLogLevel
+**
+** Retrieves the current USP logging level.
+**
+** \param   None
+**
+** \return  Current log level (log_level_t)
+**
+**************************************************************************/
+inline log_level_t USP_LOG_GetLogLevel()
+{
+    return atomic_load_explicit(&usp_log_level, memory_order_relaxed);
+}
+
+/*********************************************************************//**
+**
+** USP_LOG_SetLogLevel
+**
+** Sets the USP logging level to the specified value.
+**
+** \param   new_log_level - new logging level to apply
+**
+** \return  None
+**
+**************************************************************************/
+inline void USP_LOG_SetLogLevel(log_level_t new_log_level)
+{
+    atomic_store_explicit(&usp_log_level, new_log_level, memory_order_relaxed);
 }
 
 /*********************************************************************//**

@@ -196,6 +196,7 @@ int main(int argc, char *argv[])
     int option_index = 0;
     char *db_file = DEFAULT_DATABASE_FILE;
     bool enable_mem_info = false;
+    log_level_t level = kLogLevel_Error;
 
     // Determine a handle for the data model thread (this thread)
     OS_UTILS_SetDataModelThread();
@@ -295,7 +296,7 @@ int main(int argc, char *argv[])
                 // Set the networking interface to use for USP communication
                 if (nu_ipaddr_is_valid_interface(optarg) != true)
                 {
-                    usp_log_level = kLogLevel_Error;
+                    USP_LOG_SetLogLevel(kLogLevel_Error);
                     USP_LOG_Error("ERROR: Network interface '%s' does not exist or has no IP address", optarg);
                     goto exit;
                 }
@@ -304,13 +305,14 @@ int main(int argc, char *argv[])
 
             case 'v':
                 // Verbosity level
-                err = TEXT_UTILS_StringToUnsigned(optarg, &usp_log_level);
-                if ((err != USP_ERR_OK) || (usp_log_level >= kLogLevel_Max))
+                err = TEXT_UTILS_StringToUnsigned(optarg, &level);
+                if ((err != USP_ERR_OK) || (level >= kLogLevel_Max))
                 {
-                    usp_log_level = kLogLevel_Error;
+                    USP_LOG_SetLogLevel(kLogLevel_Error);
                     USP_LOG_Error("ERROR: Verbosity level (%s) is invalid or out of range", optarg);
                     goto exit;
                 }
+                USP_LOG_SetLogLevel(level);
                 break;
 
             case 'c':
@@ -330,7 +332,7 @@ int main(int argc, char *argv[])
                 break;
 
             case '?':
-                usp_log_level = kLogLevel_Error;
+                USP_LOG_SetLogLevel(kLogLevel_Error);
                 USP_LOG_Error("ERROR: Missing option value");
                 goto exit;
                 break;
@@ -605,4 +607,3 @@ void PrintUsage(char *prog_name)
     printf("--plugin (-x)     Specifies the path to a shared object vendor layer plug-in\n");
     printf("\n");
 }
-

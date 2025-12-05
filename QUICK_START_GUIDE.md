@@ -176,50 +176,55 @@ $ obuspa -c show database
 
 * To set the value of a data model parameter in the database use:
 ```
-$ obuspa -c dbset "parameter" "value"
+$ obuspa -c dbset 'parameter' 'value'
 ```
 IMPORTANT: This command must only be run when there is no daemon instance of OB-USP-AGENT running,
 as it directly alters the value in the database without notifying a running daemon of the change.
 
 * To set the value of a data model parameter when the daemon is running use:
 ```
-$ obuspa -c set "parameter" "value"
+$ obuspa -c set 'parameter' 'value'
 ```
 
 * To query the value of a parameter when the daemon is running use:
 ```
-$ obuspa -c get "parameter"
+$ obuspa -c get 'parameter'
 ```
 
-The "parameter" may contain USP search expressions and partial paths.
+The 'parameter' may contain USP search expressions and partial paths.
 For example, to query the value of all parameters in the DeviceInfo object when the daemon is running use:
 ```
-$ obuspa -c get "Device.DeviceInfo."
+$ obuspa -c get 'Device.DeviceInfo.'
 ```
 
 * For example to add a bulk data profile use:
 ```
-$ obuspa -c add "Device.BulkData.Profile."
+$ obuspa -c add 'Device.BulkData.Profile.'
+```
+
+* For example to add a subscription and set its child parameters use:
+```
+$ obuspa -c add 'Device.LocalAgent.Subscription.(NotifType="OperationComplete",ReferenceList="Device.",Enable="true",Persistent="true")'
 ```
 
 * For example to delete a bulk data profile using a search expression use:
 ```
-$ obuspa -c del "Device.BulkData.Profile.[Alias==\"cpe-1\"]."
+$ obuspa -c del 'Device.BulkData.Profile.[Alias=="cpe-1"].'
 ```
 
 * For example to initiate a reboot, specifying input arguments use:
 ```
-$ obuspa -c operate "Device.Reboot(Cause='LocalReboot',Reason='WebUI')"
+$ obuspa -c operate 'Device.Reboot(Cause="LocalReboot",Reason="WebUI")'
 ```
 
 * For example to force OBUSPA to generate a Boot! event with arguments for testing purposes (assuming a subscription has also been setup) use:
 ```
-$ obuspa -c event "Device.Boot!(CommandKey='R1', Cause='LocalReboot', FirmwareUpdated='false', ParameterMap='{\"Device.DeviceInfo.SerialNumber\":\"SN0001\"}' )"
+$ obuspa -c event 'Device.Boot!(CommandKey="R1", Cause="LocalReboot", FirmwareUpdated="false", ParameterMap="{\"Device.DeviceInfo.SerialNumber\":\"SN0001\"}" )'
 ```
 
 IMPORTANT: When using USP CLI commands you must be aware of the rules that the Bash shell places on command lines.
-In particular, each argument to the USP CLI command usually needs to be enclosed by double-quotes, 
-and double-quotes within the CLI command's arguments must be escaped with a backslash character.
+In particular, each argument to the USP CLI command usually needs to be enclosed by single or double-quotes, 
+and quote characters within the CLI command's argument values must be escaped with a backslash character.
 
 
 

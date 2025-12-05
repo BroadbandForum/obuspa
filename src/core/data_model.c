@@ -2923,8 +2923,9 @@ int DATA_MODEL_DeRegisterPath(char *schema_path)
     dm_node_t *node;
     dm_node_t *parent;
 
-    // Exit if node is not known
-    node = DM_PRIV_GetNodeFromPath(schema_path, NULL, NULL, 0);
+    // Exit if schema path does not exist in the data model
+    // NOTE: This may occur if the USP Service disconnects (or sends a deregister) before completing the registration sequence
+    node = DM_PRIV_GetNodeFromPath(schema_path, NULL, NULL, DONT_LOG_ERRORS);
     if (node == NULL)
     {
         return USP_ERR_INTERNAL_ERROR;

@@ -57,7 +57,6 @@ void USP_LOG_ErrorSSL(const char *func_name, const char *failure_string, int ret
 //------------------------------------------------------------------------------------
 // Exported global variables
 extern bool enable_protocol_trace;
-extern bool enable_callstack_debug;
 
 //------------------------------------------------------------------------------------
 // Macro used to dump out the data model/database etc
