@@ -44,6 +44,7 @@
 #include <string.h>
 #include <sqlite3.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 #include "common_defs.h"
 #include "data_model.h"
@@ -127,6 +128,8 @@ void LogSQLStatement(char *op, char *path, sqlite3_stmt *stmt);
 int CalcPathMigrationHashes(void);
 int MigratePath(path_migrate_t *pm);
 int GetAllEntriesForParameter(db_hash_t hash, kv_vector_t *kvv);
+int DatabaseIntegrityCheckCallback(void *data, int argc, char **argv, char **colname);
+int ReInitializeDatabase(char *db_file, bool backup_corrupt_db);
 
 /*********************************************************************//**
 **
@@ -142,35 +145,9 @@ int GetAllEntriesForParameter(db_hash_t hash, kv_vector_t *kvv);
 int DATABASE_Init(char *db_file)
 {
     int err;
-    FILE *fp;
-    char *factory_reset_file = FACTORY_RESET_FILE;
 
     // Keep a copy of the database filename, this will be needed when performing a controller initiated factory reset
     USP_STRNCPY(database_filename, db_file, sizeof(database_filename));
-
-    // Perform a factory reset, if no database file exists at the specified location
-    fp = fopen(db_file, "r");
-    if (fp == NULL)
-    {
-        // Copy across the factory reset database (if specified)
-        if (factory_reset_file[0] != '\0')
-        {
-            USP_LOG_Info("%s: No database file exists at %s", __FUNCTION__, db_file);
-            USP_LOG_Info("%s: Copying from factory reset database (%s)", __FUNCTION__, factory_reset_file);
-            err = CopyFactoryResetDatabase(factory_reset_file, db_file);
-            if (err != USP_ERR_OK)
-            {
-                return err;
-            }
-        }
-
-        // Signal that factory reset initialisation should be performed later (when the data model has been fully registered)
-        schedule_factory_reset_init = true;
-    }
-    else
-    {
-        fclose(fp);
-    }
 
     // Exit if unable to open the database
     USP_LOG_Info("%s: Opening database %s", __FUNCTION__, db_file);
@@ -320,9 +297,6 @@ void DATABASE_PerformFactoryReset_ControllerInitiated(void)
         USP_ERR_ERRNO("remove", errno);
         return;
     }
-
-    // Copy across the factory reset database (which has reboot cause set to "LocalFactoryReset")
-    CopyFactoryResetDatabase(FACTORY_RESET_FILE, db_file);
 
     // Exit if unable to open the database
     err = OpenUspDatabase(db_file);
@@ -945,24 +919,75 @@ void DATABASE_Dump(void)
 **
 ** OpenUspDatabase
 **
-** Opens the USP database, ensures the table is created in it and the SQL statements prepared
+** Opens the USP database file, validates its integrity, and performs automatic recovery if required.
+** This function performs the following steps:
+**  - Checks if the database file exists and verifies that its size is at least the SQLite minimum page size.
+**    Smaller files are treated as corrupt.
+**  - Opens the database and runs `PRAGMA integrity_check`. Any result other than "ok" marks the database as corrupt.
+**  - If the database does not exist or is corrupt, the existing file (if any) is renamed to a *.corrupt copy,
+**    an optional factory-reset database is copied into place, and the database is reopened.
+**  - Ensures the data model table is created in the database and the SQL statements prepared
 **
-** \param   db_file - path to file to use for the database
+** \param   db_file - Path to the SQLite database file to open or create
 **
-** \return  USP_ERR_OK if successful
+** \return  USP_ERR_OK on success
+** \return  USP_ERR_INTERNAL_ERROR if the database cannot be opened, validated, repaired, or initialized
 **
 **************************************************************************/
 int OpenUspDatabase(char *db_file)
 {
     int err;
+    struct stat st;
+    bool db_is_corrupt = false;
+
+    // If unable to stat the database file, factory reset it then exit
+    err = stat(db_file, &st);
+    if (err != 0)
+    {
+        USP_LOG_Error("%s: Unable to stat() USP database file %s (errno=%d, %s)", __FUNCTION__, db_file, errno, strerror(errno));
+        err = ReInitializeDatabase(db_file, false);
+        goto exit;
+    }
+
+    // If the database file is less than the minimum page size, then it is corrupt, so factory reset it, then exit
+    #define SQLITE_MINIMUM_PAGE_SIZE 512
+    if (st.st_size < SQLITE_MINIMUM_PAGE_SIZE)
+    {
+        USP_LOG_Error("%s: USP database (%s) size (%ld) is less than the sqlite minimum page size (%d)", __FUNCTION__, db_file, st.st_size, SQLITE_MINIMUM_PAGE_SIZE);
+        err = ReInitializeDatabase(db_file, true);
+        goto exit;
+    }
 
     // Exit if unable to open the database
+    // NOTE: This case doesn't perform a factory reset because if we can't open the database file, a factory reset would fail anyway
     err = sqlite3_open(db_file, &db_handle);
     if (err != SQLITE_OK)
     {
         USP_ERR_SQL(db_handle,"sqlite3_open");
         USP_LOG_Error("%s: Failed to open USP database (%s). Specify using -f, if you want a different path", __FUNCTION__, db_file);
-        return USP_ERR_INTERNAL_ERROR;
+        err = USP_ERR_INTERNAL_ERROR;
+        goto exit;
+    }
+
+    // If database integrity check fails, factory reset it, then exit
+    err = sqlite3_exec(db_handle, "PRAGMA integrity_check;", DatabaseIntegrityCheckCallback, &db_is_corrupt, NULL);
+    if ((err != SQLITE_OK) || (db_is_corrupt == true))
+    {
+        USP_LOG_Error("%s: Integrity check failed on USP database: %s", __FUNCTION__, db_file);
+        sqlite3_close(db_handle);
+        db_handle = NULL;
+        err = ReInitializeDatabase(db_file, true);
+        goto exit;
+    }
+
+    // If the code gets here, then the USP database was good and we didn't have to factory reset it
+    err = USP_ERR_OK;
+
+exit:
+    // Exit if an unrecoverable error occurred
+    if (err != USP_ERR_OK)
+    {
+        return err;
     }
 
     // Exit if unable to create the data model parameter table (if it does not already exist)
@@ -980,6 +1005,122 @@ int OpenUspDatabase(char *db_file)
     {
         return USP_ERR_INTERNAL_ERROR;
     }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DatabaseIntegrityCheckCallback
+**
+** Callback handler for the SQLite `PRAGMA integrity_check` command.
+** NOTE: The integrity check returns one row containing the text "ok" if the database is valid. Any other returned string indicates corruption.
+** NOTE: This function may be called more than once by sqlite if multiple errors are detected
+** NOTE: This callback sets the boolean flag provided in \p data to true when corruption is detected.
+**
+** \param   data - Pointer to a bool used to signal whether the database is corrupt (set to true if corruption is found)
+** \param   argc - Number of columns in the result row (always 1 for integrity_check)
+** \param   argv - Array of column values; argv[0] contains the text result ("ok" or an error description)
+** \param   colname - Array of column names (unused)
+**
+** \return  0 (required by SQLite exec callback contract)
+**
+**************************************************************************/
+int DatabaseIntegrityCheckCallback(void *data, int argc, char **argv, char **colname)
+{
+    bool *db_is_corrupt = (bool *)data;
+
+    // If the row returned wasn't 'ok', then the row contains an error message
+    if ((argc > 0) && (argv[0] != NULL) && (strcmp(argv[0], "ok") != 0))
+    {
+        USP_LOG_Error("%s: USP Database is corrupt: %s", __FUNCTION__, argv[0]);
+        if (db_is_corrupt != NULL)
+        {
+            *db_is_corrupt = true;
+        }
+    }
+
+    return 0;
+}
+
+/*********************************************************************//**
+**
+** ReInitializeDatabase
+**
+** Backups up the existing corrupt database file (if applicable),
+** then initiates re-initialization of the database to factory defaults
+**
+** \param   db_file - Path to the SQLite database file to open or create
+** \param   backup_corrupt_db - Set to true if the existing (corrupt) USP DB should be backed up
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ReInitializeDatabase(char *db_file, bool backup_corrupt_db)
+{
+    int err;
+    char filename[PATH_MAX];
+    char *factory_reset_file = FACTORY_RESET_FILE;
+
+    USP_LOG_Error("%s: USP database (%s) is corrupt or invalid. Reinitializing.", __FUNCTION__, db_file);
+
+    USP_ASSERT(db_handle == NULL);
+
+    // Rename the corrupt database file to save for analysis later
+    if (backup_corrupt_db == true)
+    {
+        USP_SNPRINTF(filename, sizeof(filename), "%s.corrupt", db_file);
+        err = rename(db_file, filename);
+        if (err == 0)
+        {
+            USP_LOG_Info("%s: Renamed corrupt USP database to %s", __FUNCTION__, filename);
+        }
+        else
+        {
+            if (errno != ENOENT)
+            {
+                // Failed to rename it, so try to delete it instead
+                USP_ERR_ERRNO("rename", errno);
+                err = remove(db_file);
+                if (err == 0)
+                {
+                    USP_LOG_Info("%s: Deleted corrupt USP database (%s)", __FUNCTION__, db_file);
+                }
+                else
+                {
+                    // Failed to delete it, so exit
+                    if (errno != ENOENT)
+                    {
+                        USP_LOG_Error("%s: Failed to delete corrupt USP database '%s' (errno=%d, %s)", __FUNCTION__, db_file, errno, strerror(errno));
+                        return USP_ERR_INTERNAL_ERROR;
+                    }
+                }
+            }
+        }
+    }
+
+    // Copy across the factory reset database (if specified)
+    if ((factory_reset_file != NULL) && (factory_reset_file[0] != '\0'))
+    {
+        USP_LOG_Info("%s: Copying from factory reset database (%s)", __FUNCTION__, factory_reset_file);
+        err = CopyFactoryResetDatabase(factory_reset_file, db_file);
+        if (err != USP_ERR_OK)
+        {
+            return err;
+        }
+    }
+
+    // Exit if unable to open the new database
+    err = sqlite3_open(db_file, &db_handle);
+    if (err != SQLITE_OK)
+    {
+        USP_ERR_SQL(db_handle,"sqlite3_open");
+        USP_LOG_Error("%s: Failed to open USP database (%s). Specify using -f, if you want a different path", __FUNCTION__, db_file);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Signal that factory reset initialisation should be performed later (when the data model has been fully registered)
+    schedule_factory_reset_init = true;
 
     return USP_ERR_OK;
 }

@@ -128,6 +128,7 @@ void RefreshInstances_LifecycleSubscriptionEndingInPartialPath(char *path);
 int ValidatePathSegment(int path_segment_index, char *segment, char *previous_segment, subs_notify_t notify_type, char *path);
 int GetPermittedInstances(char *obj_path, int_vector_t *iv, resolver_state_t *state);
 void FilterPathsByPermission(str_vector_t *sv, unsigned short permission_bitmask, unsigned short required_permission, combined_role_t *combined_role);
+int CheckUnresolvedPathValidity(char *resolved, char *unresolved);
 
 /*********************************************************************//**
 **
@@ -884,6 +885,12 @@ int ExpandWildcard(char *resolved, char *unresolved, resolver_state_t *state)
     // Exit if there are no instances of this object
     if (iv.num_entries == 0)
     {
+        // R-GET.0 requires that if any part of the path is not in the supported data model, that an error occurs
+        // So check this before finishing path resolution early (because the wildcard resolves to no instances)
+        if (state->op == kResolveOp_Get)
+        {
+            err = CheckUnresolvedPathValidity(resolved, unresolved);
+        }
         goto exit;
     }
 
@@ -1088,6 +1095,7 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     char temp[MAX_DM_PATH];
     bool is_match;
     bool is_ref_match;
+    int match_count;
     expr_op_t valid_ops[] = {kExprOp_Equal, kExprOp_NotEqual, kExprOp_LessThanOrEqual, kExprOp_GreaterThanOrEqual, kExprOp_LessThan, kExprOp_GreaterThan};
 
     // Exit if unable to find the end of the unique key
@@ -1114,7 +1122,13 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     // Exit if there are no instances of this object
     if (instances.num_entries == 0)
     {
+        // R-GET.0 requires that if any part of the path is not in the supported data model, that an error occurs
+        // So check this before finishing path resolution early because there's no instances in the table referenced by the search expression
         err = USP_ERR_OK;
+        if (state->op == kResolveOp_Get)
+        {
+            err = CheckUnresolvedPathValidity(resolved, &p[1]);
+        }
         goto exit;
     }
 
@@ -1185,6 +1199,7 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
     GROUP_GET_VECTOR_GetValues(&ref_sp.ggv);
 
     // Iterate over all instances of the object present in the data model
+    match_count = 0;
     for (i=0; i < instances.num_entries; i++)
     {
         // Exit if an error occurred whilst trying to determine whether this instance matched the unique key
@@ -1205,6 +1220,7 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
         // If found an instance which matches, continue resolving the path recursively, selecting this instance
         if (is_match & is_ref_match)
         {
+            match_count++;
             USP_SNPRINTF(temp, sizeof(temp), "%s%d", resolved, instances.vector[i]);
             err = ExpandPath(temp, unresolved, state);
             if (err != USP_ERR_OK)
@@ -1214,10 +1230,14 @@ int ResolveUniqueKey(char *resolved, char *unresolved, resolver_state_t *state)
         }
     }
 
-    // If the code gets here, then no matching unique key has been found
-    // It is not a parse error to find no instances of an object.
-    // The caller (USP message handler) will deal with the case of no objects found appropriately.
     err = USP_ERR_OK;
+
+    // R-GET.0 requires that if any part of the path is not in the supported data model, that an error occurs
+    // So check this before finishing path resolution early (because the search expression doesn't match any instances)
+    if ((state->op == kResolveOp_Get) && (match_count == 0))
+    {
+        err = CheckUnresolvedPathValidity(resolved, &p[1]);
+    }
 
 exit:
     // Ensure that the key expressions and key-values are deleted
@@ -1690,8 +1710,9 @@ int GetPermittedInstances(char *obj_path, int_vector_t *iv, resolver_state_t *st
     err = DATA_MODEL_GetInstances(obj_path, iv);
     if (err != USP_ERR_OK)
     {
-        // According to R.GET-0, if the path contains a search path (eg unique key), it acts as a filter, and should not generate an error if instance numbers do not exist
-        if ((state->op == kResolveOp_Get) && (err == USP_ERR_OBJECT_DOES_NOT_EXIST))
+        // According to R.GET-0, if the path contains any search paths (eg unique key), it acts as a filter,
+        // and should not generate an error if the requested path contains instance numbers which do not exist
+        if ((state->op == kResolveOp_Get) && (state->is_search_path == true) && (err == USP_ERR_OBJECT_DOES_NOT_EXIST))
         {
             err = USP_ERR_OK;
         }
@@ -2543,6 +2564,46 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
 
     // If the code gets here, then the path should be added to the vector of resolved objects/parameters
     *add_to_vector = true;
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** CheckUnresolvedPathValidity
+**
+** Checks that the specified unresolved path exists in the supported data model
+** NOTE: This function is only called to check that the path following a wildcard or search expression (that
+**       resolves to zero instances) is valid
+**       eg Device.BulkData.Profile.*.BadParam, when there are no instantiated Profiles
+**
+** \param   resolved - pointer to buffer containing object that we have resolved (excluding trailing instance number)
+** \param   unresolved - pointer to rest of path to resolve
+**
+** \return  USP_ERR_OK if unresolved path exists in the supported data model
+**
+**************************************************************************/
+int CheckUnresolvedPathValidity(char *resolved, char *unresolved)
+{
+    char path[MAX_DM_PATH];
+    char *p;
+    dm_node_t *node;
+
+    // Form path containing a wildcard between the resolved and unresolved parts of the path
+    USP_SNPRINTF(path, sizeof(path), "%s*%s", resolved, unresolved);
+
+    // If path contains reference following, then only validate the path before reference following
+    p = TEXT_UTILS_StrStr(path, "+");
+    if (p != NULL)
+    {
+        *p = '\0';   // Truncate the path before the reference follow
+    }
+
+    node = DM_PRIV_GetNodeFromPath(path, NULL, NULL, SUBSTITUTE_SEARCH_EXPRS);
+    if (node == NULL)
+    {
+        return USP_ERR_INVALID_PATH;
+    }
+
     return USP_ERR_OK;
 }
 

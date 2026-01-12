@@ -2603,7 +2603,7 @@ int DATA_MODEL_GetInstances(char *path, int_vector_t *iv)
     node = DM_PRIV_GetNodeFromPath(path, &inst, &is_qualified_instance, 0);
     if (node == NULL)
     {
-        return USP_ERR_OBJECT_DOES_NOT_EXIST;
+        return USP_ERR_INVALID_PATH;
     }
 
     // Exit if this is not a multi-instance object

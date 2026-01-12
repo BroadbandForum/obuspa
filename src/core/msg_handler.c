@@ -178,7 +178,8 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, char *orig
     if ((originator != UNKNOWN_ENDPOINT_ID) && (strcmp(originator, rec->from_id) != 0))
     {
         USP_ERR_SetMessage("%s: Ignoring USP record with inconsistent endpoint (MTP endpoint=%s, from_id=%s)", __FUNCTION__, originator, rec->from_id);
-        return USP_ERR_REQUEST_DENIED;
+        err = USP_ERR_REQUEST_DENIED;
+        goto exit;
     }
 
 #ifdef ENABLE_WEBSOCKETS
