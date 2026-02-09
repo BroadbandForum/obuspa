@@ -1,5 +1,14 @@
 # OB-USP-AGENT Changelog
 
+## 2026-02-09 v10.0.14
+### Fixed
+- Changes introduced in v10.0.13 could cause FactoryReset() to hit an assert. The cause has been fixed.
+- Websocket server thread prevents graceful shutdown after disabling it, or after duplicate messages in its send queue
+
+### Modified
+- Removed automatic creation of the default database directory during make install (GitHub Issue #148)
+
+
 ## 2026-01-12 v10.0.13
 ### Added
 - If USP database file is corrupt, a new database is created using the factory reset configuration

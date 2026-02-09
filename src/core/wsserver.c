@@ -444,7 +444,7 @@ void WSSERVER_QueueBinaryMessage(mtp_send_item_t *msi, int conn_id, time_t expir
     if (is_duplicate)
     {
         USP_FREE(msi->pbuf);
-        return;
+        goto exit;
     }
 
     // Add USP Record to queue
@@ -579,39 +579,46 @@ exit:
 **************************************************************************/
 void *WSSERVER_Main(void *args)
 {
-    bool run_thread = true;
+    bool run_thread;
 
-    while (run_thread)
+    while(1)
     {
-        if (wsserv.ctx == NULL)
+        run_thread = true;
+        while (run_thread)
         {
-            // WebSocket server is not currently running, so see if it should be started
-            run_thread = ServiceInactiveWebsockServer();
+            if (wsserv.ctx == NULL)
+            {
+                // WebSocket server is not currently running, so see if it should be started
+                run_thread = ServiceInactiveWebsockServer();
+            }
+            else
+            {
+                // WebSocket server is currently running
+                run_thread = ServiceActiveWebsockServer();
+            }
         }
-        else
+
+        // Deal with the case of exiting this thread because we are shutting down (due to Reboot() or FactoryReset() USP commands)
+        OS_UTILS_LockMutex(&wss_access_mutex);
+        if (mtp_exit_scheduled == kScheduledAction_Activated)
         {
-            // WebSocket server is currently running
-            run_thread = ServiceActiveWebsockServer();
+            // Free configurations
+            USP_ASSERT(wsserv.ctx == NULL);     // Websocket server context should already have been freed by call to StopWebsock
+            DestroyWssConfig(&wsserv.cur_config);
+            DestroyWssConfig(&wsserv.new_config);
+
+            // Prevent the data model from making any other changes to the MTP thread
+            is_wsserv_mtp_shutdown = true;
+
+            // Signal the data model thread that this MTP has shutdown
+            DM_EXEC_PostMtpThreadExited(WSSERVER_EXITED);
+            OS_UTILS_UnlockMutex(&wss_access_mutex);
+            goto exit;
         }
+        OS_UTILS_UnlockMutex(&wss_access_mutex);
     }
 
-    // Deal with the case of exiting this thread because we are shutting down (due to Reboot() or FactoryReset() USP commands)
-    OS_UTILS_LockMutex(&wss_access_mutex);
-    if (mtp_exit_scheduled == kScheduledAction_Activated)
-    {
-        // Free configurations
-        USP_ASSERT(wsserv.ctx == NULL);     // Websocket server context should already have been freed by call to StopWebsock
-        DestroyWssConfig(&wsserv.cur_config);
-        DestroyWssConfig(&wsserv.new_config);
-
-        // Prevent the data model from making any other changes to the MTP thread
-        is_wsserv_mtp_shutdown = true;
-
-        // Signal the data model thread that this MTP has shutdown
-        DM_EXEC_PostMtpThreadExited(WSSERVER_EXITED);
-    }
-    OS_UTILS_UnlockMutex(&wss_access_mutex);
-
+exit:
     return NULL;
 }
 

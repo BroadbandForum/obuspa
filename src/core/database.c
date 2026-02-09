@@ -252,6 +252,7 @@ void DATABASE_Destroy(void)
     {
         USP_LOG_Error("%s: sqlite3_close() failed", __FUNCTION__);
     }
+    db_handle = NULL;
 
     // Finally shutdown SQLite
     sqlite3_shutdown();

@@ -131,18 +131,6 @@ obuspa_LDFLAGS = $(AM_LDFLAGS) -rdynamic
 obuspa_LDADD = -lm -ldl -lpthread -lrt
 obuspa_LDADD += $(openssl_LIBS) $(sqlite3_LIBS) $(libcurl_LIBS) $(zlib_LIBS) $(libmosquitto_LIBS) $(libwebsockets_LIBS)
 
-# Create obuspa directory for usp.db etc on install
-# This depends on your prefix setting (default localstatedir=/usr/local/var/)
-# Default OBUSPA_LOCAL_STATE_DIR=/usr/local/var/obuspa
-install-data-local:
-	${mkdir_p} "${DESTDIR}/${OBUSPA_LOCAL_STATE_DIR}"
-	if [ -n "${SUDO_USER}" ]; then \
-		chown "${SUDO_USER}" "${DESTDIR}/${OBUSPA_LOCAL_STATE_DIR}"; \
-	fi
-
-uninstall-local:
-	rm -rf "${DESTDIR}/${OBUSPA_LOCAL_STATE_DIR}"
-
 # Import vendor makefile
 include src/vendor/vendor.am
 
