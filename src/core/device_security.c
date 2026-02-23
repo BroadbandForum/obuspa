@@ -66,6 +66,7 @@
 #include "vendor_api.h"
 #include "iso8601.h"
 #include "text_utils.h"
+#include "os_utils.h"
 
 
 //-----------------------------------------------------------------------------------------
@@ -3282,11 +3283,7 @@ void LoadTrustStore_FromMutableCertDir(void)
     {
         // Since mutable cert dir does not exist, attempt to create it
         USP_LOG_Warning("%s: Creating mutable cert dir(=%s)", __FUNCTION__, dir_path);
-        err = mkdir(dir_path, S_IRWXU | S_IRWXG | S_IRWXO);
-        if (err != 0)
-        {
-            USP_ERR_ERRNO("mkdir", errno);
-        }
+        OS_UTILS_CreateDirFromPath(dir_path);   // Intentionally ignoring error
         return;
     }
 

@@ -961,7 +961,6 @@ int Validate_BulkDataRetryIntervalMultiplier(dm_req_t *req, char *value)
 int Validate_BulkDataMqttReference(dm_req_t *req, char *value)
 {
     int err;
-    int mqtt_connection_instance;
 
     // Exit if the MQTT Reference refers to nothing. This can occur if a MQTT client being referred to is deleted.
     if (*value == '\0')
@@ -969,7 +968,7 @@ int Validate_BulkDataMqttReference(dm_req_t *req, char *value)
         return USP_ERR_OK;
     }
 
-    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", &mqtt_connection_instance);
+    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", NULL);
 
     return err;
 }

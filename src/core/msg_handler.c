@@ -5,6 +5,7 @@
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  * Copyright (C) 2022, Snom Technology GmbH
+ * Copyright (C) Copyright (c) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -68,6 +69,10 @@
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include <inttypes.h>  // For PRIu64
 #include "e2e_context.h"
+#endif
+
+#ifdef FD_PASSING_EXPERIMENTAL
+#include "fd_vector.h"
 #endif
 
 //------------------------------------------------------------------------
@@ -245,6 +250,19 @@ int MSG_HANDLER_HandleBinaryRecord(unsigned char *pbuf, int pbuf_len, char *orig
 exit:
     // Free the unpacked USP record
     usp_record__record__free_unpacked(rec, pbuf_allocator);
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    if ((err != USP_ERR_OK) && (mtpc->protocol == kMtpProtocol_UDS) && (mtpc->uds.fd_key != 0))
+    {
+        int fd_count = 0;
+        int* fd_buffer = FD_VECTOR_Get(mtpc->uds.fd_key, &fd_count);
+        if (fd_count != 0)
+        {
+            FD_VECTOR_Close(fd_buffer, fd_count);
+            FD_VECTOR_Remove(mtpc->uds.fd_key);
+        }
+    }
+#endif
 
     return err;
 }
@@ -453,11 +471,32 @@ int MSG_HANDLER_QueueMessage(char *endpoint_id, Usp__Msg *usp, mtp_conn_t *mtpc)
     usp_send_item.usp_msg = usp;
 #endif
 
+#ifdef FD_PASSING_EXPERIMENTAL
+    if (mtpc->protocol == kMtpProtocol_UDS)
+    {
+        usp_send_item.fd_key = mtpc->uds.fd_key;
+    }
+#endif
+
     // Encapsulate this message in a USP record, then queue the record, to send to a controller
     err = MSG_HANDLER_QueueUspRecord(&usp_send_item, endpoint_id, usp->header->msg_id, mtpc, END_OF_TIME);
 
     // Free the serialized USP Message because it is now encapsulated in USP Record messages.
     USP_FREE(usp_send_item.msg_packed);
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    int fd_count = 0;
+    int* fd_buffer = NULL;
+    if ((err != USP_ERR_OK) && (mtpc->protocol == kMtpProtocol_UDS) && (mtpc->uds.fd_key != 0))
+    {
+        fd_buffer = FD_VECTOR_Get(mtpc->uds.fd_key, &fd_count);
+        if (fd_count != 0)
+        {
+            FD_VECTOR_Remove(mtpc->uds.fd_key);
+            FD_VECTOR_Close(fd_buffer, fd_count);
+        }
+    }
+#endif
 
     return err;
 }
@@ -690,9 +729,14 @@ void MSG_HANDLER_UspSendItem_Init(usp_send_item_t *usi)
     usi->usp_msg_type = INVALID_USP_MSG_TYPE;
     usi->msg_packed = NULL;
     usi->msg_packed_size = 0;
+
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
     usi->curr_e2e_session = NULL;
     usi->usp_msg = NULL;
+#endif
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    usi->fd_key = 0;
 #endif
 }
 
@@ -1231,6 +1275,21 @@ int ValidateUspMsgType(Usp__Header__MsgType msg_type, char *endpoint_id, mtp_con
             break;
     }
 
+#ifdef FD_PASSING_EXPERIMENTAL
+    // If message does contain attached file descriptors and not the type
+    // that supported for tranfer of file descriptors
+    if ((mtpc->protocol == kMtpProtocol_UDS) && (mtpc->uds.fd_key > 0))
+    {
+        int fd_count = 0;
+        FD_VECTOR_Get(mtpc->uds.fd_key, &fd_count);
+        if (fd_count != 0 && msg_type != USP__HEADER__MSG_TYPE__OPERATE_RESP && msg_type != USP__HEADER__MSG_TYPE__NOTIFY)
+        {
+            USP_ERR_SetMessage("Request denied");
+            return USP_ERR_REQUEST_DENIED;
+        }
+    }
+#endif
+
     // Exit if the received USP message can be accepted for processing
     if (expected_sender_role & sender_role)
     {
@@ -1530,6 +1589,10 @@ int QueueUspNoSessionRecord(usp_send_item_t *usi, char *endpoint_id, char *usp_m
         mtp_send_item.pbuf = buf;  // Ownership of the serialized USP Record passes to the queue, unless an error is returned.
         mtp_send_item.pbuf_len = len;
     }
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    mtp_send_item.fd_key = usi->fd_key;
+#endif
 
     // Exit if unable to queue the message, to send to a controller
     // NOTE: If successful, ownership of the buffer passes to the MTP layer. If not successful, buffer is freed here

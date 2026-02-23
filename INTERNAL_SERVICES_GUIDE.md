@@ -24,7 +24,7 @@ The Broker is enabled by default.  However, some configuration is necessary in o
 
 OBUSPA stores its configuration in a database file, the path of which can be provided as a command line option. https://github.com/BroadbandForum/OBUSPA/blob/master/QUICK_START_GUIDE.md contains a detailed description of this database in the section entitled "Running OB-USP-AGENT for the first time".
 
-We need to copy and modify the factory_reset_example.txt to broker_reset.txt and add additional data model entries that OBUSPA uses to instantiate the domain sockets used by the UDS backend.  Though different configurations are possible, it is recommended (for interoperability) that the Broker creates two listening sockets.  Each USP Service will connect/disconnect as necessary and register its data model with the Broker.  One of these sockets is used when the USP Service is acting as an data model provider to the Broker's Controller.  The other socket is used when the USP Service is acting as a Controller of the Broker's Agent.
+We need to copy and modify the stomp_factory_reset_example.txt to broker_reset.txt and add additional data model entries that OBUSPA uses to instantiate the domain sockets used by the UDS backend.  Though different configurations are possible, it is recommended (for interoperability) that the Broker creates two listening sockets.  Each USP Service will connect/disconnect as necessary and register its data model with the Broker.  One of these sockets is used when the USP Service is acting as an data model provider to the Broker's Controller.  The other socket is used when the USP Service is acting as a Controller of the Broker's Agent.
 
 ### Configuring the Broker's Controller socket
 The following well known path should be used to configure the Broker's Controller socket.  OBUSPA will use this information to create a listening socket at the specified path that a USP Service's Agent can connect to. 
@@ -32,6 +32,8 @@ The following well known path should be used to configure the Broker's Controlle
 Device.UnixDomainSockets.UnixDomainSocket.1.Alias "cpe-1"
 Device.UnixDomainSockets.UnixDomainSocket.1.Mode "Listen"
 Device.UnixDomainSockets.UnixDomainSocket.1.Path "/var/run/usp/broker_controller_path"
+Device.UnixDomainSockets.UnixDomainSocket.1.AuthRequired "false"
+Device.UnixDomainSockets.UnixDomainSocket.1.RegistrationRestricted "false"
 ```
 OBUSPA will create and configure the database the first time it is run.  Note that OBUSPA will only use these factory default values if no database already exists.  If you wish to change the default parameters then you must remove the existing database.  In the below command, '-f' selects usp_broker.db as the database (instead of the default usp.db) and '-s' selects broker_cli as the CLI socket (instead of the default usp_cli).
 
@@ -39,14 +41,26 @@ OBUSPA will create and configure the database the first time it is run.  Note th
 obuspa -f /usr/local/var/obuspa/usp_broker.db -s /tmp/broker_cli -p -v 4 -r broker_reset.txt -i enp0s3
 ```
 ### Configuring a USP Service to connect to the Broker
-A second instance of OBUSPA can be used as the basis for a USP Service.  It must also be told to connect to the Broker's (listening socket) Controller path. Using factory_reset_example.txt as a starting point, copy and modify to service1_reset.txt and add the following lines:-
+A second instance of OBUSPA can be used as the basis for a USP Service.  It must also be told to connect to the Broker's (listening socket) Controller path. Using stomp_factory_reset_example.txt as a starting point, copy and modify to service1_reset.txt and add the following lines:-
 ```
 Device.LocalAgent.EndpointID "proto::service1"
 Device.UnixDomainSockets.UnixDomainSocket.1.Alias "cpe-1"
 Device.UnixDomainSockets.UnixDomainSocket.1.Mode "Connect"
 Device.UnixDomainSockets.UnixDomainSocket.1.Path "/var/run/usp/broker_controller_path"
+Device.UnixDomainSockets.UnixDomainSocket.1.AuthRequired "false"
+Device.UnixDomainSockets.UnixDomainSocket.1.RegistrationRestricted "false"
 ```
 Note the the Endpoint ID is set differently for the USP Service to "proto::service1".  By default the USP Endpoint ID is derived from the network adapter MAC address.  Each Endpoint ID must be unique which will plainly not be the case if we continue to use the default MAC address besed endpoint ID.  For each USP Service we set an appropriate Endpoint ID in the settings database that identifies that Service.
+
+On this connection, the USP Service is acting as an Agent, so we must indicate this:
+```
+Device.LocalAgent.MTP.1.Alias  "cpe-1"
+Device.LocalAgent.MTP.1.Protocol  "UDS"
+Device.LocalAgent.MTP.1.UDS.UnixDomainSocketRef  "Device.UnixDomainSockets.UnixDomainSocket.1"
+Device.LocalAgent.MTP.1.Enable  "true"
+```
+
+To start the USP Service use:
 ```
 obuspa -f /usr/local/var/obuspa/usp_server1.db -s /tmp/service1_cli -p -v4 -r service1_reset.txt -i enp0s3
 ```
@@ -254,7 +268,18 @@ Before we can launch our USP Service acting as a Controller we need to re-config
 Device.UnixDomainSockets.UnixDomainSocket.2.Alias "cpe-2"
 Device.UnixDomainSockets.UnixDomainSocket.2.Mode "Listen"
 Device.UnixDomainSockets.UnixDomainSocket.2.Path "/var/run/usp/broker_agent_path"
+Device.UnixDomainSockets.UnixDomainSocket.2.AuthRequired "false"
+Device.UnixDomainSockets.UnixDomainSocket.2.RegistrationRestricted "false"
 ````
+
+On this connection, the USP Broker is acting as an Agent, so we must indicate this:
+```
+Device.LocalAgent.MTP.2.Alias  "cpe-2"
+Device.LocalAgent.MTP.2.Protocol  "UDS"
+Device.LocalAgent.MTP.2.UDS.UnixDomainSocketRef  "Device.UnixDomainSockets.UnixDomainSocket.2"
+Device.LocalAgent.MTP.2.Enable  "true"
+```
+
 The USP Broker must be running:-
 ````
 obuspa -i wan -v 3 -r /fac_reset_broker.txt -f /obuspa_broker.db
@@ -270,6 +295,8 @@ In order for a USP Service to act as a Controller it must connect to the Broker 
 Device.UnixDomainSockets.UnixDomainSocket.2.Alias "cpe-2"
 Device.UnixDomainSockets.UnixDomainSocket.2.Mode "Connect"
 Device.UnixDomainSockets.UnixDomainSocket.2.Path "/var/run/usp/broker_agent_path"
+Device.UnixDomainSockets.UnixDomainSocket.2.AuthRequired "false"
+Device.UnixDomainSockets.UnixDomainSocket.2.RegistrationRestricted "false"
 ````
 Finally we can launch service2 acting as a Controller:-
 ````

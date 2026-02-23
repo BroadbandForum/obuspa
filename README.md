@@ -6,6 +6,10 @@ Open Broadband-User Services Platform-Agent (OB-USP-Agent) is an open source pro
 
 For build instructions, please refer to [QUICK_START_GUIDE](https://github.com/BroadbandForum/obuspa/blob/master/QUICK_START_GUIDE.md).
 
+## TP-469 Conformance Test Plan Results
+
+Test results for all MTPs are available in [conformance_test_results.txt](https://github.com/BroadbandForum/obuspa/blob/master/conformance_test_results.txt).
+
 ## Contributing
 
 Thank you for your interest in contributing! Please refer to [CONTRIBUTING.md](https://github.com/BroadbandForum/obuspa/blob/master/CONTRIBUTING.md) for guidance.

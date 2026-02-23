@@ -3,6 +3,7 @@
  * Copyright (C) 2019-2025, Broadband Forum
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
+ * Copyright (C) Copyright (c) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -67,6 +68,9 @@ typedef struct
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
     e2e_session_t *curr_e2e_session;    // Associated E2E session values
     Usp__Msg *usp_msg;                  // Used to log the protobuf message before segmentation, as this cannot be done by MTP at point of sending for a segmented USP message
+#endif
+#ifdef FD_PASSING_EXPERIMENTAL
+    unsigned int fd_key;                // Key of buffer with file descriptors in global file descriptors map
 #endif
 } usp_send_item_t;
 

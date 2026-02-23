@@ -53,6 +53,7 @@
 // Key-value pair Vector API
 void KV_VECTOR_Init(kv_vector_t *kvv);
 void KV_VECTOR_Add(kv_vector_t *kvv, char *key, char *value);
+void KV_VECTOR_Remove(kv_vector_t *kvv, char *key);
 bool KV_VECTOR_Replace(kv_vector_t *kvv, char *key, char *value);
 bool KV_VECTOR_ReplaceWithHint(kv_vector_t *kvv, char *key, char *value, int hint);
 void KV_VECTOR_AddUnsigned(kv_vector_t *kvv, char *key, unsigned value);

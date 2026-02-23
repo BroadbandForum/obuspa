@@ -1765,7 +1765,7 @@ int ValidateParamUniqueness(dm_req_t *req, char *value)
         if (strcmp(buf, value) == 0)
         {
             USP_ERR_SetMessage("%s: The value for %s (%s) is not unique (already used by instance %d)", __FUNCTION__, req->path, value, instance);
-            err = USP_ERR_INVALID_ARGUMENTS;
+            err = USP_ERR_UNIQUE_KEY_CONFLICT;
             goto exit;
         }
     }

@@ -1,0 +1,33 @@
+# 
+# These settings define a USP agent that can be tested against
+# CDRouter's USP Controller using encrypted WebSocket
+#
+
+Device.LocalAgent.EndpointID "proto::agent-id"
+
+Device.LocalAgent.MTP.1.Alias "cpe-1"
+Device.LocalAgent.MTP.1.Enable "true"
+Device.LocalAgent.MTP.1.Protocol "WebSocket"
+Device.LocalAgent.MTP.1.WebSocket.Port "443"
+Device.LocalAgent.MTP.1.WebSocket.Path "/agent-path"
+Device.LocalAgent.MTP.1.WebSocket.EnableEncryption "true"
+
+Device.LocalAgent.Controller.1.Alias "cpe-1"
+Device.LocalAgent.Controller.1.Enable "true"
+Device.LocalAgent.Controller.1.AssignedRole "Device.LocalAgent.ControllerTrust.Role.1"
+Device.LocalAgent.Controller.1.PeriodicNotifInterval "86400"
+Device.LocalAgent.Controller.1.PeriodicNotifTime "0001-01-01T00:00:00Z"
+Device.LocalAgent.Controller.1.USPNotifRetryMinimumWaitInterval "5"
+Device.LocalAgent.Controller.1.USPNotifRetryIntervalMultiplier "2000"
+Device.LocalAgent.Controller.1.ControllerCode ""
+Device.LocalAgent.Controller.1.EndpointID "proto::controller-id"
+
+Device.LocalAgent.Controller.1.MTP.1.Alias "cpe-1"
+Device.LocalAgent.Controller.1.MTP.1.Enable "true"
+Device.LocalAgent.Controller.1.MTP.1.Protocol "WebSocket"
+Device.LocalAgent.Controller.1.MTP.1.WebSocket.Host "controller.cdroutertest.com"
+Device.LocalAgent.Controller.1.MTP.1.WebSocket.Port "443"
+Device.LocalAgent.Controller.1.MTP.1.WebSocket.Path "/controller-path"
+Device.LocalAgent.Controller.1.MTP.1.WebSocket.EnableEncryption "true"
+
+Internal.Reboot.Cause "LocalFactoryReset"

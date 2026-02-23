@@ -4,6 +4,7 @@
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020, BT PLC
+ * Copyright (C) Copyright (c) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -118,6 +119,9 @@ typedef struct
     Usp__Header__MsgType usp_msg_type;  // USP Message type
     uint8_t *pbuf;                      // Payload to be sent by the MTP (USP Record)
     int pbuf_len;                       // Length of the payload
+#ifdef FD_PASSING_EXPERIMENTAL
+    unsigned int fd_key;                // Key of buffer with file descriptors in global file descriptors map
+#endif
 } mtp_send_item_t;
 
 //------------------------------------------------------------------------------

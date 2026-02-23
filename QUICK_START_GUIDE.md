@@ -85,7 +85,7 @@ To start with, use the last option, as this is the simplest method.
 If OB-USP-AGENT cannot find a database when it starts up, then it will create one using the parameter values specified
 in the file located by the `-r` option.
 
-To specify the data model parameters and values used to create the factory reset database, modify `factory_reset_example.txt`.
+To specify the data model parameters and values used to create the factory reset database, modify `stomp_factory_reset_example.txt`.
 You will need to modify the STOMP connection parameters and the USP EndpointID of the controller to connect to.
 
 When using this option, to prevent the code in vendor_factory_reset_example.c from overriding the values specified in the
@@ -94,7 +94,7 @@ file located by the `-r` option, ensure that `INCLUDE_PROGRAMMATIC_FACTORY_RESET
 To create the database and run OB-USP-AGENT connecting to a STOMP server from network interface eth0 with protocol and trace
 logging enabled to stdout, use the following command:
 ```
-$ obuspa -p -v 4 -r factory_reset_example.txt -i eth0
+$ obuspa -p -v 4 -r stomp_factory_reset_example.txt -i eth0
 ```
 
 If OB-USP-AGENT successfully connected to your STOMP server you should see trace like the following on stdout:
@@ -128,7 +128,7 @@ If OB-USP-AGENT successfully connected to your STOMP server you should see trace
 ```
 
 If OB-USP-AGENT failed to connect, review the settings in your factory reset database and the STOMP server.
-If you subsequently change the settings in `factory_reset_example.txt`, then you must delete the database,
+If you subsequently change the settings in `stomp_factory_reset_example.txt`, then you must delete the database,
 in order that the database is re-created the next time you run OB-USP-AGENT.
 To delete the database in the default location:
 ```
@@ -510,7 +510,7 @@ A shared object will be created in `obuspa/examples/plugin/.libs/plugin.so` and 
 
 ```
 cd obuspa
-obuspa -p -v 4 -r factory_reset_example.txt -i eth0 -x examples/plugin/.libs/plugin.so
+obuspa -p -v 4 -r stomp_factory_reset_example.txt -i eth0 -x examples/plugin/.libs/plugin.so
 ```
  OB-USP-AGENT supports the loading of multiple plug-ins at start-up, each one specified using a '-x' command line switch.
 

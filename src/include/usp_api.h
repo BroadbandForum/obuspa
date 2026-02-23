@@ -3,6 +3,7 @@
  * Copyright (C) 2019-2025, Broadband Forum
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
+ * Copyright (C) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -141,6 +142,9 @@ typedef struct
     dm_req_instances_t *inst;   // Pointer to instances information for the parameter or object
     dm_val_union_t val_union;   // When performing a Set Parameter Value, stores the new value converted to it's native type
     int group_id;       // group_id of the data model provider component implementing the data model path (or NON_GROUPED if implemented internally)
+#ifdef FD_PASSING_EXPERIMENTAL
+    unsigned int fd_key; // key for file descriptors in global map
+#endif
 } dm_req_t;
 
 //------------------------------------------------------------------------------
@@ -363,6 +367,7 @@ typedef int (*get_agent_cert_cb_t)(agent_cert_info_t *info);
 typedef int (*get_hardware_version_cb_t)(char *buf, int len);
 typedef int (*dm_vendor_get_mtp_username_cb_t)(int instance, char *buf, int len);
 typedef int (*dm_vendor_get_mtp_password_cb_t)(int instance, char *buf, int len);
+typedef int (*dm_vendor_get_uds_password_cb_t)(char *buf, int len);
 typedef void (*log_message_cb_t)(const char *buf);
 typedef void (*modify_firmware_updated_cb_t)(bool *is_firmware_updated);
 typedef bool (*can_mtp_connect_cb_t)(void);
@@ -406,6 +411,7 @@ typedef struct
     log_message_cb_t                        log_message_cb;
     modify_firmware_updated_cb_t            modify_firmware_updated_cb;
     can_mtp_connect_cb_t                    can_mtp_connect_cb;
+    dm_vendor_get_uds_password_cb_t         get_uds_password_cb;
 
 } vendor_hook_cb_t;
 

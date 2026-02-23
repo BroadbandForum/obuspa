@@ -42,6 +42,7 @@ add_library(core
     group_add_vector.c
     group_del_vector.c
     inst_sel_vector.c
+    fd_vector.c
     proto_trace.c
     data_model.c
     error_resp.c

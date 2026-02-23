@@ -1,0 +1,888 @@
+STOMP
+--------------------+------+-----------------------------------------------------------
+usp_conformance_1_1    Pass| Add message with allow partial false, single object, required parameters succeed
+usp_conformance_1_2    Pass| Add message with allow partial true, single object, required parameters succeed
+usp_conformance_1_3    Pass| Add message with allow partial false, single object, required parameters fail
+usp_conformance_1_4    Pass| Add message with allow partial false, single invalid object
+usp_conformance_1_5    Pass| Add message with allow partial false, multiple objects
+usp_conformance_1_6    Pass| Add message with allow partial false, multiple objects with an invalid object
+usp_conformance_1_7    Pass| Add message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_8    Pass| Add message with allow partial true, required parameters fail, invalid type, single object
+usp_conformance_1_9    Pass| Add message with allow partial true, required parameters fail, multiple objects
+usp_conformance_1_10   Pass| Add message with unique key addressing in path
+usp_conformance_1_11   Pass| Set message with allow partial false, required parameters pass
+usp_conformance_1_12   Pass| Set message with allow partial true, required parameters pass
+usp_conformance_1_13   Pass| Set message with allow partial false, multiple objects
+usp_conformance_1_14   Pass| Set message with allow partial false, required parameters fail
+usp_conformance_1_15   Pass| Set message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_16   Pass| Set message with allow partial true, required parameter fails, multiple objects
+usp_conformance_1_17   Pass| Set message with allow partial true, non-required parameter fails, multiple parameters
+usp_conformance_1_18   Pass| Set message with unique key addressing in path
+usp_conformance_1_19   Pass| Set message with wildcard search path, allow partial false, required parameters pass
+usp_conformance_1_20   Pass| Set message with wildcard search path, allow partial false, required parameters fail
+usp_conformance_1_21   Pass| Set message with wildcard search path, allow partial true, required parameters fail
+usp_conformance_1_22   Pass| Set message with search expression search path
+usp_conformance_1_23   Pass| Set message with path that matches no objects
+usp_conformance_1_24   Pass| Delete message with allow partial false, valid object instance
+usp_conformance_1_25   Pass| Delete message with allow partial false, object instance doesn't exist
+usp_conformance_1_26   Pass| Delete message with allow partial false, invalid object
+usp_conformance_1_27   Pass| Delete message with allow partial false, multiple objects
+usp_conformance_1_28   Pass| Delete message with allow partial false, multiple objects, invalid object
+usp_conformance_1_29   Pass| Delete message with allow partial true, object instance doesn't exist
+usp_conformance_1_30   Pass| Delete message with allow partial true, invalid object
+usp_conformance_1_31   Pass| Delete message with allow partial true, multiple objects, invalid object
+usp_conformance_1_32   Pass| Delete message with allow partial true, multiple objects, object doesn't exist
+usp_conformance_1_33   Pass| Delete message with unique key addressing
+usp_conformance_1_34   Pass| Delete message with wildcard search path, valid objects
+usp_conformance_1_35   Pass| Delete message with search expression search path
+usp_conformance_1_36   Pass| Get message with full parameter path
+usp_conformance_1_37   Pass| Get message with multiple full parameter paths, same object
+usp_conformance_1_38   Pass| Get message with multiple full parameter paths, different objects
+usp_conformance_1_39   Pass| Get message with object path
+usp_conformance_1_40   Pass| Get message with object instance path
+usp_conformance_1_41   Pass| Get message with invalid parameter
+usp_conformance_1_42   Pass| Get message with invalid parameter and valid parameter
+usp_conformance_1_43   Pass| Get message using unique key addressing
+usp_conformance_1_44   Pass| Get message using wildcard search path on full parameter
+usp_conformance_1_45   Pass| Get message using wildcard search path on object path
+usp_conformance_1_46   Pass| Get message using search expression search path (equivalence)
+usp_conformance_1_47   Pass| Get message using search expression search path (non-equivalence)
+usp_conformance_1_48   Pass| Get message using search expression search path (exclusive greater comparison)
+usp_conformance_1_49   Pass| Get message using search expression search path (exclusive lesser comparison)
+usp_conformance_1_50   Pass| Get message using search expression search path (inclusive greater comparison)
+usp_conformance_1_51   Pass| Get message using search expression search path (inclusive lesser comparison)
+usp_conformance_1_52   Pass| Notify - Subscription creation using Value Change
+usp_conformance_1_53   Pass| Notify - Subscription Deletion Using Value Change
+usp_conformance_1_54   Pass| Notification Retry using Value Change
+usp_conformance_1_55   Pass| Subscription Expiration using Value Change
+usp_conformance_1_56   Pass| Notification Retry Expiration using Value Change
+usp_conformance_1_57   Pass| ObjectCreation Notification
+usp_conformance_1_58   Pass| ObjectDeletion Notification
+usp_conformance_1_59   Pass| Event Notification using Periodic!
+usp_conformance_1_60   Pass| OnBoardRequest Notification
+usp_conformance_1_61   Pass| Operate message using Reboot() with send_resp true
+usp_conformance_1_62   Pass| Operate message using Reboot() with send_resp false
+usp_conformance_1_64   Pass| Asynchronous operation with send_resp true
+usp_conformance_1_65   Pass| Asynchronous operations with send_resp false
+usp_conformance_1_66   Pass| GetInstances using a single object, first_level_only true
+usp_conformance_1_67   Pass| GetInstances using a single object, first_level_only false
+usp_conformance_1_68   Pass| GetInstances with multiple objects
+usp_conformance_1_70   Pass| GetInstances with wildcard search path
+usp_conformance_1_71   Pass| GetInstances with search expression search path
+usp_conformance_1_72   Pass| GetSupportedDM using a single object, first_level_only false, all options
+usp_conformance_1_73   Pass| GetSupportedDM using a single object, first_level_only true, all options
+usp_conformance_1_74   Pass| GetSupportedDM using a single object, first_level_only true, no options
+usp_conformance_1_75   Pass| GetSupportedDM using multiple objects, first_level_only true, all options
+usp_conformance_1_76   Pass| GetSupportedDM on root object, all options
+usp_conformance_1_77   Pass| GetSupportedDM on unsupported object
+usp_conformance_1_78   Pass| Removal of subscriptions that have no associated controller
+usp_conformance_1_79   Pass| Operate message using input args
+usp_conformance_1_80   Pass| GetSupportedProtocol
+usp_conformance_1_81   Pass| Automatic unique key generation
+usp_conformance_1_82   Pass| Get message with unmatched search expression
+usp_conformance_1_83   Pass| GetInstances message with unmatched search expression
+usp_conformance_1_84   Pass| Notification - Subscription using search paths
+usp_conformance_1_86   Pass| Get message with unresolved instances - using a search path
+usp_conformance_1_87   Pass| Get message with unresolved instances - using an object path
+usp_conformance_1_88   Pass| Add message fails when unique key is invalid
+usp_conformance_1_89   Pass| Get message using max_depth
+usp_conformance_1_90   Pass| Delete message with search expression that matches no objects
+usp_conformance_1_91   Pass| Unknown arguments in an Operate message
+usp_conformance_1_95   Pass| Add message with search expression
+usp_conformance_1_96   Pass| Non-functional Unique Key Immutability
+usp_conformance_1_97   Pass| GetSupportedDM on root object, commands
+usp_conformance_1_98   Pass| GetSupportedDM on root object, events
+usp_conformance_1_99   Pass| GetSupportedDM on root object, unique_key_sets
+usp_conformance_1_100  Pass| Command with missing mandatory input_args
+usp_conformance_1_104  Pass| Set message on WriteOnceReadOnly parameter
+usp_conformance_1_105  Pass| GetSupportedDM on a Command
+usp_conformance_1_106  Pass| GetSupportedDM on an Event
+usp_conformance_1_107  Pass| GetSupportedDM on a Parameter
+usp_conformance_2_1    Pass| Agent does not accept messages from its own Endpoint ID
+usp_conformance_2_2    Pass| Agent rejects messages that do not contain it's to_id in the USP Record
+usp_conformance_2_10   Pass| Adding a Role
+usp_conformance_2_11   Pass| Permissions - Object Creation Allowed
+usp_conformance_2_12   Pass| Permissions - Object Creation Not Allowed
+usp_conformance_2_13   Pass| Permissions - Object Deletion Allowed
+usp_conformance_2_14   Pass| Permissions - Object Deletion Not Allowed
+usp_conformance_2_15   Pass| Permissions - Parameter Update Allowed
+usp_conformance_2_16   Pass| Permissions - Parameter Update Not Allowed
+usp_conformance_2_17   Pass| Permission - Operation Allowed
+usp_conformance_2_18   Pass| Permissions - Operation Not Allowed
+usp_conformance_2_19   Pass| Permissions - Value Change Notification Allowed on Parameter
+usp_conformance_2_20   Pass| Permissions - Value Change Notification Not Allowed on Parameter
+usp_conformance_2_21   Pass| Permissions - Overlapping Permissions
+usp_conformance_2_22   Pass| Using Get when no read permissions are available on some parameters
+usp_conformance_2_23   Pass| Permissions - Add message with search path, allow partial true, required parameters fail
+usp_conformance_2_24   Pass| Permissions - Add message with search path, allow partial false, required parameters fail
+usp_conformance_2_25   Pass| Permissions - Parameter within added object not allowed, omitted
+usp_conformance_2_26   Pass| Permissions - Parameter within added object not allowed, included
+usp_conformance_3_1    Pass| Bad request outside a session context
+usp_conformance_6_1    Pass| Support of Required Profiles
+usp_conformance_6_2    Pass| STOMP session establishment
+usp_conformance_6_3    Pass| STOMP Connection Retry
+usp_conformance_6_4    Pass| Successful USP message over STOMP with required headers
+usp_conformance_6_5    Pass| STOMP destination - provided in subscribe-dest
+usp_conformance_6_6    Pass| STOMP destination - configured in USP data model
+usp_conformance_6_7    Pass| STOMP Destination - Terminates Unconfigured Session
+usp_conformance_6_8    Pass| Use of STOMP heartbeat mechanism
+usp_conformance_6_9    Pass| Error Handling - Unprocessed Record
+usp_conformance_6_10   Pass| Agent's STOMP destination is changed
+usp_conformance_6_12   Pass| STOMP - Use of Connect Record
+usp_conformance_9_2    Pass| Use of Device.LocalAgent.AddCertificate()
+usp_conformance_9_9    Pass| Adding a New Controller- OnBoardingRequest
+usp_conformance_9_11   Pass| Use of the Timer! Event
+usp_conformance_10_1   Pass| Use BulkData collection using HTTP and JSON
+usp_conformance_10_2   Pass| Use BulkData collection using HTTPS and JSON
+usp_conformance_10_5   Pass| Use BulkData collection using HTTP and URI Parameters
+usp_conformance_10_6   Pass| Use BulkData collection using HTTPS and URI Parameters
+usp_conformance_10_7   Pass| Use BulkData collection retry mechanism over HTTP
+usp_conformance_10_8   Pass| Use BulkData collection using HTTP with wildcard parameter
+usp_conformance_10_9   Pass| Use BulkData collection using HTTP with Object Path
+usp_conformance_10_10  Pass| Use BulkData collection using Push event
+usp_conformance_10_11  Pass| Use BulkData collection using Push event with wildcard parameter
+usp_conformance_10_12  Pass| Use BulkData collection using Push event with Object Path
+usp_conformance_10_13  Pass| Use BulkData collection over MQTT
+
+STOMP over TLS
+--------------------+------+-----------------------------------------------------------
+usp_conformance_1_1    Pass| Add message with allow partial false, single object, required parameters succeed
+usp_conformance_1_2    Pass| Add message with allow partial true, single object, required parameters succeed
+usp_conformance_1_3    Pass| Add message with allow partial false, single object, required parameters fail
+usp_conformance_1_4    Pass| Add message with allow partial false, single invalid object
+usp_conformance_1_5    Pass| Add message with allow partial false, multiple objects
+usp_conformance_1_6    Pass| Add message with allow partial false, multiple objects with an invalid object
+usp_conformance_1_7    Pass| Add message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_8    Pass| Add message with allow partial true, required parameters fail, invalid type, single object
+usp_conformance_1_9    Pass| Add message with allow partial true, required parameters fail, multiple objects
+usp_conformance_1_10   Pass| Add message with unique key addressing in path
+usp_conformance_1_11   Pass| Set message with allow partial false, required parameters pass
+usp_conformance_1_12   Pass| Set message with allow partial true, required parameters pass
+usp_conformance_1_13   Pass| Set message with allow partial false, multiple objects
+usp_conformance_1_14   Pass| Set message with allow partial false, required parameters fail
+usp_conformance_1_15   Pass| Set message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_16   Pass| Set message with allow partial true, required parameter fails, multiple objects
+usp_conformance_1_17   Pass| Set message with allow partial true, non-required parameter fails, multiple parameters
+usp_conformance_1_18   Pass| Set message with unique key addressing in path
+usp_conformance_1_19   Pass| Set message with wildcard search path, allow partial false, required parameters pass
+usp_conformance_1_20   Pass| Set message with wildcard search path, allow partial false, required parameters fail
+usp_conformance_1_21   Pass| Set message with wildcard search path, allow partial true, required parameters fail
+usp_conformance_1_22   Pass| Set message with search expression search path
+usp_conformance_1_23   Pass| Set message with path that matches no objects
+usp_conformance_1_24   Pass| Delete message with allow partial false, valid object instance
+usp_conformance_1_25   Pass| Delete message with allow partial false, object instance doesn't exist
+usp_conformance_1_26   Pass| Delete message with allow partial false, invalid object
+usp_conformance_1_27   Pass| Delete message with allow partial false, multiple objects
+usp_conformance_1_28   Pass| Delete message with allow partial false, multiple objects, invalid object
+usp_conformance_1_29   Pass| Delete message with allow partial true, object instance doesn't exist
+usp_conformance_1_30   Pass| Delete message with allow partial true, invalid object
+usp_conformance_1_31   Pass| Delete message with allow partial true, multiple objects, invalid object
+usp_conformance_1_32   Pass| Delete message with allow partial true, multiple objects, object doesn't exist
+usp_conformance_1_33   Pass| Delete message with unique key addressing
+usp_conformance_1_34   Pass| Delete message with wildcard search path, valid objects
+usp_conformance_1_35   Pass| Delete message with search expression search path
+usp_conformance_1_36   Pass| Get message with full parameter path
+usp_conformance_1_37   Pass| Get message with multiple full parameter paths, same object
+usp_conformance_1_38   Pass| Get message with multiple full parameter paths, different objects
+usp_conformance_1_39   Pass| Get message with object path
+usp_conformance_1_40   Pass| Get message with object instance path
+usp_conformance_1_41   Pass| Get message with invalid parameter
+usp_conformance_1_42   Pass| Get message with invalid parameter and valid parameter
+usp_conformance_1_43   Pass| Get message using unique key addressing
+usp_conformance_1_44   Pass| Get message using wildcard search path on full parameter
+usp_conformance_1_45   Pass| Get message using wildcard search path on object path
+usp_conformance_1_46   Pass| Get message using search expression search path (equivalence)
+usp_conformance_1_47   Pass| Get message using search expression search path (non-equivalence)
+usp_conformance_1_48   Pass| Get message using search expression search path (exclusive greater comparison)
+usp_conformance_1_49   Pass| Get message using search expression search path (exclusive lesser comparison)
+usp_conformance_1_50   Pass| Get message using search expression search path (inclusive greater comparison)
+usp_conformance_1_51   Pass| Get message using search expression search path (inclusive lesser comparison)
+usp_conformance_1_52   Pass| Notify - Subscription creation using Value Change
+usp_conformance_1_53   Pass| Notify - Subscription Deletion Using Value Change
+usp_conformance_1_54   Pass| Notification Retry using Value Change
+usp_conformance_1_55   Pass| Subscription Expiration using Value Change
+usp_conformance_1_56   Pass| Notification Retry Expiration using Value Change
+usp_conformance_1_57   Pass| ObjectCreation Notification
+usp_conformance_1_58   Pass| ObjectDeletion Notification
+usp_conformance_1_59   Pass| Event Notification using Periodic!
+usp_conformance_1_60   Pass| OnBoardRequest Notification
+usp_conformance_1_61   Pass| Operate message using Reboot() with send_resp true
+usp_conformance_1_62   Pass| Operate message using Reboot() with send_resp false
+usp_conformance_1_64   Pass| Asynchronous operation with send_resp true
+usp_conformance_1_65   Pass| Asynchronous operations with send_resp false
+usp_conformance_1_66   Pass| GetInstances using a single object, first_level_only true
+usp_conformance_1_67   Pass| GetInstances using a single object, first_level_only false
+usp_conformance_1_68   Pass| GetInstances with multiple objects
+usp_conformance_1_70   Pass| GetInstances with wildcard search path
+usp_conformance_1_71   Pass| GetInstances with search expression search path
+usp_conformance_1_72   Pass| GetSupportedDM using a single object, first_level_only false, all options
+usp_conformance_1_73   Pass| GetSupportedDM using a single object, first_level_only true, all options
+usp_conformance_1_74   Pass| GetSupportedDM using a single object, first_level_only true, no options
+usp_conformance_1_75   Pass| GetSupportedDM using multiple objects, first_level_only true, all options
+usp_conformance_1_76   Pass| GetSupportedDM on root object, all options
+usp_conformance_1_77   Pass| GetSupportedDM on unsupported object
+usp_conformance_1_78   Pass| Removal of subscriptions that have no associated controller
+usp_conformance_1_79   Pass| Operate message using input args
+usp_conformance_1_80   Pass| GetSupportedProtocol
+usp_conformance_1_81   Pass| Automatic unique key generation
+usp_conformance_1_82   Pass| Get message with unmatched search expression
+usp_conformance_1_83   Pass| GetInstances message with unmatched search expression
+usp_conformance_1_84   Pass| Notification - Subscription using search paths
+usp_conformance_1_86   Pass| Get message with unresolved instances - using a search path
+usp_conformance_1_87   Pass| Get message with unresolved instances - using an object path
+usp_conformance_1_88   Pass| Add message fails when unique key is invalid
+usp_conformance_1_89   Pass| Get message using max_depth
+usp_conformance_1_90   Pass| Delete message with search expression that matches no objects
+usp_conformance_1_91   Pass| Unknown arguments in an Operate message
+usp_conformance_1_95   Pass| Add message with search expression
+usp_conformance_1_96   Pass| Non-functional Unique Key Immutability
+usp_conformance_1_97   Pass| GetSupportedDM on root object, commands
+usp_conformance_1_98   Pass| GetSupportedDM on root object, events
+usp_conformance_1_99   Pass| GetSupportedDM on root object, unique_key_sets
+usp_conformance_1_100  Pass| Command with missing mandatory input_args
+usp_conformance_1_104  Pass| Set message on WriteOnceReadOnly parameter
+usp_conformance_1_105  Pass| GetSupportedDM on a Command
+usp_conformance_1_106  Pass| GetSupportedDM on an Event
+usp_conformance_1_107  Pass| GetSupportedDM on a Parameter
+usp_conformance_2_1    Pass| Agent does not accept messages from its own Endpoint ID
+usp_conformance_2_2    Pass| Agent rejects messages that do not contain it's to_id in the USP Record
+usp_conformance_2_10   Pass| Adding a Role
+usp_conformance_2_11   Pass| Permissions - Object Creation Allowed
+usp_conformance_2_12   Pass| Permissions - Object Creation Not Allowed
+usp_conformance_2_13   Pass| Permissions - Object Deletion Allowed
+usp_conformance_2_14   Pass| Permissions - Object Deletion Not Allowed
+usp_conformance_2_15   Pass| Permissions - Parameter Update Allowed
+usp_conformance_2_16   Pass| Permissions - Parameter Update Not Allowed
+usp_conformance_2_17   Pass| Permission - Operation Allowed
+usp_conformance_2_18   Pass| Permissions - Operation Not Allowed
+usp_conformance_2_19   Pass| Permissions - Value Change Notification Allowed on Parameter
+usp_conformance_2_20   Pass| Permissions - Value Change Notification Not Allowed on Parameter
+usp_conformance_2_21   Pass| Permissions - Overlapping Permissions
+usp_conformance_2_22   Pass| Using Get when no read permissions are available on some parameters
+usp_conformance_2_23   Pass| Permissions - Add message with search path, allow partial true, required parameters fail
+usp_conformance_2_24   Pass| Permissions - Add message with search path, allow partial false, required parameters fail
+usp_conformance_2_25   Pass| Permissions - Parameter within added object not allowed, omitted
+usp_conformance_2_26   Pass| Permissions - Parameter within added object not allowed, included
+usp_conformance_3_1    Pass| Bad request outside a session context
+usp_conformance_4_1    Pass| Use of X.509 Certificates at the MTP Layer
+usp_conformance_6_1    Pass| Support of Required Profiles
+usp_conformance_6_2    Pass| STOMP session establishment
+usp_conformance_6_3    Pass| STOMP Connection Retry
+usp_conformance_6_4    Pass| Successful USP message over STOMP with required headers
+usp_conformance_6_5    Pass| STOMP destination - provided in subscribe-dest
+usp_conformance_6_6    Pass| STOMP destination - configured in USP data model
+usp_conformance_6_7    Pass| STOMP Destination - Terminates Unconfigured Session
+usp_conformance_6_8    Pass| Use of STOMP heartbeat mechanism
+usp_conformance_6_9    Pass| Error Handling - Unprocessed Record
+usp_conformance_6_10   Pass| Agent's STOMP destination is changed
+usp_conformance_6_11   Pass| STOMP - Use of TLS
+usp_conformance_6_12   Pass| STOMP - Use of Connect Record
+usp_conformance_9_2    Pass| Use of Device.LocalAgent.AddCertificate()
+usp_conformance_9_9    Pass| Adding a New Controller- OnBoardingRequest
+usp_conformance_9_11   Pass| Use of the Timer! Event
+usp_conformance_10_1   Pass| Use BulkData collection using HTTP and JSON
+usp_conformance_10_2   Pass| Use BulkData collection using HTTPS and JSON
+usp_conformance_10_5   Pass| Use BulkData collection using HTTP and URI Parameters
+usp_conformance_10_6   Pass| Use BulkData collection using HTTPS and URI Parameters
+usp_conformance_10_7   Pass| Use BulkData collection retry mechanism over HTTP
+usp_conformance_10_8   Pass| Use BulkData collection using HTTP with wildcard parameter
+usp_conformance_10_9   Pass| Use BulkData collection using HTTP with Object Path
+usp_conformance_10_10  Pass| Use BulkData collection using Push event
+usp_conformance_10_11  Pass| Use BulkData collection using Push event with wildcard parameter
+usp_conformance_10_12  Pass| Use BulkData collection using Push event with Object Path
+usp_conformance_10_13  Pass| Use BulkData collection over MQTT
+
+MQTT
+--------------------+------+-----------------------------------------------------------
+usp_conformance_1_1    Pass| Add message with allow partial false, single object, required parameters succeed
+usp_conformance_1_2    Pass| Add message with allow partial true, single object, required parameters succeed
+usp_conformance_1_3    Pass| Add message with allow partial false, single object, required parameters fail
+usp_conformance_1_4    Pass| Add message with allow partial false, single invalid object
+usp_conformance_1_5    Pass| Add message with allow partial false, multiple objects
+usp_conformance_1_6    Pass| Add message with allow partial false, multiple objects with an invalid object
+usp_conformance_1_7    Pass| Add message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_8    Pass| Add message with allow partial true, required parameters fail, invalid type, single object
+usp_conformance_1_9    Pass| Add message with allow partial true, required parameters fail, multiple objects
+usp_conformance_1_10   Pass| Add message with unique key addressing in path
+usp_conformance_1_11   Pass| Set message with allow partial false, required parameters pass
+usp_conformance_1_12   Pass| Set message with allow partial true, required parameters pass
+usp_conformance_1_13   Pass| Set message with allow partial false, multiple objects
+usp_conformance_1_14   Pass| Set message with allow partial false, required parameters fail
+usp_conformance_1_15   Pass| Set message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_16   Pass| Set message with allow partial true, required parameter fails, multiple objects
+usp_conformance_1_17   Pass| Set message with allow partial true, non-required parameter fails, multiple parameters
+usp_conformance_1_18   Pass| Set message with unique key addressing in path
+usp_conformance_1_19   Pass| Set message with wildcard search path, allow partial false, required parameters pass
+usp_conformance_1_20   Pass| Set message with wildcard search path, allow partial false, required parameters fail
+usp_conformance_1_21   Pass| Set message with wildcard search path, allow partial true, required parameters fail
+usp_conformance_1_22   Pass| Set message with search expression search path
+usp_conformance_1_23   Pass| Set message with path that matches no objects
+usp_conformance_1_24   Pass| Delete message with allow partial false, valid object instance
+usp_conformance_1_25   Pass| Delete message with allow partial false, object instance doesn't exist
+usp_conformance_1_26   Pass| Delete message with allow partial false, invalid object
+usp_conformance_1_27   Pass| Delete message with allow partial false, multiple objects
+usp_conformance_1_28   Pass| Delete message with allow partial false, multiple objects, invalid object
+usp_conformance_1_29   Pass| Delete message with allow partial true, object instance doesn't exist
+usp_conformance_1_30   Pass| Delete message with allow partial true, invalid object
+usp_conformance_1_31   Pass| Delete message with allow partial true, multiple objects, invalid object
+usp_conformance_1_32   Pass| Delete message with allow partial true, multiple objects, object doesn't exist
+usp_conformance_1_33   Pass| Delete message with unique key addressing
+usp_conformance_1_34   Pass| Delete message with wildcard search path, valid objects
+usp_conformance_1_35   Pass| Delete message with search expression search path
+usp_conformance_1_36   Pass| Get message with full parameter path
+usp_conformance_1_37   Pass| Get message with multiple full parameter paths, same object
+usp_conformance_1_38   Pass| Get message with multiple full parameter paths, different objects
+usp_conformance_1_39   Pass| Get message with object path
+usp_conformance_1_40   Pass| Get message with object instance path
+usp_conformance_1_41   Pass| Get message with invalid parameter
+usp_conformance_1_42   Pass| Get message with invalid parameter and valid parameter
+usp_conformance_1_43   Pass| Get message using unique key addressing
+usp_conformance_1_44   Pass| Get message using wildcard search path on full parameter
+usp_conformance_1_45   Pass| Get message using wildcard search path on object path
+usp_conformance_1_46   Pass| Get message using search expression search path (equivalence)
+usp_conformance_1_47   Pass| Get message using search expression search path (non-equivalence)
+usp_conformance_1_48   Pass| Get message using search expression search path (exclusive greater comparison)
+usp_conformance_1_49   Pass| Get message using search expression search path (exclusive lesser comparison)
+usp_conformance_1_50   Pass| Get message using search expression search path (inclusive greater comparison)
+usp_conformance_1_51   Pass| Get message using search expression search path (inclusive lesser comparison)
+usp_conformance_1_52   Pass| Notify - Subscription creation using Value Change
+usp_conformance_1_53   Pass| Notify - Subscription Deletion Using Value Change
+usp_conformance_1_54   Pass| Notification Retry using Value Change
+usp_conformance_1_55   Pass| Subscription Expiration using Value Change
+usp_conformance_1_56   Pass| Notification Retry Expiration using Value Change
+usp_conformance_1_57   Pass| ObjectCreation Notification
+usp_conformance_1_58   Pass| ObjectDeletion Notification
+usp_conformance_1_59   Pass| Event Notification using Periodic!
+usp_conformance_1_60   Pass| OnBoardRequest Notification
+usp_conformance_1_61   Pass| Operate message using Reboot() with send_resp true
+usp_conformance_1_62   Pass| Operate message using Reboot() with send_resp false
+usp_conformance_1_64   Pass| Asynchronous operation with send_resp true
+usp_conformance_1_65   Pass| Asynchronous operations with send_resp false
+usp_conformance_1_66   Pass| GetInstances using a single object, first_level_only true
+usp_conformance_1_67   Pass| GetInstances using a single object, first_level_only false
+usp_conformance_1_68   Pass| GetInstances with multiple objects
+usp_conformance_1_70   Pass| GetInstances with wildcard search path
+usp_conformance_1_71   Pass| GetInstances with search expression search path
+usp_conformance_1_72   Pass| GetSupportedDM using a single object, first_level_only false, all options
+usp_conformance_1_73   Pass| GetSupportedDM using a single object, first_level_only true, all options
+usp_conformance_1_74   Pass| GetSupportedDM using a single object, first_level_only true, no options
+usp_conformance_1_75   Pass| GetSupportedDM using multiple objects, first_level_only true, all options
+usp_conformance_1_76   Pass| GetSupportedDM on root object, all options
+usp_conformance_1_77   Pass| GetSupportedDM on unsupported object
+usp_conformance_1_78   Pass| Removal of subscriptions that have no associated controller
+usp_conformance_1_79   Pass| Operate message using input args
+usp_conformance_1_80   Pass| GetSupportedProtocol
+usp_conformance_1_81   Pass| Automatic unique key generation
+usp_conformance_1_82   Pass| Get message with unmatched search expression
+usp_conformance_1_83   Pass| GetInstances message with unmatched search expression
+usp_conformance_1_84   Pass| Notification - Subscription using search paths
+usp_conformance_1_86   Pass| Get message with unresolved instances - using a search path
+usp_conformance_1_87   Pass| Get message with unresolved instances - using an object path
+usp_conformance_1_88   Pass| Add message fails when unique key is invalid
+usp_conformance_1_89   Pass| Get message using max_depth
+usp_conformance_1_90   Pass| Delete message with search expression that matches no objects
+usp_conformance_1_91   Pass| Unknown arguments in an Operate message
+usp_conformance_1_95   Pass| Add message with search expression
+usp_conformance_1_96   Pass| Non-functional Unique Key Immutability
+usp_conformance_1_97   Pass| GetSupportedDM on root object, commands
+usp_conformance_1_98   Pass| GetSupportedDM on root object, events
+usp_conformance_1_99   Pass| GetSupportedDM on root object, unique_key_sets
+usp_conformance_1_100  Pass| Command with missing mandatory input_args
+usp_conformance_1_104  Pass| Set message on WriteOnceReadOnly parameter
+usp_conformance_1_105  Pass| GetSupportedDM on a Command
+usp_conformance_1_106  Pass| GetSupportedDM on an Event
+usp_conformance_1_107  Pass| GetSupportedDM on a Parameter
+usp_conformance_2_1    Pass| Agent does not accept messages from its own Endpoint ID
+usp_conformance_2_2    Pass| Agent rejects messages that do not contain it's to_id in the USP Record
+usp_conformance_2_10   Pass| Adding a Role
+usp_conformance_2_11   Pass| Permissions - Object Creation Allowed
+usp_conformance_2_12   Pass| Permissions - Object Creation Not Allowed
+usp_conformance_2_13   Pass| Permissions - Object Deletion Allowed
+usp_conformance_2_14   Pass| Permissions - Object Deletion Not Allowed
+usp_conformance_2_15   Pass| Permissions - Parameter Update Allowed
+usp_conformance_2_16   Pass| Permissions - Parameter Update Not Allowed
+usp_conformance_2_17   Pass| Permission - Operation Allowed
+usp_conformance_2_18   Pass| Permissions - Operation Not Allowed
+usp_conformance_2_19   Pass| Permissions - Value Change Notification Allowed on Parameter
+usp_conformance_2_20   Pass| Permissions - Value Change Notification Not Allowed on Parameter
+usp_conformance_2_21   Pass| Permissions - Overlapping Permissions
+usp_conformance_2_22   Pass| Using Get when no read permissions are available on some parameters
+usp_conformance_2_23   Pass| Permissions - Add message with search path, allow partial true, required parameters fail
+usp_conformance_2_24   Pass| Permissions - Add message with search path, allow partial false, required parameters fail
+usp_conformance_2_25   Pass| Permissions - Parameter within added object not allowed, omitted
+usp_conformance_2_26   Pass| Permissions - Parameter within added object not allowed, included
+usp_conformance_3_1    Pass| Bad request outside a session context
+usp_conformance_9_2    Pass| Use of Device.LocalAgent.AddCertificate()
+usp_conformance_9_9    Pass| Adding a New Controller- OnBoardingRequest
+usp_conformance_9_11   Pass| Use of the Timer! Event
+usp_conformance_10_1   Pass| Use BulkData collection using HTTP and JSON
+usp_conformance_10_2   Pass| Use BulkData collection using HTTPS and JSON
+usp_conformance_10_5   Pass| Use BulkData collection using HTTP and URI Parameters
+usp_conformance_10_6   Pass| Use BulkData collection using HTTPS and URI Parameters
+usp_conformance_10_7   Pass| Use BulkData collection retry mechanism over HTTP
+usp_conformance_10_8   Pass| Use BulkData collection using HTTP with wildcard parameter
+usp_conformance_10_9   Pass| Use BulkData collection using HTTP with Object Path
+usp_conformance_10_10  Pass| Use BulkData collection using Push event
+usp_conformance_10_11  Pass| Use BulkData collection using Push event with wildcard parameter
+usp_conformance_10_12  Pass| Use BulkData collection using Push event with Object Path
+usp_conformance_10_13  Pass| Use BulkData collection over MQTT
+usp_conformance_11_1   Pass| Support of Required MQTT Profiles
+usp_conformance_11_2   Pass| MQTT session establishment using a CONNECT packet
+usp_conformance_11_4   Pass| MQTT 5.0 ClientID
+usp_conformance_11_5   Pass| MQTT ClientID Persistence
+usp_conformance_11_6   Pass| MQTT Message Retry
+usp_conformance_11_7   Pass| MQTT Keep Alive
+usp_conformance_11_8  +FAIL| MQTT SUBSCRIBE Packet
+usp_conformance_11_9   Pass| MQTT New Subscription
+usp_conformance_11_10  Pass| MQTT No Topic in CONNACK
+usp_conformance_11_11  Pass| MQTT Failure to Subscribe
+usp_conformance_11_12  Pass| MQTT PUBLISH Packet
+usp_conformance_11_13  Pass| MQTT QoS
+usp_conformance_11_14  Pass| MQTT Reply to Topic
+usp_conformance_11_15  Pass| MQTT 5.0 Content Type
+usp_conformance_11_16  Pass| MQTT Connection Retry
+usp_conformance_11_17  Pass| MQTT - Use of Connect Record
+
+MQTT over TLS
+--------------------+------+-----------------------------------------------------------
+usp_conformance_1_1    Pass| Add message with allow partial false, single object, required parameters succeed
+usp_conformance_1_2    Pass| Add message with allow partial true, single object, required parameters succeed
+usp_conformance_1_3    Pass| Add message with allow partial false, single object, required parameters fail
+usp_conformance_1_4    Pass| Add message with allow partial false, single invalid object
+usp_conformance_1_5    Pass| Add message with allow partial false, multiple objects
+usp_conformance_1_6    Pass| Add message with allow partial false, multiple objects with an invalid object
+usp_conformance_1_7    Pass| Add message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_8    Pass| Add message with allow partial true, required parameters fail, invalid type, single object
+usp_conformance_1_9    Pass| Add message with allow partial true, required parameters fail, multiple objects
+usp_conformance_1_10   Pass| Add message with unique key addressing in path
+usp_conformance_1_11   Pass| Set message with allow partial false, required parameters pass
+usp_conformance_1_12   Pass| Set message with allow partial true, required parameters pass
+usp_conformance_1_13   Pass| Set message with allow partial false, multiple objects
+usp_conformance_1_14   Pass| Set message with allow partial false, required parameters fail
+usp_conformance_1_15   Pass| Set message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_16   Pass| Set message with allow partial true, required parameter fails, multiple objects
+usp_conformance_1_17   Pass| Set message with allow partial true, non-required parameter fails, multiple parameters
+usp_conformance_1_18   Pass| Set message with unique key addressing in path
+usp_conformance_1_19   Pass| Set message with wildcard search path, allow partial false, required parameters pass
+usp_conformance_1_20   Pass| Set message with wildcard search path, allow partial false, required parameters fail
+usp_conformance_1_21   Pass| Set message with wildcard search path, allow partial true, required parameters fail
+usp_conformance_1_22   Pass| Set message with search expression search path
+usp_conformance_1_23   Pass| Set message with path that matches no objects
+usp_conformance_1_24   Pass| Delete message with allow partial false, valid object instance
+usp_conformance_1_25   Pass| Delete message with allow partial false, object instance doesn't exist
+usp_conformance_1_26   Pass| Delete message with allow partial false, invalid object
+usp_conformance_1_27   Pass| Delete message with allow partial false, multiple objects
+usp_conformance_1_28   Pass| Delete message with allow partial false, multiple objects, invalid object
+usp_conformance_1_29   Pass| Delete message with allow partial true, object instance doesn't exist
+usp_conformance_1_30   Pass| Delete message with allow partial true, invalid object
+usp_conformance_1_31   Pass| Delete message with allow partial true, multiple objects, invalid object
+usp_conformance_1_32   Pass| Delete message with allow partial true, multiple objects, object doesn't exist
+usp_conformance_1_33   Pass| Delete message with unique key addressing
+usp_conformance_1_34   Pass| Delete message with wildcard search path, valid objects
+usp_conformance_1_35   Pass| Delete message with search expression search path
+usp_conformance_1_36   Pass| Get message with full parameter path
+usp_conformance_1_37   Pass| Get message with multiple full parameter paths, same object
+usp_conformance_1_38   Pass| Get message with multiple full parameter paths, different objects
+usp_conformance_1_39   Pass| Get message with object path
+usp_conformance_1_40   Pass| Get message with object instance path
+usp_conformance_1_41   Pass| Get message with invalid parameter
+usp_conformance_1_42   Pass| Get message with invalid parameter and valid parameter
+usp_conformance_1_43   Pass| Get message using unique key addressing
+usp_conformance_1_44   Pass| Get message using wildcard search path on full parameter
+usp_conformance_1_45   Pass| Get message using wildcard search path on object path
+usp_conformance_1_46   Pass| Get message using search expression search path (equivalence)
+usp_conformance_1_47   Pass| Get message using search expression search path (non-equivalence)
+usp_conformance_1_48   Pass| Get message using search expression search path (exclusive greater comparison)
+usp_conformance_1_49   Pass| Get message using search expression search path (exclusive lesser comparison)
+usp_conformance_1_50   Pass| Get message using search expression search path (inclusive greater comparison)
+usp_conformance_1_51   Pass| Get message using search expression search path (inclusive lesser comparison)
+usp_conformance_1_52   Pass| Notify - Subscription creation using Value Change
+usp_conformance_1_53   Pass| Notify - Subscription Deletion Using Value Change
+usp_conformance_1_54   Pass| Notification Retry using Value Change
+usp_conformance_1_55  +FAIL| Subscription Expiration using Value Change
+usp_conformance_1_56   Pass| Notification Retry Expiration using Value Change
+usp_conformance_1_57   Pass| ObjectCreation Notification
+usp_conformance_1_58   Pass| ObjectDeletion Notification
+usp_conformance_1_59   Pass| Event Notification using Periodic!
+usp_conformance_1_60   Pass| OnBoardRequest Notification
+usp_conformance_1_61   Pass| Operate message using Reboot() with send_resp true
+usp_conformance_1_62   Pass| Operate message using Reboot() with send_resp false
+usp_conformance_1_64   Pass| Asynchronous operation with send_resp true
+usp_conformance_1_65   Pass| Asynchronous operations with send_resp false
+usp_conformance_1_66   Pass| GetInstances using a single object, first_level_only true
+usp_conformance_1_67   Pass| GetInstances using a single object, first_level_only false
+usp_conformance_1_68   Pass| GetInstances with multiple objects
+usp_conformance_1_70   Pass| GetInstances with wildcard search path
+usp_conformance_1_71   Pass| GetInstances with search expression search path
+usp_conformance_1_72   Pass| GetSupportedDM using a single object, first_level_only false, all options
+usp_conformance_1_73   Pass| GetSupportedDM using a single object, first_level_only true, all options
+usp_conformance_1_74   Pass| GetSupportedDM using a single object, first_level_only true, no options
+usp_conformance_1_75   Pass| GetSupportedDM using multiple objects, first_level_only true, all options
+usp_conformance_1_76   Pass| GetSupportedDM on root object, all options
+usp_conformance_1_77   Pass| GetSupportedDM on unsupported object
+usp_conformance_1_78   Pass| Removal of subscriptions that have no associated controller
+usp_conformance_1_79   Pass| Operate message using input args
+usp_conformance_1_80   Pass| GetSupportedProtocol
+usp_conformance_1_81   Pass| Automatic unique key generation
+usp_conformance_1_82   Pass| Get message with unmatched search expression
+usp_conformance_1_83   Pass| GetInstances message with unmatched search expression
+usp_conformance_1_84   Pass| Notification - Subscription using search paths
+usp_conformance_1_86   Pass| Get message with unresolved instances - using a search path
+usp_conformance_1_87   Pass| Get message with unresolved instances - using an object path
+usp_conformance_1_88   Pass| Add message fails when unique key is invalid
+usp_conformance_1_89   Pass| Get message using max_depth
+usp_conformance_1_90   Pass| Delete message with search expression that matches no objects
+usp_conformance_1_91   Pass| Unknown arguments in an Operate message
+usp_conformance_1_95   Pass| Add message with search expression
+usp_conformance_1_96   Pass| Non-functional Unique Key Immutability
+usp_conformance_1_97   Pass| GetSupportedDM on root object, commands
+usp_conformance_1_98   Pass| GetSupportedDM on root object, events
+usp_conformance_1_99   Pass| GetSupportedDM on root object, unique_key_sets
+usp_conformance_1_100  Pass| Command with missing mandatory input_args
+usp_conformance_1_104  Pass| Set message on WriteOnceReadOnly parameter
+usp_conformance_1_105  Pass| GetSupportedDM on a Command
+usp_conformance_1_106  Pass| GetSupportedDM on an Event
+usp_conformance_1_107  Pass| GetSupportedDM on a Parameter
+usp_conformance_2_1    Pass| Agent does not accept messages from its own Endpoint ID
+usp_conformance_2_2    Pass| Agent rejects messages that do not contain it's to_id in the USP Record
+usp_conformance_2_10   Pass| Adding a Role
+usp_conformance_2_11   Pass| Permissions - Object Creation Allowed
+usp_conformance_2_12   Pass| Permissions - Object Creation Not Allowed
+usp_conformance_2_13   Pass| Permissions - Object Deletion Allowed
+usp_conformance_2_14   Pass| Permissions - Object Deletion Not Allowed
+usp_conformance_2_15   Pass| Permissions - Parameter Update Allowed
+usp_conformance_2_16   Pass| Permissions - Parameter Update Not Allowed
+usp_conformance_2_17   Pass| Permission - Operation Allowed
+usp_conformance_2_18   Pass| Permissions - Operation Not Allowed
+usp_conformance_2_19   Pass| Permissions - Value Change Notification Allowed on Parameter
+usp_conformance_2_20   Pass| Permissions - Value Change Notification Not Allowed on Parameter
+usp_conformance_2_21   Pass| Permissions - Overlapping Permissions
+usp_conformance_2_22   Pass| Using Get when no read permissions are available on some parameters
+usp_conformance_2_23   Pass| Permissions - Add message with search path, allow partial true, required parameters fail
+usp_conformance_2_24   Pass| Permissions - Add message with search path, allow partial false, required parameters fail
+usp_conformance_2_25   Pass| Permissions - Parameter within added object not allowed, omitted
+usp_conformance_2_26   Pass| Permissions - Parameter within added object not allowed, included
+usp_conformance_3_1    Pass| Bad request outside a session context
+usp_conformance_4_1    Pass| Use of X.509 Certificates at the MTP Layer
+usp_conformance_9_2    Pass| Use of Device.LocalAgent.AddCertificate()
+usp_conformance_9_9    Pass| Adding a New Controller- OnBoardingRequest
+usp_conformance_9_11   Pass| Use of the Timer! Event
+usp_conformance_10_1   Pass| Use BulkData collection using HTTP and JSON
+usp_conformance_10_2   Pass| Use BulkData collection using HTTPS and JSON
+usp_conformance_10_5   Pass| Use BulkData collection using HTTP and URI Parameters
+usp_conformance_10_6   Pass| Use BulkData collection using HTTPS and URI Parameters
+usp_conformance_10_7   Pass| Use BulkData collection retry mechanism over HTTP
+usp_conformance_10_8   Pass| Use BulkData collection using HTTP with wildcard parameter
+usp_conformance_10_9   Pass| Use BulkData collection using HTTP with Object Path
+usp_conformance_10_10  Pass| Use BulkData collection using Push event
+usp_conformance_10_11  Pass| Use BulkData collection using Push event with wildcard parameter
+usp_conformance_10_12  Pass| Use BulkData collection using Push event with Object Path
+usp_conformance_10_13  Pass| Use BulkData collection over MQTT
+usp_conformance_11_1   Pass| Support of Required MQTT Profiles
+usp_conformance_11_2   Pass| MQTT session establishment using a CONNECT packet
+usp_conformance_11_3   Pass| MQTT Use of TLS
+usp_conformance_11_4   Pass| MQTT 5.0 ClientID
+usp_conformance_11_5   Pass| MQTT ClientID Persistence
+usp_conformance_11_6   Pass| MQTT Message Retry
+usp_conformance_11_7   Pass| MQTT Keep Alive
+usp_conformance_11_8  +FAIL| MQTT SUBSCRIBE Packet
+usp_conformance_11_9   Pass| MQTT New Subscription
+usp_conformance_11_10  Pass| MQTT No Topic in CONNACK
+usp_conformance_11_11  Pass| MQTT Failure to Subscribe
+usp_conformance_11_12  Pass| MQTT PUBLISH Packet
+usp_conformance_11_13  Pass| MQTT QoS
+usp_conformance_11_14  Pass| MQTT Reply to Topic
+usp_conformance_11_15  Pass| MQTT 5.0 Content Type
+usp_conformance_11_16  Pass| MQTT Connection Retry
+usp_conformance_11_17  Pass| MQTT - Use of Connect Record
+
+WEBSOCKET
+--------------------+------+-----------------------------------------------------------
+usp_conformance_1_1    Pass| Add message with allow partial false, single object, required parameters succeed
+usp_conformance_1_2    Pass| Add message with allow partial true, single object, required parameters succeed
+usp_conformance_1_3    Pass| Add message with allow partial false, single object, required parameters fail
+usp_conformance_1_4    Pass| Add message with allow partial false, single invalid object
+usp_conformance_1_5    Pass| Add message with allow partial false, multiple objects
+usp_conformance_1_6    Pass| Add message with allow partial false, multiple objects with an invalid object
+usp_conformance_1_7    Pass| Add message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_8    Pass| Add message with allow partial true, required parameters fail, invalid type, single object
+usp_conformance_1_9    Pass| Add message with allow partial true, required parameters fail, multiple objects
+usp_conformance_1_10   Pass| Add message with unique key addressing in path
+usp_conformance_1_11   Pass| Set message with allow partial false, required parameters pass
+usp_conformance_1_12   Pass| Set message with allow partial true, required parameters pass
+usp_conformance_1_13   Pass| Set message with allow partial false, multiple objects
+usp_conformance_1_14   Pass| Set message with allow partial false, required parameters fail
+usp_conformance_1_15   Pass| Set message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_16   Pass| Set message with allow partial true, required parameter fails, multiple objects
+usp_conformance_1_17   Pass| Set message with allow partial true, non-required parameter fails, multiple parameters
+usp_conformance_1_18   Pass| Set message with unique key addressing in path
+usp_conformance_1_19   Pass| Set message with wildcard search path, allow partial false, required parameters pass
+usp_conformance_1_20   Pass| Set message with wildcard search path, allow partial false, required parameters fail
+usp_conformance_1_21   Pass| Set message with wildcard search path, allow partial true, required parameters fail
+usp_conformance_1_22   Pass| Set message with search expression search path
+usp_conformance_1_23   Pass| Set message with path that matches no objects
+usp_conformance_1_24   Pass| Delete message with allow partial false, valid object instance
+usp_conformance_1_25   Pass| Delete message with allow partial false, object instance doesn't exist
+usp_conformance_1_26   Pass| Delete message with allow partial false, invalid object
+usp_conformance_1_27   Pass| Delete message with allow partial false, multiple objects
+usp_conformance_1_28   Pass| Delete message with allow partial false, multiple objects, invalid object
+usp_conformance_1_29   Pass| Delete message with allow partial true, object instance doesn't exist
+usp_conformance_1_30   Pass| Delete message with allow partial true, invalid object
+usp_conformance_1_31   Pass| Delete message with allow partial true, multiple objects, invalid object
+usp_conformance_1_32   Pass| Delete message with allow partial true, multiple objects, object doesn't exist
+usp_conformance_1_33   Pass| Delete message with unique key addressing
+usp_conformance_1_34   Pass| Delete message with wildcard search path, valid objects
+usp_conformance_1_35   Pass| Delete message with search expression search path
+usp_conformance_1_36   Pass| Get message with full parameter path
+usp_conformance_1_37   Pass| Get message with multiple full parameter paths, same object
+usp_conformance_1_38   Pass| Get message with multiple full parameter paths, different objects
+usp_conformance_1_39   Pass| Get message with object path
+usp_conformance_1_40   Pass| Get message with object instance path
+usp_conformance_1_41   Pass| Get message with invalid parameter
+usp_conformance_1_42   Pass| Get message with invalid parameter and valid parameter
+usp_conformance_1_43   Pass| Get message using unique key addressing
+usp_conformance_1_44   Pass| Get message using wildcard search path on full parameter
+usp_conformance_1_45   Pass| Get message using wildcard search path on object path
+usp_conformance_1_46   Pass| Get message using search expression search path (equivalence)
+usp_conformance_1_47   Pass| Get message using search expression search path (non-equivalence)
+usp_conformance_1_48   Pass| Get message using search expression search path (exclusive greater comparison)
+usp_conformance_1_49   Pass| Get message using search expression search path (exclusive lesser comparison)
+usp_conformance_1_50   Pass| Get message using search expression search path (inclusive greater comparison)
+usp_conformance_1_51   Pass| Get message using search expression search path (inclusive lesser comparison)
+usp_conformance_1_52   Pass| Notify - Subscription creation using Value Change
+usp_conformance_1_53   Pass| Notify - Subscription Deletion Using Value Change
+usp_conformance_1_54   Pass| Notification Retry using Value Change
+usp_conformance_1_55   Pass| Subscription Expiration using Value Change
+usp_conformance_1_56   Pass| Notification Retry Expiration using Value Change
+usp_conformance_1_57   Pass| ObjectCreation Notification
+usp_conformance_1_58   Pass| ObjectDeletion Notification
+usp_conformance_1_59   Pass| Event Notification using Periodic!
+usp_conformance_1_60   Pass| OnBoardRequest Notification
+usp_conformance_1_61   Pass| Operate message using Reboot() with send_resp true
+usp_conformance_1_62   Pass| Operate message using Reboot() with send_resp false
+usp_conformance_1_64   Pass| Asynchronous operation with send_resp true
+usp_conformance_1_65   Pass| Asynchronous operations with send_resp false
+usp_conformance_1_66   Pass| GetInstances using a single object, first_level_only true
+usp_conformance_1_67   Pass| GetInstances using a single object, first_level_only false
+usp_conformance_1_68   Pass| GetInstances with multiple objects
+usp_conformance_1_70   Pass| GetInstances with wildcard search path
+usp_conformance_1_71   Pass| GetInstances with search expression search path
+usp_conformance_1_72   Pass| GetSupportedDM using a single object, first_level_only false, all options
+usp_conformance_1_73   Pass| GetSupportedDM using a single object, first_level_only true, all options
+usp_conformance_1_74   Pass| GetSupportedDM using a single object, first_level_only true, no options
+usp_conformance_1_75   Pass| GetSupportedDM using multiple objects, first_level_only true, all options
+usp_conformance_1_76   Pass| GetSupportedDM on root object, all options
+usp_conformance_1_77   Pass| GetSupportedDM on unsupported object
+usp_conformance_1_78   Pass| Removal of subscriptions that have no associated controller
+usp_conformance_1_79   Pass| Operate message using input args
+usp_conformance_1_80   Pass| GetSupportedProtocol
+usp_conformance_1_81   Pass| Automatic unique key generation
+usp_conformance_1_82   Pass| Get message with unmatched search expression
+usp_conformance_1_83   Pass| GetInstances message with unmatched search expression
+usp_conformance_1_84   Pass| Notification - Subscription using search paths
+usp_conformance_1_86   Pass| Get message with unresolved instances - using a search path
+usp_conformance_1_87   Pass| Get message with unresolved instances - using an object path
+usp_conformance_1_88   Pass| Add message fails when unique key is invalid
+usp_conformance_1_89   Pass| Get message using max_depth
+usp_conformance_1_90   Pass| Delete message with search expression that matches no objects
+usp_conformance_1_91   Pass| Unknown arguments in an Operate message
+usp_conformance_1_95   Pass| Add message with search expression
+usp_conformance_1_96   Pass| Non-functional Unique Key Immutability
+usp_conformance_1_97   Pass| GetSupportedDM on root object, commands
+usp_conformance_1_98   Pass| GetSupportedDM on root object, events
+usp_conformance_1_99   Pass| GetSupportedDM on root object, unique_key_sets
+usp_conformance_1_100  Pass| Command with missing mandatory input_args
+usp_conformance_1_104  Pass| Set message on WriteOnceReadOnly parameter
+usp_conformance_1_105  Pass| GetSupportedDM on a Command
+usp_conformance_1_106  Pass| GetSupportedDM on an Event
+usp_conformance_1_107  Pass| GetSupportedDM on a Parameter
+usp_conformance_2_1    Pass| Agent does not accept messages from its own Endpoint ID
+usp_conformance_2_2    Pass| Agent rejects messages that do not contain it's to_id in the USP Record
+usp_conformance_2_10   Pass| Adding a Role
+usp_conformance_2_11   Pass| Permissions - Object Creation Allowed
+usp_conformance_2_12   Pass| Permissions - Object Creation Not Allowed
+usp_conformance_2_13   Pass| Permissions - Object Deletion Allowed
+usp_conformance_2_14   Pass| Permissions - Object Deletion Not Allowed
+usp_conformance_2_15   Pass| Permissions - Parameter Update Allowed
+usp_conformance_2_16   Pass| Permissions - Parameter Update Not Allowed
+usp_conformance_2_17   Pass| Permission - Operation Allowed
+usp_conformance_2_18   Pass| Permissions - Operation Not Allowed
+usp_conformance_2_19   Pass| Permissions - Value Change Notification Allowed on Parameter
+usp_conformance_2_20   Pass| Permissions - Value Change Notification Not Allowed on Parameter
+usp_conformance_2_21   Pass| Permissions - Overlapping Permissions
+usp_conformance_2_22   Pass| Using Get when no read permissions are available on some parameters
+usp_conformance_2_23   Pass| Permissions - Add message with search path, allow partial true, required parameters fail
+usp_conformance_2_24   Pass| Permissions - Add message with search path, allow partial false, required parameters fail
+usp_conformance_2_25   Pass| Permissions - Parameter within added object not allowed, omitted
+usp_conformance_2_26   Pass| Permissions - Parameter within added object not allowed, included
+usp_conformance_3_1    Pass| Bad request outside a session context
+usp_conformance_7_1    Pass| WebSocket - Session Establishment
+usp_conformance_7_2    Pass| Use of only one session
+usp_conformance_7_4    Pass| Closing a WebSocket Connection
+usp_conformance_7_6   +FAIL| Error Handling - Unprocessed Records
+usp_conformance_7_7    Pass| Use of Ping and Pong frames
+usp_conformance_7_8    Pass| WebSocket Session Retry
+usp_conformance_7_10   Pass| WebSocket - Use of Connect Record
+usp_conformance_7_11   Pass| Websocket response does not include bbf-usp-protocol
+usp_conformance_7_12   Pass| Agent can process USP Records within fragmented Websocket messages
+usp_conformance_9_2    Pass| Use of Device.LocalAgent.AddCertificate()
+usp_conformance_9_9    Pass| Adding a New Controller- OnBoardingRequest
+usp_conformance_9_11   Pass| Use of the Timer! Event
+usp_conformance_10_1   Pass| Use BulkData collection using HTTP and JSON
+usp_conformance_10_2   Pass| Use BulkData collection using HTTPS and JSON
+usp_conformance_10_5   Pass| Use BulkData collection using HTTP and URI Parameters
+usp_conformance_10_6   Pass| Use BulkData collection using HTTPS and URI Parameters
+usp_conformance_10_7   Pass| Use BulkData collection retry mechanism over HTTP
+usp_conformance_10_8   Pass| Use BulkData collection using HTTP with wildcard parameter
+usp_conformance_10_9   Pass| Use BulkData collection using HTTP with Object Path
+usp_conformance_10_10  Pass| Use BulkData collection using Push event
+usp_conformance_10_11  Pass| Use BulkData collection using Push event with wildcard parameter
+usp_conformance_10_12  Pass| Use BulkData collection using Push event with Object Path
+usp_conformance_10_13  Pass| Use BulkData collection over MQTT
+
+WEBSOCKET over TLS
+--------------------+------+-----------------------------------------------------------
+usp_conformance_1_1    Pass| Add message with allow partial false, single object, required parameters succeed
+usp_conformance_1_2    Pass| Add message with allow partial true, single object, required parameters succeed
+usp_conformance_1_3    Pass| Add message with allow partial false, single object, required parameters fail
+usp_conformance_1_4    Pass| Add message with allow partial false, single invalid object
+usp_conformance_1_5    Pass| Add message with allow partial false, multiple objects
+usp_conformance_1_6    Pass| Add message with allow partial false, multiple objects with an invalid object
+usp_conformance_1_7    Pass| Add message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_8    Pass| Add message with allow partial true, required parameters fail, invalid type, single object
+usp_conformance_1_9    Pass| Add message with allow partial true, required parameters fail, multiple objects
+usp_conformance_1_10   Pass| Add message with unique key addressing in path
+usp_conformance_1_11   Pass| Set message with allow partial false, required parameters pass
+usp_conformance_1_12   Pass| Set message with allow partial true, required parameters pass
+usp_conformance_1_13   Pass| Set message with allow partial false, multiple objects
+usp_conformance_1_14   Pass| Set message with allow partial false, required parameters fail
+usp_conformance_1_15   Pass| Set message with allow partial false, multiple objects, required parameters fail in single object
+usp_conformance_1_16   Pass| Set message with allow partial true, required parameter fails, multiple objects
+usp_conformance_1_17   Pass| Set message with allow partial true, non-required parameter fails, multiple parameters
+usp_conformance_1_18   Pass| Set message with unique key addressing in path
+usp_conformance_1_19   Pass| Set message with wildcard search path, allow partial false, required parameters pass
+usp_conformance_1_20   Pass| Set message with wildcard search path, allow partial false, required parameters fail
+usp_conformance_1_21   Pass| Set message with wildcard search path, allow partial true, required parameters fail
+usp_conformance_1_22   Pass| Set message with search expression search path
+usp_conformance_1_23   Pass| Set message with path that matches no objects
+usp_conformance_1_24   Pass| Delete message with allow partial false, valid object instance
+usp_conformance_1_25   Pass| Delete message with allow partial false, object instance doesn't exist
+usp_conformance_1_26   Pass| Delete message with allow partial false, invalid object
+usp_conformance_1_27   Pass| Delete message with allow partial false, multiple objects
+usp_conformance_1_28   Pass| Delete message with allow partial false, multiple objects, invalid object
+usp_conformance_1_29   Pass| Delete message with allow partial true, object instance doesn't exist
+usp_conformance_1_30   Pass| Delete message with allow partial true, invalid object
+usp_conformance_1_31   Pass| Delete message with allow partial true, multiple objects, invalid object
+usp_conformance_1_32   Pass| Delete message with allow partial true, multiple objects, object doesn't exist
+usp_conformance_1_33   Pass| Delete message with unique key addressing
+usp_conformance_1_34   Pass| Delete message with wildcard search path, valid objects
+usp_conformance_1_35   Pass| Delete message with search expression search path
+usp_conformance_1_36   Pass| Get message with full parameter path
+usp_conformance_1_37   Pass| Get message with multiple full parameter paths, same object
+usp_conformance_1_38   Pass| Get message with multiple full parameter paths, different objects
+usp_conformance_1_39   Pass| Get message with object path
+usp_conformance_1_40   Pass| Get message with object instance path
+usp_conformance_1_41   Pass| Get message with invalid parameter
+usp_conformance_1_42   Pass| Get message with invalid parameter and valid parameter
+usp_conformance_1_43   Pass| Get message using unique key addressing
+usp_conformance_1_44   Pass| Get message using wildcard search path on full parameter
+usp_conformance_1_45   Pass| Get message using wildcard search path on object path
+usp_conformance_1_46   Pass| Get message using search expression search path (equivalence)
+usp_conformance_1_47   Pass| Get message using search expression search path (non-equivalence)
+usp_conformance_1_48   Pass| Get message using search expression search path (exclusive greater comparison)
+usp_conformance_1_49   Pass| Get message using search expression search path (exclusive lesser comparison)
+usp_conformance_1_50   Pass| Get message using search expression search path (inclusive greater comparison)
+usp_conformance_1_51   Pass| Get message using search expression search path (inclusive lesser comparison)
+usp_conformance_1_52   Pass| Notify - Subscription creation using Value Change
+usp_conformance_1_53   Pass| Notify - Subscription Deletion Using Value Change
+usp_conformance_1_54   Pass| Notification Retry using Value Change
+usp_conformance_1_55  +FAIL| Subscription Expiration using Value Change
+usp_conformance_1_56   Pass| Notification Retry Expiration using Value Change
+usp_conformance_1_57   Pass| ObjectCreation Notification
+usp_conformance_1_58   Pass| ObjectDeletion Notification
+usp_conformance_1_59   Pass| Event Notification using Periodic!
+usp_conformance_1_60   Pass| OnBoardRequest Notification
+usp_conformance_1_61   Pass| Operate message using Reboot() with send_resp true
+usp_conformance_1_62   Pass| Operate message using Reboot() with send_resp false
+usp_conformance_1_64   Pass| Asynchronous operation with send_resp true
+usp_conformance_1_65   Pass| Asynchronous operations with send_resp false
+usp_conformance_1_66   Pass| GetInstances using a single object, first_level_only true
+usp_conformance_1_67   Pass| GetInstances using a single object, first_level_only false
+usp_conformance_1_68   Pass| GetInstances with multiple objects
+usp_conformance_1_70   Pass| GetInstances with wildcard search path
+usp_conformance_1_71   Pass| GetInstances with search expression search path
+usp_conformance_1_72   Pass| GetSupportedDM using a single object, first_level_only false, all options
+usp_conformance_1_73   Pass| GetSupportedDM using a single object, first_level_only true, all options
+usp_conformance_1_74   Pass| GetSupportedDM using a single object, first_level_only true, no options
+usp_conformance_1_75   Pass| GetSupportedDM using multiple objects, first_level_only true, all options
+usp_conformance_1_76   Pass| GetSupportedDM on root object, all options
+usp_conformance_1_77   Pass| GetSupportedDM on unsupported object
+usp_conformance_1_78   Pass| Removal of subscriptions that have no associated controller
+usp_conformance_1_79   Pass| Operate message using input args
+usp_conformance_1_80   Pass| GetSupportedProtocol
+usp_conformance_1_81   Pass| Automatic unique key generation
+usp_conformance_1_82   Pass| Get message with unmatched search expression
+usp_conformance_1_83   Pass| GetInstances message with unmatched search expression
+usp_conformance_1_84   Pass| Notification - Subscription using search paths
+usp_conformance_1_86   Pass| Get message with unresolved instances - using a search path
+usp_conformance_1_87   Pass| Get message with unresolved instances - using an object path
+usp_conformance_1_88   Pass| Add message fails when unique key is invalid
+usp_conformance_1_89   Pass| Get message using max_depth
+usp_conformance_1_90   Pass| Delete message with search expression that matches no objects
+usp_conformance_1_91   Pass| Unknown arguments in an Operate message
+usp_conformance_1_95   Pass| Add message with search expression
+usp_conformance_1_96   Pass| Non-functional Unique Key Immutability
+usp_conformance_1_97   Pass| GetSupportedDM on root object, commands
+usp_conformance_1_98   Pass| GetSupportedDM on root object, events
+usp_conformance_1_99   Pass| GetSupportedDM on root object, unique_key_sets
+usp_conformance_1_100  Pass| Command with missing mandatory input_args
+usp_conformance_1_104  Pass| Set message on WriteOnceReadOnly parameter
+usp_conformance_1_105  Pass| GetSupportedDM on a Command
+usp_conformance_1_106  Pass| GetSupportedDM on an Event
+usp_conformance_1_107  Pass| GetSupportedDM on a Parameter
+usp_conformance_2_1    Pass| Agent does not accept messages from its own Endpoint ID
+usp_conformance_2_2    Pass| Agent rejects messages that do not contain it's to_id in the USP Record
+usp_conformance_2_10   Pass| Adding a Role
+usp_conformance_2_11   Pass| Permissions - Object Creation Allowed
+usp_conformance_2_12   Pass| Permissions - Object Creation Not Allowed
+usp_conformance_2_13   Pass| Permissions - Object Deletion Allowed
+usp_conformance_2_14   Pass| Permissions - Object Deletion Not Allowed
+usp_conformance_2_15   Pass| Permissions - Parameter Update Allowed
+usp_conformance_2_16   Pass| Permissions - Parameter Update Not Allowed
+usp_conformance_2_17   Pass| Permission - Operation Allowed
+usp_conformance_2_18   Pass| Permissions - Operation Not Allowed
+usp_conformance_2_19   Pass| Permissions - Value Change Notification Allowed on Parameter
+usp_conformance_2_20   Pass| Permissions - Value Change Notification Not Allowed on Parameter
+usp_conformance_2_21   Pass| Permissions - Overlapping Permissions
+usp_conformance_2_22   Pass| Using Get when no read permissions are available on some parameters
+usp_conformance_2_23   Pass| Permissions - Add message with search path, allow partial true, required parameters fail
+usp_conformance_2_24   Pass| Permissions - Add message with search path, allow partial false, required parameters fail
+usp_conformance_2_25   Pass| Permissions - Parameter within added object not allowed, omitted
+usp_conformance_2_26   Pass| Permissions - Parameter within added object not allowed, included
+usp_conformance_3_1    Pass| Bad request outside a session context
+usp_conformance_4_1    Pass| Use of X.509 Certificates at the MTP Layer
+usp_conformance_7_1    Pass| WebSocket - Session Establishment
+usp_conformance_7_2    Pass| Use of only one session
+usp_conformance_7_4    Pass| Closing a WebSocket Connection
+usp_conformance_7_6   +FAIL| Error Handling - Unprocessed Records
+usp_conformance_7_7    Pass| Use of Ping and Pong frames
+usp_conformance_7_8    Pass| WebSocket Session Retry
+usp_conformance_7_9    Pass| WebSocket - Use of TLS
+usp_conformance_7_10   Pass| WebSocket - Use of Connect Record
+usp_conformance_7_11   Pass| Websocket response does not include bbf-usp-protocol
+usp_conformance_7_12   Pass| Agent can process USP Records within fragmented Websocket messages
+usp_conformance_9_2    Pass| Use of Device.LocalAgent.AddCertificate()
+usp_conformance_9_9    Pass| Adding a New Controller- OnBoardingRequest
+usp_conformance_9_11   Pass| Use of the Timer! Event
+usp_conformance_10_1   Pass| Use BulkData collection using HTTP and JSON
+usp_conformance_10_2   Pass| Use BulkData collection using HTTPS and JSON
+usp_conformance_10_5   Pass| Use BulkData collection using HTTP and URI Parameters
+usp_conformance_10_6   Pass| Use BulkData collection using HTTPS and URI Parameters
+usp_conformance_10_7   Pass| Use BulkData collection retry mechanism over HTTP
+usp_conformance_10_8   Pass| Use BulkData collection using HTTP with wildcard parameter
+usp_conformance_10_9   Pass| Use BulkData collection using HTTP with Object Path
+usp_conformance_10_10  Pass| Use BulkData collection using Push event
+usp_conformance_10_11  Pass| Use BulkData collection using Push event with wildcard parameter
+usp_conformance_10_12  Pass| Use BulkData collection using Push event with Object Path
+usp_conformance_10_13  Pass| Use BulkData collection over MQTT
+

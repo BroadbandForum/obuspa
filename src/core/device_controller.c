@@ -5,6 +5,7 @@
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  * Copyright (C) 2022, Snom Technology GmbH
+ * Copyright (C) Copyright (c) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -241,7 +242,6 @@ int ValidateMtpUniqueness(mtp_protocol_t protocol, int cont_inst, int mtp_inst);
 int ValidateMtpResourceAvailable(mtp_protocol_t protocol, int cont_inst, int mtp_inst);
 int CalcNotifyDest(char *endpoint_id, controller_t *cont, controller_mtp_t *mtp, mtp_conn_t *dest);
 int QueueBinaryMessageOnMtp(mtp_send_item_t *msi, char *endpoint_id, char *usp_msg_id, mtp_conn_t *mtpc, time_t expiry_time);
-int CopyNotifyDestForEndpoint(char *endpoint_id, mtp_protocol_t protocol, Usp__Header__MsgType usp_msg_type, mtp_conn_t *dest);
 void StartAllMtpClients(void);
 void PollCanMtpConnect(int id);
 bool UpdateCanMtpConnect(void);
@@ -948,12 +948,21 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id
     // This is always the case for notifications, since they are not a response to any incoming USP message
     if (mtpc->is_reply_to_specified == false)
     {
-        err = CopyNotifyDestForEndpoint(endpoint_id, mtpc->protocol, msi->usp_msg_type, &dest);
+        err = DEVICE_CONTROLLER_CopyNotifyDestForEndpoint(endpoint_id, mtpc->protocol, msi->usp_msg_type, &dest);
         if (err != USP_ERR_OK)
         {
             return err;
         }
     }
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    // Notification with file descriptors send to destination which is on non-UDS MTP
+    // which is not allowed
+    if ((dest.protocol != kMtpProtocol_UDS) && (msi->fd_key != 0))
+    {
+        return USP_ERR_REQUEST_DENIED;
+    }
+#endif
 
     // Send the response
     // NOTE: Ownership of msi->pbuf passes to the MTP, if successful
@@ -1407,6 +1416,9 @@ void DEVICE_CONTROLLER_AddController_UDS(char *endpoint_id, int uds_instance)
         cont_instance = cont->instance;
     }
 
+    // Controllers that are connected over UDS have inherited role based upon whether they are authenticated or not
+    cont->inherited_instance = DEVICE_UDS_IsAuthRequired(uds_instance) ? ROLE_UDS_AUTH : ROLE_UDS;
+
     // Determine whether the external endpoint has a UDS entry in the Controller MTP table already
     mtp = FindControllerMtpByProtocol(cont, kMtpProtocol_UDS);
     if (mtp == NULL)
@@ -1477,10 +1489,10 @@ update:
         // Ensure that cont points to the controller which we just added
         cont = FindControllerByInstance(cont_instance);
         USP_ASSERT(cont != NULL);           // Because we just added it (when the commit chained to updating controllers[])
-    }
 
-    // Controllers that are connected over UDS have implicit full access
-    cont->inherited_instance = ROLE_UDS;
+        // Controllers that are connected over UDS have inherited role based upon whether they are authenticated or not
+        cont->inherited_instance = DEVICE_UDS_IsAuthRequired(uds_instance) ? ROLE_UDS_AUTH : ROLE_UDS;
+    }
 
     //-------------------------------------------------------
     // ADD / UPDATE MTP
@@ -1928,7 +1940,7 @@ void UpdateNextPeriodicTime(void)
 
 /*********************************************************************//**
 **
-** CopyNotifyDestForEndpoint
+** DEVICE_CONTROLLER_CopyNotifyDestForEndpoint
 **
 ** Determines a destination MTP to send a USP Record to based on the endpoint to send to
 ** This function is usually used to determine the destination MTP for USP notifications
@@ -1942,7 +1954,7 @@ void UpdateNextPeriodicTime(void)
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int CopyNotifyDestForEndpoint(char *endpoint_id, mtp_protocol_t protocol, Usp__Header__MsgType usp_msg_type, mtp_conn_t *dest)
+int DEVICE_CONTROLLER_CopyNotifyDestForEndpoint(char *endpoint_id, mtp_protocol_t protocol, Usp__Header__MsgType usp_msg_type, mtp_conn_t *dest)
 {
     int err;
     controller_t *cont;
@@ -2903,7 +2915,6 @@ int Validate_SessionRetryMultiplier(dm_req_t *req, char *value)
 int Validate_ControllerAssignedRole(dm_req_t *req, char *value)
 {
     int err;
-    int instance;
 
     // Empty String is an allowed value for Assigned Role
     if (*value == '\0')
@@ -2911,7 +2922,7 @@ int Validate_ControllerAssignedRole(dm_req_t *req, char *value)
         return USP_ERR_OK;
     }
 
-    err = DM_ACCESS_ValidateReference(value, "Device.LocalAgent.ControllerTrust.Role.{i}", &instance);
+    err = DM_ACCESS_ValidateReference(value, "Device.LocalAgent.ControllerTrust.Role.{i}", NULL);
 
     return err;
 }
@@ -4514,11 +4525,20 @@ int ProcessControllerMtpAdded(controller_t *cont, int mtp_instance)
         goto exit;
     }
 
-    // The inherited role when using UDS is known before connection, so set it now, so that permissions are correct
-    // when generating any USP events before UDS has connected
+    // The inherited role when using UDS is based upon whether the connection is authenticated,
+    // so set it now, so that permissions are correct when generating any USP events before UDS has connected
     if (mtp->protocol == kMtpProtocol_UDS)
     {
-        cont->inherited_instance = ROLE_UDS;
+        bool is_auth_required = true;
+
+        // NOTE: Get the value direct from the DB, rather than calling DEVICE_UDS_IsAuthRequired() to avoid startup dependency issues
+        USP_SNPRINTF(path, sizeof(path), "%s.%d.AuthRequired", device_uds_conn_root, mtp->uds_connection_instance);
+        err = DM_ACCESS_GetBool(path, &is_auth_required);
+        cont->inherited_instance = (is_auth_required) ? ROLE_UDS_AUTH : ROLE_UDS;
+        if (err != USP_ERR_OK)
+        {
+            goto exit;
+        }
     }
 
     // NOTE: No need to start a UDS Client/Server based on this reference - they are started based on being present in the UnixDomainSockets table

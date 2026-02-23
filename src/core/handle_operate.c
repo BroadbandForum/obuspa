@@ -3,6 +3,7 @@
  * Copyright (C) 2019-2025, Broadband Forum
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
+ * Copyright (C) Copyright (c) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,6 +56,10 @@
 #include "usp_broker.h"
 #include "se_cache.h"
 
+#ifdef FD_PASSING_EXPERIMENTAL
+#include "fd_vector.h"
+#endif
+
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 Usp__Msg *CreateOperResp(char *msg_id);
@@ -92,6 +97,10 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_con
     int instance;
     combined_role_t combined_role;
     char req_path[MAX_DM_PATH];
+#ifdef FD_PASSING_EXPERIMENTAL
+    unsigned int fd_key = 0;
+    bool descriptors_found = false;
+#endif
 
     // Initialise all structures that may be freed on exit
     KV_VECTOR_Init(&input_args);
@@ -163,18 +172,84 @@ void MSG_HANDLER_HandleOperate(Usp__Msg *usp, char *controller_endpoint, mtp_con
 
         KV_VECTOR_Init(&output_args);
 
-#ifndef REMOVE_USP_BROKER
-        // Perform the operation only if there is a subscription on the USP Service when this is an async cmd
-        // This test is necessary because otherwise the Broker will not know when the USP Command has completed and hence will never delete the request from the Broker's Request table
-        err = USP_BROKER_CheckAsyncCommandIsSubscribedTo(oper_path, &combined_role);
-        if (err == USP_ERR_OK)
+#ifdef FD_PASSING_EXPERIMENTAL
+        // If on previous iteration descriptors was found - skip any other iterations
+        // as multiple synchronous responses with file descriptors isn't supported
+        if (descriptors_found)
         {
-            err = DATA_MODEL_Operate(oper_path, &input_args, &output_args, oper->command_key, &instance);
+            err = USP_ERR_COMMAND_FAILURE;
+            USP_ERR_SetMessage("Command failure");
+        }
+        else
+        {
+        #ifndef REMOVE_USP_BROKER
+            // Perform the operation only if there is a subscription on the USP Service when this is an async cmd
+            // This test is necessary because otherwise the Broker will not know when the USP Command has completed and hence will never delete the request from the Broker's Request table
+            err = USP_BROKER_CheckAsyncCommandIsSubscribedTo(oper_path, &combined_role);
+            if (err == USP_ERR_OK)
+            {
+                err = DATA_MODEL_OperateWithFds(oper_path, &input_args, &output_args, oper->command_key, &instance, &fd_key);
+            }
+        #else
+            // Perform the operation
+            err = DATA_MODEL_OperateWithFds(oper_path, &input_args, &output_args, oper->command_key, &instance, &fd_key);
+        #endif
+
+            if (fd_key != 0)
+            {
+                int fd_count = 0;
+                int* fd_buffer = FD_VECTOR_Get(fd_key, &fd_count);
+                if (fd_count != 0)
+                {
+                    if ((mtpc->protocol != kMtpProtocol_UDS) || (paths.num_entries > 1) || (fd_count < 0))
+                    {
+                        FD_VECTOR_Close(fd_buffer, fd_count);
+
+                        if (err == USP_ERR_OK)
+                        {
+                            if (mtpc->protocol != kMtpProtocol_UDS)
+                            {
+                                err = USP_ERR_REQUEST_DENIED;
+                                USP_ERR_SetMessage("%s: File Descriptor passing request denied", __FUNCTION__);
+                            }
+                            else if (paths.num_entries > 1)
+                            {
+                                err = USP_ERR_COMMAND_FAILURE;
+                                USP_ERR_SetMessage("%s: File Descriptor passing Command failure", __FUNCTION__);
+                            }
+                            else
+                            {
+                                err = USP_ERR_RESOURCES_EXCEEDED;
+                                USP_ERR_SetMessage("%s: File Descriptor passing Resources exceeded", __FUNCTION__);
+                            }
+                        }
+                        FD_VECTOR_Remove(fd_key);
+                        fd_key = 0;
+                    }
+                    descriptors_found = true;
+                }
+
+                if (mtpc->protocol == kMtpProtocol_UDS)
+                {
+                    mtpc->uds.fd_key = fd_key;
+                }
+            }
         }
 #else
-        // Perform the operation
-        err = DATA_MODEL_Operate(oper_path, &input_args, &output_args, oper->command_key, &instance);
+        #ifndef REMOVE_USP_BROKER
+            // Perform the operation only if there is a subscription on the USP Service when this is an async cmd
+            // This test is necessary because otherwise the Broker will not know when the USP Command has completed and hence will never delete the request from the Broker's Request table
+            err = USP_BROKER_CheckAsyncCommandIsSubscribedTo(oper_path, &combined_role);
+            if (err == USP_ERR_OK)
+            {
+                err = DATA_MODEL_Operate(oper_path, &input_args, &output_args, oper->command_key, &instance);
+            }
+        #else
+            // Perform the operation
+            err = DATA_MODEL_Operate(oper_path, &input_args, &output_args, oper->command_key, &instance);
+        #endif
 #endif
+
         if (err != USP_ERR_OK)
         {
             // Operation failed

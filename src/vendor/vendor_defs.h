@@ -5,6 +5,7 @@
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020, BT PLC
  * Copyright (C) 2022, Snom Technology GmbH
+ * Copyright (C) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -63,7 +64,7 @@
 #define MAX_AGENT_MTPS (MAX_CONTROLLERS)  // Maximum number of MTPs that an agent may have in the DB (Device.LocalAgent.MTP.{i})
 #define MAX_STOMP_CONNECTIONS (MAX_CONTROLLERS)  // Maximum number of STOMP connections that an agent may have in the DB (Device.STOMP.Connection.{i})
 #define MAX_USP_SERVICES 10          // Maximum number of USP services which can connect, when acting as a broker
-#define MAX_UDS_SERVERS 2           // Maximum number of UDS sockets that an agent may have in the DB (Device.UnixDomainSockets.UnixDomainSocket.{i})
+#define MAX_UDS_SERVERS 4           // Maximum number of UDS sockets that an agent may have in the DB (Device.UnixDomainSockets.UnixDomainSocket.{i})
 
 #define MAX_COAP_CONNECTIONS (MAX_CONTROLLERS)  // Maximum number of CoAP connections that an agent may have in the DB (Device.LocalAgent.Controller.{i}.MTP.{i}.CoAP)
 #define MAX_COAP_SERVERS 5          // Maximum number of interfaces which an agent listens for CoAP messages on
@@ -73,6 +74,8 @@
 #define MAX_WEBSOCKET_CLIENTS (MAX_CONTROLLERS)  // Maximum number of WebSocket controllers which an agent sends to, or receives from
 #define MAX_NODE_MAP_BUCKETS  1024  // Maximum number of buckets in the data model node map. This should be set to at least the number of registered parameters and objects in the data model
 #define USP_LOG_MAXLEN  (10*1024)   // Maximum number of characters in a single log statement
+#define MAX_FD_VECTOR_ENTRIES (MAX_USP_SERVICES * MAX_UDS_SERVERS)  // Maximum number of file descriptor buffers that can be in global map
+#define MAX_UDS_FDS 8               // Maximum number of file descriptors supported in the ancilliary data of a UDS MTP record
 
 // Uncomment and change the following define to override the severity level of messages sent to syslog.
 // Refer to the syslog documentation and its priority argument to know the possible values.
@@ -164,10 +167,10 @@
 
 // Various defines for constant parameters in Device.DeviceInfo
 // These defines are only used if USP Agent core implements DeviceInfo (see REMOVE_DEVICE_INFO above)
-// These defines MUST be modified by the vendor
-#define VENDOR_PRODUCT_CLASS "USP Agent"   // Configures the value of Device.DeviceInfo.ProductClass
-#define VENDOR_MANUFACTURER  "Manufacturer"   // Configures the value of Device.DeviceInfo.Manufacturer
-#define VENDOR_MODEL_NAME    "USP Agent"   // Configures the value of Device.DeviceInfo.ModelName
+// These values may be overridden by entries in the database
+#define VENDOR_PRODUCT_CLASS "USP Agent"   // Configures the default value of Device.DeviceInfo.ProductClass
+#define VENDOR_MANUFACTURER  "Manufacturer"   // Configures the default value of Device.DeviceInfo.Manufacturer
+#define VENDOR_MODEL_NAME    "USP Agent"   // Configures the default value of Device.DeviceInfo.ModelName
 
 // URI of data model implemented by USP Agent
 #define BBF_DATA_MODEL_URI "urn:broadband-forum-org:tr-181-2-12-0"
@@ -236,12 +239,18 @@
 //#define E2ESESSION_EXPERIMENTAL_USP_V_1_2
 
 //-----------------------------------------------------------------------------------------
+// Uncomment the following define to include file descriptor passing via the UDS MTP
+// This is experimental as it doesn't match the USP Specification for the feature being discussed
+//#define FD_PASSING_EXPERIMENTAL
+
+//-----------------------------------------------------------------------------------------
 // Instance numbers of roles in Device.LocalAgent.Controller.Role.{i}
 #define ROLE_FULL_ACCESS    1   // Instance number of role providing full data model access for trusted controllers
 #define ROLE_UNTRUSTED      2   // Instance number of role to use for untrusted controllers
 #define ROLE_NON_SSL        ROLE_FULL_ACCESS  // Inherited role instance to use if SSL is not being used for the MTP
 #define ROLE_DEFAULT        ROLE_FULL_ACCESS  // Inherited role instance to use if the controller cert does not have an associated inherited role
-#define ROLE_UDS            ROLE_FULL_ACCESS  // Inherited role instance to use for USP requests received over UDS
+#define ROLE_UDS            ROLE_FULL_ACCESS  // Inherited role instance to use for USP requests received over UDS unauthenticated connection
+#define ROLE_UDS_AUTH       ROLE_UNTRUSTED    // Inherited role instance to use for USP requests received over UDS authenticated connection
 #define ROLE_TRUST_STORE_DEFAULT ROLE_FULL_ACCESS  // Inherited role instance to use for trust store certificates specified with the -t option
 
 #define MAX_CTRUST_ROLES    8  // Maximum number of roles that can be present in Device.LocalAgent.ControllerTrust.Role.{i}
@@ -262,6 +271,12 @@
 #ifndef ENABLE_UDS
 #if !defined(REMOVE_USP_BROKER) || !defined(REMOVE_USP_SERVICE)
 #error "If UDS MTP is disabled, then REMOVE_USP_BROKER and REMOVE_USP_SERVICE must be defined"
+#endif
+#endif
+
+#ifdef FD_PASSING_EXPERIMENTAL
+#if !defined(ENABLE_UDS)
+#error "If FD_PASSING_EXPERIMENTAL is enabled, then the UDS MTP must also be enabled"
 #endif
 #endif
 

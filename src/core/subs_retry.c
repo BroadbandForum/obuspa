@@ -3,6 +3,7 @@
  * Copyright (C) 2019-2025, Broadband Forum
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
+ * Copyright (C) Copyright (c) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -43,6 +44,7 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <unistd.h>
 
 #include "common_defs.h"
 #include "msg_handler.h"
@@ -50,9 +52,14 @@
 #include "device.h"
 #include "sync_timer.h"
 #include "retry_wait.h"
+#include "subs_retry.h"
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include "e2e_context.h"
+#endif
+
+#ifdef FD_PASSING_EXPERIMENTAL
+#include "fd_vector.h"
 #endif
 
 //------------------------------------------------------------------------
@@ -75,6 +82,9 @@ typedef struct
     unsigned interval_multiplier;// Interval multiplier parameter for RETRY_WAIT calculation
 
     time_t next_retry_time;     // Time at which the message should next be retried to be sent
+#ifdef FD_PASSING_EXPERIMENTAL
+    unsigned int fd_key;        // key to access file descriptor buffer (for further attach to payload)
+#endif
 } subs_retry_t;
 
 //------------------------------------------------------------------------
@@ -164,12 +174,21 @@ void SUBS_RETRY_Stop(void)
 **                 NOTE: Ownership of the serialized USP message passes to this module
 ** \param   pbuf_len - length of protobuf binary message
 ** \param   retry_expiry_time - time at which retrying to send this message should stop
+** \param   fd_key - index of buffer with file descriptors in global file descriptors map
 **
 ** \return  None
 **
 **************************************************************************/
 void SUBS_RETRY_Add(int instance, char *msg_id, char *subscription_id, char *dest_endpoint, char *differentiator,
                     unsigned char *pbuf, int pbuf_len, time_t retry_expiry_time)
+#ifdef FD_PASSING_EXPERIMENTAL
+{
+    SUBS_RETRY_AddWithFds(instance, msg_id, subscription_id, dest_endpoint, differentiator, pbuf, pbuf_len, retry_expiry_time, 0);
+}
+
+void SUBS_RETRY_AddWithFds(int instance, char *msg_id, char *subscription_id, char *dest_endpoint, char *differentiator,
+                    unsigned char *pbuf, int pbuf_len, time_t retry_expiry_time, unsigned int fd_key)
+#endif
 {
     int err;
     int new_num_entries;
@@ -202,6 +221,10 @@ void SUBS_RETRY_Add(int instance, char *msg_id, char *subscription_id, char *des
         subs_retry.vector = USP_REALLOC(subs_retry.vector, new_num_entries*sizeof(subs_retry_t));
         sr = &subs_retry.vector[ subs_retry.num_entries ];
         subs_retry.num_entries = new_num_entries;
+
+#ifdef FD_PASSING_EXPERIMENTAL
+        sr->fd_key = 0;
+#endif
     }
     else
     {
@@ -231,6 +254,16 @@ void SUBS_RETRY_Add(int instance, char *msg_id, char *subscription_id, char *des
     sr->retry_count = 1;
     sr->min_wait_interval = min_wait_interval;
     sr->interval_multiplier = interval_multiplier;
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    if (fd_key != 0)
+    {
+        sr->fd_key = fd_key;
+        // Reference count increased because we are have adding new object that refers buffer
+        // and we need to hold descriptors until they successfully sent or retry is expired
+        FD_VECTOR_IncRef(sr->fd_key);
+    }
+#endif
 
     sr->next_retry_time = CalcNextSubsRetryTime(sr);
     USP_LOG_Info("Retrying sending notification (retry_count=%d) in %d seconds.", sr->retry_count, (int)(sr->next_retry_time-time(NULL)) );
@@ -364,6 +397,17 @@ void SubsRetryExec(int id)
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
                 usp_send_item.curr_e2e_session = DEVICE_CONTROLLER_FindE2ESessionByEndpointId(sr->dest_endpoint);
                 usp_send_item.usp_msg = NULL;
+#endif
+
+#ifdef FD_PASSING_EXPERIMENTAL
+                if (sr->fd_key != 0)
+                {
+                    usp_send_item.fd_key = sr->fd_key;
+                    // References count increased because we still have reference in retry
+                    // while another in sending queue.
+                    // This allow to close descriptors when all referencing objects are cleared
+                    FD_VECTOR_IncRef(sr->fd_key);
+                }
 #endif
 
                 // Try resending the saved serialized USP message
@@ -504,6 +548,23 @@ void UpdateFirstRetryTime(void)
 **************************************************************************/
 void DestroySubsRetryEntry(subs_retry_t *sr)
 {
+#ifdef FD_PASSING_EXPERIMENTAL
+    if (sr->fd_key != 0)
+    {
+        if (FD_VECTOR_DecRef(sr->fd_key) <= 0)
+        {
+            int fd_count = 0;
+            int *fd_buffer = FD_VECTOR_Get(sr->fd_key, &fd_count);
+
+            if (fd_count != 0)
+            {
+                FD_VECTOR_Close(fd_buffer, fd_count);
+                FD_VECTOR_Remove(sr->fd_key);
+            }
+        }
+    }
+#endif
+
     // Free all dynamically allocated parts of this structure
     USP_FREE(sr->msg_id);
     USP_FREE(sr->subscription_id);

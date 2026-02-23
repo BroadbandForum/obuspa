@@ -154,7 +154,6 @@ static double_linked_list_t usp_service_req_list = { NULL, NULL };
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
-Usp__Msg *CreateUspServiceRegisterReq(char *msg_id, char **paths, int num_paths);
 Usp__Msg *CreateUspServiceDeregisterReq(char *msg_id, char **paths, int num_paths);
 void CalcUspServiceMessageId(char *msg_id, int len);
 void ProcessUspService_Notification(Usp__Notify *notify);
@@ -216,8 +215,14 @@ void USP_SERVICE_QueueRegisterRequest(char *endpoint_id, char *objects)
     USP_ASSERT(objects != NULL);
     mtpc.is_reply_to_specified = false;   // Force DEVICE_CONTROLLER_QueueBinaryMessage() to calculate an MRT destination for the request
 
-    // Iterate over all paths, validating them
+    // Exit if there are no paths to register. In this case no need to send a register message
     TEXT_UTILS_SplitString(objects, &sv, ",");
+    if (sv.num_entries == 0)
+    {
+        return;
+    }
+
+    // Iterate over all paths, validating them
     for (i=0; i < sv.num_entries; i++)
     {
         // Exit if path does not exist in the data model (of this endpoint)
@@ -239,7 +244,7 @@ void USP_SERVICE_QueueRegisterRequest(char *endpoint_id, char *objects)
 
     // Create a register request
     CalcUspServiceMessageId(msg_id, sizeof(msg_id));
-    msg = CreateUspServiceRegisterReq(msg_id, sv.vector, sv.num_entries);
+    msg = USP_SERVICE_CreateRegisterReq(msg_id, false, sv.vector, sv.num_entries);
     MSG_HANDLER_QueueMessage(endpoint_id, msg, &mtpc);
 
     // Save off the message_id and endpoint_id, in order that we can check the register response against them
@@ -1003,6 +1008,51 @@ int USP_SERVICE_RegisterNotificationCallback(usp_service_notify_cb_t cb)
 
 /*********************************************************************//**
 **
+** USP_SERVICE_CreateRegisterReq
+**
+** Create a USP Register request message
+**
+** \param   msg_id - MessageId to put in the message
+** \param   allow_partial - value of allow_partial to put in the register request
+** \param   paths- array of paths to register
+** \param   num_paths - num
+**
+** \return  Pointer to a Register Request object
+**          NOTE: If out of memory, USP Agent is terminated
+**
+**************************************************************************/
+Usp__Msg *USP_SERVICE_CreateRegisterReq(char *msg_id, bool allow_partial, char **paths, int num_paths)
+{
+    int i;
+    Usp__Msg *msg;
+    Usp__Register *reg;
+    Usp__Register__RegistrationPath *rp;
+
+    // Create Register Request
+    msg =  MSG_HANDLER_CreateRequestMsg(msg_id, USP__HEADER__MSG_TYPE__REGISTER, USP__REQUEST__REQ_TYPE_REGISTER);
+    reg = USP_MALLOC(sizeof(Usp__Register));
+    usp__register__init(reg);
+    msg->body->request->register_ = reg;
+
+    // Copy the paths into the Register
+    reg->n_reg_paths = num_paths;
+    reg->reg_paths = USP_MALLOC(num_paths*sizeof(void *));
+    for (i=0; i<num_paths; i++)
+    {
+        rp = USP_MALLOC(sizeof(Usp__Register__RegistrationPath));
+        usp__register__registration_path__init(rp);
+        rp->path = USP_STRDUP(paths[i]);
+        reg->reg_paths[i] = rp;
+    }
+
+    // Fill in the flags in the Register
+    reg->allow_partial = allow_partial;
+
+    return msg;
+}
+
+/*********************************************************************//**
+**
 ** PerformUspServiceRequest
 **
 ** Sends the specified request to the USP Broker, waits for a response, then parses the response
@@ -1131,50 +1181,6 @@ void QueueUspServiceRequest(void *arg1, void *arg2)
 
     timer_timeout = time(NULL) + request->timeout;
     SYNC_TIMER_Add(HandleUspServiceControllerMessageResponseTimeout, request->timeout_id, timer_timeout);
-}
-
-/*********************************************************************//**
-**
-** CreateUspServiceRegisterReq
-**
-** Create a USP Register request message
-**
-** \param   msg_id - MessageId to put in the message
-** \param   paths- array of paths to register
-** \param   num_paths - num
-**
-** \return  Pointer to a Register Request object
-**          NOTE: If out of memory, USP Agent is terminated
-**
-**************************************************************************/
-Usp__Msg *CreateUspServiceRegisterReq(char *msg_id, char **paths, int num_paths)
-{
-    int i;
-    Usp__Msg *msg;
-    Usp__Register *reg;
-    Usp__Register__RegistrationPath *rp;
-
-    // Create Register Request
-    msg =  MSG_HANDLER_CreateRequestMsg(msg_id, USP__HEADER__MSG_TYPE__REGISTER, USP__REQUEST__REQ_TYPE_REGISTER);
-    reg = USP_MALLOC(sizeof(Usp__Register));
-    usp__register__init(reg);
-    msg->body->request->register_ = reg;
-
-    // Copy the paths into the Register
-    reg->n_reg_paths = num_paths;
-    reg->reg_paths = USP_MALLOC(num_paths*sizeof(void *));
-    for (i=0; i<num_paths; i++)
-    {
-        rp = USP_MALLOC(sizeof(Usp__Register__RegistrationPath));
-        usp__register__registration_path__init(rp);
-        rp->path = USP_STRDUP(paths[i]);
-        reg->reg_paths[i] = rp;
-    }
-
-    // Fill in the flags in the Register
-    reg->allow_partial = false;
-
-    return msg;
 }
 
 /*********************************************************************//**

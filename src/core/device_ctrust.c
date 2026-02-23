@@ -369,7 +369,6 @@ int DEVICE_CTRUST_Init(void)
 #endif
 
     // Initialise search expression based permissions components
-    TEXT_UTILS_SplitString(allowed_params_for_se_based_perms_str, &allowed_params_for_se_based_perms, ",");
     SE_CACHE_Init();
 
     // Exit if any errors occurred
@@ -401,6 +400,10 @@ int DEVICE_CTRUST_Start(void)
     int instance;
     char path[MAX_DM_PATH];
     role_t *role;
+
+    // Initialise the list of parameters that are allowed to be used by search expression based permissions
+    // NOTE: This is done here, rather than in DEVICE_CTRUST_init() in order to prevent a false warning when running with -m option
+    TEXT_UTILS_SplitString(allowed_params_for_se_based_perms_str, &allowed_params_for_se_based_perms, ",");
 
     // Exit if unable to get the object instance numbers present in the role table
     INT_VECTOR_Init(&iv);
@@ -3143,7 +3146,6 @@ int ControllerTrustRequestChallenge(dm_req_t *req, char *command_key, kv_vector_
     bool enabled;
     controller_challenge_t *cc;
     controller_info_t ci;
-    int challenge_ref_instance;
 
     // Input variables
     char *challenge_ref;
@@ -3174,7 +3176,7 @@ int ControllerTrustRequestChallenge(dm_req_t *req, char *command_key, kv_vector_
     }
 
     // validate if challenge reference exists
-    err = DM_ACCESS_ValidateReference(challenge_ref, DEVICE_CHALLENGE_ROOT, &challenge_ref_instance);
+    err = DM_ACCESS_ValidateReference(challenge_ref, DEVICE_CHALLENGE_ROOT, NULL);
     if (err != USP_ERR_OK)
     {
         err = USP_ERR_INVALID_VALUE;  // Not strictly necessary, as DM_ACCESS_ValidateReference() returns invlaid value
@@ -3298,9 +3300,8 @@ char *GenerateChallengeId(char *challenge_id, int len)
 int Validate_ChallengeRole(dm_req_t *req, char *value)
 {
     int err;
-    int instance;
 
-    err = DM_ACCESS_ValidateReference(value, DEVICE_ROLE_ROOT, &instance);
+    err = DM_ACCESS_ValidateReference(value, DEVICE_ROLE_ROOT, NULL);
 
     return err;
 }

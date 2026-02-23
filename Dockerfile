@@ -91,8 +91,8 @@ RUN apt update && apt -y install libssl-dev libsqlite3-dev libcurl4-openssl-dev 
 WORKDIR /
 COPY --from=build-stage /usr/local/lib/libwebsockets.* /usr/local/lib/
 COPY --from=build-stage /usr/local/bin/obuspa /bin
-COPY --from=build-stage /usr/local/src/obuspa/factory_reset_example.txt /etc
+COPY --from=build-stage /usr/local/src/obuspa/stomp_factory_reset_example.txt /etc
 RUN ldconfig
 
 ENTRYPOINT ["/bin/obuspa"]
-CMD ["-p", "-v4", "-r", "/etc/factory_reset_example.txt", "-f", "/tmp/usp.db"]
+CMD ["-p", "-v4", "-r", "/etc/stomp_factory_reset_example.txt", "-f", "/tmp/usp.db"]

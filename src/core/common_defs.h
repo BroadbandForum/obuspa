@@ -99,12 +99,20 @@ extern int USP_SNPRINTF(char *dest, size_t size, const char *fmt, ...) __attribu
 #define CONVERT_4_BYTES(p)  ((p)[0]<<24) + ((p)[1]<<16) + ((p)[2]<<8) + (p)[3];
 
 //----------------------------------------------------------------
+// Macros to skip a value from a byte stream buffer (big endian format), updating the pointer and length of stream left (in input buffer)
+#define SKIP_BYTE(p,l)     (p)++; (l)--;
+#define SKIP_2_BYTES(p,l)  (p) += 2;  (l) -= 2;
+#define SKIP_3_BYTES(p,l)  (p) += 3;  (l) -= 3;
+#define SKIP_4_BYTES(p,l)  (p) += 4;  (l) -= 4;
+#define SKIP_N_BYTES(src, n, len)  (src) += n; (len) -= n;
+
+//----------------------------------------------------------------
 // Macros to read a value from a byte stream buffer (big endian format), updating the pointer and length of stream left (in input buffer)
-#define READ_BYTE(p,l)     (p)[0]; (p)++; (l)--;
-#define READ_2_BYTES(p,l)  CONVERT_2_BYTES(p);   (p) += 2;  (l) -= 2;
-#define READ_3_BYTES(p,l)  CONVERT_3_BYTES(p);   (p) += 3;  (l) -= 3;
-#define READ_4_BYTES(p,l)  CONVERT_4_BYTES(p);   (p) += 4;  (l) -= 4;
-#define READ_N_BYTES(dest, src, n, len)  memcpy((dest), (src), (n)); (src) += n; (len) -= n;
+#define READ_BYTE(p,l)     (p)[0]; SKIP_BYTE(p, l);
+#define READ_2_BYTES(p,l)  CONVERT_2_BYTES(p);   SKIP_2_BYTES(p, l);
+#define READ_3_BYTES(p,l)  CONVERT_3_BYTES(p);   SKIP_3_BYTES(p, l);
+#define READ_4_BYTES(p,l)  CONVERT_4_BYTES(p);   SKIP_4_BYTES(p, l);
+#define READ_N_BYTES(dest, src, n, len)  memcpy((dest), (src), (n)); SKIP_N_BYTES(src, n, len);
 
 //----------------------------------------------------------------------------
 // Macros to write a value to a byte stream buffer (big endian format), but not update the pointer

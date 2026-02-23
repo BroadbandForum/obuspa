@@ -1286,9 +1286,22 @@ int ExecuteCli_Operate(str_vector_t *args)
             goto exit;
         }
 
-        // Exit if unable to start the specified operation
         KV_VECTOR_Init(&output_args);
+
+#ifndef REMOVE_USP_BROKER
+        // Perform the operation only if there is a subscription on the USP Service when this is an async cmd
+        // This test is necessary because otherwise the Broker will not know when the USP Command has completed and hence will never delete the request from the Broker's Request table
+        err = USP_BROKER_CheckAsyncCommandIsSubscribedTo(operations.vector[i], combined_role);
+        if (err == USP_ERR_OK)
+        {
+            err = DATA_MODEL_Operate(operations.vector[i], &input_args, &output_args, "CLI-initiated", &instance);
+        }
+#else
+        // Perform the operation
         err = DATA_MODEL_Operate(operations.vector[i], &input_args, &output_args, "CLI-initiated", &instance);
+#endif
+
+        // Exit if unable to start the specified operation
         if (err != USP_ERR_OK)
         {
             SendCliResponse("ERROR: Operation failed");
@@ -1750,40 +1763,19 @@ int ExecuteCli_PermSel(str_vector_t *args)
 int ExecuteCli_DbGet(str_vector_t *args)
 {
     int err;
-    dm_hash_t hash;
-    char instances[MAX_DM_PATH];
     char value[MAX_DM_VALUE_LEN];
-    unsigned path_flags;
     char *param;
 
     USP_ASSERT(args->num_entries >= 2);
     param = args->vector[1];
 
-    // Exit if parameter path is incorrect
-    err = DM_PRIV_FormDB_FromPath(param, &hash, instances, sizeof(instances));
-    if (err != USP_ERR_OK)
-    {
-        return err;
-    }
-
-    // Exit, not printing any value, if this parameter is obfuscated (eg containing a password)
-    value[0] = '\0';
-    path_flags = DATA_MODEL_GetPathProperties(param, INTERNAL_ROLE, NULL, NULL, NULL, 0);
-    if (path_flags & PP_IS_SECURE_PARAM)
-    {
-        goto exit;
-    }
-
     // Exit if unable to get value of parameter from DB
-    USP_ERR_ClearMessage();
-    err = DATABASE_GetParameterValue(param, hash, instances, value, sizeof(value), 0);
+    err = DATA_MODEL_GetParameterFromDatabase(param, value, sizeof(value));
     if (err != USP_ERR_OK)
     {
-        USP_ERR_ReplaceEmptyMessage("Parameter %s exists in the schema, but does not exist in the database", param);
         return err;
     }
 
-exit:
     // Since successful, send back the value of the parameter
     SendCliResponse("%s => %s\n", param, value);
 

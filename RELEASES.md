@@ -1,4 +1,77 @@
-# Release History
+# Major Release History
+
+## Release 11.0.0
+  * Highlights
+    * Authenticated UDS connections support: USP Services must provide a passsword if connecting via an authenticated UDS socket
+    * Data model registration permissions support: The USP Broker can control which DM elements a USP Service is allowed to register
+    * Support for permission Targets containing search expressions
+    * Experimental file descriptor passing via Unix domain socket ancilliary data for USP Services. To enable, define FD_PASSING_EXPERIMENTAL in vendor_defs.h
+    * Device.LocalAgent.AddCertificate() support. See QUICK_START_GUIDE.md for how to use this feature
+    * TP-469 Conformance Test Plan Results for each release are now checked into the repo, in the file conformance_test_results.txt
+    * 'obuspa -c add' CLI command now supports setting child parameters
+    * Functions to access the data model from vendor threads (USP_PROCESS_DoWorkSync, USP_PROCESS_DM_GetParameterValue, USP_PROCESS_DM_SetParameterValue)
+    * If USP database file is corrupt, a new database is created using the factory reset configuration
+    * Maximum allowed MTP frame size received has been increased to 5MB (from 64K)
+
+  * USP Broker, USP Services and UDS MTP
+    * Fixed crash that occurred if invalid UDS MTP parameters were present in OBUSPA's database at startup
+    * Fixed crash if USP Service registers a DM element, but does not provide it in the GSDM response
+    * Fixed race hazard causing USP Broker to reject all messages from a USP Service. Occurs when USP Service disconnects, then immediately reconnects over UDS MTP, whilst USP Broker is waiting for a synchronous USP response
+    * USP Command and Event arguments should not be allowed to be registered more than once
+    * USP Services should not reuse group_ids registered by internal data model providers
+    * Prevented assert when changing LocalAgent.MTP.Enable and Protocol is UDS
+    * LocalAgent.MTP.{i}.Status is now working for UDS MTP
+
+  * MQTT
+    * MQTT client should not disconnect if no Response Topic
+    * MQTT connection should be retried if TLS handshake fails and libmoquitto version<2.0.13
+    * MQTT Send message queue should not get stuck if packet too large
+    * MQTT client should not assert if no Response Topic
+
+  * WebSockets
+    * Fixed memory leak with WebSockets MTP, if from_id does not match EID in Sec-WebSocket-Extensions header
+    * Websocket server thread should not prevent graceful shutdown after disabling it, or after duplicate messages in its send queue
+
+  * CLI
+    * 'obuspa -c' output has been made cleaner, containing only logs from the data model thread
+    * Concurrent CLI invocations should not get stuck
+    * CLI initiated event arguments should support JSON formatted data
+
+  * Build Options
+    * Device.Security.Certificate may be removed from OBUSPA's data model using the define REMOVE_DEVICE_SECURITY_CERTIFICATE in vendor_defs.h.
+    * Configure options to enable address sanitizer (--enable-asan) and thread sanitizer builds (--enable-tsan) have been added. These options are disabled by default.
+    * Configure option (--enable-hardening) to enable compiler hardening flags (disabled by default)
+    * To support compilation of OBUSPA data model plug-ins, the build process now installs header files to $(includedir)/obuspa
+    * Fixed compilation failure when #include'ing only usp_api.h (enable_callstack_debug should be declared in usp_api.h)
+
+  * USP API
+    * Added USP_LOG_GetLogLevel and USP_LOG_SetLogLevel API functions to atomically access the log level at runtime
+    * Added USP_SIGNAL_Reboot API function to initiate shutting down, then rebooting the device
+    * can_mtp_connect vendor hook should also control Bulk Data Collection report generation
+
+  * Database
+    * OBUSPA's database may configure DeviceInfo.ProductClass, Manufacturer and ModelName, overriding compile time defaults
+    * Lines in the factory reset text file that begin with `+` automatically add the parameter to OBUSPA's database (existing value is left unchanged)
+    * factory_reset_example.txt renamed as stomp_factory_reset_example.txt
+    * Removed automatic creation of the default database directory during make install (GitHub Issue #148)
+
+  * Misc
+    * Code has been updated to use the latest v1.5.2 release of protobuf-c
+    * Fixed R-GET.0 not working for invalid object names in path
+    * Fixed R-GET.0 not applied for partial paths
+    * Fixed race hazard preventing graceful shutdown. Occurs if re-initiating shutdown whilst in the process of shutting down
+    * Fixed crash if object creation notification contains too many keys
+    * Wildcarded delete response with allow_partial=true now correct, if one instance not permitted to be deleted
+    * Fixed regression (introduced in v10.0.0) with Async Operation max concurrency limit
+    * ControllerTrust Permission Order uniqueness is now enforced when Add request with allow_partial=false adds multiple permissions with the same Order
+    * GSDM response does not contain unique keys for child objects when first_level_only=true
+    * Prevented first object creation notification after bootup being missed
+    * OBUSPA now returns correct error code to pass conformance test 1.100
+    * Alias uniqueness validation failures now return error code 7004 instead of 7025.
+    * Added SIGTERM signal handler to cleanly shutdown
+    * Added support for Device.BulkData.Profile.{i}.Controller parameter
+
+
 
 ## Release 10.0.0
   * USP v1.4 and TR-181 v2.18

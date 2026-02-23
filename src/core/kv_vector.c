@@ -91,6 +91,52 @@ void KV_VECTOR_Add(kv_vector_t *kvv, char *key, char *value)
 
 /*********************************************************************//**
 **
+** KV_VECTOR_Remove
+**
+** Removes a key value pair from the vector
+**
+** \param   kvv - pointer to structure to remove the entry from
+** \param   key - pointer to key to remove
+**
+** \return  None
+**
+**************************************************************************/
+void KV_VECTOR_Remove(kv_vector_t *kvv, char *key)
+{
+    int index;
+    kv_pair_t *kv;
+    int num_to_move;
+
+    // Exit if key doesn't exist in the vector - nothing to do
+    index = KV_VECTOR_FindKey(kvv, key, 0);
+    if (index == INVALID)
+    {
+        return;
+    }
+
+    // Free the entry
+    kv = &kvv->vector[index];
+    USP_FREE(kv->key);
+    USP_SAFE_FREE(kv->value);
+
+    // Move the rest of the entries down by 1
+    num_to_move = kvv->num_entries - 1 - index;
+    if (num_to_move > 0)
+    {
+        memmove(&kvv->vector[index], &kvv->vector[index+1], num_to_move*sizeof(kv_pair_t));
+    }
+
+    // Fixup number of entries and free vector, if there are no entries now
+    kvv->num_entries--;
+    if (kvv->num_entries == 0)
+    {
+        USP_FREE(kvv->vector);
+        kvv->vector = NULL;
+    }
+}
+
+/*********************************************************************//**
+**
 ** KV_VECTOR_Replace
 **
 ** Replaces all values associated with the specified key

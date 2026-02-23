@@ -4,6 +4,7 @@
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020, BT PLC
+ * Copyright (C) Copyright (c) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -79,7 +80,7 @@ void DM_EXEC_PostMqttHandshakeComplete(int mqtt_instance, mqtt_protocolver_t ver
 void DM_EXEC_PostWebsockHandshakeComplete(int cont_instance, int role_instance);
 #endif
 #ifdef ENABLE_UDS
-void DM_EXEC_PostUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigned conn_id);
+void DM_EXEC_PostUdsHandshakeComplete(char *endpoint_id, int instance, uds_path_t path_type, unsigned conn_id);
 void DM_EXEC_PostUdsDisconnected(char *endpoint_id, uds_path_t path_type);
 #endif
 void DM_EXEC_PostMtpThreadExited(unsigned flags);
@@ -90,9 +91,14 @@ int DM_EXEC_PostE2eEvent(e2e_event_t event, int request_instance, int controller
 void DM_EXEC_HandleScheduledExit(void);
 bool DM_EXEC_IsNotificationsEnabled(void);
 void *DM_EXEC_Main(void *args);
+
 #ifndef REMOVE_USP_BROKER
 Usp__Msg *DM_EXEC_SendRequestAndWaitForResponse(char *endpoint_id, Usp__Msg *req, mtp_conn_t *mtpc,
                                                 Usp__Header__MsgType header_type, int timeout);
+#ifdef FD_PASSING_EXPERIMENTAL
+Usp__Msg *DM_EXEC_SendRequestAndWaitForResponseWithFds(char *endpoint_id, Usp__Msg *req, mtp_conn_t *mtpc,
+                                                Usp__Header__MsgType header_type, int timeout, unsigned int *fd_key, bool *fd_res_exceeded);
+#endif
 #endif
 //------------------------------------------------------------------------------
 

@@ -1,0 +1,46 @@
+# 
+# These settings define a USP agent that can be tested against
+# CDRouter's USP Controller using unencrypted STOMP
+#
+
+Device.LocalAgent.EndpointID "proto::agent-id"
+
+Device.STOMP.Connection.1.Alias "cpe-1"
+Device.STOMP.Connection.1.Enable "true"
+Device.STOMP.Connection.1.Port "61613"
+Device.STOMP.Connection.1.X_ARRIS-COM_EnableEncryption "false"
+Device.STOMP.Connection.1.VirtualHost "/"
+Device.STOMP.Connection.1.Host "controller.cdroutertest.com"
+Device.STOMP.Connection.1.Username "qacafe"
+Device.STOMP.Connection.1.Password "qacafe123"
+Device.STOMP.Connection.1.EnableHeartbeats "true"
+Device.STOMP.Connection.1.OutgoingHeartbeat "30000"
+Device.STOMP.Connection.1.IncomingHeartbeat "300000"
+Device.STOMP.Connection.1.ServerRetryInitialInterval "60"
+Device.STOMP.Connection.1.ServerRetryIntervalMultiplier "2000"
+Device.STOMP.Connection.1.ServerRetryMaxInterval "30720"
+
+Device.LocalAgent.MTP.1.Alias "cpe-1"
+Device.LocalAgent.MTP.1.Enable "true"
+Device.LocalAgent.MTP.1.Protocol "STOMP"
+Device.LocalAgent.MTP.1.STOMP.Reference "Device.STOMP.Connection.1"
+Device.LocalAgent.MTP.1.STOMP.Destination "/agent-path"
+
+Device.LocalAgent.Controller.1.EndpointID "proto::controller-id"
+Device.LocalAgent.Controller.1.Alias "cpe-1"
+Device.LocalAgent.Controller.1.Enable "true"
+Device.LocalAgent.Controller.1.AssignedRole "Device.LocalAgent.ControllerTrust.Role.1"
+Device.LocalAgent.Controller.1.PeriodicNotifInterval "86400"
+Device.LocalAgent.Controller.1.PeriodicNotifTime "0001-01-01T00:00:00Z"
+Device.LocalAgent.Controller.1.USPNotifRetryMinimumWaitInterval "5"
+Device.LocalAgent.Controller.1.USPNotifRetryIntervalMultiplier "2000"
+Device.LocalAgent.Controller.1.ControllerCode ""
+
+Device.LocalAgent.Controller.1.MTP.1.Alias "cpe-1"
+Device.LocalAgent.Controller.1.MTP.1.Enable "true"
+Device.LocalAgent.Controller.1.MTP.1.Protocol "STOMP"
+Device.LocalAgent.Controller.1.MTP.1.STOMP.Reference "Device.STOMP.Connection.1"
+Device.LocalAgent.Controller.1.MTP.1.STOMP.Destination "/controller-path"
+
+Internal.Reboot.Cause "LocalFactoryReset"
+

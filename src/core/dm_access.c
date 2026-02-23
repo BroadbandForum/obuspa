@@ -561,7 +561,7 @@ int DM_ACCESS_ValidateRange_Signed(dm_req_t *req, int min_value, int max_value)
 **
 ** \param   reference - path to the instance in the specified table
 ** \param   table - data model schema path of table eg Device.STOMP.Connection.{i}
-** \param   instance - pointer to variable in which to return the instance number in the specified table
+** \param   instance - pointer to variable in which to return the instance number in the specified table, or NULL if the caller is not interested
 **
 ** \return  USP_ERR_OK if successful
 **
@@ -608,7 +608,10 @@ int DM_ACCESS_ValidateReference(char *reference, char *table, int *instance)
     }
 
     // Extract the trailing instance number of the reference in the table
-    *instance = inst.instances[inst.order-1];
+    if (instance != NULL)
+    {
+        *instance = inst.instances[inst.order-1];
+    }
 
     // If code gets here, then the reference was valid
     return USP_ERR_OK;
@@ -1040,6 +1043,39 @@ int DM_ACCESS_PopulateAliasParam(dm_req_t *req, char *buf, int len)
     // Generate the value to auto-populate the Alias parameter with
     instance = req->inst->instances[req->inst->order-1];
     USP_SNPRINTF(buf, len, DEFAULT_ALIAS_PREFIX "%d", instance);
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DM_ACCESS_PopulateEndpointIDParam
+**
+** Called to get an auto-populated parameter value for an EndpointID parameter
+** This function takes account of the multi-dimensionality of the object
+** Using the highest order dimension to number the instance
+**
+** \param   req - pointer to structure identifying the path
+** \param   buf - pointer to buffer in which to store the value to use to auto-populate the parameter's value
+** \param   len - length of return buffer
+**
+** \return  USP_ERR_OK if retrieved successfully
+**
+**************************************************************************/
+int DM_ACCESS_PopulateEndpointIDParam(dm_req_t *req, char *buf, int len)
+{
+    int instance;
+
+    // Exit if EndpointID parameter has not been used correctly ie. is not a member of a table
+    if (req->inst->order == 0)
+    {
+        USP_ERR_SetMessage("%s: Auto-populate EndpointID parameter is not in a table (%s)", __FUNCTION__, req->path);
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    // Generate the value to auto-populate the EndpointID parameter with
+    instance = req->inst->instances[req->inst->order-1];
+    USP_SNPRINTF(buf, len, AUTO_EID_PREFIX "%d", instance);
 
     return USP_ERR_OK;
 }

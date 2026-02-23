@@ -153,7 +153,9 @@ static struct option long_options[] =
     {"resetfile",  required_argument, NULL, 'r'},    // Specifies the location of a text file containing factory reset parameters
     {"interface",  required_argument, NULL, 'i'},    // Specifies the networking interface to use for communications
     {"cli",        required_argument, NULL, 's'},    // Specifies the Unix domain socket file to use for CLI communications
+#ifndef REMOVE_USP_SERVICE
     {"register",   required_argument, NULL, 'R'},    // Specifies the top level data model objects to register. Use of this option runs the Agent as a USP Service,
+#endif
     {"plugin",     required_argument, NULL, 'x'},    // Specifies the path to a vendor plugin - can be used multiple times to load multiple plugins
 
     {0, 0, 0, 0}
@@ -283,15 +285,13 @@ int main(int argc, char *argv[])
                 cli_uds_file = optarg;
                 break;
 
-            case 'R':
 #ifndef REMOVE_USP_SERVICE
+            case 'R':
                 // Set the top-level data model objects to register and run this Agent as a USP Service
                 usp_service_objects = optarg;
-#else
-                USP_LOG_Error("ERROR: The -R (--register) option is not supported on builds compiled with REMOVE_USP_SERVICE defined");
-                goto exit;
-#endif
                 break;
+#endif
+
             case 'i':
                 // Set the networking interface to use for USP communication
                 if (nu_ipaddr_is_valid_interface(optarg) != true)
@@ -591,7 +591,7 @@ void PrintUsage(char *prog_name)
     printf("--cli (-s)        Sets the path of the Unix domain socket file used for CLI communications\n");
 #ifndef REMOVE_DEVICE_SECURITY
     printf("--authcert (-a)   Sets the path of the PEM formatted file containing a client certificate and private key to authenticate this device with\n");
-    printf("--truststore (-t) Sets the path of the PEM formatted file containing trust store certificates\n");
+    printf("--truststore (-t) Sets the path of the file or directory containing PEM formatted trust store certificates\n");
 #endif
     printf("--resetfile (-r)  Sets the path of the text file containing factory reset parameters\n");
     printf("--interface (-i)  Sets the name of the networking interface to use for USP communication\n");

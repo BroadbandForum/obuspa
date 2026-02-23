@@ -2401,7 +2401,7 @@ int CheckPathProperties(char *path, resolver_state_t *state, bool *add_to_vector
     switch(state->op)
     {
         case kResolveOp_Get:
-            // Exit if the instance numbers do not exit, deciding whether this should be ignored or generate an error
+            // Exit if the instance numbers do not exist, deciding whether this should be ignored or generate an error
             if ((property_flags & PP_INSTANCE_NUMBERS_EXIST)==0)
             {
                 // If the path didn't contain a search path, then according to R-GET.0, it should return an error

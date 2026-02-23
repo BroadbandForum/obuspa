@@ -1,0 +1,60 @@
+# Below container was created from following Dockerfile:
+# FROM debian:trixie
+# RUN apt update && apt -y install \
+#    build-essential autoconf automake libtool pkg-config cmake git \
+#    libssl-dev libcurl4-openssl-dev libsqlite3-dev libz-dev libmosquitto-dev libwebsockets-dev clang-tools
+#
+# Commands to build and push container:
+# docker build -f Dockerfile -t toolsatbbf/obuspa-trixie-build:1 .
+# docker login --username=toolsatbbf
+# docker push toolsatbbf/obuspa-trixie-build:1
+
+image: toolsatbbf/obuspa-trixie-build:1
+
+# Cloned into current working directory (/opt/atlassian/pipelines/agent/build) with correct branch selected
+clone:
+  enabled: true
+
+pipelines:
+  default:
+    - step:
+        name: Build
+        script:
+          - autoreconf --force --install && ./configure && make install
+          - make clean && scan-build -o static_analysis make
+
+        artifacts:
+          - 'static_analysis/**'
+    - step:
+        name: CDRouter Docker Build
+        runs-on:
+          - 'self.hosted'
+          - 'linux.shell'
+          - 'cdrouter'
+        script:
+          - systemctl status docker
+          - docker build -t obuspa -f ci/Dockerfile .
+    - step:
+        name: CDRouter Conformance Test
+        runs-on:
+          - 'self.hosted'
+          - 'linux.shell'
+          - 'cdrouter'
+        script:
+          - docker compose -f ci/docker-compose.yml create --force-recreate
+          # when working on the pipeline, use tag <bitbucket-test> instead of <bitbucket-obuspa> for quicker runs
+          - ci/cdrouter-runner.py http://localhost 1234 bitbucket-obuspa $BITBUCKET_BUILD_NUMBER
+        after-script:
+          - docker compose -f ci/docker-compose.yml down
+          - docker compose -f ci/docker-compose.yml down
+          - unzip -p out/OBUSPA_USP_Conformance_STOMP.zip final.txt            | sed '1,/^Test[[:space:]]*Result/d' | sed '/test(s) run/,$d' | sed '1i STOMP'               > out/conformance_test_results.txt
+          - unzip -p out/OBUSPA_USP_Conformance_STOMPS.zip final.txt           | sed '1,/^Test[[:space:]]*Result/d' | sed '/test(s) run/,$d' | sed '1i STOMP over TLS'     >> out/conformance_test_results.txt
+          - unzip -p out/OBUSPA_USP_Conformance_MQTT.zip final.txt             | sed '1,/^Test[[:space:]]*Result/d' | sed '/test(s) run/,$d' | sed '1i MQTT'               >> out/conformance_test_results.txt
+          - unzip -p out/OBUSPA_USP_Conformance_MQTTS.zip final.txt            | sed '1,/^Test[[:space:]]*Result/d' | sed '/test(s) run/,$d' | sed '1i MQTT over TLS'      >> out/conformance_test_results.txt
+          - unzip -p out/OBUSPA_USP_Conformance_WebSocket.zip final.txt        | sed '1,/^Test[[:space:]]*Result/d' | sed '/test(s) run/,$d' | sed '1i WEBSOCKET'          >> out/conformance_test_results.txt
+          - unzip -p out/OBUSPA_USP_Conformance_Secure_WebSocket.zip final.txt | sed '1,/^Test[[:space:]]*Result/d' | sed '/test(s) run/,$d' | sed '1i WEBSOCKET over TLS' >> out/conformance_test_results.txt
+        artifacts:
+          - out/*
+          - out/conformance_test_results.txt
+
+

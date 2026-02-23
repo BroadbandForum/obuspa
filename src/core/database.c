@@ -123,7 +123,7 @@ int OpenUspDatabase(char *db_file);
 void ObfuscatedCopy(unsigned char *dest, unsigned char *src, int len);
 int CopyFactoryResetDatabase(char *reset_file, char *db_file);
 int ResetFactoryParameters(void);
-int ResetFactoryParametersFromFile(char *file);
+int ResetFactoryParametersFromFile(char *file, bool only_prefixed);
 void LogSQLStatement(char *op, char *path, sqlite3_stmt *stmt);
 int CalcPathMigrationHashes(void);
 int MigratePath(path_migrate_t *pm);
@@ -200,7 +200,7 @@ int DATABASE_Start(void)
         // Initialise using the factory reset text file
         if (factory_reset_text_file != NULL)
         {
-            err = ResetFactoryParametersFromFile(factory_reset_text_file);
+            err = ResetFactoryParametersFromFile(factory_reset_text_file, false);
             if (err != USP_ERR_OK)
             {
                 return err;
@@ -208,6 +208,18 @@ int DATABASE_Start(void)
         }
 
         schedule_factory_reset_init = false;
+    }
+    else
+    {
+        // We didn't have to perform a factory reset, but we should still process all prefixed parameters in the factory reset text file
+        if (factory_reset_text_file != NULL)
+        {
+            err = ResetFactoryParametersFromFile(factory_reset_text_file, true);
+            if (err != USP_ERR_OK)
+            {
+                return err;
+            }
+        }
     }
 
     // Migrate all paths that have changed to new DB entries
@@ -263,7 +275,6 @@ void DATABASE_Destroy(void)
 ** DATABASE_PerformFactoryReset_ControllerInitiated
 **
 ** Performs a factory reset of the database, ensuring that the reboot cause is set to "RemoteFactoryReset"
-** NOTE: This function must only be called when the database is not open (ie after DATABASE_Destroy has been called)
 **
 ** \param   None
 **
@@ -281,7 +292,7 @@ void DATABASE_PerformFactoryReset_ControllerInitiated(void)
     char reason[MAX_DM_SHORT_VALUE_LEN] = {0};
 
     // Save the cause and reason for this factory reset from the current database
-    // (so that we can restore them in the new database after the factor reset)
+    // (so that we can restore them in the new database after the factory reset)
     DM_PRIV_CalcHashFromPath(reboot_cause_path, NULL, &hash, 0);
     DATABASE_GetParameterValue(reboot_cause_path, hash, "", cause, sizeof(cause), 0);
     DM_PRIV_CalcHashFromPath(reboot_reason_path, NULL, &hash, 0);
@@ -318,7 +329,7 @@ void DATABASE_PerformFactoryReset_ControllerInitiated(void)
     // Exit if unable to setup the parameters specified in the factory reset text file
     if (factory_reset_text_file != NULL)
     {
-        err = ResetFactoryParametersFromFile(factory_reset_text_file);
+        err = ResetFactoryParametersFromFile(factory_reset_text_file, false);
         if (err != USP_ERR_OK)
         {
             return;
@@ -1063,7 +1074,7 @@ int ReInitializeDatabase(char *db_file, bool backup_corrupt_db)
     char filename[PATH_MAX];
     char *factory_reset_file = FACTORY_RESET_FILE;
 
-    USP_LOG_Error("%s: USP database (%s) is corrupt or invalid. Reinitializing.", __FUNCTION__, db_file);
+    USP_LOG_Error("%s: Reinitializing USP database (%s)", __FUNCTION__, db_file);
 
     USP_ASSERT(db_handle == NULL);
 
@@ -1290,21 +1301,26 @@ exit:
 ** Sets the data model parameters specified in the file
 **
 ** \param   file - name of file containing parameters to set
+** \param   only_prefixed - Set to true if we should only consider parameters prefixed with special characters in the file
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
-int ResetFactoryParametersFromFile(char *file)
+int ResetFactoryParametersFromFile(char *file, bool only_prefixed)
 {
     FILE *fp;
     char *result;
     char buf[MAX_DM_PATH + MAX_DM_VALUE_LEN + 4]; // Plus 4 to allow for separator, line ending characters and NULL terminator
+    char cur_value[MAX_DM_VALUE_LEN];
     int err;
     char *key;
     char *value;
     int line_number = 1;
 
-    USP_LOG_Info("%s: Setting factory reset parameters", __FUNCTION__);
+    if (only_prefixed==false)
+    {
+        USP_LOG_Info("%s: Setting factory reset parameters", __FUNCTION__);
+    }
 
     // Exit if unable to open the file containing factory reset parameters
     fp = fopen(file, "r");
@@ -1322,21 +1338,48 @@ int ResetFactoryParametersFromFile(char *file)
     {
         // Exit if an error occurred when parsing this line
         err = TEXT_UTILS_KeyValueFromString(buf, &key, &value);
-        if (err != USP_ERR_OK)
+        if ( (err != USP_ERR_OK) ||
+             ((err == USP_ERR_OK) && (key != NULL) && (strcmp(key, "+")==0)) )
         {
             USP_LOG_Error("%s: Syntax error in %s at line %d", __FUNCTION__, file, line_number);
             goto next_line;
         }
 
-        // Set the parameter (if the line was not blank or a comment)
-        if ((key != NULL) & (value != NULL))
+        // Skip blank lines and comments
+        if ((key == NULL) || (value == NULL))
         {
-            err = DATA_MODEL_SetParameterInDatabase(key, value);
-            if (err != USP_ERR_OK)
+            goto next_line;
+        }
+
+        // If we're only supposed to be considering prefixed parameters...
+        if (only_prefixed==true)
+        {
+            // Skip the parameter if it wasn't prefixed
+            if (*key != '+')
             {
-                USP_LOG_Error("%s: Failed to set parameter at line %d of %s", __FUNCTION__, line_number, file);
                 goto next_line;
             }
+
+            // Skip the parameter if it was already present in the database
+            err = DATA_MODEL_GetParameterFromDatabase(&key[1], cur_value, sizeof(cur_value));
+            if (err == USP_ERR_OK)
+            {
+                goto next_line;
+            }
+        }
+
+        // Remove leading prefix character (if present)
+        if (*key == '+')
+        {
+            key++;
+        }
+
+        // Set the parameter
+        err = DATA_MODEL_SetParameterInDatabase(key, value);
+        if (err != USP_ERR_OK)
+        {
+            USP_LOG_Error("%s: Failed to set parameter at line %d of %s", __FUNCTION__, line_number, file);
+            goto next_line;
         }
 
 next_line:
@@ -1345,7 +1388,7 @@ next_line:
         result = fgets(buf, sizeof(buf), fp);
     }
 
-    // If the code gets here, then all parameters in the file have been set successfully
+    // If the code gets here, then we've tried to set all parameters in the file (some may have failed)
     err = USP_ERR_OK;
 
     fclose(fp);

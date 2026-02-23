@@ -229,9 +229,9 @@ int DEVICE_LOCAL_AGENT_Init(void)
 
 #ifndef REMOVE_DEVICE_INFO
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.DeviceInfo.SoftwareVersion", GetActiveSoftwareVersion, DM_STRING);
-    err |= USP_REGISTER_Param_Constant("Device.DeviceInfo.ProductClass", VENDOR_PRODUCT_CLASS, DM_STRING);
-    err |= USP_REGISTER_Param_Constant("Device.DeviceInfo.Manufacturer", VENDOR_MANUFACTURER, DM_STRING);
-    err |= USP_REGISTER_Param_Constant("Device.DeviceInfo.ModelName", VENDOR_MODEL_NAME, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadOnly("Device.DeviceInfo.ProductClass", VENDOR_PRODUCT_CLASS, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadOnly("Device.DeviceInfo.Manufacturer", VENDOR_MANUFACTURER, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadOnly("Device.DeviceInfo.ModelName", VENDOR_MODEL_NAME, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.DeviceInfo.HardwareVersion", GetHardwareVersion, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly("Device.DeviceInfo.UpTime", GetKernelUpTime, DM_UINT);
 
@@ -815,7 +815,7 @@ int GetDefaultSerialNumber(char *buf, int len)
         err = get_agent_serial_number_cb(buf, len);
         if (err != USP_ERR_OK)
         {
-            USP_ERR_SetMessage("%s: get_agent_endpoint_id_cb() failed", __FUNCTION__);
+            USP_ERR_SetMessage("%s: get_agent_serial_number_cb() failed", __FUNCTION__);
             return USP_ERR_INTERNAL_ERROR;
         }
 

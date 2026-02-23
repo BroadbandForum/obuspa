@@ -1,5 +1,31 @@
 # OB-USP-AGENT Changelog
 
+## 2026-02-20 v11.0.0
+### Added
+- Authenticated UDS connections: USP Services must provide a passsword in the UDS Handshake frame if 
+  UnixDomainSocket.{i}.AuthRequired is set to true. Passwords are configured in UnixDomainSockets.Authentication.{i}
+- Data model registration permissions: USP Services are only permitted to register the DM elements specified
+  in USPServices.Trust.{i}, if UnixDomainSocket.{i}.RegistrationRestricted is set to true.
+- File descriptor passing via Unix domain socket ancilliary data for USP Services. Currently this feature is
+  being discussed for inclusion in the USP v1.6 specification. Disabled by default, this feature
+  may be enabled by defining FD_PASSING_EXPERIMENTAL in vendor_defs.h
+- Lines in the factory reset text file that begin with `+` automatically add the parameter to OBUSPA's database. 
+  If it is already present, its existing value is left unchanged.
+- TP-469 Conformance Test Plan Results for each release are checked in at 
+  [conformance_test_results.txt](https://github.com/BroadbandForum/obuspa/blob/master/conformance_test_results.txt).
+  The CI directory contains the files used by the test procedure.
+
+### Modified
+- factory_reset_example.txt renamed as stomp_factory_reset_example.txt
+- OBUSPA's database may configure DeviceInfo.ProductClass, Manufacturer and ModelName, overriding compile time defaults.
+
+### Fixed
+- Crash that occurred if invalid UDS MTP parameters were present in OBUSPA's database at startup.
+- OBUSPA was not automatically creating intermediate directories in the MUTABLE_CERT_DIR path.
+- Alias uniqueness validation failures returned error code 7004 instead of 7025.
+
+
+
 ## 2026-02-09 v10.0.14
 ### Fixed
 - Changes introduced in v10.0.13 could cause FactoryReset() to hit an assert. The cause has been fixed.

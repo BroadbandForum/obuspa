@@ -3,6 +3,7 @@
  * Copyright (C) 2019-2025, Broadband Forum
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
+ * Copyright (C) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -68,6 +69,10 @@
 
 #ifndef REMOVE_USP_BROKER
 #include "usp_broker.h"
+#endif
+
+#ifdef FD_PASSING_EXPERIMENTAL
+#include "fd_vector.h"
 #endif
 
 //------------------------------------------------------------------------------
@@ -190,6 +195,9 @@ void GetAllPathExpressionParameterValues(subs_t *sub, str_vector_t *path_express
 char *SerializeToJSONObject(kv_vector_t *param_values);
 void SendOperationCompleteNotify(subs_t *sub, char *command, char *command_key, int err_code, char *err_msg, kv_vector_t *output_args);
 void SendNotify(Usp__Msg *req, subs_t *sub, char *path);
+#ifdef FD_PASSING_EXPERIMENTAL
+void SendNotifyWithFds(Usp__Msg *req, subs_t *sub, char *path, unsigned int fd_key);
+#endif
 bool DoesSubscriptionSendNotification(subs_t *sub, char *event_name);
 bool DoesSubscriptionMatchEvent(subs_t *subs, char *event_name);
 bool HasControllerGotNotificationPermission(int cont_instance, char *path, unsigned short mask);
@@ -846,11 +854,19 @@ void DEVICE_SUBSCRIPTION_NotifyControllerDeleted(int cont_instance)
 ** \param   usp - pointer to parsed USP message structure. This will be freed by the caller (not this function)
 ** \param   instance - instance number of the subscription in the Broker's Device.LocalAgent.Subscription.{i}
 ** \param   subscribed_path - the relevant path from the subscription reference list
+** \param   fd_key - key of buffer with file descriptors in global file descriptors map
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
 int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance, char *subscribed_path)
+#ifdef FD_PASSING_EXPERIMENTAL
+{
+    return DEVICE_SUBSCRIPTION_RouteNotificationWithFds(usp, instance, subscribed_path, 0);
+}
+
+int DEVICE_SUBSCRIPTION_RouteNotificationWithFds(Usp__Msg *usp, int instance, char *subscribed_path, unsigned int fd_key)
+#endif
 {
     subs_t *sub;
     Usp__Notify *notify;
@@ -982,10 +998,44 @@ int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance, char *sub
     // Modify the send_resp
     notify->send_resp = sub->notification_retry;
 
+#ifdef FD_PASSING_EXPERIMENTAL
+{
+    mtp_conn_t dest;
+    char *dest_endpoint;
+
+    // Exit if unable to determine the endpoint of the controller
+    // This could occur if the controller had been deleted
+    dest_endpoint = DEVICE_CONTROLLER_FindEndpointIdByInstance(sub->cont_instance);
+    if (dest_endpoint == NULL)
+    {
+        return USP_ERR_INTERNAL_ERROR;
+    }
+
+    err = DEVICE_CONTROLLER_CopyNotifyDestForEndpoint(dest_endpoint, kMtpProtocol_None, USP__HEADER__MSG_TYPE__NOTIFY, &dest);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // If file descriptors attached to operation complete notification on non-UDS MTP
+    // return error as transfer file descriptors on non-UDS protocol is not supported
+    if ((fd_key != 0)
+            && (notify->notification_case == USP__NOTIFY__NOTIFICATION_OPER_COMPLETE)
+            && (dest.protocol != kMtpProtocol_UDS))
+    {
+        return USP_ERR_VALUE_CONFLICT;
+    }
+
+    // Send the Notify Request to the controller which set up the subscription on the Broker
+    // NOTE: This call also ensures that we now handle retries for this notification message to the originating controller
+    SendNotifyWithFds(usp, sub, path, fd_key);
+}
+#else
+
     // Send the Notify Request to the controller which set up the subscription on the Broker
     // NOTE: This call also ensures that we now handle retries for this notification message to the originating controller
     SendNotify(usp, sub, path);
-
+#endif
     return USP_ERR_OK;
 }
 
@@ -1354,6 +1404,7 @@ int ProcessSubscriptionAdded(int instance)
 {
     char path[MAX_DM_PATH];
     char controller_path[MAX_DM_PATH];
+    char ref_list[MAX_DM_VALUE_LEN];
     subs_t sub;
     int err;
 
@@ -1442,14 +1493,11 @@ int ProcessSubscriptionAdded(int instance)
 
     // Get ReferenceList
     USP_SNPRINTF(path, sizeof(path), "%s.%d.ReferenceList", device_subs_root, instance);
-    err = DM_ACCESS_GetStringVector(path, &sub.path_expressions);
+    err = DATA_MODEL_GetParameterValue(path, ref_list, sizeof(ref_list), 0);
     if (err != USP_ERR_OK)
     {
         goto exit;
     }
-
-    // Ensure that the subscription handler_group_ids for all of the ReferenceList path components are marked as not used
-    INT_VECTOR_Create(&sub.handler_group_ids, sub.path_expressions.num_entries, NON_GROUPED);
 
     // Get NotifType
     USP_SNPRINTF(path, sizeof(path), "%s.%d.NotifType", device_subs_root, instance);
@@ -1458,6 +1506,19 @@ int ProcessSubscriptionAdded(int instance)
     {
         goto exit;
     }
+
+    // Exit if the ReferenceList was not permitted, given the notify type
+    err = Validate_SubsRefList_Inner(sub.notify_type, ref_list);
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    TEXT_UTILS_SplitString(ref_list, &sub.path_expressions, ",");
+
+    // Ensure that the subscription handler_group_ids for all of the ReferenceList path components are marked as not used
+    INT_VECTOR_Create(&sub.handler_group_ids, sub.path_expressions.num_entries, NON_GROUPED);
+
 
     // If the code gets here, then we successfully retrieved all data about the subscription
     err = USP_ERR_OK;
@@ -3392,11 +3453,19 @@ void SendOperationCompleteNotify(subs_t *sub, char *command, char *command_key, 
 ** \param   req - pointer to USP notify request message to send. This is always freed by the caller (not this function)
 ** \param   sub - pointer to subscription that caused this notify to be triggered
 ** \param   path - data model path of parameter, operation or event which we are notifying
+** \param   fd_key - key of buffer with file descriptors in global file descriptors map
 **
 ** \return  None
 **
 **************************************************************************/
 void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
+#ifdef FD_PASSING_EXPERIMENTAL
+{
+    SendNotifyWithFds(req, sub, path, 0);
+}
+
+void SendNotifyWithFds(Usp__Msg *req, subs_t *sub, char *path, unsigned int fd_key)
+#endif
 {
     unsigned char *pbuf;
     int pbuf_len;
@@ -3443,9 +3512,31 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
 #endif
 
     // Send the message
-    // NOTE: Intentionally ignoring error here. If the controller has been disabled or deleted, then
+#ifdef FD_PASSING_EXPERIMENTAL
+    // NOTE: Intentionally ignoring other errors here except USP_ERR_REQUEST_DENIED. In case of USP_ERR_REQUEST_DENIED
+    // file descriptors should be closed immediately. If the controller has been disabled or deleted, then
+    // allow the subs retry code to remove any previous attempts from the retry array
+    // Notification targeted to wrong MTP
+    usp_send_item.fd_key = fd_key;
+    int err = MSG_HANDLER_QueueUspRecord(&usp_send_item, dest_endpoint, req->header->msg_id, &mtp_conn, retry_expiry_time);
+    if (err == USP_ERR_REQUEST_DENIED && fd_key != 0)
+    {
+        int fd_count = 0;
+        int* fd_buffer = FD_VECTOR_Get(fd_key, &fd_count);
+        if (fd_count != 0)
+        {
+            FD_VECTOR_Remove(fd_key);
+            FD_VECTOR_Close(fd_buffer, fd_count);
+        }
+        USP_FREE(pbuf);
+        return;
+    }
+#else
+    // NOTE: Intentionally ignoring other errors here except USP_ERR_REQUEST_DENIED. In case of USP_ERR_REQUEST_DENIED
+    // file descriptors should be closed immediately. If the controller has been disabled or deleted, then
     // allow the subs retry code to remove any previous attempts from the retry array
     MSG_HANDLER_QueueUspRecord(&usp_send_item, dest_endpoint, req->header->msg_id, &mtp_conn, retry_expiry_time);
+#endif
 
     // If the message should be retried until a NotifyResponse is received, then...
     if (sub->notification_retry)
@@ -3453,8 +3544,13 @@ void SendNotify(Usp__Msg *req, subs_t *sub, char *path)
         // Add this message to the list of notification requests to retry
         // NOTE: Ownership of the serialized USP message passes to the subs retry module
         msg_id = req->header->msg_id;
+#ifdef FD_PASSING_EXPERIMENTAL
+        SUBS_RETRY_AddWithFds(sub->instance, msg_id, sub->subscription_id, dest_endpoint, path,
+                       pbuf, pbuf_len, retry_expiry_time, fd_key);
+#else
         SUBS_RETRY_Add(sub->instance, msg_id, sub->subscription_id, dest_endpoint, path,
                        pbuf, pbuf_len, retry_expiry_time);
+#endif
     }
     else
     {

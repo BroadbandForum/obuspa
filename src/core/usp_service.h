@@ -53,5 +53,6 @@ void USP_SERVICE_QueueDeregisterRequest(char *endpoint_id, char *objects);
 void USP_SERVICE_HandleDeRegisterResp(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtpc);
 bool USP_SERVICE_AsController_IsExpectedResponse(Usp__Msg *usp);
 int USP_SERVICE_SetBrokerAgent(char *endpoint_id, mtp_conn_t *mrt);
+Usp__Msg *USP_SERVICE_CreateRegisterReq(char *msg_id, bool allow_partial, char **paths, int num_paths);
 
 #endif

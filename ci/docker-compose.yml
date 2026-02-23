@@ -1,0 +1,87 @@
+# Docker compose file used by CI pipeline for testing against a CDRouter NTA
+version: "3.7"
+
+services:
+
+    # Main OBUSPA service all others are based on
+    obuspa:
+        image: obuspa:latest
+        stdin_open: true
+        tty: true
+        dns:
+            - 202.254.101.1
+        restart: unless-stopped
+
+    # mtp-specific services
+    obuspa-mqtt:
+        container_name: obuspa-mqtt
+        extends:
+            service: obuspa
+        networks:
+            - eth1
+        command: obuspa -p -v4 -r /etc/obuspa/configs/MQTT.txt -t /etc/obuspa/certs -f /tmp/usp.db
+
+    obuspa-mqtts:
+        container_name: obuspa-mqtts
+        extends:
+            service: obuspa
+        networks:
+            - eth1
+        command: obuspa -p -v4 -r /etc/obuspa/configs/Secure_MQTT.txt -t /etc/obuspa/certs -f /tmp/usp.db
+
+    obuspa-stomp:
+        container_name: obuspa-stomp
+        extends:
+            service: obuspa
+        networks:
+            - eth3
+        command: obuspa -p -v4 -r /etc/obuspa/configs/STOMP.txt -t /etc/obuspa/certs -f /tmp/usp.db
+        
+    obuspa-stomps:
+        container_name: obuspa-stomps
+        extends:
+            service: obuspa
+        networks:
+            - eth3
+        command: obuspa -p -v4 -r /etc/obuspa/configs/Secure_STOMP.txt -t /etc/obuspa/certs -f /tmp/usp.db
+
+    obuspa-websocket:
+        container_name: obuspa-websocket
+        extends:
+            service: obuspa
+        networks:
+            - eth5
+        command: obuspa -p -v4 -r /etc/obuspa/configs/WebSocket.txt -t /etc/obuspa/certs -f /tmp/usp.db
+
+    obuspa-websockets:
+        container_name: obuspa-websockets
+        extends:
+            service: obuspa
+        networks:
+            - eth5
+        command: obuspa -p -v4 -r /etc/obuspa/configs/Secure_WebSocket.txt -t /etc/obuspa/certs -f /tmp/usp.db
+
+networks:
+    mgmt:
+        driver: bridge
+    eth1:
+        driver: macvlan
+        driver_opts:
+            parent: eth1
+        ipam:
+            config:
+                - subnet: "202.254.1.0/24"
+    eth3:
+        driver: macvlan
+        driver_opts:
+            parent: eth3
+        ipam:
+            config:
+                - subnet: "202.254.2.0/24"
+    eth5:
+        driver: macvlan
+        driver_opts:
+            parent: eth5
+        ipam:
+            config:
+                - subnet: "202.254.3.0/24"

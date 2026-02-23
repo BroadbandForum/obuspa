@@ -50,13 +50,15 @@ typedef enum
     kUdsConnType_Invalid = INVALID
 } uds_connection_type_t;
 
-// Structure containing configuration parameters for the agent's domain socket server
+// Structure containing configuration parameters for the UDS MTP
 typedef struct
 {
-    int instance;               // domain socket instance from the datamodel
+    int instance;               // Instance number in Device.UnixDomainSockets.UnixDomainSocket.{i}
     char *path;                 // resource path in the URL to the domain socket server
     uds_path_t path_type;       // Specifies whether the Unix domain socket path is the USP Broker's agent or controller
     uds_connection_type_t mode; // server or client
+    bool auth_required;         // Set to true if Endpoints connecting on this socket should provide their password
+    bool registration_restricted;// Set to true if registration path permissions (in Device.USPServices.Trust) apply for Endpoints connecting on this socket
 } uds_conn_params_t;
 
 //------------------------------------------------------------------------------
@@ -69,6 +71,7 @@ typedef enum
     kUdsFrameType_Handshake = 1,
     kUdsFrameType_Error = 2,
     kUdsFrameType_UspRecord = 3,
+    kUdsFrameType_Password = 4,
 } uds_frame_t;
 
 //------------------------------------------------------------------------------
@@ -82,10 +85,13 @@ void UDS_UpdateAllSockSet(socket_set_t *set);
 void UDS_ProcessAllSocketActivity(socket_set_t *set);
 int UDS_QueueBinaryMessage(mtp_send_item_t *msi, mtp_conn_t *mtpc, time_t expiry_time, uds_frame_t frame_type);
 int UDS_GetMTPForEndpointId(char *endpoint_id, mtp_conn_t *mtpc);
-int UDS_GetInstanceForConnection(unsigned conn_id);
 void UDS_ActivateScheduledActions(void);
 bool UDS_AreAllResponsesSent(void);
 void UDS_Destroy(void);
 char *UDS_PathTypeToString(uds_path_t path_type);
 mtp_status_t UDS_GetMtpStatus(int instance);
+void UDS_AddAuthPassword(char *endpoint_id, char *password);
+void UDS_RemoveAuthPassword(char *endpoint_id);
+void UDS_ModifyAuthPassword(char *endpoint_id, char *password);
+void UDS_SetSelfPassword(char *password);
 #endif // UDS_H

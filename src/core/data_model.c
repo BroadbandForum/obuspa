@@ -4,6 +4,7 @@
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
+ * Copyright (C) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -72,6 +73,10 @@
 
 #ifdef ENABLE_UDS
 #include "uds.h"
+#endif
+
+#ifdef FD_PASSING_EXPERIMENTAL
+#include "fd_vector.h"
 #endif
 
 #ifndef REMOVE_USP_BROKER
@@ -367,10 +372,6 @@ int DATA_MODEL_Start(void)
     err |= DEVICE_STOMP_Start();          // NOTE: This must come after DEVICE_SECURITY_Start(), as it assumes the trust store and client certs have been locally cached
 #endif
 
-#ifdef ENABLE_UDS
-    err |= DEVICE_UDS_Start();
-#endif
-
 #ifdef ENABLE_COAP
     err |= COAP_Start();                  // NOTE: This must come after DEVICE_SECURITY_Start(), as it assumes the trust store and client certs have been locally cached
 #endif
@@ -380,13 +381,20 @@ int DATA_MODEL_Start(void)
 #endif
     err |= DEVICE_MTP_Start();            // NOTE: This must come after COAP_Start, as it assumes that the CoAP SSL contexts have been created
     err |= DEVICE_SUBSCRIPTION_Start();   // NOTE: This must come after DEVICE_LOCAL_AGENT_Start(), as it calls DEVICE_LOCAL_AGENT_GetRebootInfo()
+
+#ifdef ENABLE_UDS
+    err |= DEVICE_UDS_Start();            // NOTE: This must come after DEVICE_MTP_Start(), as it calls DEVICE_MTP_CalcUdsPathType()
+#endif
+
 #ifndef REMOVE_DEVICE_BULKDATA
     err |= DEVICE_BULKDATA_Start();
 #endif
 
 
 
-
+#ifndef REMOVE_USP_BROKER
+    err |= USP_BROKER_Start();
+#endif
 
     // Always start the vendor last
     err |= VENDOR_Start();
@@ -1527,11 +1535,21 @@ int DATA_MODEL_NotifyInstanceDeleted(char *path)
 ** \param   command_key - pointer to string used by controller to identify the operation in a notification
 ** \param   instance - pointer to variable in which to return the instance number of an entry in the request table
 **                     (if the operation was sync, then the variable will be set to invalid)
+** \param   fd_key - pointer to memory where key to file descriptor buffer recieved from operate reponse will be put
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
+#ifdef FD_PASSING_EXPERIMENTAL
 int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_args, char *command_key, int *instance)
+{
+    return DATA_MODEL_OperateWithFds(path, input_args, output_args, command_key, instance, NULL);
+}
+
+int DATA_MODEL_OperateWithFds(char *path, kv_vector_t *input_args, kv_vector_t *output_args, char *command_key, int *instance, unsigned int *fd_key)
+#else
+int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_args, char *command_key, int *instance)
+#endif
 {
     dm_instances_t inst;
     dm_node_t *node;
@@ -1602,6 +1620,26 @@ int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_
                 USP_ERR_ReplaceEmptyMessage("%s: Synchronous operation (%s) failed", __FUNCTION__, path);
                 goto exit;
             }
+
+#ifdef FD_PASSING_EXPERIMENTAL
+            // Set key of file descriptor buffer if caller provided
+            // where to put it.
+            // Otherwise if request contains file descriptors - close them all
+            if (fd_key != NULL)
+            {
+                (*fd_key) = req.fd_key;
+            }
+            else if (req.fd_key > 0)
+            {
+                int fd_count = 0;
+                int *fd_buffer = FD_VECTOR_Get(req.fd_key, &fd_count);
+                if (fd_count != 0)
+                {
+                    FD_VECTOR_Close(fd_buffer, fd_count);
+                    FD_VECTOR_Remove(req.fd_key);
+                }
+            }
+#endif
 
             #ifdef VALIDATE_OUTPUT_ARG_NAMES
             // Validate the names of the output arguments
@@ -2831,6 +2869,55 @@ char DATA_MODEL_GetJSONParameterType(char *path)
     }
 
     return type;
+}
+
+/*********************************************************************//**
+**
+** DATA_MODEL_GetParameterFromDatabase
+**
+** Function to get a parameter directly in the database, ignoring all vendor hooks
+** This function is used by the dbget CLI command
+**
+** \param   path - data model path of the parameter
+** \param   buf - buffer in which to return the parameter's value
+** \param   len - length of the buffer in which to return the parameter's value
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int DATA_MODEL_GetParameterFromDatabase(char *path, char *buf, int len)
+{
+    int err;
+    dm_hash_t hash;
+    char instances[MAX_DM_PATH];
+    unsigned path_flags;
+
+    *buf = '\0';
+
+    // Exit if parameter path is incorrect
+    err = DM_PRIV_FormDB_FromPath(path, &hash, instances, sizeof(instances));
+    if (err != USP_ERR_OK)
+    {
+        return err;
+    }
+
+    // Exit, returning empty string, if this parameter is obfuscated (eg containing a password)
+    path_flags = DATA_MODEL_GetPathProperties(path, INTERNAL_ROLE, NULL, NULL, NULL, 0);
+    if (path_flags & PP_IS_SECURE_PARAM)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Exit if unable to get value of parameter from DB
+    USP_ERR_ClearMessage();
+    err = DATABASE_GetParameterValue(path, hash, instances, buf, len, 0);
+    if (err != USP_ERR_OK)
+    {
+        USP_ERR_ReplaceEmptyMessage("%s: Parameter %s exists in the schema, but does not exist in the database", __FUNCTION__, path);
+        return err;
+    }
+
+    return USP_ERR_OK;
 }
 
 /*********************************************************************//**

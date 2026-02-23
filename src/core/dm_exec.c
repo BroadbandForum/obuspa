@@ -5,6 +5,7 @@
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020,  BT PLC
  * Copyright (C) 2022, Snom Technology GmbH
+ * Copyright (C) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -89,6 +90,10 @@
 
 #ifndef REMOVE_USP_SERVICE
 #include "usp_service.h"
+#endif
+
+#ifdef FD_PASSING_EXPERIMENTAL
+#include "fd_vector.h"
 #endif
 
 //------------------------------------------------------------------------------
@@ -221,6 +226,7 @@ typedef struct
 typedef struct
 {
     char *endpoint_id;
+    int instance;               // Instance number in Device.UnixDomainSocket.UnixDomainSockets.{i}
     uds_path_t path_type;
     unsigned conn_id;
 } uds_complete_msg_t;
@@ -379,10 +385,14 @@ void GetParameterValueCallback(void *arg1, void *arg2);
 void SetParameterValueCallback(void *arg1, void *arg2);
 #ifndef REMOVE_USP_BROKER
 void ForwardPendingMessagesOnFilterQueue(socket_set_t *set);
+#ifdef FD_PASSING_EXPERIMENTAL
+Usp__Msg *IsMatchingMsgId(dm_exec_msg_t *msg, char *msg_id, char *responder, Usp__Header__MsgType header_type, bool *is_handled, unsigned int *fd_key, bool *fd_res_exceeded);
+#else
 Usp__Msg *IsMatchingMsgId(dm_exec_msg_t *msg, char *msg_id, char *responder, Usp__Header__MsgType header_type, bool *is_handled);
 #endif
+#endif
 #ifdef ENABLE_UDS
-void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigned conn_id);
+void HandleUdsHandshakeComplete(char *endpoint_id, int instance, uds_path_t path_type, unsigned conn_id);
 void HandleUdsDisconnected(char *endpoint_id, uds_path_t path_type);
 #endif
 void SigTermHandler(int sig);
@@ -401,7 +411,7 @@ void SigTermHandler(int sig);
 int DM_EXEC_Init(void)
 {
     int err;
-    struct sigaction sa = {0};
+    struct sigaction sa = {{0}};
 
     // Exit if unable to initialize the socket pair used to implement the main message queue
     err = socketpair(AF_UNIX, SOCK_DGRAM, 0, main_mq_sockets);
@@ -1024,12 +1034,13 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, char *originator, 
     process_usp_record_msg_t *pur;
     int bytes_sent;
     int mq_tx_socket = main_mq_tx_socket;
+    int err = USP_ERR_INTERNAL_ERROR;
 
     // Exit if message queue is not setup yet
     if (main_mq_tx_socket == -1)
     {
         USP_LOG_Error("%s is being called before data model has been initialised", __FUNCTION__);
-        return;
+        goto exit;
     }
 
     // Form message
@@ -1059,8 +1070,25 @@ void DM_EXEC_PostUspRecord(unsigned char *pbuf, int pbuf_len, char *originator, 
         USP_LOG_Error("%s(%d): send failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         USP_LOG_Error("%s: Discarding received USP Record", __FUNCTION__);
         FreeDmExecMessageArguments(&msg);
-        return;
+        goto exit;
     }
+
+    err = USP_ERR_OK;
+
+exit:
+    (void)err;
+#ifdef FD_PASSING_EXPERIMENTAL
+    if ((err != USP_ERR_OK) && (mtpc->protocol == kMtpProtocol_UDS) && (mtpc->uds.fd_key != 0))
+    {
+        int fd_count = 0;
+        int *fd_buffer = FD_VECTOR_Get(mtpc->uds.fd_key, &fd_count);
+        if (fd_count != 0)
+        {
+            FD_VECTOR_Close(fd_buffer, fd_count);
+            FD_VECTOR_Remove(mtpc->uds.fd_key);
+        }
+    }
+#endif
 }
 
 /*********************************************************************//**
@@ -1224,13 +1252,14 @@ void DM_EXEC_PostWebsockHandshakeComplete(int cont_instance, int role_instance)
 ** The first time this is called, it will unblock processing of subscriptions on this device
 **
 ** \param   endpoint_id - endpoint that has connected
+** \param   instance - Instance number in Device.UnixDomainSocket.UnixDomainSockets.{i}
 ** \param   path_type - whether the endpoint is connected to the Broker's Controller or the Broker's Agent socket
 ** \param   conn_id - Unique identifier for the connection to the endpoint
 **
 ** \return  None
 **
 **************************************************************************/
-void DM_EXEC_PostUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigned conn_id)
+void DM_EXEC_PostUdsHandshakeComplete(char *endpoint_id, int instance, uds_path_t path_type, unsigned conn_id)
 {
     dm_exec_msg_t  msg;
     uds_complete_msg_t *ucm;
@@ -1242,6 +1271,7 @@ void DM_EXEC_PostUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, u
     msg.type = kDmExecMsg_UdsHandshakeComplete;
     ucm = &msg.params.uds_complete;
     ucm->endpoint_id = USP_STRDUP(endpoint_id);
+    ucm->instance = instance;
     ucm->path_type = path_type;
     ucm->conn_id = conn_id;
 
@@ -1584,8 +1614,13 @@ void DM_EXEC_CopyMTPConnection(mtp_conn_t *dst, mtp_conn_t *src)
 
 #ifdef ENABLE_UDS
         case kMtpProtocol_UDS:
+            dst->uds.instance = src->uds.instance;
             dst->uds.conn_id = src->uds.conn_id;
             dst->uds.path_type = src->uds.path_type;
+
+#ifdef FD_PASSING_EXPERIMENTAL
+            dst->uds.fd_key = src->uds.fd_key;
+#endif
             break;
 #endif
         default:
@@ -1727,12 +1762,22 @@ void DM_EXEC_HandleScheduledExit(void)
 ** \param   mtpc - details of where this USP message should be sent
 ** \param   header_type - Type of response message that we are expecting in the USP Message header
 ** \param   timeout - timeout (in seconds) for receiving a response message
+** \param   fd_key - pointer to memory where key to file descriptor buffer recieved from operate reponse will be put
+** \param   fd_res_exceeded - pointer to memory where to put flag indicating exceeded file descriptors buffers limit
 **
 ** \return  USP response message or NULL if timed out or an error occurred
 **
 **************************************************************************/
 Usp__Msg *DM_EXEC_SendRequestAndWaitForResponse(char *endpoint_id, Usp__Msg *req, mtp_conn_t *mtpc,
                                                 Usp__Header__MsgType header_type, int timeout)
+#ifdef FD_PASSING_EXPERIMENTAL
+{
+    return DM_EXEC_SendRequestAndWaitForResponseWithFds(endpoint_id, req, mtpc, header_type, timeout, NULL, NULL);
+}
+
+Usp__Msg *DM_EXEC_SendRequestAndWaitForResponseWithFds(char *endpoint_id, Usp__Msg *req, mtp_conn_t *mtpc,
+                                                Usp__Header__MsgType header_type, int timeout, unsigned int *fd_key, bool *fd_res_exceeded)
+#endif
 {
     char wanted_msg_id[MAX_MSG_ID_LEN];
     int timeout_ms;
@@ -1794,7 +1839,11 @@ Usp__Msg *DM_EXEC_SendRequestAndWaitForResponse(char *endpoint_id, Usp__Msg *req
 #endif
 
             // Exit if we've received the response message we're waiting for, freeing the message from the queue
+#ifdef FD_PASSING_EXPERIMENTAL
+            resp = IsMatchingMsgId(&msg, wanted_msg_id, endpoint_id, header_type, &is_handled, fd_key, fd_res_exceeded);
+#else
             resp = IsMatchingMsgId(&msg, wanted_msg_id, endpoint_id, header_type, &is_handled);
+#endif
             if (resp != NULL)
             {
                 divert_to_filter_queue = false;     // Switch back to posting to the main message queue
@@ -2103,7 +2152,7 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
         {
             uds_complete_msg_t *ucm;
             ucm = &msg.params.uds_complete;
-            HandleUdsHandshakeComplete(ucm->endpoint_id, ucm->path_type, ucm->conn_id);
+            HandleUdsHandshakeComplete(ucm->endpoint_id, ucm->instance, ucm->path_type, ucm->conn_id);
         }
             break;
 
@@ -2253,14 +2302,17 @@ void ProcessMessageQueueSocketActivity(socket_set_t *set)
 ** Called after a USP endpoint has connected over UDS MTP
 **
 ** \param   endpoint_id - endpoint that we've connected to
+** \param   instance - Instance number in Device.UnixDomainSocket.UnixDomainSockets.{i}
 ** \param   path_type - whether the endpoint is connected to the Broker's Controller or the Broker's Agent socket
 ** \param   conn_id - Unique identifier for the connection to the endpoint
 **
 ** \return  None
 **
 **************************************************************************/
-void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigned conn_id)
+void HandleUdsHandshakeComplete(char *endpoint_id, int instance, uds_path_t path_type, unsigned conn_id)
 {
+    USP_LOG_Debug("%s: Processing UDS Handshake from %s on %s", __FUNCTION__, endpoint_id, UDS_PathTypeToString(path_type));
+
 #ifndef REMOVE_USP_BROKER
     // If running as USP Broker then...
     if (RUNNING_AS_USP_SERVICE() == false)
@@ -2270,6 +2322,7 @@ void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigne
         memset(&mtpc, 0, sizeof(mtpc));
         mtpc.protocol = kMtpProtocol_UDS;
         mtpc.is_reply_to_specified = true;
+        mtpc.uds.instance = instance;
         mtpc.uds.conn_id = conn_id;
         mtpc.uds.path_type = path_type;
         USP_BROKER_AddUspService(endpoint_id, &mtpc);  // Deliberately ignoring the error - there's nothing more we can do than log it
@@ -2278,12 +2331,7 @@ void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigne
         // NOTE: This also ensures that the controller's inherited role is full access
         if (path_type == kUdsPathType_BrokersAgent)
         {
-            int uds_instance;
-            uds_instance = UDS_GetInstanceForConnection(conn_id);
-            if (uds_instance != INVALID)
-            {
-                DEVICE_CONTROLLER_AddController_UDS(endpoint_id, uds_instance);
-            }
+            DEVICE_CONTROLLER_AddController_UDS(endpoint_id, instance);
         }
     }
 #endif
@@ -2295,12 +2343,7 @@ void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigne
         // Add the Broker's endpoint into the Controller table. This is necessary to accept messages from it, regardless of
         // whether the messages are from its agent or controller
         // NOTE: This also ensures that the controller's inherited role is full access
-        int uds_instance;
-        uds_instance = UDS_GetInstanceForConnection(conn_id);
-        if (uds_instance != INVALID)
-        {
-            DEVICE_CONTROLLER_AddController_UDS(endpoint_id, uds_instance);
-        }
+        DEVICE_CONTROLLER_AddController_UDS(endpoint_id, instance);
 
         // Send a Register request if just connected to the Broker's Controller, and there are some objects to register
         if ((*usp_service_objects != '\0') && (path_type == kUdsPathType_BrokersController))
@@ -2315,6 +2358,7 @@ void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigne
             memset(&mtp_conn, 0, sizeof(mtp_conn_t));
             mtp_conn.protocol = kMtpProtocol_UDS;
             mtp_conn.is_reply_to_specified = true;
+            mtp_conn.uds.instance = instance;
             mtp_conn.uds.conn_id = conn_id;
             mtp_conn.uds.path_type = path_type;
 
@@ -2341,6 +2385,8 @@ void HandleUdsHandshakeComplete(char *endpoint_id, uds_path_t path_type, unsigne
 **************************************************************************/
 void HandleUdsDisconnected(char *endpoint_id, uds_path_t path_type)
 {
+    USP_LOG_Debug("%s: Processing UDS Disconnection from %s on %s", __FUNCTION__, endpoint_id, UDS_PathTypeToString(path_type));
+
 #ifndef REMOVE_USP_BROKER
     // If running as USP Broker then handle the disconnection
     if (RUNNING_AS_USP_SERVICE() == false)
@@ -2538,13 +2584,19 @@ void ForwardPendingMessagesOnFilterQueue(socket_set_t *set)
 ** \param   responder - endpoint_id which we expect to receive the response from
 ** \param   header_type - Type of response message in the header that we are expecting
 ** \param   is_handled - pointer to variable in which to return whether the message was handled here or not
+** \param   fd_key - pointer to memory where key to file descriptor buffer recieved from operate reponse will be put
+** \param   fd_res_exceeded - pointer to memory where to put flag indicating exceeded file descriptors buffers limit
 **
 ** \return  pointer to unpacked USP message strcture, if this is the response message that we're waiting for
 **          otherwise NULL if this is not the response message that we're waiting for, or an error occurred
 **          NOTE that if NULL, the message may have been handled here or not, depending on the return value of is_handled
 **
 **************************************************************************/
+#ifdef FD_PASSING_EXPERIMENTAL
+Usp__Msg *IsMatchingMsgId(dm_exec_msg_t *msg, char *msg_id, char *responder, Usp__Header__MsgType header_type, bool *is_handled, unsigned int *fd_key, bool *fd_res_exceeded)
+#else
 Usp__Msg *IsMatchingMsgId(dm_exec_msg_t *msg, char *msg_id, char *responder, Usp__Header__MsgType header_type, bool *is_handled)
+#endif
 {
     process_usp_record_msg_t *pur;
     UspRecord__Record *rec = NULL;
@@ -2568,6 +2620,15 @@ Usp__Msg *IsMatchingMsgId(dm_exec_msg_t *msg, char *msg_id, char *responder, Usp
     {
         goto exit;
     }
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    // If source of message is UDS protocol - extract file descriptors key
+    if (fd_key != NULL && fd_res_exceeded && pur->mtp_conn.protocol == kMtpProtocol_UDS)
+    {
+        (*fd_key) = pur->mtp_conn.uds.fd_key;
+        (*fd_res_exceeded) = pur->mtp_conn.uds.fd_res_exceeded;
+    }
+#endif
 
     // Exit if this record is not supposed to be processed by us
     local_endpoint_id = DEVICE_LOCAL_AGENT_GetEndpointID();

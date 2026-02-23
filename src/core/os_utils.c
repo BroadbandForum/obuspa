@@ -46,6 +46,7 @@
 #include <errno.h>
 
 #include "common_defs.h"
+#include "os_utils.h"
 
 //-------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -99,12 +100,13 @@ int OS_UTILS_CreateThread(const char* name, void *(* start_routine)(void *), voi
         goto exit;
     }
 
+    // Attempt to set the name of the thread
+    // NOTE: Do not return an error if this fails, as the caller would then think that the thread had not been created
+    // and may free args. But the thread has been created and may currently be using args.
     err = pthread_setname_np(thread, name);
     if (err != 0)
     {
         USP_ERR_ERRNO("pthread_setname_np", err);
-        err = USP_ERR_INTERNAL_ERROR;
-        goto exit;
     }
 
     err = USP_ERR_OK;
@@ -240,6 +242,31 @@ void OS_UTILS_UnlockMutex(pthread_mutex_t *mutex)
 
 /*********************************************************************//**
 **
+** OS_UTILS_CreateDirFromPath
+**
+** Creates all directories in the given path, if they haven't been created already
+**
+** \param   dir - absolute path to the directory, which we would like to create
+**
+** \return  USP_ERR_OK if all directories have been created or exist already
+**
+**************************************************************************/
+int OS_UTILS_CreateDirFromPath(char *dir)
+{
+    int err;
+    char path[PATH_MAX];
+    USP_ASSERT((dir != NULL) && (dir[0] == '/'));  // This function supports only absolute paths from root
+
+    // Add a trailing '/', so that we can call OS_UTILS_CreateDirFromFilename() to create all directories in the path
+    USP_SNPRINTF(path, sizeof(path), "%s/", dir);
+
+    err = OS_UTILS_CreateDirFromFilename(path);
+
+    return err;
+}
+
+/*********************************************************************//**
+**
 ** OS_UTILS_CreateDirFromFilename
 **
 ** Creates all parent directories of the given filename, if they haven't been created already
@@ -274,7 +301,7 @@ int OS_UTILS_CreateDirFromFilename(char *filename)
             err = mkdir(path, S_IRWXU | S_IRWXG | S_IRWXO);
             if (err != 0)
             {
-                USP_ERR_ERRNO("mkdir", errno);
+                USP_LOG_Error("%s: Failed to create directory %s (errno=%d, %s)", __FUNCTION__, path, errno, strerror(errno));
                 return USP_ERR_INTERNAL_ERROR;
             }
         }

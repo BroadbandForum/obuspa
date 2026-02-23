@@ -3,6 +3,7 @@
  * Copyright (C) 2019-2025, Broadband Forum
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
+ * Copyright (C) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,6 +53,10 @@ void SUBS_RETRY_Init(void);
 void SUBS_RETRY_Stop(void);
 void SUBS_RETRY_Add(int instance, char *msg_id, char *subscription_id, char *dest_endpoint, char *differentiator,
                     unsigned char *pbuf, int pbuf_len, time_t retry_expiry_time);
+#ifdef FD_PASSING_EXPERIMENTAL
+void SUBS_RETRY_AddWithFds(int instance, char *msg_id, char *subscription_id, char *dest_endpoint, char *differentiator,
+                                   unsigned char *pbuf, int pbuf_len, time_t retry_expiry_time, unsigned int fd_key);
+#endif
 void SUBS_RETRY_Remove(char *msg_id, char *subscription_id);
 void SUBS_RETRY_Delete(int instance);
 

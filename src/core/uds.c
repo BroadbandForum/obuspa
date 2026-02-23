@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2023-2025, Broadband Forum
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
- * Copyright (C) 2023-2024  CommScope, Inc
+ * Copyright (C) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -63,6 +63,11 @@
 #include "mtp_exec.h"
 #include "os_utils.h"
 #include "iso8601.h"
+#include "usp_service.h"
+
+#ifdef FD_PASSING_EXPERIMENTAL
+#include "fd_vector.h"
+#endif
 
 //------------------------------------------------------------------------------
 // R-UDS.5 - When a UNIX domain socket connection is closed or fails to be established, the USP Endpoint acting as a client MUST attempt to re-establish
@@ -72,7 +77,7 @@
 #define DONT_RETRY false
 #define RETRY_LATER true
 #define HANDSHAKE_TIMEOUT 30
-#define TLV_HEADER_SIZE 5
+#define TLV_HEADER_SIZE 5       // TLV header contains 1 byte type + 4 byte length
 
 //------------------------------------------------------------------------------
 // one of these for each instantiated UDS server
@@ -81,6 +86,7 @@ typedef struct
     int instance;          // Instance number in Device.UnixDomainSockets.UnixDomainSocket.{i}. INVALID denotes that this entry in the array isn't used
     int listen_sock;       // if this is an MTP (service) then listen on this socket for connections from controller
     uds_path_t path_type;  // Specifies whether this server is listening on the USP Broker's agent or controller path
+    bool auth_required;    // Set to true if endpoints connecting to this server must provide password based authentication
     scheduled_action_t schedule_reconnect;  // Sets whether a UDS reconnect is scheduled after the send queue has cleared
     uds_conn_params_t next_conn_params;     // Connection parameters to use, the next time that a reconnect occurs
     char *socket_path;                      // Store the socket path to remove the socket file when closing the listening socket
@@ -106,22 +112,29 @@ typedef struct
     int instance;                                // Instance number in Device.UnixDomainSockets.UnixDomainSocket.{i}. INVALID denotes that this entry in the array isn't used
     uds_connection_type_t type;                  // Is this the server or client end of the connection
     uds_path_t path_type;                        // Specifies whether this connection is on the USP Broker's agent or controller path
+    bool auth_required;                          // Set to true if this connection requires password based authentication
     int socket;                                  // socket connection to a server or client or INVALID if this UDS connection entry is not used
     int hdr_bytes_rxed;                          // number of bytes of sync header received on the socket
     int len_bytes_rxed;                          // number of bytes of length received on the socket
     unsigned char length_bytes[4];               // buffer to read length bytes into
     int payload_bytes_rxed;                      // number of bytes of payload received on the socket
     int payload_length;                          // calculated payload length from bitshifted bytes
-    unsigned char *rx_buf;                       // transient buffer containing the USP message frame currently being received
+    unsigned char *rx_buf;                       // transient buffer containing the payload of the UDS frame currently being received
     char *endpoint_id;                           // Endpoint ID at the other end of this connection
     double_linked_list_t usp_record_send_queue;  // Queue of USP Records to send to the endpoint
+#ifdef FD_PASSING_EXPERIMENTAL
+    struct msghdr *tx_buf;                       // Payload message containing USP message frame currently being send
+    int* fd_buffer;                              // File descriptors buffer that received with payload
+    int fd_count;                                // Amount of file descriptors
+#else
     unsigned char *tx_buf;                       // transient buffer containing the USP message frame currently being sent
     int tx_bytes_sent;                           // Counts the number of bytes sent of the current USP Record to tx (i.e. at the head of the usp_record_send_queue)
+#endif
     int tx_buf_len;                              // the length of the currently transmitting packet
     uds_frame_t tx_buf_type;                     // type of the uds frame being transmitted
     bool is_disconnect_record;                   // Is the transmitted usp message of disconnect record type
     unsigned conn_id;                            // Unique identifier for this connection. Used to ensure that USP responses are placed on the correct queue (or discarded if the connection has dropped)
-    char *socket_path;                           // Store the socket path in case we need to reconnect
+    char *socket_path;                           // Store the socket path in case we need to reconnect, and also for logging
     time_t retry_timeout;                        // If we lose the connection and have to reconnect after a random timeout
     scheduled_action_t schedule_reconnect;       // Sets whether a UDS reconnect is scheduled after the send queue has cleared
     uds_conn_params_t next_conn_params;          // Connection parameters to use, the next time that a reconnect occurs
@@ -130,6 +143,14 @@ typedef struct
 
 // Array of connections
 static uds_connection_t uds_connections[MAX_UDS_SERVERS*MAX_USP_SERVICES];
+
+//------------------------------------------------------------------------------
+// Vector used to check the password that a USP Service provides
+kv_vector_t uds_passwords;
+
+//------------------------------------------------------------------------------
+// Password to autheticate this endpoint on UDS MTP
+char *uds_self_password = NULL;
 
 //------------------------------------------------------------------------------
 // Sync bytes identifying the start of a UDS frame
@@ -148,7 +169,7 @@ static unsigned uds_conn_id_counter = 1;
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
 void ProcessUdsFrame(uds_connection_t *uc);
-void ProcessUdsRecord(uds_connection_t *uc, uds_frame_t frame_type, unsigned char *record, unsigned record_length);
+void ProcessUdsTLV(uds_connection_t *uc, uds_frame_t frame_type, unsigned char *record, unsigned record_length);
 uds_connection_t *FindFreeUdsConnection(void);
 uds_server_t *FindFreeUdsServer(void);
 uds_server_t *FindUdsServerByInstanceId(int instance);
@@ -163,7 +184,11 @@ void SendUdsFrames(uds_connection_t *uc);
 void ReadUdsFrames(uds_connection_t *uc);
 int HandleUdsListeningSocketConnection(uds_server_t *us);
 uds_connection_t *FindUdsConnectionByConnId(unsigned conn_id);
+#ifdef FD_PASSING_EXPERIMENTAL
+unsigned int PopUdsSendItem(uds_connection_t *uc);
+#else
 void PopUdsSendItem(uds_connection_t *uc);
+#endif
 unsigned CalcNextUdsConnectionId(void);
 void RemoveUdsQueueItem(uds_connection_t *uc, uds_send_item_t *queued_msg);
 void RemoveExpiredUdsMessages(uds_connection_t *uc);
@@ -172,6 +197,17 @@ void InitialiseUdsConnection(uds_connection_t *uc);
 void InitialiseUdsServer(uds_server_t *us);
 char *EndpointIdForLog(uds_connection_t *uc);
 void QueueUspConnectRecord_Uds(uds_connection_t *uc);
+void ProcessUdsHandshakeTLV(uds_connection_t *uc, unsigned char *record, unsigned record_length);
+int ValidateUdsPayload(unsigned char *payload, int payload_len);
+char *StrDupUdsTlvPayload(unsigned char *tlv_payload, int tlv_len);
+void ProcessUdsTLV_Error(uds_connection_t *uc, unsigned char *tlv_payload, unsigned tlv_len);
+void ProcessUdsTLV_UspRecord(uds_connection_t *uc, unsigned char *tlv_payload, unsigned tlv_len);
+void ProcessUdsTLV_Echo(uds_connection_t *uc, unsigned char *tlv_payload, unsigned tlv_len);
+void ProcessUdsTLV_HandshakePassword(uds_connection_t *uc, char *endpoint_id, char *password);
+void PopulateUdsMtpConnection(mtp_conn_t *mtpc, uds_connection_t *uc);
+void CopyUdsConnParams(uds_conn_params_t *dest, uds_conn_params_t *src);
+void FreeUdsConnParams(uds_conn_params_t *ucp);
+void FreeCurUdsTxItem(uds_connection_t *uc);
 
 /*********************************************************************//**
 **
@@ -190,6 +226,8 @@ int UDS_Init(void)
     uds_server_t *us;
     int i;
     int err = USP_ERR_OK;
+
+    KV_VECTOR_Init(&uds_passwords);
 
     // Mark all UDS connection slots as unused
     memset(uds_connections, 0, sizeof(uds_connections));
@@ -236,6 +274,7 @@ void UDS_UpdateAllSockSet(socket_set_t *set)
     uds_connection_t *uc;
     uds_server_t *us;
     bool responses_sent = false;
+    uds_conn_params_t conn_params;
 
     OS_UTILS_LockMutex(&uds_access_mutex);
 
@@ -252,65 +291,60 @@ void UDS_UpdateAllSockSet(socket_set_t *set)
         us = &uds_servers[i];
         if (us->instance != INVALID)
         {
-           if (us->schedule_reconnect == kScheduledAction_Activated)
-           {
-               // Its possible a listening server could be scheduled to restart when there are no valid connections
-               // Default responses_sent to true to ensure the connection gets restarted in this case
-               responses_sent = true;
+            if (us->schedule_reconnect == kScheduledAction_Activated)
+            {
+                // Its possible a listening server could be scheduled to restart when there are no valid connections
+                // Default responses_sent to true to ensure the connection gets restarted in this case
+                responses_sent = true;
 
-               // we should only disable the listening server connection (and any connections associated with it) if there
-               // are no pending messages being received or transmitted by any connections associated with the listening socket
-               for (i=0; i<NUM_ELEM(uds_connections); i++)
-               {
-                   uc = &uds_connections[i];
-                   if (uc->instance != INVALID)
-                   {
-                       // if the connection is a server connection belonging to the server socket instance
-                       if ((uc->type == kUdsConnType_Server) && (uc->instance == us->instance))
-                       {
-                          // Determine if all responses have been sent on this connection, and update whether they have been sent on all connections
-                          // Also check that we've not started to receive a UDS frame
-                          responses_sent = ((uc->usp_record_send_queue.head == NULL) &&
-                                            (uc->tx_buf == NULL) &&
-                                            (uc->hdr_bytes_rxed==0));
+                // we should only disable the listening server connection (and any connections associated with it) if there
+                // are no pending messages being received or transmitted by any connections associated with the listening socket
+                for (i=0; i<NUM_ELEM(uds_connections); i++)
+                {
+                    uc = &uds_connections[i];
+                    if (uc->instance != INVALID)
+                    {
+                        // if the connection is a server connection belonging to the server socket instance
+                        if ((uc->type == kUdsConnType_Server) && (uc->instance == us->instance))
+                        {
+                           // Determine if all responses have been sent on this connection, and update whether they have been sent on all connections
+                           // Also check that we've not started to receive a UDS frame
+                           responses_sent = ((uc->usp_record_send_queue.head == NULL) &&
+                                             (uc->tx_buf == NULL) &&
+                                             (uc->hdr_bytes_rxed==0));
 
-                          if (responses_sent == false)
-                          {
-                             // there are pending messages in the message queue / rx buffer
-                             // Break out and ignore this server instance until messages have been handled
-                             USP_LOG_Info("Pending messages in the UDS server connection queue - cannot reconnect yet");
-                             break;
-                          }
-                       }
-                   }
-               }
+                           if (responses_sent == false)
+                           {
+                              // there are pending messages in the message queue / rx buffer
+                              // Break out and ignore this server instance until messages have been handled
+                              USP_LOG_Info("Pending messages in the UDS server connection queue - cannot reconnect yet");
+                              break;
+                           }
+                        }
+                    }
+                }
 
-               if (responses_sent == true)
-               {
-                   uds_conn_params_t conn_params;
+                if (responses_sent == true)
+                {
+                    // if all messages pertaining to this server socket have been sent then disable the connection
+                    // and close all active connections associated with the listening server socket
+                    USP_LOG_Info("UDS server connection parameters changed. Reconnecting instance %d", us->instance);
 
-                   // if all messages pertaining to this server socket have been sent then disable the connection
-                   // this will close all active connections associated with the listening server socket
-                   USP_LOG_Info("UDS server connection parameters changed. Reconnecting instance %d", us->instance);
+                    // make a deep copy of us->next_conn_params as these get freed in UDS_DisableConnection
+                    CopyUdsConnParams(&conn_params, &us->next_conn_params);
+                    UDS_DisableConnection(us->instance);
 
-                   // make a deep copy of us->next_conn_params as these get freed in UDS_DisableConnection
-                   conn_params.instance = us->next_conn_params.instance;
-                   conn_params.path = USP_STRDUP(us->next_conn_params.path);
-                   conn_params.path_type = us->next_conn_params.path_type;
-                   conn_params.mode = us->next_conn_params.mode;
+                    // start a new connection (which may be a client or a server)
+                    UDS_EnableConnection(&conn_params);
+                    FreeUdsConnParams(&conn_params);
+                }
+            }
 
-                   UDS_DisableConnection(us->instance);
-                   // start a new connection (which may be a client or a server)
-                   UDS_EnableConnection(&conn_params);
-                   USP_SAFE_FREE(conn_params.path);
-               }
-           }
-
-           if (us->listen_sock != INVALID)
-           {
-               SOCKET_SET_AddSocketToReceiveFrom(us->listen_sock, MAX_SOCKET_TIMEOUT, set);
-           }
-       }
+            if (us->listen_sock != INVALID)
+            {
+                SOCKET_SET_AddSocketToReceiveFrom(us->listen_sock, MAX_SOCKET_TIMEOUT, set);
+            }
+        }
     }
 
     time_t next_wakeup_time = INVALID;
@@ -336,20 +370,15 @@ void UDS_UpdateAllSockSet(socket_set_t *set)
                     // Perform a reconnect when all responses have been sent (and there are no incoming messages)
                     if (responses_sent)
                     {
-                        uds_conn_params_t conn_params;
-
                         USP_LOG_Info("UDS client connection parameters changed. Reconnecting instance %d", uc->instance);
 
-                        // make a deep copy of us->next_conn_params as these get freed in UDS_DisableConnection
-                        conn_params.instance = uc->next_conn_params.instance;
-                        conn_params.path = USP_STRDUP(uc->next_conn_params.path);
-                        conn_params.path_type = uc->next_conn_params.path_type;
-                        conn_params.mode = uc->next_conn_params.mode;
-
+                        // make a deep copy of uc->next_conn_params as these get freed in UDS_DisableConnection
+                        CopyUdsConnParams(&conn_params, &uc->next_conn_params);
                         UDS_DisableConnection(uc->instance);
+
                         // start a new connection (which may be a client or a server)
                         UDS_EnableConnection(&conn_params);
-                        USP_SAFE_FREE(conn_params.path);
+                        FreeUdsConnParams(&conn_params);
                     }
                     else
                     {
@@ -455,9 +484,7 @@ int UDS_GetMTPForEndpointId(char *endpoint_id, mtp_conn_t *mtpc)
             {
                 if (strcmp(uc->endpoint_id, endpoint_id)==0)
                 {
-                    mtpc->protocol = kMtpProtocol_UDS;
-                    mtpc->uds.conn_id = uc->conn_id;
-                    mtpc->uds.path_type = uc->path_type;
+                    PopulateUdsMtpConnection(mtpc, uc);
                     ret = USP_ERR_OK;
                     goto exit;
                 }
@@ -470,45 +497,6 @@ int UDS_GetMTPForEndpointId(char *endpoint_id, mtp_conn_t *mtpc)
 exit:
     OS_UTILS_UnlockMutex(&uds_access_mutex);
     return ret;
-}
-
-/*********************************************************************//**
-**
-** UDS_GetInstanceForConnection
-**
-** Determines the instance number in Device.UnixDomainSockets.UnixDomainSocket.{i} used by the specified connection
-**
-** \param   conn_id - uniquely identifies the connection
-**
-** \return  instance number in Device.UnixDomainSockets.UnixDomainSocket.{i} or INVALID if the connection had died
-**
-**************************************************************************/
-int UDS_GetInstanceForConnection(unsigned conn_id)
-{
-    uds_connection_t *uc;
-    int instance = INVALID;
-
-    OS_UTILS_LockMutex(&uds_access_mutex);
-
-    // Exit if MTP thread has exited
-    if (is_uds_mtp_thread_exited)
-    {
-        goto exit;
-    }
-
-    // Exit if the cnnection is not alive anymore
-    uc = FindUdsConnectionByConnId(conn_id);
-    if (uc == NULL)
-    {
-        goto exit;
-    }
-
-    // Connection is still connected
-    instance = uc->instance;
-
-exit:
-    OS_UTILS_UnlockMutex(&uds_access_mutex);
-    return instance;
 }
 
 /*********************************************************************//**
@@ -684,6 +672,7 @@ void UDS_ScheduleReconnect(uds_conn_params_t *ucp)
         uc->next_conn_params.path = USP_STRDUP(ucp->path);
         uc->next_conn_params.path_type = ucp->path_type;
         uc->next_conn_params.mode = ucp->mode;
+
         uc->schedule_reconnect = kScheduledAction_Signalled;
         mtp_reconnect_scheduled = true;     // Set flag to ensure that data model thread subsequently calls UDS_ActivateScheduledActions()
         goto exit;
@@ -772,7 +761,7 @@ void UDS_ProcessAllSocketActivity(socket_set_t *set)
                     if (uc->retry_timeout <= time(NULL))
                     {
                         uc->retry_timeout = INVALID;
-                        USP_LOG_Info("%s: Retrying client socket connection now %s", __FUNCTION__, uc->socket_path);
+                        USP_LOG_Info("%s: Retrying client socket connection on %s", __FUNCTION__, uc->socket_path);
                         StartUdsClient(uc);
                     }
                 }
@@ -783,7 +772,7 @@ void UDS_ProcessAllSocketActivity(socket_set_t *set)
                     if (uc->handshake_timeout <= time(NULL))
                     {
                         uc->handshake_timeout = INVALID;
-                        USP_LOG_Info("%s: Retrying client socket handshake now %s", __FUNCTION__, uc->socket_path);
+                        USP_LOG_Info("%s: Retrying client socket handshake on %s", __FUNCTION__, uc->socket_path);
                         CloseUdsConnection(uc, RETRY_LATER);
                     }
                 }
@@ -834,6 +823,7 @@ int UDS_QueueBinaryMessage(mtp_send_item_t *msi, mtp_conn_t *mtpc, time_t expiry
         err = USP_ERR_INTERNAL_ERROR;
         goto exit;
     }
+    USP_ASSERT(uc->instance == mtpc->uds.instance);
 
     // Remove any queued messages that have expired
     RemoveExpiredUdsMessages(uc);
@@ -1038,6 +1028,10 @@ void UDS_Destroy(void)
         }
     }
 
+    // Free all expected passwords and our own UDS MTP password
+    KV_VECTOR_Destroy(&uds_passwords);
+    USP_SAFE_FREE(uds_self_password);
+
     // Prevent the data model from making any other changes to the MTP thread
     is_uds_mtp_thread_exited = true;
 
@@ -1131,6 +1125,92 @@ exit:
     return status;
 }
 
+/*********************************************************************//**
+**
+** UDS_AddAuthPassword
+**
+** Adds the password for a USP Service connecting to this endpoint,
+** so that we can check it when it connects
+**
+** \param   endpoint_id - Identifies the USP Service
+** \param   password - Password for the USP Service
+**
+** \return  None
+**
+**************************************************************************/
+void UDS_AddAuthPassword(char *endpoint_id, char *password)
+{
+    OS_UTILS_LockMutex(&uds_access_mutex);
+
+    KV_VECTOR_Add(&uds_passwords, endpoint_id, password);
+
+    OS_UTILS_UnlockMutex(&uds_access_mutex);
+}
+
+/*********************************************************************//**
+**
+** UDS_RemoveAuthPassword
+**
+** Removes the password for a USP Service connecting to this endpoint.
+** If the USP Service connects on an 'AuthRequired' UDS socket, then it will fail to connect
+**
+** \param   endpoint_id - Identifies the USP Service
+**
+** \return  None
+**
+**************************************************************************/
+void UDS_RemoveAuthPassword(char *endpoint_id)
+{
+    OS_UTILS_LockMutex(&uds_access_mutex);
+
+    KV_VECTOR_Remove(&uds_passwords, endpoint_id);
+
+    OS_UTILS_UnlockMutex(&uds_access_mutex);
+}
+
+/*********************************************************************//**
+**
+** UDS_ModifAuthPassword
+**
+** Modifies the expected password for a USP Service connecting to this endpoint
+**
+** \param   endpoint_id - Identifies the USP Service
+** \param   password - Password for the USP Service
+**
+** \return  None
+**
+**************************************************************************/
+void UDS_ModifyAuthPassword(char *endpoint_id, char *password)
+{
+    OS_UTILS_LockMutex(&uds_access_mutex);
+
+    KV_VECTOR_Replace(&uds_passwords, endpoint_id, password);
+
+    OS_UTILS_UnlockMutex(&uds_access_mutex);
+}
+
+/*********************************************************************//**
+**
+** UDS_SetSelfPassword
+**
+** Mofifies the password used in this endpoint's UDS handshake when connecting to another USP Endpoint
+**
+** \param   password - Password for this endpoint
+**
+** \return  None
+**
+**************************************************************************/
+void UDS_SetSelfPassword(char *password)
+{
+    OS_UTILS_LockMutex(&uds_access_mutex);
+
+    USP_ASSERT(password != NULL);
+    USP_SAFE_FREE(uds_self_password);
+    uds_self_password = USP_STRDUP(password);
+
+    OS_UTILS_UnlockMutex(&uds_access_mutex);
+}
+
 
 /*********************************************************************//**
 **
@@ -1156,25 +1236,29 @@ int EnableUdsServer(uds_conn_params_t *ucp)
     if (us == NULL)
     {
         USP_LOG_Error("%s: No free server elements available", __FUNCTION__);
-        err = USP_ERR_INTERNAL_ERROR;
-        goto exit;
+        return USP_ERR_INTERNAL_ERROR;
     }
 
+    // Initialise the UDS server structure
     InitialiseUdsServer(us);
-
-    // keep a copy of the UDS DM instance
     us->instance = ucp->instance;
     us->path_type = ucp->path_type;
     USP_ASSERT(us->socket_path == NULL);
     us->socket_path = USP_STRDUP(ucp->path);
+    us->auth_required = ucp->auth_required;
+    us->next_conn_params.instance = ucp->instance;
+    us->next_conn_params.path = USP_STRDUP(ucp->path);
+    us->next_conn_params.path_type = ucp->path_type;
+    us->next_conn_params.mode = ucp->mode;
+    us->next_conn_params.auth_required = ucp->auth_required;
+    us->next_conn_params.registration_restricted = ucp->registration_restricted; // NOTE: not actually used by UDS MTP, but copied for completeness
 
     // Create a new server socket with domain: AF_UNIX, type: SOCK_STREAM, protocol: 0
     us->listen_sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (us->listen_sock == INVALID)
     {
         USP_ERR_ERRNO("socket", errno);
-        err = USP_ERR_INTERNAL_ERROR;
-        goto exit;
+        return USP_ERR_INTERNAL_ERROR;
     }
 
     // Exit if unable to ensure that all directories used by the UDS path have been created
@@ -1220,8 +1304,9 @@ int EnableUdsServer(uds_conn_params_t *ucp)
 
 exit:
     // clean up any resources allocated
-    if ((err != USP_ERR_OK) && (us->listen_sock != INVALID))
+    if (err != USP_ERR_OK)
     {
+        USP_ASSERT(us->listen_sock != INVALID);
         close(us->listen_sock);
         us->listen_sock = INVALID;      // Mark the slot status as 'Error'
     }
@@ -1261,6 +1346,7 @@ int CreateUdsClient(uds_conn_params_t *ucp)
     uc->instance = ucp->instance;
     uc->conn_id = CalcNextUdsConnectionId();
     uc->path_type = ucp->path_type;
+    uc->auth_required = ucp->auth_required;
     uc->socket_path = USP_STRDUP(ucp->path);
 
     err = StartUdsClient(uc);
@@ -1501,6 +1587,15 @@ void CloseUdsConnection(uds_connection_t *uc, bool retry)
         uc->socket = INVALID;
     }
 
+#ifdef FD_PASSING_EXPERIMENTAL
+    if (uc->fd_buffer)
+    {
+        FD_VECTOR_Close(uc->fd_buffer, uc->fd_count);
+        uc->fd_buffer = NULL;
+        uc->fd_count = 0;
+    }
+#endif
+
     // Inform the rest of the system that an endpoint has disconnected, unless this was a graceful shutdown
     // We don't post the message for graceful shutdown, because we don't want any active requests to be removed from
     // the request table, as the operation complete (indicating failure) will not be sent because UDS has shutdown
@@ -1513,7 +1608,7 @@ void CloseUdsConnection(uds_connection_t *uc, bool retry)
 
     // flush any rx/tx buffers
     USP_SAFE_FREE(uc->rx_buf);
-    USP_SAFE_FREE(uc->tx_buf);
+    FreeCurUdsTxItem(uc);
     USP_SAFE_FREE(uc->endpoint_id);
 
     // Flush all queued outgoing USP messages
@@ -1537,7 +1632,7 @@ void CloseUdsConnection(uds_connection_t *uc, bool retry)
         // delay must be between 1 and 5 seconds
         delay = (rand() % (MAX_RETRY_INTERVAL-MIN_RETRY_INTERVAL)) + MIN_RETRY_INTERVAL;
         uc->retry_timeout =  time(NULL) + delay;
-        USP_LOG_Info("%s: Retrying connection in %d seconds for %s", __FUNCTION__, delay, UDS_PathTypeToString(uc->path_type));
+        USP_LOG_Info("%s: Retrying connection in %d seconds for %s", __FUNCTION__, delay, uc->socket_path);
         // kick the MTP thread here to trigger recalc of the socket timeout in UDS_UpdateAllSockSet
         MTP_EXEC_UdsWakeup();
     }
@@ -1568,6 +1663,21 @@ void ReadUdsFrames(uds_connection_t *uc)
     int i;
     int num_bytes = 0;
 
+#ifdef FD_PASSING_EXPERIMENTAL
+    struct msghdr bmsg = {0};
+    struct cmsghdr* cmsg;
+    struct iovec iov;
+    union {
+        struct cmsghdr align;
+        char buffer[CMSG_SPACE(sizeof(int) * MAX_UDS_FDS)];
+    } control_un;
+    bmsg.msg_iov = &iov;
+    bmsg.msg_iovlen = 1;
+    bmsg.msg_control = control_un.buffer;
+    bmsg.msg_controllen = CMSG_SPACE(sizeof(int) * MAX_UDS_FDS);
+    int fd_amount = 0;
+#endif
+
     USP_ASSERT(uc->socket != INVALID);
 
     // the following implementation breaks the message down into header, length and payload to make
@@ -1584,13 +1694,65 @@ void ReadUdsFrames(uds_connection_t *uc)
         char buf[4];
 
         bytes_outstanding = sizeof(uds_frame_sync_bytes) - uc->hdr_bytes_rxed;
-        num_bytes = recv(uc->socket, buf, bytes_outstanding, 0);
+#ifdef FD_PASSING_EXPERIMENTAL
+        iov.iov_base = buf;
+        iov.iov_len = bytes_outstanding;
+        num_bytes = recvmsg(uc->socket, &bmsg, 0);
         if (num_bytes <= 0) // -1 = error, 0 = other end closed
         {
-            USP_LOG_Warning("%s: Endpoint (%s) disconnected from %s", __FUNCTION__, EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
+            USP_LOG_Warning("%s: Endpoint (%s) disconnected from %s", __FUNCTION__, EndpointIdForLog(uc), uc->socket_path);
             CloseUdsConnection(uc, RETRY_LATER);
             return;
         }
+
+        if (uc->fd_buffer == NULL)
+        {
+            uc->fd_buffer = USP_MALLOC(sizeof(int) * MAX_UDS_FDS);
+            if (uc->fd_buffer == NULL)
+            {
+                USP_LOG_Warning("%s: Failed to allocate buffer for file descriptors", __FUNCTION__);
+                SendUdsErrorFrame(uc, "Failed to allocate buffer for file descriptors");
+                CloseUdsConnection(uc, RETRY_LATER);
+                return;
+            }
+
+            for (cmsg = CMSG_FIRSTHDR(&bmsg); cmsg != NULL; cmsg = CMSG_NXTHDR(&bmsg, cmsg))
+            {
+                if ((cmsg->cmsg_level == SOL_SOCKET) && (cmsg->cmsg_type == SCM_RIGHTS))
+                {
+                    if (cmsg->cmsg_len >= CMSG_LEN(sizeof(int)))
+                    {
+                        fd_amount = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+                        int* fd = (int *)CMSG_DATA(cmsg);
+                        for (uc->fd_count = 0; uc->fd_count < fd_amount; uc->fd_count++)
+                        {
+                            uc->fd_buffer[uc->fd_count] = *fd;
+                            fd++;
+                        }
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if ((bmsg.msg_flags & MSG_CTRUNC) != 0)
+            {
+                FD_VECTOR_Close(uc->fd_buffer, uc->fd_count);
+                uc->fd_buffer = NULL;
+                uc->fd_count = -1;
+            }
+        }
+#else
+        num_bytes = recv(uc->socket, buf, bytes_outstanding, 0);
+        if (num_bytes <= 0) // -1 = error, 0 = other end closed
+        {
+            USP_LOG_Warning("%s: Endpoint (%s) disconnected from %s", __FUNCTION__, EndpointIdForLog(uc), uc->socket_path);
+            CloseUdsConnection(uc, RETRY_LATER);
+            return;
+        }
+#endif
 
         // Count the number of correct sync bytes received
         // If any of the sync bytes are incorrect, then disconnect
@@ -1602,7 +1764,7 @@ void ReadUdsFrames(uds_connection_t *uc)
             }
             else
             {
-                USP_LOG_Error("%s: UDS Sync bytes incorrect. Disconnecting %s from %s", __FUNCTION__, EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
+                USP_LOG_Error("%s: UDS Sync bytes incorrect. Disconnecting %s from %s", __FUNCTION__, EndpointIdForLog(uc), uc->socket_path);
                 CloseUdsConnection(uc, RETRY_LATER);
                 return;
             }
@@ -1620,7 +1782,7 @@ void ReadUdsFrames(uds_connection_t *uc)
         num_bytes = recv(uc->socket, buf, len, 0);
         if (num_bytes <= 0) // -1 = error, 0 = other end closed
         {
-            USP_LOG_Warning("%s: Endpoint (%s) disconnected from %s", __FUNCTION__, EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
+            USP_LOG_Warning("%s: Endpoint (%s) disconnected from %s", __FUNCTION__, EndpointIdForLog(uc), uc->socket_path);
             CloseUdsConnection(uc, RETRY_LATER);
             return;
         }
@@ -1657,7 +1819,7 @@ void ReadUdsFrames(uds_connection_t *uc)
         num_bytes = recv(uc->socket, uc->rx_buf + uc->payload_bytes_rxed, uc->payload_length - uc->payload_bytes_rxed, 0);
         if (num_bytes <= 0) // -1 = error, 0 = other end closed
         {
-            USP_LOG_Warning("%s: Endpoint (%s) disconnected from %s", __FUNCTION__, EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
+            USP_LOG_Warning("%s: Endpoint (%s) disconnected from %s", __FUNCTION__, EndpointIdForLog(uc), uc->socket_path);
             CloseUdsConnection(uc, RETRY_LATER);
             return;
         }
@@ -1681,7 +1843,7 @@ void ReadUdsFrames(uds_connection_t *uc)
 **
 ** ProcessUdsFrame
 **
-** Private internal function to process a raw UDS frame
+** Processes the payload of a UDS frame
 **
 ** \param   uc - UDS connection which received some data
 **
@@ -1690,176 +1852,75 @@ void ReadUdsFrames(uds_connection_t *uc)
 **************************************************************************/
 void ProcessUdsFrame(uds_connection_t *uc)
 {
-    uds_frame_t frame_type;
-    int record_length;
-
-    // R-UDS.6 - A Frame sent across a UNIX domain socket that is being used as an MTP MUST have a Header field and one or more TLV fields.
-    // Iterate through all the TLV fields in the payload processing them individually
-    int record_offset = 0;
-
-    // There must be at least TLV_HEADER_SIZE (5 bytes) following the current UDS record start offset to process the TLV field
-    while ((record_offset + TLV_HEADER_SIZE) < uc->payload_length)
-    {
-       frame_type = uc->rx_buf[record_offset];
-       record_length = CONVERT_4_BYTES((&uc->rx_buf[record_offset+1]));
-
-       if (record_length < 0)
-       {
-           USP_LOG_Error("%s: Failed to parse incoming USP record length", __FUNCTION__);
-           SendUdsErrorFrame(uc,"Failed to parse incoming USP record");
-           return;
-       }
-
-       // If the TLV UDS record payload crosses the end of the UDS frame payload buffer then this is a malformed frame
-       if ((record_offset + record_length + TLV_HEADER_SIZE) > uc->payload_length)
-       {
-           // R-UDS.23 UDS client or server must send error frame if incoming UDS Frame containing USP record cannot be parsed
-           // R-UDS.24 UDS client or server must send error frame if it cannot parse incoming UDS Frame
-           USP_LOG_Error("%s: Failed to parse incoming USP record", __FUNCTION__);
-           SendUdsErrorFrame(uc,"Failed to parse incoming USP record");
-           return;
-       }
-       ProcessUdsRecord(uc, frame_type, &uc->rx_buf[record_offset + TLV_HEADER_SIZE], record_length);
-       // increment offset to point to next TLV entry 1 byte (Type) + 4 bytes (Len) + Record length
-       record_offset += (TLV_HEADER_SIZE + record_length);
-    }
-}
-
-/*********************************************************************//**
-**
-** ProcessUdsRecord
-**
-** Private internal function to process a raw UDS record extracted from a UDS frame
-**
-** \param   uc - UDS connection which received some data
-** \param   frame_type - The type of record (handshake, error or USP record)
-** \param   record - Pointer to the start of the record
-** \param   record_length - The length of the record
-**
-** \return  None
-**
-**************************************************************************/
-void ProcessUdsRecord(uds_connection_t *uc, uds_frame_t frame_type, unsigned char *record, unsigned record_length)
-{
+    int err;
+    unsigned char *p;
+    int payload_remaining;
+    int tlv_type;
+    int tlv_len;
     char buf[128];
-    unsigned len;
-    char *err_msg = NULL;
-    bool drop_connection = false;
-    char time_buf[MAX_ISO8601_LEN];
-    char *validate_endpoint = NULL;
-    mtp_conn_t mtp_conn;
+    char *saved_endpoint = NULL;
+    char *saved_password = NULL;
 
-    switch(frame_type)
+    // Exit if the payload was invalid
+    err = ValidateUdsPayload(uc->rx_buf, uc->payload_length);
+    if (err != USP_ERR_OK)
     {
-        case kUdsFrameType_Handshake:
-            // Exit if we've already received a handshake (in which case, we just ignore this handshake packet [R-UDS.19])
-            if (uc->endpoint_id != NULL)
-            {
-                USP_LOG_Warning("%s: Ignoring extraneous UDS MTP handshake", __FUNCTION__);
-                break;
-            }
-
-            if(record_length == 0)
-            {
-                // R-UDS.21 : UDS client or server must send error frame if it cannot parse handshake frame
-                err_msg = "Invalid EndpointID, Failed to process Handshake Frame";
-                USP_LOG_Error("%s: %s", __FUNCTION__, err_msg);
-                SendUdsErrorFrame(uc, err_msg);
-                break;
-            }
-
-            //get the endpointID for validation
-            validate_endpoint = USP_MALLOC(record_length+1);   // Plus 1 to include NULL terminator
-            memcpy(validate_endpoint, record, record_length);
-            validate_endpoint[record_length] = '\0';
-
-            //check for endpointID validity
-            err_msg = ValidateUdsEndpointID(validate_endpoint, uc->path_type);
-            if (err_msg != NULL)
-            {
-                // R-UDS.21 : UDS client or server must send error frame if it cannot parse handshake frame
-                USP_LOG_Error("%s: %s", __FUNCTION__, err_msg);
-                SendUdsErrorFrame(uc, err_msg);
-                USP_SAFE_FREE(validate_endpoint);
-                break;
-            }
-
-            // Save the endpoint_id of the connecting client
-            uc->endpoint_id = validate_endpoint;
-            USP_LOG_Info("Received UDS HANDSHAKE from endpoint_id=%s on %s", EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
-
-            if ( ((RUNNING_AS_USP_SERVICE()==true) && (uc->path_type == kUdsPathType_BrokersController)) ||
-                 ((RUNNING_AS_USP_SERVICE()==false) && (uc->path_type == kUdsPathType_BrokersAgent)) )
-            {
-                QueueUspConnectRecord_Uds(uc);
-            }
-
-            // cancel the handshake timeout during handshake exchange
-            // Only the client sets a handshake timeout as only the client expects a handshake response
-            // doing this on a server connection is benign
-            uc->handshake_timeout = INVALID;
-
-            // Notify the data model of the endpoint which has connected
-            DM_EXEC_PostUdsHandshakeComplete(uc->endpoint_id, uc->path_type, uc->conn_id);
-
-            // If acting as a server, then queue our UDS handshake message now, in response to the handshake message received from the connecting client [R-UDS.17]
-            if (uc->type == kUdsConnType_Server)
-            {
-                uds_send_item_t *send_item;
-
-                send_item = USP_MALLOC(sizeof(uds_send_item_t));
-                memset(send_item, 0, sizeof(uds_send_item_t));
-                send_item->expiry_time = END_OF_TIME;
-                send_item->type = kUdsFrameType_Handshake;
-                DLLIST_LinkToHead(&uc->usp_record_send_queue, send_item);
-            }
-            break;
-
-        case kUdsFrameType_Error:
-            // R-UDS.25 : USP record with type error received. Close the uds socket connection
-            len = MIN(record_length, (sizeof(buf)-1));
-            USP_STRNCPY(buf, (char*)record, len);
-            buf[len] = '\0'; // NULL terminate the error string
-            USP_LOG_Error("Received UDS ERROR from endpoint_id=%s on %s", EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
-            USP_LOG_Error("UDS ERROR is '%s'", buf);
-            drop_connection = true;
-            break;
-
-        case kUdsFrameType_UspRecord:
-            // Discard received frame if we received a USP Record before the handshake process has completed [R-UDS.20]
-            if (uc->endpoint_id == NULL)
-            {
-                USP_LOG_Warning("%s: Ignoring USP frame received before handshake completed", __FUNCTION__);
-                break;
-            }
-
-            iso8601_cur_time(time_buf, sizeof(time_buf));
-            USP_LOG_Info("USP Record received at time %s, from endpoint_id=%s over UDS (%s)", time_buf, EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
-
-            memset(&mtp_conn, 0, sizeof(mtp_conn));
-            mtp_conn.is_reply_to_specified = true;
-            mtp_conn.protocol = kMtpProtocol_UDS;
-            mtp_conn.uds.conn_id = uc->conn_id;
-            mtp_conn.uds.path_type = uc->path_type;
-            DM_EXEC_PostUspRecord(record, record_length, EndpointIdForLog(uc), ROLE_UDS, &mtp_conn);
-            break;
-
-
-
-        default:
-            // Unexpected type in the USP TLV, ignoring the frame as per R-UDS.15
-            USP_LOG_Error("%s: Unsupported UDS frame type (0x%02x). Ignoring packet", __FUNCTION__, frame_type);
-            break;
+        USP_SNPRINTF(buf, sizeof(buf), "%s: Failed to parse incoming UDS frame", __FUNCTION__);
+        USP_LOG_Error("%s", buf);
+        SendUdsErrorFrame(uc, buf);
+        return;
     }
 
-
-    if (drop_connection)
+    // Iterate over all the TLVs in the payload, processing them
+    p = uc->rx_buf;
+    payload_remaining = uc->payload_length;
+    while (payload_remaining > 0)
     {
-        USP_LOG_Info("Closing connection_id =%u", uc->conn_id);
-        CloseUdsConnection(uc, RETRY_LATER);
+        tlv_type = READ_BYTE(p, payload_remaining);
+        tlv_len = READ_4_BYTES(p, payload_remaining);
+
+        switch(tlv_type)
+        {
+            case kUdsFrameType_Handshake:
+                saved_endpoint = StrDupUdsTlvPayload(p, tlv_len);
+                break;
+
+            case kUdsFrameType_Error:
+                ProcessUdsTLV_Error(uc, p, tlv_len);
+                break;
+
+            case kUdsFrameType_UspRecord:
+                ProcessUdsTLV_UspRecord(uc, p, tlv_len);
+                break;
+
+            case kUdsFrameType_Password:
+                saved_password = StrDupUdsTlvPayload(p, tlv_len);
+                break;
+
+            default:
+                // Unexpected type in the USP TLV, ignoring the frame as per R-UDS.15
+                USP_LOG_Warning("%s: Unsupported UDS TLV type (0x%02x). Ignoring packet", __FUNCTION__, tlv_type);
+                break;
+        }
+
+        // Skip TLV payload, moving to next TLV
+        SKIP_N_BYTES(p, tlv_len, payload_remaining);
     }
+
+    // Process Handshake frame (containing endpoint_id and optionally password)
+    if ((saved_endpoint != NULL) || (saved_password != NULL))
+    {
+        ProcessUdsTLV_HandshakePassword(uc, saved_endpoint, saved_password);
+        USP_SAFE_FREE(saved_endpoint);
+        USP_SAFE_FREE(saved_password);
+    }
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    FD_VECTOR_Close(uc->fd_buffer, uc->fd_count);
+    uc->fd_buffer = NULL;
+    uc->fd_count = 0;
+#endif
 }
-
 
 /*********************************************************************//**
 **
@@ -1876,22 +1937,20 @@ void ProcessUdsRecord(uds_connection_t *uc, uds_frame_t frame_type, unsigned cha
 **************************************************************************/
 void SendUdsErrorFrame(uds_connection_t *uc, char* errorString)
 {
-
-    mtp_conn_t mtp_conn;
-    memset(&mtp_conn, 0, sizeof(mtp_conn));
-    mtp_conn.uds.conn_id = uc->conn_id;
-    mtp_conn.protocol = kMtpProtocol_UDS;
-
     mtp_send_item_t msi;
+    mtp_conn_t mtp_conn;
+
     msi.usp_msg_type = INVALID_USP_MSG_TYPE; //USP message type is for logging purpose only
     msi.content_type = kMtpContentType_UspMessage;
     msi.pbuf_len = strlen(errorString);
     msi.pbuf = USP_MALLOC(msi.pbuf_len);
     memcpy(msi.pbuf, errorString, msi.pbuf_len);
+    PopulateUdsMtpConnection(&mtp_conn, uc);
+#ifdef FD_PASSING_EXPERIMENTAL
+    msi.fd_key = 0;
+#endif
 
     UDS_QueueBinaryMessage(&msi, &mtp_conn, END_OF_TIME, kUdsFrameType_Error);
-
-    return;
 }
 
 /*********************************************************************//**
@@ -1914,7 +1973,7 @@ char *ValidateUdsEndpointID(char* endpointID, uds_path_t path_type)
     uds_connection_t *uc;
     char *our_endpoint_id;
 
-    if((strcmp(endpointID, "") == 0) || (strcmp(endpointID, " ") == 0))
+    if ((strcmp(endpointID, "") == 0) || (strcmp(endpointID, " ") == 0))
     {
         return "NULL or empty string in EndpointID, Failed to process Handshake Frame";
     }
@@ -1930,16 +1989,18 @@ char *ValidateUdsEndpointID(char* endpointID, uds_path_t path_type)
     }
 
     // Exit if EndpointID does not contain two colons
-    if(count!=2)
+    if (count!=2)
     {
         return "Incorrect format of EndpointID, Failed to process Handshake Frame";
     }
 
-    //Iterate over existing UDS connections, to check if we have case of Duplicate EndpointID connecting on same UDS path
+    // Iterate over existing UDS connections, exiting if this endpoint_id is already connected on this UDS path type
     for (i=0; i<NUM_ELEM(uds_connections); i++)
     {
+
         uc = &uds_connections[i];
-        if ((uc->instance != INVALID) && (uc->endpoint_id != NULL) && (uc->path_type == path_type) && (strcmp(endpointID, uc->endpoint_id) == 0))
+        if ((uc->instance != INVALID) && (uc->endpoint_id != NULL) &&
+            (uc->path_type == path_type) && (strcmp(endpointID, uc->endpoint_id) == 0))
         {
             USP_LOG_Info("%s: Found matching path type %s and endpoint ID %s in existing connections", __FUNCTION__, UDS_PathTypeToString(path_type), endpointID);
             return "Duplicate EndpointID connecting on same UDS path, Failed to process Handshake Frame";
@@ -1969,6 +2030,70 @@ char *ValidateUdsEndpointID(char* endpointID, uds_path_t path_type)
 **************************************************************************/
 void SendUdsFrames(uds_connection_t *uc)
 {
+#ifdef FD_PASSING_EXPERIMENTAL
+    int bytes_sent = 0;
+    unsigned int fd_key = 0;
+    int fd_count = 0;
+    int *fd_buffer = NULL;
+
+    if (uc->socket == INVALID)
+    {
+        // bad socket - shouldn't really get here unless the socket was closed
+        USP_LOG_Error("%s: transmit data on invalid socket", __FUNCTION__);
+        return;
+    }
+
+    // Get the next frame, if not currently transmitting one
+    if (uc->tx_buf == NULL)
+    {
+        fd_key = PopUdsSendItem(uc);
+
+        // Exit if there's no more frames to send
+        if (uc->tx_buf == NULL)
+        {
+            return;
+        }
+    }
+
+    // if we get here there has to be data in uc->tx_buf (either partial remaining frame, or a newly constructed frame)
+    USP_ASSERT(uc->tx_buf != NULL);
+
+    // Try sending the remaining data in the UDS frame
+    bytes_sent = sendmsg(uc->socket, uc->tx_buf, 0);
+    if (fd_key != 0)
+    {
+        // If no references left for this buffer (no notifications or subscriptions holding reference)
+        // it is need to be removed and closed
+        if (FD_VECTOR_DecRef(fd_key) <= 0)
+        {
+            fd_buffer = FD_VECTOR_Get(fd_key, &fd_count);
+            FD_VECTOR_Close(fd_buffer, fd_count);
+            FD_VECTOR_Remove(fd_key);
+        }
+    }
+
+    if (bytes_sent == -1)
+    {
+        USP_ERR_ERRNO("send", errno);
+        CloseUdsConnection(uc, RETRY_LATER);
+        return;
+    }
+
+    if (bytes_sent == uc->tx_buf_len)
+    {
+        // if we sent all the data then free the buffer.
+        // The next record in the queue will be popped on the next iteration
+        // If the UDS frame sent was of Error Type, close the connection
+        // Close the uds connection, If the UDS frame sent was for usp disconnect record.
+        if ((uc->tx_buf_type == kUdsFrameType_Error) || (uc->is_disconnect_record))
+        {
+            CloseUdsConnection(uc, RETRY_LATER);
+        }
+
+        FreeCurUdsTxItem(uc);
+        uc->is_disconnect_record = false;
+    }
+#else
     int bytes_sent = 0;
 
     if (uc->socket == INVALID)
@@ -1981,9 +2106,8 @@ void SendUdsFrames(uds_connection_t *uc)
     // Get the next frame, if not currently transmitting one
     if (uc->tx_buf == NULL)
     {
-        PopUdsSendItem(uc);
-
         // Exit if there's no more frames to send
+        PopUdsSendItem(uc);
         if (uc->tx_buf == NULL)
         {
             return;
@@ -2007,16 +2131,17 @@ void SendUdsFrames(uds_connection_t *uc)
     {
         // if we sent all the data then free the buffer.
         // The next record in the queue will be popped on the next iteration
-        // If the UDS frame sent was of Error Type, close the connection if the error was encountered after successful handshake.
+        // If the UDS frame sent was of Error Type, close the connection
         // Close the uds connection, If the UDS frame sent was for usp disconnect record.
-        if(((uc->tx_buf_type == kUdsFrameType_Error) && (uc->endpoint_id != NULL)) || uc->is_disconnect_record)
+        if ((uc->tx_buf_type == kUdsFrameType_Error) || (uc->is_disconnect_record))
         {
             CloseUdsConnection(uc, RETRY_LATER);
         }
-        USP_FREE(uc->tx_buf);
-        uc->tx_buf = NULL;
+
+        FreeCurUdsTxItem(uc);
         uc->is_disconnect_record = false;
     }
+#endif
 }
 
 /*********************************************************************//**
@@ -2027,15 +2152,128 @@ void SendUdsFrames(uds_connection_t *uc)
 **
 ** \param   uc - Pointer to uds_connection_t instance structure
 **
-** \return  None
+** \return  (only used by FD_PASSING_EXPERIMENTAL) key for file descriptor buffer in global map
 **
 **************************************************************************/
+#ifdef FD_PASSING_EXPERIMENTAL
+unsigned int PopUdsSendItem(uds_connection_t *uc)
+{
+    int tlv_len = 0;
+    char *endpoint_id = "";  // NOTE: This is initialised to an empty string to prevent Clang static analyser from generating a false positive if it was initialised to NULL
+    int endpoint_len = 0;
+    unsigned char *p;
+    int password_len = 0;
+    bool include_self_password = false;
+    struct msghdr *bmsg = NULL;
+    struct cmsghdr* cmsg;
+    int *fd_buffer = NULL;
+    bool success = false;
+    unsigned int fd_key = 0;
+    int fd_count = 0;
+
+    USP_ASSERT(uc->tx_buf == NULL);
+
+    //Remove any queued messages that have expired
+    RemoveExpiredUdsMessages(uc);
+
+    // Exit if no more USP records left to send
+    uds_send_item_t *send_item = (uds_send_item_t *) uc->usp_record_send_queue.head;
+    if (send_item == NULL)
+    {
+        return 0;
+    }
+
+    // Calculate the length of the TLV payload
+    switch (send_item->type)
+    {
+        case kUdsFrameType_UspRecord:
+            // Log the USP Record before we send the first chunk
+            MSG_HANDLER_LogMessageToSend(&send_item->item, kMtpProtocol_UDS, uc->endpoint_id, NULL);
+            tlv_len = TLV_HEADER_SIZE + send_item->item.pbuf_len;
+
+            if (send_item->item.fd_key != 0)
+            {
+                fd_buffer = FD_VECTOR_Get(send_item->item.fd_key, &fd_count);
+                fd_key = send_item->item.fd_key;
+            }
+            break;
+
+        case kUdsFrameType_Error:
+            tlv_len = TLV_HEADER_SIZE + send_item->item.pbuf_len;
+            break;
+
+        case kUdsFrameType_Handshake:
+            endpoint_id = DEVICE_LOCAL_AGENT_GetEndpointID();
+            USP_ASSERT(endpoint_id != NULL);
+            endpoint_len = strlen(endpoint_id);
+            tlv_len = TLV_HEADER_SIZE + endpoint_len;
+
+            // Optionally add password TLV
+            include_self_password = (uds_self_password != NULL) && (*uds_self_password != '\0');
+            if (include_self_password)
+            {
+                password_len = strlen(uds_self_password);
+                tlv_len += TLV_HEADER_SIZE + password_len;
+            }
+            break;
+
+
+        default:
+            TERMINATE_BAD_CASE(send_item->type);
+            break;
+    }
+
+    if (CMSG_SPACE(sizeof(int) * fd_count) > sizeof(struct cmsghdr))
+    {
+        cmsg = USP_MALLOC(CMSG_SPACE(sizeof(int) * fd_count));
+    }
+    else
+    {
+        cmsg = USP_MALLOC(sizeof(struct cmsghdr));
+    }
+
+    bmsg = USP_MALLOC(sizeof(struct msghdr));
+    if (bmsg == NULL)
+    {
+        goto exit;
+    }
+
+    memset(bmsg, 0, sizeof(struct msghdr));
+
+    // frame consists of 4 sync bytes + 4 length bytes + payload
+    uc->tx_buf_len = sizeof(uds_frame_sync_bytes) + 4 + tlv_len;
+    p = USP_MALLOC(uc->tx_buf_len);
+    if (p == NULL)
+    {
+        goto exit;
+    }
+
+    bmsg->msg_iov = USP_MALLOC(sizeof(struct iovec));
+    bmsg->msg_iov->iov_base = p;
+    bmsg->msg_iov->iov_len = uc->tx_buf_len;
+    bmsg->msg_iovlen = 1;
+    bmsg->msg_control = cmsg;
+    bmsg->msg_controllen = CMSG_SPACE(sizeof(int) * fd_count);
+
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int) * fd_count);
+    if (fd_buffer)
+    {
+        memcpy(CMSG_DATA(cmsg), fd_buffer, sizeof(int) * fd_count);
+    }
+
+    uc->tx_buf = bmsg;
+#else
+
 void PopUdsSendItem(uds_connection_t *uc)
 {
     int tlv_len = 0;
     char *endpoint_id = "";  // NOTE: This is initialised to an empty string to prevent Clang static analyser from generating a false positive if it was initialised to NULL
     int endpoint_len = 0;
     unsigned char *p;
+    int password_len = 0;
+    bool include_self_password = false;
 
     USP_ASSERT(uc->tx_buf == NULL);
 
@@ -2055,21 +2293,27 @@ void PopUdsSendItem(uds_connection_t *uc)
         case kUdsFrameType_UspRecord:
             // Log the USP Record before we send the first chunk
             MSG_HANDLER_LogMessageToSend(&send_item->item, kMtpProtocol_UDS, uc->endpoint_id, NULL);
-            tlv_len = 1 + 4 + send_item->item.pbuf_len;
+            tlv_len = TLV_HEADER_SIZE + send_item->item.pbuf_len;
             break;
 
         case kUdsFrameType_Error:
-            tlv_len = 1 + 4 + send_item->item.pbuf_len;
+            tlv_len = TLV_HEADER_SIZE + send_item->item.pbuf_len;
             break;
 
         case kUdsFrameType_Handshake:
             endpoint_id = DEVICE_LOCAL_AGENT_GetEndpointID();
             USP_ASSERT(endpoint_id != NULL);
             endpoint_len = strlen(endpoint_id);
-            // handshake record consists of TLV (type is 1 byte, length is 4)
-            tlv_len = 1 + 4 + endpoint_len;
-            break;
+            tlv_len = TLV_HEADER_SIZE + endpoint_len;
 
+            // Optionally add password TLV
+            include_self_password = (uds_self_password != NULL) && (*uds_self_password != '\0');
+            if (include_self_password)
+            {
+                password_len = strlen(uds_self_password);
+                tlv_len += TLV_HEADER_SIZE + password_len;
+            }
+            break;
 
         default:
             TERMINATE_BAD_CASE(send_item->type);
@@ -2077,12 +2321,14 @@ void PopUdsSendItem(uds_connection_t *uc)
     }
 
     // frame consists of 4 sync bytes + 4 length bytes + payload
-    uc->tx_buf_len = 4 + 4 + tlv_len;
+    uc->tx_buf_len = sizeof(uds_frame_sync_bytes) + 4 + tlv_len;
     uc->tx_buf = USP_MALLOC(uc->tx_buf_len);
     uc->tx_bytes_sent = 0;
 
-    // Construct frame header
     p = uc->tx_buf;
+#endif
+
+    // Construct frame header
     WRITE_N_BYTES(p, uds_frame_sync_bytes, sizeof(uds_frame_sync_bytes));
     WRITE_4_BYTES(p, tlv_len);
 
@@ -2090,7 +2336,7 @@ void PopUdsSendItem(uds_connection_t *uc)
     switch (send_item->type)
     {
         case kUdsFrameType_UspRecord:
-            USP_LOG_Info("Sending USP RECORD to endpoint_id=%s on %s", EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
+            USP_LOG_Info("Sending USP RECORD to endpoint_id=%s on %s", EndpointIdForLog(uc), uc->socket_path);
             WRITE_BYTE(p, kUdsFrameType_UspRecord);
             WRITE_4_BYTES(p, send_item->item.pbuf_len);
             WRITE_N_BYTES(p, send_item->item.pbuf, send_item->item.pbuf_len);
@@ -2098,7 +2344,7 @@ void PopUdsSendItem(uds_connection_t *uc)
             break;
 
         case kUdsFrameType_Error:
-            USP_LOG_Info("Sending UDS ERROR to endpoint_id=%s on %s", EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
+            USP_LOG_Info("Sending UDS ERROR to endpoint_id=%s on %s", EndpointIdForLog(uc), uc->socket_path);
             WRITE_BYTE(p, kUdsFrameType_Error);
             WRITE_4_BYTES(p, send_item->item.pbuf_len);
             WRITE_N_BYTES(p, send_item->item.pbuf, send_item->item.pbuf_len);
@@ -2106,10 +2352,18 @@ void PopUdsSendItem(uds_connection_t *uc)
             break;
 
         case kUdsFrameType_Handshake:
-            USP_LOG_Info("Sending UDS HANDSHAKE to endpoint_id=%s on %s", EndpointIdForLog(uc), UDS_PathTypeToString(uc->path_type));
+            USP_LOG_Info("Sending UDS HANDSHAKE to endpoint_id=%s on %s", EndpointIdForLog(uc), uc->socket_path);
             WRITE_BYTE(p, kUdsFrameType_Handshake);
             WRITE_4_BYTES(p, endpoint_len);
             WRITE_N_BYTES(p, endpoint_id, endpoint_len);
+
+            // Optionally add password TLV
+            if (include_self_password)
+            {
+                WRITE_BYTE(p, kUdsFrameType_Password);
+                WRITE_4_BYTES(p, password_len);
+                WRITE_N_BYTES(p, uds_self_password, password_len);
+            }
             break;
 
 
@@ -2127,6 +2381,57 @@ void PopUdsSendItem(uds_connection_t *uc)
     // free up the record and remove it from the tx queue
     DLLIST_Unlink(&uc->usp_record_send_queue, send_item);
     USP_FREE(send_item);
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    success = true;
+
+exit:
+    if (!success)
+    {
+        if (bmsg != NULL)
+        {
+            USP_SAFE_FREE(bmsg->msg_iov);
+        }
+        USP_SAFE_FREE(bmsg);
+        USP_SAFE_FREE(p);
+    }
+
+    return fd_key;
+#endif
+}
+
+/*********************************************************************//**
+**
+** FreeCurUdsTxItem
+**
+** Frees the memory associated with the current item being transmitted (if not already freed)
+**
+** \param   uc - Pointer to the connection to free the current TX item from
+**
+** \return  None
+**
+**************************************************************************/
+void FreeCurUdsTxItem(uds_connection_t *uc)
+{
+    // Exit if the memory has already been freed (nothing to do)
+    if (uc->tx_buf == NULL)
+    {
+        return;
+    }
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    if (uc->tx_buf->msg_iov != NULL)
+    {
+        USP_SAFE_FREE(uc->tx_buf->msg_iov->iov_base);
+        USP_FREE(uc->tx_buf->msg_iov);
+        uc->tx_buf->msg_iov = NULL;
+    }
+
+    USP_SAFE_FREE(uc->tx_buf->msg_control);
+#endif
+
+    USP_FREE(uc->tx_buf);
+    uc->tx_buf = NULL;
 }
 
 /*********************************************************************//**
@@ -2175,7 +2480,8 @@ int HandleUdsListeningSocketConnection(uds_server_t *us)
     uc->conn_id = CalcNextUdsConnectionId();
     uc->instance = us->instance;
     uc->path_type = us->path_type;
-    uc->socket_path = NULL; // we don't need to remember socket path for server side connections - only clients attempt to reconnect after a disconnection
+    uc->auth_required = us->auth_required;
+    uc->socket_path = USP_STRDUP(us->socket_path);
 
     DLLIST_Init(&uc->usp_record_send_queue);
 
@@ -2259,6 +2565,21 @@ void RemoveExpiredUdsMessages(uds_connection_t *uc)
 **************************************************************************/
 void RemoveUdsQueueItem(uds_connection_t *uc, uds_send_item_t *queued_msg)
 {
+#ifdef FD_PASSING_EXPERIMENTAL
+    if (queued_msg->item.fd_key > 0)
+    {
+        if (FD_VECTOR_DecRef(queued_msg->item.fd_key) <= 0)
+        {
+            int fd_count = 0;
+            int* fd_buffer = FD_VECTOR_Get(queued_msg->item.fd_key, &fd_count);
+            if ((fd_buffer != NULL) && (fd_count > 0))
+            {
+                FD_VECTOR_Close(fd_buffer, fd_count);
+            }
+        }
+    }
+#endif
+
     USP_ASSERT(queued_msg != NULL);
 
     // Free all dynamically allocated member variables
@@ -2377,6 +2698,7 @@ void InitialiseUdsConnection(uds_connection_t *uc)
     uc->instance = INVALID;
     uc->type = kUdsConnType_Invalid;
     uc->path_type = kUdsPathType_Invalid;
+    uc->auth_required = true;
     uc->socket = INVALID;
     uc->hdr_bytes_rxed = 0;
     uc->len_bytes_rxed = 0;
@@ -2387,7 +2709,9 @@ void InitialiseUdsConnection(uds_connection_t *uc)
     uc->usp_record_send_queue.head = NULL;
     uc->usp_record_send_queue.tail = NULL;
     uc->tx_buf = NULL;
+#ifndef FD_PASSING_EXPERIMENTAL
     uc->tx_bytes_sent = 0;
+#endif
     uc->tx_buf_len = 0;
     uc->tx_buf_type = kUdsFrameType_Invalid;
     uc->is_disconnect_record = false;
@@ -2443,4 +2767,351 @@ char *EndpointIdForLog(uds_connection_t *uc)
     return (uc->endpoint_id == NULL) ? "UNKNOWN" : uc->endpoint_id;
 }
 
+/*********************************************************************//**
+**
+** PopulateUdsMtpConnection
+**
+** Helper function to copy the relevant fields from the UDS connection struture into the MTP connection structure
+**
+** \param   mtpc - structure to populate with details of the connection
+** \param   uc - UDS Connection structure to copy the connection details from
+**
+** \return  instance number in Device.UnixDomainSockets.UnixDomainSocket.{i} or INVALID if the connection had died
+**
+**************************************************************************/
+void PopulateUdsMtpConnection(mtp_conn_t *mtpc, uds_connection_t *uc)
+{
+    memset(mtpc, 0, sizeof(mtp_conn_t));
+    mtpc->is_reply_to_specified = true;
+    mtpc->protocol = kMtpProtocol_UDS;
+    mtpc->uds.instance = uc->instance;
+    mtpc->uds.conn_id = uc->conn_id;
+    mtpc->uds.path_type = uc->path_type;
+}
+
+/*********************************************************************//**
+**
+** ValidateUdsPayload
+**
+** Validates that the payload of a UDS frame is correctly formed
+** ie that the sum of the TLV headers and lengths matches the frame payload length
+**
+** \param   payload - pointer to buffer containing payload of UDS frame
+** \param   payload_len - length of payload in UDS frame
+**
+** \return  USP_ERR_OK if valid
+**
+**************************************************************************/
+int ValidateUdsPayload(unsigned char *payload, int payload_len)
+{
+    unsigned char *p;
+    int payload_remaining;
+    int tlv_len;
+
+    // Iterate over all the TLVs in the payload, validating their length
+    p = payload;
+    payload_remaining = payload_len;
+    while (payload_remaining > 0)
+    {
+        // Exit if payload is not large enough to contain TLV header
+        if (payload_remaining < TLV_HEADER_SIZE)
+        {
+            return USP_ERR_RECORD_NOT_PARSED;
+        }
+
+        SKIP_BYTE(p, payload_remaining);  // Skip TLV type byte
+        tlv_len = READ_4_BYTES(p, payload_remaining);
+
+        // Exit if the TLV's length is invalid
+        if ((tlv_len < 0) || (tlv_len > payload_remaining))
+        {
+            return USP_ERR_RECORD_NOT_PARSED;
+        }
+
+        // Skip TLV payload, moving to next TLV
+        SKIP_N_BYTES(p, tlv_len, payload_remaining);
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** StrDupUdsTlvPayload
+**
+** Copies the specified TLV payload into a dynamically allocated string
+**
+** \param   tlv_payload - Pointer to the start of the TLV's payload
+** \param   tlv_len - The length of the TLV's payload
+**
+** \return  USP_ERR_OK if valid
+**
+**************************************************************************/
+char *StrDupUdsTlvPayload(unsigned char *tlv_payload, int tlv_len)
+{
+    char *buf;
+
+    buf = USP_MALLOC(tlv_len+1);   // Plus 1 to include NULL terminator
+    memcpy(buf, tlv_payload, tlv_len);
+    buf[tlv_len] = '\0';
+
+    return buf;
+}
+
+/*********************************************************************//**
+**
+** ProcessUdsTLV_Error
+**
+** Process the payload of an Error TLV
+**
+** \param   uc - UDS connection which received some data
+** \param   tlv_payload - Pointer to the start of the TLV's payload
+** \param   tlv_len - The length of the TLV's payload
+**
+** \return  None
+**
+**************************************************************************/
+void ProcessUdsTLV_Error(uds_connection_t *uc, unsigned char *tlv_payload, unsigned tlv_len)
+{
+    char buf[128];
+    unsigned len;
+
+    // Truncate the error message
+    len = MIN(tlv_len, (sizeof(buf)-1));
+    memcpy(buf, (char*)tlv_payload, len);
+    buf[len] = '\0'; // NULL terminate the error string
+
+    // Log the error message
+    USP_LOG_Error("Received UDS ERROR from endpoint_id=%s on %s", EndpointIdForLog(uc), uc->socket_path);
+    USP_LOG_Error("UDS ERROR is '%s'", buf);
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    if (uc->fd_count != 0)
+    {
+        SendUdsErrorFrame(uc, "File descriptors are not supported with error frame");
+    }
+#endif
+
+    // Close the uds socket connection
+    CloseUdsConnection(uc, RETRY_LATER);
+}
+
+/*********************************************************************//**
+**
+** ProcessUdsTLV_UspRecord
+**
+** Process the payload of a TLV containing a USP Record
+**
+** \param   uc - UDS connection which received some data
+** \param   tlv_payload - Pointer to the start of the TLV's payload
+** \param   tlv_len - The length of the TLV's payload
+**
+** \return  None
+**
+**************************************************************************/
+void ProcessUdsTLV_UspRecord(uds_connection_t *uc, unsigned char *tlv_payload, unsigned tlv_len)
+{
+    char time_buf[MAX_ISO8601_LEN];
+    mtp_conn_t mtp_conn;
+    int role_instance;
+
+    // Exit, discarding received frame if we received a USP Record before the handshake process has completed [R-UDS.20]
+    if (uc->endpoint_id == NULL)
+    {
+        USP_LOG_Warning("%s: Ignoring USP frame received before handshake completed", __FUNCTION__);
+        return;
+    }
+
+    iso8601_cur_time(time_buf, sizeof(time_buf));
+    USP_LOG_Info("USP Record received at time %s, from endpoint_id=%s over UDS (%s)", time_buf, EndpointIdForLog(uc), uc->socket_path);
+
+    PopulateUdsMtpConnection(&mtp_conn, uc);
+    role_instance = (uc->auth_required) ? ROLE_UDS_AUTH : ROLE_UDS;
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    unsigned int fd_key = 0;
+    if (uc->fd_count != 0)
+    {
+        fd_key = FD_VECTOR_New_Key();
+        if (fd_key == 0)
+        {
+            mtp_conn.uds.fd_res_exceeded = true;
+        }
+        else
+        {
+            mtp_conn.uds.fd_key = fd_key;
+            FD_VECTOR_Add(mtp_conn.uds.fd_key, uc->fd_buffer, uc->fd_count);
+            uc->fd_buffer = NULL;
+            uc->fd_count = 0;
+        }
+    }
+#endif
+
+    DM_EXEC_PostUspRecord(tlv_payload, tlv_len, uc->endpoint_id, role_instance, &mtp_conn);
+}
+
+/*********************************************************************//**
+**
+** ProcessUdsTLV_HandshakePassword
+**
+** Processes the contents of a UDS frame that contained a handshake TLV and optionally a password TLV
+**
+** \param   uc - UDS connection which received some data
+** \param   endpoint_id - Endpoint ID of the peer, extracted from the Handshake TLV, or NULL if Handshake TLV not present in UDS frame
+** \param   password - Password provided by the peer, extracted from the Password TLV, or NULL if Password TLV not present in UDS frame
+**
+** \return  None
+**
+**************************************************************************/
+void ProcessUdsTLV_HandshakePassword(uds_connection_t *uc, char *endpoint_id, char *password)
+{
+    char *err_msg = NULL;
+    char *expected_password;
+    int index;
+
+    // Exit if we've already received a successful handshake (in which case, we just ignore this handshake packet [R-UDS.19])
+    if (uc->endpoint_id != NULL)
+    {
+        USP_LOG_Warning("%s: Ignoring extraneous UDS MTP handshake", __FUNCTION__);
+        return;
+    }
+
+    // Exit if no EndpointID
+    if ((endpoint_id == NULL) || (*endpoint_id == '\0'))
+    {
+        // R-UDS.21 : UDS client or server must send error frame if it cannot parse handshake frame
+        err_msg = "Invalid EndpointID, Failed to process Handshake Frame";
+        USP_LOG_Error("%s: %s", __FUNCTION__, err_msg);
+        SendUdsErrorFrame(uc, err_msg);
+        return;
+    }
+
+    // Exit if peer's endpoint_id was badly formed, or already connected to this UDS path type
+    err_msg = ValidateUdsEndpointID(endpoint_id, uc->path_type);
+    if (err_msg != NULL)
+    {
+        // R-UDS.21 : UDS client or server must send error frame if it cannot process the handshake
+        USP_LOG_Error("%s: %s", __FUNCTION__, err_msg);
+        SendUdsErrorFrame(uc, err_msg);
+        return;
+    }
+
+    // Handle connections that require password based authentication
+    if (uc->auth_required)
+    {
+        // Exit if the expected password was blank, in which case the USP Service is blocked from connecting with any password
+        index = KV_VECTOR_FindKey(&uds_passwords, endpoint_id, 0);
+        if ((index != INVALID) && (uds_passwords.vector[index].value[0] == '\0'))
+        {
+            err_msg = "USP Service blocked";
+            USP_LOG_Error("%s: %s", __FUNCTION__, err_msg);
+            SendUdsErrorFrame(uc, err_msg);
+            return;
+        }
+
+        // Exit if a password was required, but none provided
+        if (password == NULL)
+        {
+            err_msg = "Password required but none provided in UDS frame";
+            USP_LOG_Error("%s: %s", __FUNCTION__, err_msg);
+            SendUdsErrorFrame(uc, err_msg);
+            return;
+        }
+
+        // Exit if no authentication setup for this endpoint
+        if (index == INVALID)
+        {
+            err_msg = "Password required but none configured";
+            USP_LOG_Error("%s: %s for endpoint_id=%s", __FUNCTION__, err_msg, endpoint_id);
+            SendUdsErrorFrame(uc, err_msg);
+            return;
+        }
+
+        // Exit if password was incorrect
+        expected_password = uds_passwords.vector[index].value;
+        if (strcmp(password, expected_password) != 0)
+        {
+            err_msg = "Incorrect Password";
+            USP_LOG_Error("%s: %s for endpoint_id=%s", __FUNCTION__, err_msg, endpoint_id);
+            SendUdsErrorFrame(uc, err_msg);
+            return;
+        }
+    }
+
+    // Save the endpoint_id of the connecting client
+    uc->endpoint_id = USP_STRDUP(endpoint_id);
+    USP_LOG_Info("Received UDS HANDSHAKE from endpoint_id=%s on %s", EndpointIdForLog(uc), uc->socket_path);
+
+    if ( ((RUNNING_AS_USP_SERVICE()==true) && (uc->path_type == kUdsPathType_BrokersController)) ||
+         ((RUNNING_AS_USP_SERVICE()==false) && (uc->path_type == kUdsPathType_BrokersAgent)) )
+    {
+        QueueUspConnectRecord_Uds(uc);
+    }
+
+    // cancel the handshake timeout during handshake exchange
+    // Only the client sets a handshake timeout as only the client expects a handshake response
+    // doing this on a server connection is benign
+    uc->handshake_timeout = INVALID;
+
+    // Notify the data model of the endpoint which has connected
+    DM_EXEC_PostUdsHandshakeComplete(uc->endpoint_id, uc->instance, uc->path_type, uc->conn_id);
+
+    // If acting as a server, then queue our UDS handshake message now, in response to the handshake message received from the connecting client [R-UDS.17]
+    if (uc->type == kUdsConnType_Server)
+    {
+        uds_send_item_t *send_item;
+
+        send_item = USP_MALLOC(sizeof(uds_send_item_t));
+        memset(send_item, 0, sizeof(uds_send_item_t));
+        send_item->expiry_time = END_OF_TIME;
+        send_item->type = kUdsFrameType_Handshake;
+        DLLIST_LinkToHead(&uc->usp_record_send_queue, send_item);
+    }
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    if (uc->fd_count != 0)
+    {
+        SendUdsErrorFrame(uc, "File descriptors are not supported with handshake frame");
+    }
+#endif
+}
+
+/*********************************************************************//**
+**
+** CopyUdsConnParams
+**
+** Performs a deep copy of UDS connection parameters
+**
+** \param   dest - pointer to destination structure to copy into
+** \param   src - pointer to source structure to copy from
+**
+** \return  None
+**
+**************************************************************************/
+void CopyUdsConnParams(uds_conn_params_t *dest, uds_conn_params_t *src)
+{
+    memset(dest, 0, sizeof(uds_conn_params_t));
+    dest->instance = src->instance;
+    dest->path = USP_STRDUP(src->path);
+    dest->path_type = src->path_type;
+    dest->mode = src->mode;
+    dest->auth_required = src->auth_required;
+    dest->registration_restricted = src->registration_restricted;
+}
+
+/*********************************************************************//**
+**
+** FreeUdsConnParams
+**
+** Safely frees all dynamically allocated memory associated with the UDS connection parameter structure
+**
+** \param   ucp - pointer to structure to free all dynamically allocated memory variables in
+**
+** \return  None
+**
+**************************************************************************/
+void FreeUdsConnParams(uds_conn_params_t *ucp)
+{
+    USP_SAFE_FREE(ucp->path);
+}
 #endif // ENABLE_UDS

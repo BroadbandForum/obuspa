@@ -108,6 +108,7 @@ SOURCES = src/core/main.c \
                     src/core/e2e_context.c \
                     src/core/plugin.c \
                     src/core/device_uds.c \
+                    src/core/fd_vector.c \
                     src/core/uds.c \
                     src/core/usp_service.c \
                     src/core/usp_broker.c
@@ -133,6 +134,10 @@ obuspa_LDADD += $(openssl_LIBS) $(sqlite3_LIBS) $(libcurl_LIBS) $(zlib_LIBS) $(l
 
 # Import vendor makefile
 include src/vendor/vendor.am
+
+# Import plugin makefiles
+pkglib_LTLIBRARIES = 
+include examples/test_uds/Makefile.am
 
 # Include files
 public_includedir = $(includedir)/obuspa/include

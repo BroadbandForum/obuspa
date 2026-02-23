@@ -3,6 +3,7 @@
  * Copyright (C) 2023-2025, Broadband Forum
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2023-2024  CommScope, Inc
+ * Copyright (C) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -60,6 +61,11 @@
 #include "cli.h"
 #include "group_get_vector.h"
 #include "se_cache.h"
+#include "dm_access.h"
+
+#ifdef FD_PASSING_EXPERIMENTAL
+#include "fd_vector.h"
+#endif
 
 #ifndef REMOVE_USP_BROKER
 
@@ -68,8 +74,11 @@
 #define RESPONSE_TIMEOUT  30
 
 //------------------------------------------------------------------------------
-// Location of the Device.USPService.USPService table within the data model
-#define DEVICE_SERVICE_ROOT "Device.USPServices.USPService"
+// Location of USPService tables within the data model
+#define DEVICE_SERVICE_ROOT         "Device.USPServices.USPService"
+#define DEVICE_SERVICE_TRUST_ROOT   "Device.USPServices.Trust"
+
+static char *device_service_trust_root = DEVICE_SERVICE_TRUST_ROOT;
 
 //------------------------------------------------------------------------------
 // Path to use when querying the USP Service's subscription table
@@ -124,7 +133,7 @@ typedef struct
 // Array containing the list of connected USP Services
 typedef struct
 {
-    int instance;                   // instance number in Device.USP.USPService.{i}. Set to INVALID, if this entry is not in use
+    int instance;                   // instance number in Device.USPServices.USPService.{i}. Set to INVALID, if this entry is not in use
     char *endpoint_id;              // Endpoint Id of the USP service
     mtp_conn_t controller_mtp;      // Identifies the MTP to use when acting as a controller sending to the Endpoint's agent
     mtp_conn_t agent_mtp;           // Identifies the MTP to use when acting as an agent sending to the Endpoint's controller
@@ -145,6 +154,18 @@ static usp_service_t usp_services[MAX_USP_SERVICES] = {{0}};
 //------------------------------------------------------------------------------
 // Array for fast lookup of USP service based on group_id
 static usp_service_t *group_id_to_usp_service[MAX_VENDOR_PARAM_GROUPS] = {0};
+
+//------------------------------------------------------------------------------
+// Dynamically allocated array containing the list of allowed paths for each USP Service
+typedef struct
+{
+    int instance;                   // Instance number in Device.USPServices.Trust.{i}. Set to INVALID, if this entry is not in use
+    char *endpoint_id;              // Endpoint Id of the USP service
+    str_vector_t target_paths;      // String vector of paths that the USP Service is allowed to register
+} usp_services_trust_t;
+
+static usp_services_trust_t *usp_services_trust = NULL;
+static int num_usp_services_trust = 0;
 
 //------------------------------------------------------------------------------
 // Defines for flags argument of HandleUspServiceAgentDisconnect()
@@ -189,6 +210,9 @@ const enum_entry_t cli_service_cmds[kCliServiceCmd_Max] =
 // Defines for execution flags of CheckPassThruPermissions()
 #define CHECK_TABLES_ONLY       0x00000001    // Checks the specified permission, but only on table objects
                                               // (without this flag, the permission is tested recursively on all nodes)
+//------------------------------------------------------------------------------
+// Defines for execution flags of IsValidUspServicePath()
+#define ALLOW_DEVICE_DOT 0x00000001     // Allows 'Device.' to be a valid path. This flag is only used for paths in the Trust table
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them
@@ -202,7 +226,7 @@ usp_service_t *FindUspServiceByGroupId(int group_id);
 usp_service_t *FindUnusedUspService(void);
 int CalcNextUspServiceInstanceNumber(void);
 void CalcBrokerMessageId(char *msg_id, int len);
-bool IsValidUspServicePath(char *path);
+bool IsValidUspServicePath(char *path, unsigned flags);
 int ProcessGetResponse(Usp__Msg *resp, kv_vector_t *kvv);
 int ProcessGetInstancesResponse(Usp__Msg *resp, usp_service_t *us, bool within_vendor_hook);
 int CompareGetInstances_CurInst(const void *entry1, const void *entry2);
@@ -255,7 +279,12 @@ int ProcessGetSubsResponse(usp_service_t *us, Usp__Msg *resp);
 void ProcessGetSubsResponse_ResolvedPathResult(usp_service_t *us, Usp__GetResp__ResolvedPathResult *res, str_vector_t *subs_to_delete);
 char *GetParamValueFromResolvedPathResult(Usp__GetResp__ResolvedPathResult *res, char *name);
 int SendOperateAndProcessResponse(int group_id, char *path, bool is_sync, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args, bool *is_complete);
+#ifdef FD_PASSING_EXPERIMENTAL
+int SendOperateAndProcessResponseWithFds(int group_id, char *path, bool is_sync, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args, bool *is_complete, unsigned int *fd_key);
+int ProcessOperateResponseWithFds(Usp__Msg *resp, char *path, bool is_sync, kv_vector_t *output_args, bool *is_complete, bool fd_res_exceeded);
+#else
 int ProcessOperateResponse(Usp__Msg *resp, char *path, bool is_sync, kv_vector_t *output_args, bool *is_complete);
+#endif
 void DeleteMatchingOperateRequest(usp_service_t *us, char *obj_path, char *command_name, char *command_key);
 void UpdateUspServiceMRT(usp_service_t *us, mtp_conn_t *mtpc);
 void ProcessUniqueKeys(char *path, Usp__GetInstancesResp__CurrInstance__UniqueKeysEntry **unique_keys, int num_unique_keys);
@@ -279,7 +308,7 @@ void DeRegisterAllPaths(usp_service_t *us, Usp__DeregisterResp *dreg_resp);
 void RemoveDeRegisterResp_DeRegisteredPathResult(Usp__DeregisterResp *dreg_resp);
 void AddDeRegisterRespSuccess_Path(Usp__DeregisterResp__DeregisteredPathResult *dreg_path_result, char *path);
 int DeRegisterUspServicePath(usp_service_t *us, char *path);
-int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path, str_vector_t *accepted_paths);
+int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path, str_vector_t *allowed_paths, str_vector_t *accepted_paths);
 void RegisterBrokerVendorHooks(usp_service_t *us);
 void DeregisterBrokerVendorHooks(usp_service_t *us);
 Usp__Msg *CreateCliInitiatedRequest(cli_service_cmd_t cmd, char *path, char *optional, Usp__Header__MsgType *resp_type);
@@ -296,7 +325,15 @@ unsigned UpdateDeviceDotNotificationList(str_vector_t *sv, char **p_list, unsign
 int UspService_GetAllParamsForPath( usp_service_t *us, str_vector_t *usp_service_paths, kv_vector_t *usp_service_values, int depth);
 void GetAllPathsForOptimizedUspService(dm_node_t *node, str_vector_t usp_service_paths[], int usp_remaining_depth[], str_vector_t *non_usp_service_params, int_vector_t *non_usp_service_group_ids, combined_role_t *combined_role, int depth_remaining);
 int HandleWatchNotification(Usp__Notify *notify, usp_service_t *us);
-
+int Notify_ServicesTrustAdded(dm_req_t *req);
+int Notify_ServicesTrustDeleted(dm_req_t *req);
+int Validate_TrustEndpointID(dm_req_t *req, char *value);
+int Validate_TrustTargetPaths(dm_req_t *req, char *value);
+int NotifyChange_TrustEndpointID(dm_req_t *req, char *value);
+int NotifyChange_TrustTargetPaths(dm_req_t *req, char *value);
+int ProcessServicesTrustAdded(int instance);
+usp_services_trust_t *FindServicesTrustByEndpointId(char *endpoint_id);
+usp_services_trust_t *FindServicesTrustByInstance(int instance);
 
 /*********************************************************************//**
 **
@@ -315,21 +352,31 @@ int USP_BROKER_Init(void)
     usp_service_t *us;
     int err = USP_ERR_OK;
 
-    // Register Device.UspServices object
+    // Register Device.USPServices.USPService object
     err |= USP_REGISTER_Object(DEVICE_SERVICE_ROOT ".{i}", USP_HOOK_DenyAddInstance, NULL, NULL,
                                                            USP_HOOK_DenyDeleteInstance, NULL, NULL);
 
     err |= USP_REGISTER_Param_NumEntries("Device.USPServices.USPServiceNumberOfEntries", DEVICE_SERVICE_ROOT ".{i}");
 
-    // Register Device.USPServices.USPService parameters
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_SERVICE_ROOT ".{i}.EndpointID", GetUspService_EndpointID, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_SERVICE_ROOT ".{i}.Protocol", GetUspService_Protocol, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_SERVICE_ROOT ".{i}.DataModelPaths", GetUspService_DMPaths, DM_STRING);
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_SERVICE_ROOT ".{i}.HasController", GetUspService_HasController, DM_BOOL);
 
-    // Register unique key for table
     char *unique_keys[] = { "EndpointID" };
-    err |= USP_REGISTER_Object_UniqueKey("Device.USPServices.USPService.{i}", unique_keys, NUM_ELEM(unique_keys));
+    err |= USP_REGISTER_Object_UniqueKey(DEVICE_SERVICE_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
+
+    // Register Device.USPServices.Trust object
+    err |= USP_REGISTER_Object(DEVICE_SERVICE_TRUST_ROOT ".{i}", NULL, NULL, Notify_ServicesTrustAdded,
+                                                                 NULL, NULL, Notify_ServicesTrustDeleted);
+
+    err |= USP_REGISTER_Param_NumEntries("Device.USPServices.TrustNumberOfEntries", DEVICE_SERVICE_TRUST_ROOT ".{i}");
+
+    err |= USP_REGISTER_DBParam_ReadWriteAuto(DEVICE_SERVICE_TRUST_ROOT ".{i}.EndpointID", DM_ACCESS_PopulateEndpointIDParam, Validate_TrustEndpointID, NotifyChange_TrustEndpointID, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_SERVICE_TRUST_ROOT ".{i}.TargetPaths", "", Validate_TrustTargetPaths, NotifyChange_TrustTargetPaths, DM_STRING);
+
+    err |= USP_REGISTER_Object_UniqueKey(DEVICE_SERVICE_TRUST_ROOT ".{i}", unique_keys, NUM_ELEM(unique_keys));
+
 
     // Exit if any errors occurred
     if (err != USP_ERR_OK)
@@ -371,7 +418,40 @@ int USP_BROKER_Init(void)
 **************************************************************************/
 int USP_BROKER_Start(void)
 {
-    return USP_ERR_OK;
+    int i;
+    int err;
+    int instance;
+    int_vector_t iv;
+    char path[MAX_DM_PATH];
+
+    // Exit if unable to get the object instance numbers present in the USPServices.Trust table
+    INT_VECTOR_Init(&iv);
+    err = DATA_MODEL_GetInstances(device_service_trust_root, &iv);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Add entries in the USPServices.Trust table to usp_services_trust[]
+    for (i=0; i < iv.num_entries; i++)
+    {
+        instance = iv.vector[i];
+        err = ProcessServicesTrustAdded(instance);
+        if (err != USP_ERR_OK)
+        {
+            USP_SNPRINTF(path, sizeof(path), "%s.%d", device_service_trust_root, instance);
+            USP_LOG_Warning("%s: Deleting %s as it contained invalid parameters.", __FUNCTION__, path);
+            err = DATA_MODEL_DeleteInstance(path, 0);
+            if (err != USP_ERR_OK)
+            {
+                goto exit;
+            }
+        }
+    }
+
+exit:
+    INT_VECTOR_Destroy(&iv);
+    return err;
 }
 
 /*********************************************************************//**
@@ -389,6 +469,7 @@ void USP_BROKER_Stop(void)
 {
     int i;
     usp_service_t *us;
+    usp_services_trust_t *ust;
 
     // Iterate over all USP services freeing all memory allocated by the USP Service (including data model)
     for (i=0; i<MAX_USP_SERVICES; i++)
@@ -402,6 +483,16 @@ void USP_BROKER_Stop(void)
             FreeUspService(us);
         }
     }
+
+    // Iterate over all USP service trust settings, freeing all memory allocated
+    for (i=0; i < num_usp_services_trust; i++)
+    {
+        ust = &usp_services_trust[i];
+        USP_FREE(ust->endpoint_id);
+        STR_VECTOR_Destroy(&ust->target_paths);
+    }
+    USP_SAFE_FREE(usp_services_trust);
+    num_usp_services_trust = 0;
 }
 
 /*********************************************************************//**
@@ -543,7 +634,11 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
     Usp__RegisterResp *reg_resp;
     bool allow_partial;
     str_vector_t accepted_paths;    // List of paths accepted from this register message, which have not been previously registered
+    usp_services_trust_t *st;
+    str_vector_t empty_list = {NULL, 0};
+    str_vector_t *allowed_paths = &empty_list;  // List of paths that are allowed to be registered. Default of empty list indicates none are allowed to be registered
     char path[MAX_DM_PATH];
+    bool use_register_acls = true;
 
     STR_VECTOR_Init(&accepted_paths);
 
@@ -600,6 +695,27 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
         goto exit;
     }
 
+    // For UDS MTP, some UDS paths do not restrict which DM elements can be registered (these paths are used by firmware based USP Services)
+    // For all other MTPs, the Device.USPServices.Trust.{i} table restrictions should be applied
+    if (mtpc->protocol == kMtpProtocol_UDS)
+    {
+        use_register_acls = DEVICE_UDS_DoRegistrationRestrictionsApply(mtpc->uds.instance);
+    }
+
+    // Determine the paths that are allowed to be registered by this USP Service
+    if (use_register_acls)
+    {
+        st = FindServicesTrustByEndpointId(us->endpoint_id);
+        if (st != NULL)
+        {
+            allowed_paths = &st->target_paths;
+        }
+    }
+    else
+    {
+        allowed_paths = NULL;
+    }
+
     // Create a Register Response message
     resp = CreateRegisterResp(usp->header->msg_id);
     reg_resp = resp->body->response->register_resp;
@@ -611,7 +727,7 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
         rp = reg->reg_paths[i];
         USP_ASSERT((rp != NULL) && (rp->path != NULL));
 
-        err = ShouldPathBeAddedToDataModel(us, rp->path, &accepted_paths);
+        err = ShouldPathBeAddedToDataModel(us, rp->path, allowed_paths, &accepted_paths);
         if (err == USP_ERR_OK)
         {
             // Path should be added to data model
@@ -745,7 +861,7 @@ void USP_BROKER_HandleDeRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *m
         }
         else
         {
-            is_valid = IsValidUspServicePath(path);
+            is_valid = IsValidUspServicePath(path, 0);
             if (is_valid)
             {
                 // Deregister a DM object (normal case)
@@ -907,6 +1023,10 @@ void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t 
     Usp__Notify__OperationComplete *op;
     int items_converted;
     int broker_instance;
+#ifdef FD_PASSING_EXPERIMENTAL
+    unsigned int fd_key = 0;
+    char command_path[MAX_DM_PATH];
+#endif
 
     // Exit if message is invalid or failed to parse
     // This code checks the parsed message enums and pointers for expectations and validity
@@ -975,6 +1095,70 @@ void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t 
         goto exit;
     }
 
+#ifdef FD_PASSING_EXPERIMENTAL
+    if (mtpc->protocol == kMtpProtocol_UDS)
+    {
+        fd_key = mtpc->uds.fd_key;
+        int fd_count = 0;
+
+        FD_VECTOR_Get(mtpc->uds.fd_key, &fd_count);
+
+        // Exit if we have truncated file descriptors or we reached limit for keys
+        if ( ((fd_count < 0) || (mtpc->uds.fd_res_exceeded)) &&
+             (notify->notification_case != USP__NOTIFY__NOTIFICATION_OPER_COMPLETE) )
+        {
+            USP_ERR_SetMessage("%s: Truncated received file descriptors or we reached limit for keys", __FUNCTION__);
+            USP_SNPRINTF(command_path, sizeof(command_path), "%s%s", notify->oper_complete->obj_path, notify->oper_complete->command_name);
+            req_map_t *rmap = ReqMap_Find(&us->req_map, command_path, notify->oper_complete->command_key);
+            if (rmap == NULL)
+            {
+                err = USP_ERR_INTERNAL_ERROR;
+                goto exit;
+            }
+            USP_SIGNAL_OperationComplete(rmap->request_instance, USP_ERR_RESOURCES_EXCEEDED, USP_ERR_GetMessage(), NULL);
+            err = USP_ERR_REQUEST_DENIED;
+            goto exit;
+        }
+
+        // File descriptors supported only in OperationComplete and Event notifications
+        if ((fd_count > 0) &&
+                 (notify->notification_case != USP__NOTIFY__NOTIFICATION_OPER_COMPLETE) &&
+                 (notify->notification_case != USP__NOTIFY__NOTIFICATION_EVENT))
+        {
+            USP_ERR_SetMessage("%s: File descriptor passing supported only in OperationComplete and Event notifications", __FUNCTION__);
+            err = USP_ERR_REQUEST_DENIED;
+            goto exit;
+        }
+    }
+
+    // Forward the notification back to the controller that set up the subscription on the Broker
+    err = DEVICE_SUBSCRIPTION_RouteNotificationWithFds(usp, broker_instance, smap->path, fd_key);
+
+    // If this is an OperationComplete notification, then delete the associated request
+    // in the Broker's Request table and from this USP Service's request mapping table
+    if (notify->notification_case == USP__NOTIFY__NOTIFICATION_OPER_COMPLETE)
+    {
+        // This type of error means that the USP message NOTIFY with file
+        // descriptors in output arguments is being sent to the controller over
+        // non-UDS MTP
+        if ((err == USP_ERR_VALUE_CONFLICT) || (err == USP_ERR_RESOURCES_EXCEEDED))
+        {
+            USP_SNPRINTF(command_path, sizeof(command_path), "%s%s", notify->oper_complete->obj_path, notify->oper_complete->command_name);
+            req_map_t *rmap = ReqMap_Find(&us->req_map, command_path, notify->oper_complete->command_key);
+            if (rmap == NULL)
+            {
+                err = USP_ERR_INTERNAL_ERROR;
+                goto exit;
+            }
+            USP_SIGNAL_OperationComplete(rmap->request_instance, err, USP_ERR_UspErrToString(err), NULL);
+            err = USP_ERR_REQUEST_DENIED;
+            goto exit;
+        }
+
+        op = notify->oper_complete;
+        DeleteMatchingOperateRequest(us, op->obj_path, op->command_name, op->command_key);
+    }
+#else
     // Forward the notification back to the controller that set up the subscription on the Broker
     err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance, smap->path);
 
@@ -985,11 +1169,25 @@ void USP_BROKER_HandleNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t 
         op = notify->oper_complete;
         DeleteMatchingOperateRequest(us, op->obj_path, op->command_name, op->command_key);
     }
+#endif
 
 exit:
     // Send a USP ERROR response if an error was detected (as per R-MTP.5)
     if (err != USP_ERR_OK)
     {
+#ifdef FD_PASSING_EXPERIMENTAL
+        if (fd_key != 0)
+        {
+            int fd_count = 0;
+            int* fd_buffer = FD_VECTOR_Get(fd_key, &fd_count);
+            if (fd_count != 0)
+            {
+                FD_VECTOR_Close(fd_buffer, fd_count);
+                FD_VECTOR_Remove(fd_key);
+            }
+        }
+#endif
+
         MSG_HANDLER_QueueErrorMessage(err, endpoint_id, mtpc, usp->header->msg_id);
     }
 }
@@ -3482,7 +3680,12 @@ int Broker_SyncOperate(dm_req_t *req, char *command_key, kv_vector_t *input_args
 
     #define IS_SYNC true
     #define IS_ASYNC false
+
+#ifdef FD_PASSING_EXPERIMENTAL
+    err = SendOperateAndProcessResponseWithFds(req->group_id, req->path, IS_SYNC, command_key, input_args, output_args, &is_complete, &req->fd_key);
+#else
     err = SendOperateAndProcessResponse(req->group_id, req->path, IS_SYNC, command_key, input_args, output_args, &is_complete);
+#endif
 
     return err;
 }
@@ -4372,7 +4575,7 @@ int UspService_GetAllParamsForPath(usp_service_t *us, str_vector_t *usp_service_
     // Exit if timed out waiting for a response
     if (resp == NULL)
     {
-        USP_LOG_Warning("%s: WARNING: Unable to send to UspService=%s. Request timeout out", __FUNCTION__, us->endpoint_id);
+        USP_LOG_Warning("%s: WARNING: Timed out waiting for response from UspService=%s", __FUNCTION__, us->endpoint_id);
         goto exit;
     }
 
@@ -5140,11 +5343,19 @@ int ProcessDeleteResponse(Usp__Msg *resp, str_vector_t *paths, int *failure_inde
 ** \param   is_complete - pointer to variable in which to return whether the operate response was indicating that the operate had completed
 **                        or NULL if this information is not required
 **                        This argument is only needed for async commands to differentiate an operate response containing an operate result from one not containing an operate result
+** \param   fd_key - pointer to memory where key to file descriptor buffer recieved from operate reponse will be put
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
 int SendOperateAndProcessResponse(int group_id, char *path, bool is_sync, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args, bool *is_complete)
+#ifdef FD_PASSING_EXPERIMENTAL
+{
+    return SendOperateAndProcessResponseWithFds(group_id, path, is_sync, command_key, input_args, output_args, is_complete, NULL);
+}
+
+int SendOperateAndProcessResponseWithFds(int group_id, char *path, bool is_sync, char *command_key, kv_vector_t *input_args, kv_vector_t *output_args, bool *is_complete, unsigned int *fd_key)
+#endif
 {
     int err;
     Usp__Msg *req;
@@ -5184,9 +5395,16 @@ int SendOperateAndProcessResponse(int group_id, char *path, bool is_sync, char *
 
     // Send the request and wait for a response
     // NOTE: request message is consumed by DM_EXEC_SendRequestAndWaitForResponse()
+#ifdef FD_PASSING_EXPERIMENTAL
+    bool fd_res_exceeded = false;
+    resp = DM_EXEC_SendRequestAndWaitForResponseWithFds(us->endpoint_id, req, &us->controller_mtp,
+                                                 USP__HEADER__MSG_TYPE__OPERATE_RESP,
+                                                 RESPONSE_TIMEOUT, fd_key, &fd_res_exceeded);
+#else
     resp = DM_EXEC_SendRequestAndWaitForResponse(us->endpoint_id, req, &us->controller_mtp,
                                                  USP__HEADER__MSG_TYPE__OPERATE_RESP,
                                                  RESPONSE_TIMEOUT);
+#endif
 
     // Exit if timed out waiting for a response
     if (resp == NULL)
@@ -5195,7 +5413,11 @@ int SendOperateAndProcessResponse(int group_id, char *path, bool is_sync, char *
     }
 
     // Process the operate response, determining if it was successful or not
+#ifdef FD_PASSING_EXPERIMENTAL
+    err = ProcessOperateResponseWithFds(resp, path, is_sync, output_args, is_complete, fd_res_exceeded);
+#else
     err = ProcessOperateResponse(resp, path, is_sync, output_args, is_complete);
+#endif
 
     // Free the operate response, since we've finished with it
     usp__msg__free_unpacked(resp, pbuf_allocator);
@@ -5216,11 +5438,16 @@ int SendOperateAndProcessResponse(int group_id, char *path, bool is_sync, char *
 ** \param   is_complete - pointer to variable in which to return whether the operate response was indicating that the operate had completed
 **                        or NULL if this information is not required
 **                        This argument is only needed for async commands to differentiate an operate response containing an operate result from one not containing an operate result
+** \param   fd_res_exceeded - flag indicating exceeded limit for file descriptor buffers
 **
 ** \return  USP_ERR_OK if successful
 **
 **************************************************************************/
+#ifdef FD_PASSING_EXPERIMENTAL
+int ProcessOperateResponseWithFds(Usp__Msg *resp, char *path, bool is_sync, kv_vector_t *output_args, bool *is_complete, bool fd_res_exceeded)
+#else
 int ProcessOperateResponse(Usp__Msg *resp, char *path, bool is_sync, kv_vector_t *output_args, bool *is_complete)
+#endif
 {
     int i;
     int err;
@@ -5285,6 +5512,14 @@ int ProcessOperateResponse(Usp__Msg *resp, char *path, bool is_sync, kv_vector_t
             break;
 
         case USP__OPERATE_RESP__OPERATION_RESULT__OPERATION_RESP_REQ_OUTPUT_ARGS:
+#ifdef FD_PASSING_EXPERIMENTAL
+            if (fd_res_exceeded)
+            {
+                err = USP_ERR_RESOURCES_EXCEEDED;
+                USP_ERR_SetMessage("Resourced exceeded");
+                break;
+            }
+#endif
             // Operation succeeded: Copy across output arguments
             args = res->req_output_args;
             for (i=0; i < args->n_output_args; i++)
@@ -6007,6 +6242,9 @@ bool IsWantedDmElement(char *elem_path, str_vector_t *accepted_paths)
 **
 ** \param   us - USP Service that is attempting to register the path
 ** \param   path - path to data model element which USP Service wants to add to Broker's data model
+** \param   allowed_paths - paths that are allowed to be registered by this USP Service
+**                           - Empty list denotes none are allowed to be registered
+**                           - NULL denotes all paths are allowed
 ** \param   accepted_paths - list of paths in the current register request which have been accepted to be registered
 **                           This list is used to check that the USP Service is not attempting to break the registration rules within the register request message
 **
@@ -6014,13 +6252,15 @@ bool IsWantedDmElement(char *elem_path, str_vector_t *accepted_paths)
 **          otherwise return an error code indicating why the paths shouldn't be added
 **
 **************************************************************************/
-int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path, str_vector_t *accepted_paths)
+int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path, str_vector_t *allowed_paths, str_vector_t *accepted_paths)
 {
+    int i;
     bool is_registered;
     bool is_valid;
+    char *path_spec;
 
     // Exit if path looks textually invalid, so should not be added
-    is_valid = IsValidUspServicePath(path);
+    is_valid = IsValidUspServicePath(path, 0);
     if (is_valid == false)
     {
         return USP_ERR_REGISTER_FAILURE;
@@ -6033,8 +6273,27 @@ int ShouldPathBeAddedToDataModel(usp_service_t *us, char *path, str_vector_t *ac
         return USP_ERR_PATH_ALREADY_REGISTERED;
     }
 
-    // If the code gets here, then the path should be added
-    return USP_ERR_OK;
+    // Exit if all paths are allowed to be registered
+    if (allowed_paths == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Iterate over all allowed paths, seeing if the path we want to register matches any
+    // NOTE: This code allows partial paths in the allowed paths, so an allowed path of 'Device.' allows anything to be registered
+    for (i=0; i < allowed_paths->num_entries; i++)
+    {
+        // Exit if path is allowed to be registered
+        path_spec = allowed_paths->vector[i];
+        if (TEXT_UTILS_IsPathMatch(path, path_spec))
+        {
+            return USP_ERR_OK;
+        }
+    }
+
+    // If the code gets here, then none of the allowed paths matched
+    USP_ERR_SetMessage("%s: %s not allowed to be registered by %s", __FUNCTION__, path, us->endpoint_id);
+    return USP_ERR_REGISTER_FAILURE;
 }
 
 /*********************************************************************//**
@@ -6161,11 +6420,12 @@ bool IsPathAlreadyRegistered(char *req_path, str_vector_t *accepted_paths)
 ** Determines whether the specified path is textually a valid data model path for a register message
 **
 ** \param   path - Data model path received in the USP Register message
+** \param   flags - Flags controlling execution  (eg ALLOW_DEVICE_DOT)
 **
 ** \return  true if the path appears to be valid
 **
 **************************************************************************/
-bool IsValidUspServicePath(char *path)
+bool IsValidUspServicePath(char *path, unsigned flags)
 {
     int i;
     int len;
@@ -6179,10 +6439,13 @@ bool IsValidUspServicePath(char *path)
     }
 
     // Exit if the path is only 'Device.'
-    if (path[dm_root_len] == '\0')
+    if ((flags & ALLOW_DEVICE_DOT)==0)
     {
-        USP_ERR_SetMessage("%s: Cannot register '%s'", __FUNCTION__, path);
-        return false;
+        if (path[dm_root_len] == '\0')
+        {
+            USP_ERR_SetMessage("%s: Cannot register '%s'", __FUNCTION__, path);
+            return false;
+        }
     }
 
     // Exit if the path contains too many dots as a separator
@@ -7488,12 +7751,38 @@ bool AttemptPassThruForNotification(Usp__Msg *usp, char *endpoint_id, mtp_conn_t
     }
     USP_LOG_Info("Passthru NOTIFY");
 
+#ifdef FD_PASSING_EXPERIMENTAL
+    unsigned int fd_key = 0;
+    if (mtpc->protocol == kMtpProtocol_UDS)
+    {
+        fd_key = mtpc->uds.fd_key;
+    }
+
+    // Forward the notification back to the controller that set up the subscription on the Broker
+    err = DEVICE_SUBSCRIPTION_RouteNotificationWithFds(usp, broker_instance, smap->path, fd_key);
+    if (err != USP_ERR_OK)
+    {
+        if (fd_key != 0)
+        {
+            int fd_count = 0;
+            int* fd_buffer = FD_VECTOR_Get(fd_key, &fd_count);
+            if (fd_count != 0)
+            {
+                FD_VECTOR_Remove(fd_key);
+                FD_VECTOR_Close(fd_buffer, fd_count);
+            }
+        }
+
+        return false;
+    }
+#else
     // Forward the notification back to the controller that set up the subscription on the Broker
     err = DEVICE_SUBSCRIPTION_RouteNotification(usp, broker_instance, smap->path);
     if (err != USP_ERR_OK)
     {
         return false;
     }
+#endif
 
     // NOTE: There is no need to send a NotifyResponse to the USP Service which sent this notification, because
     // this Broker code always sets NotifRetry=false on the USP Service
@@ -8278,5 +8567,365 @@ void TestIsWantedGsdmObj(void)
     }
 }
 #endif
+
+/*********************************************************************//**
+**
+** Notify_ServicesTrustAdded
+**
+** Function called after an instance has been added to Device.USPServices.Trust.{i}
+**
+** \param   req - pointer to structure identifying the instance
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ServicesTrustAdded(dm_req_t *req)
+{
+    int err;
+
+    err = ProcessServicesTrustAdded(inst1);
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** Notify_ServicesTrustDeleted
+**
+** Function called after an instance has been deleted from Device.USPServices.Trust.{i}
+**
+** \param   req - pointer to structure identifying the instance
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Notify_ServicesTrustDeleted(dm_req_t *req)
+{
+    usp_services_trust_t *ust;
+    int index;
+    int entries_after;
+
+    // Exit if unable to find the entry for this instance
+    // NOTE: We might not find it if it was never added. This could occur if deleting from the DB at startup when we detected that the database params were invalid
+    ust = FindServicesTrustByInstance(inst1);
+    if (ust == NULL)
+    {
+        return USP_ERR_OK;
+    }
+
+    // Free all dynamically allocated memory owned by this entry
+    USP_FREE(ust->endpoint_id);
+    STR_VECTOR_Destroy(&ust->target_paths);
+
+    // Move all later entries in the array down by one
+    index = ust - usp_services_trust;
+    entries_after = num_usp_services_trust - index - 1;
+    if (entries_after > 0)
+    {
+        memmove(ust, &ust[1], entries_after*sizeof(usp_services_trust_t));
+    }
+
+    // Fixup number of entries and free vector, if there are no entries now
+    num_usp_services_trust--;
+    if (num_usp_services_trust == 0)
+    {
+        USP_FREE(usp_services_trust);
+        usp_services_trust = NULL;
+    }
+    else
+    {
+        usp_services_trust = USP_REALLOC(usp_services_trust, num_usp_services_trust*sizeof(usp_services_trust_t));
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Validate_TrustEndpointID
+**
+** Validates new values of Device.USPServices.Trust.{i}.EndpointID
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of the parameter for this instance which the controller would like to set
+**
+** \return  USP_ERR_OK if retrieved successfully
+**
+**************************************************************************/
+int Validate_TrustEndpointID(dm_req_t *req, char *value)
+{
+    usp_services_trust_t *ust;
+    char buf[MAX_DM_SHORT_VALUE_LEN];
+
+    // Exit if an empty endpoint_id was given
+    if (*value == '\0')
+    {
+        USP_ERR_SetMessage("%s: EndpointID should not be an empty string", __FUNCTION__);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if this instance already has an EndpointID setup (because we don't allow it to be changed, once created)
+    USP_SNPRINTF(buf, sizeof(buf), AUTO_EID_PREFIX "%d", inst1);
+    ust = FindServicesTrustByInstance(inst1);
+    if ((ust != NULL) && (strcmp(ust->endpoint_id, buf) != 0))
+    {
+        USP_ERR_SetMessage("%s: EndpointID cannot be changed from %s", __FUNCTION__, ust->endpoint_id);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if a list of EndpointIDs were given
+    if (strchr(value, ',') != NULL)
+    {
+        USP_ERR_SetMessage("%s: EndpointID ('%s') should not be a list", __FUNCTION__, value);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    // Exit if this Endpoint already exists in the table
+    ust = FindServicesTrustByEndpointId(value);
+    if (ust != NULL)
+    {
+        USP_ERR_SetMessage("%s: Entry already exists for EndpointID='%s'", __FUNCTION__, value);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** Validate_TrustTargetPaths
+**
+** Validates new values of Device.USPServices.Trust.{i}.TargetPaths
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of the parameter for this instance which the controller would like to set
+**
+** \return  USP_ERR_OK if retrieved successfully
+**
+**************************************************************************/
+int Validate_TrustTargetPaths(dm_req_t *req, char *value)
+{
+    int i;
+    str_vector_t paths;
+    int err = USP_ERR_OK;
+    bool is_valid;
+
+    TEXT_UTILS_SplitString(value, &paths, ",");
+
+    // Iterate over all paths, exiting if any are invalid
+    for (i=0; i < paths.num_entries; i++)
+    {
+        is_valid = IsValidUspServicePath(paths.vector[i], ALLOW_DEVICE_DOT);
+        if (is_valid == false)
+        {
+            err = USP_ERR_INVALID_ARGUMENTS;
+            goto exit;
+        }
+    }
+
+exit:
+    STR_VECTOR_Destroy(&paths);
+
+    return err;;
+}
+
+/*********************************************************************//**
+**
+** NotifyChange_TrustEndpointID
+**
+** Function called when Device.USPServices.Trust.{i}.EndpointID is modified
+**
+** \param   req - pointer to structure identifying the instance
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_TrustEndpointID(dm_req_t *req, char *value)
+{
+    usp_services_trust_t *ust;
+
+    ust = FindServicesTrustByInstance(inst1);
+    USP_ASSERT(ust != NULL);
+
+    USP_SAFE_FREE(ust->endpoint_id);
+    ust->endpoint_id = USP_STRDUP(value);
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** NotifyChange_TrustTargetPaths
+**
+** Function called when Device.USPServices.Trust.{i}.TargetPaths is modified
+**
+** \param   req - pointer to structure identifying the instance
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int NotifyChange_TrustTargetPaths(dm_req_t *req, char *value)
+{
+    usp_services_trust_t *ust;
+
+    ust = FindServicesTrustByInstance(inst1);
+    USP_ASSERT(ust != NULL);
+
+    STR_VECTOR_Destroy(&ust->target_paths);
+    TEXT_UTILS_SplitString(value, &ust->target_paths, ",");
+
+    return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** ProcessServicesTrustAdded
+**
+** Reads the instance from the database and adds it to the usp_services_trust vector
+**
+** \param   req - pointer to structure identifying the instance
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int ProcessServicesTrustAdded(int instance)
+{
+    int err;
+    char path[MAX_DM_PATH];
+    char *endpoint_id = NULL;
+    char buf[MAX_DM_VALUE_LEN];
+    usp_services_trust_t *ust;
+    int new_num_entries;
+    str_vector_t target_paths;
+    int i;
+
+    STR_VECTOR_Init(&target_paths);
+
+    // Get the Endpoint ID
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.EndpointID", device_service_trust_root, instance);
+    err = DM_ACCESS_GetString(path, &endpoint_id);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if EID is an empty string
+    if (*endpoint_id == '\0')
+    {
+        USP_ERR_SetMessage("%s: %s should not be an empty string", __FUNCTION__, path);
+        err = USP_ERR_INVALID_ARGUMENTS;
+        goto exit;
+    }
+
+    // Exit if this EndpointID is already in the table (ie this entry is not unique)
+    ust = FindServicesTrustByEndpointId(endpoint_id);
+    if (ust != NULL)
+    {
+        USP_ERR_SetMessage("%s: %s.%d has the same EndpointID as %s.%d", __FUNCTION__, device_service_trust_root, instance, device_service_trust_root, ust->instance);
+        err = USP_ERR_INVALID_ARGUMENTS;
+        goto exit;
+    }
+
+    // Get the TargetPaths into a buffer
+    USP_SNPRINTF(path, sizeof(path), "%s.%d.TargetPaths", device_service_trust_root, instance);
+    err = DATA_MODEL_GetParameterValue(path, buf, sizeof(buf), 0);
+    if (err != USP_ERR_OK)
+    {
+        goto exit;
+    }
+
+    // Exit if any of the target paths are invalid
+    TEXT_UTILS_SplitString(buf, &target_paths, ",");
+    for (i=0; i<target_paths.num_entries; i++)
+    {
+        if (IsValidUspServicePath(target_paths.vector[i], ALLOW_DEVICE_DOT) == false)
+        {
+            err = USP_ERR_INVALID_ARGUMENTS;
+            goto exit;
+        }
+    }
+
+    // Increase the number of entries in the usp_services_trust vector
+    new_num_entries = num_usp_services_trust + 1;
+    usp_services_trust = USP_REALLOC(usp_services_trust, new_num_entries*sizeof(usp_services_trust_t));
+    ust = &usp_services_trust[ num_usp_services_trust ];
+    num_usp_services_trust = new_num_entries;
+
+    // Fill in the new entry, transferring ownership of target_paths to the usp_services_trust vector
+    ust->instance = instance;
+    ust->endpoint_id = endpoint_id;
+    memcpy(&ust->target_paths, &target_paths, sizeof(target_paths));
+
+    err = USP_ERR_OK;
+
+exit:
+    if (err != USP_ERR_OK)
+    {
+        USP_SAFE_FREE(endpoint_id);
+        STR_VECTOR_Destroy(&target_paths);
+    }
+
+    return err;
+}
+
+/*********************************************************************//**
+**
+** FindServicesTrustByEndpointId
+**
+** Finds the specified endpoint in the usp_services_trust[] array
+**
+** \param   endpoint_id - endpoint of USP service to match
+**
+** \return  pointer to matching USP service, or NULL if no match found
+**
+**************************************************************************/
+usp_services_trust_t *FindServicesTrustByEndpointId(char *endpoint_id)
+{
+    int i;
+    usp_services_trust_t *ust;
+
+    for (i=0; i < num_usp_services_trust; i++)
+    {
+        ust = &usp_services_trust[i];
+        if (strcmp(ust->endpoint_id, endpoint_id)==0)
+        {
+            return ust;
+        }
+    }
+
+    return NULL;
+}
+
+/*********************************************************************//**
+**
+** FindServicesTrustByInstance
+**
+** Finds the specified instance in the usp_services_trust[] array
+**
+** \param   instance - instance in Device.USPServices.Trust.{i}
+**
+** \return  pointer to matching USP service, or NULL if no match found
+**
+**************************************************************************/
+usp_services_trust_t *FindServicesTrustByInstance(int instance)
+{
+    int i;
+    usp_services_trust_t *ust;
+
+    for (i=0; i < num_usp_services_trust; i++)
+    {
+        ust = &usp_services_trust[i];
+        if (ust->instance == instance)
+        {
+            return ust;
+        }
+    }
+
+    return NULL;
+}
+
 
 #endif // REMOVE_USP_BROKER

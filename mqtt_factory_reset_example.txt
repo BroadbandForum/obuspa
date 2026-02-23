@@ -13,55 +13,14 @@
 # The value may optionally be enclosed in speech marks "" (this is the only way to specify an empty string)
 #
 ##########################################################################################################
+
 #
-# Adding MQTT parameters to test the datamodel interface
+# The following parameters will definitely need modifying
 #
-
-Device.LocalAgent.EndpointID "proto::rx_usp_agent_mqtt"
-
-
-## Adding boot params
-Device.LocalAgent.Controller.1.BootParameter.1.Enable true
-Device.LocalAgent.Controller.1.BootParameter.1.ParameterName "Device.LocalAgent.EndpointID"
-Device.LocalAgent.Subscription.1.Alias cpe-1
-Device.LocalAgent.Subscription.1.Enable true
-Device.LocalAgent.Subscription.1.ID default-boot-event-ACS
-Device.LocalAgent.Subscription.1.Recipient Device.LocalAgent.Controller.1
-Device.LocalAgent.Subscription.1.NotifType Event
-Device.LocalAgent.Subscription.1.ReferenceList Device.Boot!
-Device.LocalAgent.Subscription.1.Persistent true
-
-Device.LocalAgent.MTP.1.MQTT.ResponseTopicConfigured "/usp/agent"
-Device.LocalAgent.MTP.1.MQTT.Reference "Device.MQTT.Client.1"
-Device.MQTT.Client.1.BrokerAddress "mqtt.eclipse.org"
-Device.MQTT.Client.1.ProtocolVersion "5.0"
-Device.MQTT.Client.1.BrokerPort "1883"
-Device.MQTT.Client.1.TransportProtocol "TCP/IP"
+Device.LocalAgent.Controller.1.EndpointID "self::usp-controller"
+Device.MQTT.Client.1.BrokerAddress "test.mosquitto.org"
 Device.MQTT.Client.1.Username ""
 Device.MQTT.Client.1.Password ""
-Device.MQTT.Client.1.Alias "cpe-1"
-Device.MQTT.Client.1.Enable true
-Device.MQTT.Client.1.ClientID ""
-Device.MQTT.Client.1.KeepAliveTime "60"
-
-Device.MQTT.Client.1.ConnectRetryTime "5"
-Device.MQTT.Client.1.ConnectRetryIntervalMultiplier   "2000"
-Device.MQTT.Client.1.ConnectRetryMaxInterval "60"
-
-
-Device.LocalAgent.Controller.1.Alias "cpe-1"
-Device.LocalAgent.Controller.1.Enable true
-Device.LocalAgent.Controller.1.PeriodicNotifInterval "86400"
-Device.LocalAgent.Controller.1.PeriodicNotifTime "0001-01-01T00:00:00Z"
-Device.LocalAgent.Controller.1.ControllerCode ""
-Device.LocalAgent.Controller.1.MTP.1.Alias "cpe-1"
-Device.LocalAgent.Controller.1.MTP.1.Enable true
-Device.LocalAgent.Controller.1.MTP.1.Protocol "MQTT"
-Device.LocalAgent.Controller.1.EndpointID "self::usp-controller"
-Device.LocalAgent.Controller.1.MTP.1.MQTT.Reference "Device.MQTT.Client.1"
-Device.LocalAgent.Controller.1.MTP.1.MQTT.Topic "/usp/controller"
-
-
 
 #
 # The following parameters may be modified
@@ -69,6 +28,33 @@ Device.LocalAgent.Controller.1.MTP.1.MQTT.Topic "/usp/controller"
 Device.LocalAgent.MTP.1.Alias "cpe-1"
 Device.LocalAgent.MTP.1.Enable true
 Device.LocalAgent.MTP.1.Protocol "MQTT"
+Device.LocalAgent.MTP.1.MQTT.ResponseTopicConfigured "/usp/agent"
+Device.LocalAgent.MTP.1.MQTT.Reference "Device.MQTT.Client.1"
+
+Device.MQTT.Client.1.ProtocolVersion "5.0"
+Device.MQTT.Client.1.BrokerPort "1883"
+Device.MQTT.Client.1.TransportProtocol "TCP/IP"
+Device.MQTT.Client.1.Alias "cpe-1"
+Device.MQTT.Client.1.Enable true
+Device.MQTT.Client.1.ClientID ""
+Device.MQTT.Client.1.KeepAliveTime "60"
+Device.MQTT.Client.1.ConnectRetryTime "5"
+Device.MQTT.Client.1.ConnectRetryIntervalMultiplier   "2000"
+Device.MQTT.Client.1.ConnectRetryMaxInterval "30720"
+
+Device.LocalAgent.Controller.1.Alias "cpe-1"
+Device.LocalAgent.Controller.1.Enable true
+Device.LocalAgent.Controller.1.AssignedRole "Device.LocalAgent.ControllerTrust.Role.1"
+Device.LocalAgent.Controller.1.PeriodicNotifInterval "86400"
+Device.LocalAgent.Controller.1.PeriodicNotifTime "0001-01-01T00:00:00Z"
+Device.LocalAgent.Controller.1.USPNotifRetryMinimumWaitInterval "5"
+Device.LocalAgent.Controller.1.USPNotifRetryIntervalMultiplier "2000"
+Device.LocalAgent.Controller.1.ControllerCode ""
+Device.LocalAgent.Controller.1.MTP.1.Alias "cpe-1"
+Device.LocalAgent.Controller.1.MTP.1.Enable true
+Device.LocalAgent.Controller.1.MTP.1.Protocol "MQTT"
+Device.LocalAgent.Controller.1.MTP.1.MQTT.Reference "Device.MQTT.Client.1"
+Device.LocalAgent.Controller.1.MTP.1.MQTT.Topic "/usp/controller"
 
 Internal.Reboot.Cause "LocalFactoryReset"
 

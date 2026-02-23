@@ -4,6 +4,7 @@
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
  * Copyright (C) 2020, BT PLC
+ * Copyright (C) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -105,8 +106,8 @@ typedef struct
 typedef enum
 {
     kUdsPathType_Invalid = INVALID,
-    kUdsPathType_BrokersAgent,
-    kUdsPathType_BrokersController,
+    kUdsPathType_BrokersAgent = 0,
+    kUdsPathType_BrokersController = 1,
 } uds_path_t;
 
 //------------------------------------------------------------------------------
@@ -162,8 +163,15 @@ typedef struct
 #ifdef ENABLE_UDS
 typedef struct
 {
+    int instance;                   // Instance number in Device.UnixDomainSockets.UnixDomainSocket.{i}.
     unsigned conn_id;               // uniquely identifies the UDS connection on which this record was received
     uds_path_t path_type;           // identifies whether the UDS connection on which this record was received was the Broker's controller socket or the Broker's Agent socket
+
+    #ifdef FD_PASSING_EXPERIMENTAL
+    unsigned int fd_key;            // key for file descriptors in global map
+    bool fd_res_exceeded;           // flag indicating that message contained file descriptors, but it not possible to create key
+    #endif
+
 } from_uds_t;
 #endif
 
@@ -227,6 +235,7 @@ int DEVICE_CONTROLLER_QueueBinaryMessage(mtp_send_item_t *msi, char *endpoint_id
 bool DEVICE_CONTROLLER_IsMTPConfigured(char *endpoint_id, mtp_protocol_t protocol);
 char *DEVICE_CONTROLLER_FindEndpointIdByInstance(int instance);
 char *DEVICE_CONTROLLER_FindEndpointByMTP(mtp_conn_t *mtpc);
+int DEVICE_CONTROLLER_CopyNotifyDestForEndpoint(char *endpoint_id, mtp_protocol_t protocol, Usp__Header__MsgType usp_msg_type, mtp_conn_t *dest);
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByInstance(int instance);
 e2e_session_t *DEVICE_CONTROLLER_FindE2ESessionByEndpointId(char *endpoint_id);
@@ -263,6 +272,8 @@ void DEVICE_WEBSOCK_Stop(void);
 int DEVICE_UDS_Init(void);
 int DEVICE_UDS_Start(void);
 void DEVICE_UDS_Stop(void);
+bool DEVICE_UDS_DoRegistrationRestrictionsApply(int instance);
+bool DEVICE_UDS_IsAuthRequired(int instance);
 int DEVICE_SUBSCRIPTION_Init(void);
 int DEVICE_SUBSCRIPTION_Start(void);
 void DEVICE_SUBSCRIPTION_Stop(void);
@@ -345,6 +356,7 @@ int DEVICE_MQTT_CountEnabledConnections(void);
 void DEVICE_MQTT_UpdateControllerTopics(void);
 int DEVICE_MTP_GetMqttReference(char *path, int *mqtt_connection_instance);
 int DEVICE_MTP_GetUdsReference(char *path, int *uds_connection_instance);
+uds_path_t DEVICE_MTP_CalcUdsPathType(int instance);
 void DEVICE_MTP_StartMtpServers(void);
 void DEVICE_CONTROLLER_NotifyMqttConnDeleted(int mqtt_instance);
 void DEVICE_MTP_NotifyMqttConnDeleted(int mqtt_instance);
@@ -358,6 +370,9 @@ int DEVICE_CONTROLLER_CountEnabledWebsockClientConnections(void);
 
 #ifndef REMOVE_USP_BROKER
 int DEVICE_SUBSCRIPTION_RouteNotification(Usp__Msg *usp, int instance, char *subscribed_path);
+#ifdef FD_PASSING_EXPERIMENTAL
+int DEVICE_SUBSCRIPTION_RouteNotificationWithFds(Usp__Msg *usp, int instance, char *subscribed_path, unsigned int fd_key);
+#endif
 bool DEVICE_SUBSCRIPTION_MarkVendorLayerSubs(int broker_instance, subs_notify_t notify_type, char *path, int group_id);
 void DEVICE_SUBSCRIPTION_UnmarkVendorLayerSubs(int broker_instance, subs_notify_t notify_type, char *path, int group_id);
 void DEVICE_SUBSCRIPTION_StartAllVendorLayerSubsForGroup(int group_id);
@@ -386,6 +401,7 @@ extern const enum_entry_t mqtt_protocol[kMqttProtocol_Max];
 //------------------------------------------------------------------------------
 // Pointers to strings containing paths in the data model
 extern char *device_req_root;
+extern const char *device_uds_conn_root;
 
 //-----------------------------------------------------------------------------------------------
 // Help macroer to convert a ControllerTrust permission bit to a character

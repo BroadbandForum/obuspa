@@ -215,6 +215,7 @@ int Get_WebsockInterfaces(dm_req_t *req, char *buf, int len);
 #endif
 
 #ifdef ENABLE_UDS
+int Validate_AgentMtpUdsReference(dm_req_t *req, char *value);
 int NotifyChange_AgentMtpUdsReference(dm_req_t *req, char *value);
 #endif
 
@@ -280,7 +281,7 @@ int DEVICE_MTP_Init(void)
 #endif
 
 #ifdef ENABLE_UDS
-    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.UDS.UnixDomainSocketRef", "", NULL, NotifyChange_AgentMtpUdsReference, DM_STRING);
+    err |= USP_REGISTER_DBParam_ReadWrite(DEVICE_AGENT_MTP_ROOT ".{i}.UDS.UnixDomainSocketRef", "", Validate_AgentMtpUdsReference, NotifyChange_AgentMtpUdsReference, DM_STRING);
 #endif
 
     err |= USP_REGISTER_VendorParam_ReadOnly(DEVICE_AGENT_MTP_ROOT ".{i}.Status", Get_MtpStatus, DM_STRING);
@@ -467,7 +468,6 @@ char *DEVICE_MTP_EnumToString(mtp_protocol_t protocol)
 int DEVICE_MTP_ValidateStompReference(dm_req_t *req, char *value)
 {
     int err;
-    int stomp_connection_instance;
 
     // Exit if the STOMP Reference refers to nothing. This can occur if a STOMP connection being referred to is deleted.
     if (*value == '\0')
@@ -475,7 +475,7 @@ int DEVICE_MTP_ValidateStompReference(dm_req_t *req, char *value)
         return USP_ERR_OK;
     }
 
-    err = DM_ACCESS_ValidateReference(value, "Device.STOMP.Connection.{i}", &stomp_connection_instance);
+    err = DM_ACCESS_ValidateReference(value, "Device.STOMP.Connection.{i}", NULL);
 
     return err;
 }
@@ -638,7 +638,6 @@ mqtt_qos_t DEVICE_MTP_GetAgentMqttPublishQos(int instance)
 int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value)
 {
     int err;
-    int mqtt_connection_instance;
 
     // Exit if the MQTT Reference refers to nothing. This can occur if a MQTT client being referred to is deleted.
     if (*value == '\0')
@@ -646,7 +645,7 @@ int DEVICE_MTP_ValidateMqttReference(dm_req_t *req, char *value)
         return USP_ERR_OK;
     }
 
-    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", &mqtt_connection_instance);
+    err = DM_ACCESS_ValidateReference(value, "Device.MQTT.Client.{i}", NULL);
 
     return err;
 }
@@ -774,6 +773,52 @@ int DEVICE_MTP_GetUdsReference(char *path, int *uds_connection_instance)
     }
 
     return USP_ERR_OK;
+}
+
+/*********************************************************************//**
+**
+** DEVICE_MTP_CalcUdsPathType
+**
+** Determines whether the specified UnixDomainSocket instance represents the Broker's Controller or the Broker's Agent
+**
+** \param   instance - Instance number in Device.UnixDomainSockets.UnixDomainSocket.{i}
+**
+** \return  kUdsPathType_BrokersAgent if the path is the Broker's Agent path, otherwise kUdsPathType_BrokersController
+**
+**************************************************************************/
+uds_path_t DEVICE_MTP_CalcUdsPathType(int instance)
+{
+    int i;
+    agent_mtp_t *mtp;
+    uds_path_t agent_path_type;
+    uds_path_t controller_path_type;
+
+    // Determine what Device.LocalAgent.MTP.{i}.UDS.UnixDomainDocketRef points to, based on whether this is a USP Service or a USP Broker
+    if (RUNNING_AS_USP_SERVICE())
+    {
+        agent_path_type = kUdsPathType_BrokersController;
+        controller_path_type = kUdsPathType_BrokersAgent;
+    }
+    else
+    {
+        agent_path_type = kUdsPathType_BrokersAgent;
+        controller_path_type = kUdsPathType_BrokersController;
+    }
+
+    // Iterate over all agent MTPs
+    for (i=0; i<MAX_AGENT_MTPS; i++)
+    {
+        mtp = &agent_mtps[i];
+        if ((mtp->instance != INVALID) && (mtp->enable) &&
+            (mtp->protocol == kMtpProtocol_UDS) && (mtp->uds_connection_instance==instance))
+        {
+            // All Entries in LocalAgent.MTP point to Broker's Agent paths
+            return agent_path_type;
+        }
+    }
+
+    // If there wasn't an entry in LocalAgent.MTP, then this instance must be the Broker's Controller path
+    return controller_path_type;
 }
 #endif
 
@@ -1865,6 +1910,27 @@ exit:
 #endif
 
 #ifdef ENABLE_UDS
+/*********************************************************************//**
+**
+** Validate_AgentMtpUdsReference
+**
+** Function called to validate Device.LocalAgent.MTP.UDS.Reference
+**
+** \param   req - pointer to structure identifying the path
+** \param   value - new value of this parameter
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int Validate_AgentMtpUdsReference(dm_req_t *req, char *value)
+{
+    int err;
+
+    err = DM_ACCESS_ValidateReference(value, "Device.UnixDomainSockets.UnixDomainSocket.{i}", NULL);
+
+    return err;
+}
+
 /*********************************************************************//**
 **
 ** NotifyChange_AgentMtpUdsReference

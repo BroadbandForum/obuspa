@@ -3,6 +3,7 @@
  * Copyright (C) 2019-2025, Broadband Forum
  * Copyright (C) 2024-2025, Vantiva Technologies SAS
  * Copyright (C) 2016-2024  CommScope, Inc
+ * Copyright (C) 2025 Inango
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -381,6 +382,9 @@ int DATA_MODEL_NotifyInstanceDeleted(char *path);
 int DATA_MODEL_GetParameterValue(char *path, char *buf, int len, unsigned flags);
 int DATA_MODEL_SetParameterValue(char *path, char *new_value, unsigned flags);
 int DATA_MODEL_Operate(char *path, kv_vector_t *input_args, kv_vector_t *output_args, char *command_key, int *instance);
+#ifdef FD_PASSING_EXPERIMENTAL
+int DATA_MODEL_OperateWithFds(char *path, kv_vector_t *input_args, kv_vector_t *output_args, char *command_key, int *instance, unsigned int *fd_key);
+#endif
 int DATA_MODEL_ShouldOperationRestart(char *path, int instance, bool *is_restart, int *err_code, char *err_msg, int err_msg_len, kv_vector_t *output_args);
 int DATA_MODEL_RestartAsyncOperation(char *path, kv_vector_t *input_args, int instance);
 unsigned DATA_MODEL_GetPathProperties(char *path, combined_role_t *combined_role, unsigned short *permission_bitmask, int *group_id, unsigned *type_flags, unsigned exec_flags);
@@ -393,6 +397,7 @@ int DATA_MODEL_ValidateDefaultedUniqueKeys(char *obj_path, kv_vector_t *unique_k
 void DATA_MODEL_DumpSchema(void);
 void DATA_MODEL_DumpInstances(void);
 char DATA_MODEL_GetJSONParameterType(char *path);
+int DATA_MODEL_GetParameterFromDatabase(char *path, char *buf, int len);
 int DATA_MODEL_SetParameterInDatabase(char *path, char *value);
 int DATA_MODEL_FindUnusedGroupId(void);
 int DATA_MODEL_DeRegisterPath(char *schema_path);
