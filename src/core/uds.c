@@ -1857,18 +1857,17 @@ void ProcessUdsFrame(uds_connection_t *uc)
     int payload_remaining;
     int tlv_type;
     int tlv_len;
-    char buf[128];
+    char err_msg[128];
     char *saved_endpoint = NULL;
     char *saved_password = NULL;
 
     // Exit if the payload was invalid
+    err_msg[0] = '\0';
     err = ValidateUdsPayload(uc->rx_buf, uc->payload_length);
     if (err != USP_ERR_OK)
     {
-        USP_SNPRINTF(buf, sizeof(buf), "%s: Failed to parse incoming UDS frame", __FUNCTION__);
-        USP_LOG_Error("%s", buf);
-        SendUdsErrorFrame(uc, buf);
-        return;
+        USP_SNPRINTF(err_msg, sizeof(err_msg), "%s: Failed to parse incoming UDS frame", __FUNCTION__);
+        goto exit;
     }
 
     // Iterate over all the TLVs in the payload, processing them
@@ -1882,6 +1881,11 @@ void ProcessUdsFrame(uds_connection_t *uc)
         switch(tlv_type)
         {
             case kUdsFrameType_Handshake:
+                if (saved_endpoint != NULL)
+                {
+                    USP_SNPRINTF(err_msg, sizeof(err_msg), "%s: Frame contains multiple Handshake TLVs", __FUNCTION__);
+                    goto exit;
+                }
                 saved_endpoint = StrDupUdsTlvPayload(p, tlv_len);
                 break;
 
@@ -1894,6 +1898,11 @@ void ProcessUdsFrame(uds_connection_t *uc)
                 break;
 
             case kUdsFrameType_Password:
+                if (saved_password != NULL)
+                {
+                    USP_SNPRINTF(err_msg, sizeof(err_msg), "%s: Frame contains multiple Password TLVs", __FUNCTION__);
+                    goto exit;
+                }
                 saved_password = StrDupUdsTlvPayload(p, tlv_len);
                 break;
 
@@ -1911,9 +1920,19 @@ void ProcessUdsFrame(uds_connection_t *uc)
     if ((saved_endpoint != NULL) || (saved_password != NULL))
     {
         ProcessUdsTLV_HandshakePassword(uc, saved_endpoint, saved_password);
-        USP_SAFE_FREE(saved_endpoint);
-        USP_SAFE_FREE(saved_password);
     }
+
+exit:
+    // Send an error frame if an error was detected
+    if (err_msg[0] != '\0')
+    {
+        USP_LOG_Error("%s", err_msg);
+        SendUdsErrorFrame(uc, err_msg);
+    }
+
+    // Free memory allocated by this function
+    USP_SAFE_FREE(saved_endpoint);
+    USP_SAFE_FREE(saved_password);
 
 #ifdef FD_PASSING_EXPERIMENTAL
     FD_VECTOR_Close(uc->fd_buffer, uc->fd_count);

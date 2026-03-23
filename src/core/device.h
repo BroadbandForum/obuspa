@@ -340,6 +340,9 @@ void DEVICE_BULKDATA_Stop(void);
 void DEVICE_BULKDATA_NotifyTransferResult(int profile_id, bdc_transfer_result_t transfer_result);
 void DEVICE_BULKDATA_NotifyControllerDeleted(int cont_instance);
 void DEVICE_BULKDATA_AllowConnect(void);
+#ifndef REMOVE_IP_CAPACITY_DIAG
+int DEVICE_IPLCAP_Init(void);
+#endif
 #ifndef REMOVE_SELF_TEST_DIAG_EXAMPLE
 int DEVICE_SELF_TEST_Init(void);
 #endif

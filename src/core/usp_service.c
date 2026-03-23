@@ -59,7 +59,7 @@
 
 #ifndef REMOVE_USP_SERVICE
 //------------------------------------------------------------------------
-// Comma separated list containing the endpoint_id of the USP Broker, followed by the top-level data model objects to register
+// Comma separated list containing the top-level data model objects to register
 // This string is set by the value of the '-R' option and is not changed by subsequent '-c register' or '-c deregister' CLI invocations
 char *usp_service_objects = NULL;
 

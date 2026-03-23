@@ -636,11 +636,12 @@ int TEXT_UTILS_StringToIpAddr(char *str, nu_ipaddr_t *ip_addr)
 ** \param   num_items - number of items in the array
 ** \param   buf - pointer to buffer in which to return the string
 ** \param   len - length of buffer in which to return the string
+** \param   separator - string to be used to separate each item in the destination string
 **
 ** \return  None
 **
 **************************************************************************/
-void TEXT_UTILS_ListToString(char **items, int num_items, char *buf, int len)
+void TEXT_UTILS_ListToString(char **items, int num_items, char *buf, int len, char *separator)
 {
     int i;
     int chars_written;
@@ -652,15 +653,15 @@ void TEXT_UTILS_ListToString(char **items, int num_items, char *buf, int len)
     for (i=0; i<num_items; i++)
     {
         // Add comma before every item (apart from the first)
-        if (i != 0)
+        if (i == 0)
         {
-            chars_written = USP_SNPRINTF(buf, len, "%s", ", ");
-            buf += chars_written;
-            len -= chars_written;
+            chars_written = USP_SNPRINTF(buf, len, "%s", items[i]);
+        }
+        else
+        {
+            chars_written = USP_SNPRINTF(buf, len, "%s%s", separator, items[i]);
         }
 
-        // Add the item
-        chars_written = USP_SNPRINTF(buf, len, "%s", items[i]);
         buf += chars_written;
         len -= chars_written;
     }
@@ -1752,6 +1753,57 @@ char *TEXT_UTILS_StrDupWithTrailingDot(char *path)
     }
 
     return p;
+}
+
+/*********************************************************************//**
+**
+** TEXT_UTILS_StringToFirstUnsigned
+**
+** Extracts the first number found in a string
+**
+** \param   str - pointer to string containing an number somewhere in it
+** \param   value - pointer to variable in which to return the number
+**
+** \return  USP_ERR_OK if successful
+**
+**************************************************************************/
+int TEXT_UTILS_StringToFirstUnsigned(char *str, unsigned *value)
+{
+    char *s;
+    char c;
+    unsigned n;
+
+    // Scan for first number character
+    s = str;
+    c = *s++;
+    while (c != '\0')
+    {
+        if (IS_NUMERIC(c))
+        {
+            break;
+        }
+        c = *s++;
+    }
+
+    // Exit if reached the end of the string without finding any number characters
+    if (c == '\0')
+    {
+        USP_ERR_SetMessage("%s: No number found in '%s'", __FUNCTION__, str);
+        return USP_ERR_INVALID_VALUE;
+    }
+
+    // Extract the rest of the number
+    n = c - '0';
+    c = *s++;
+    while ((c != '\0') && (IS_NUMERIC(c)))
+    {
+        n = n*10 + c - '0';
+        c = *s++;
+    }
+
+    *value = n;
+
+    return USP_ERR_OK;
 }
 
 //------------------------------------------------------------------------------------------

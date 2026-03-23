@@ -76,7 +76,7 @@ int TEXT_UTILS_StringToBinary(char *str, unsigned char *buf, int len, int *bytes
 int TEXT_UTILS_StringToIpAddr(char *str, nu_ipaddr_t *ip_addr);
 char *TEXT_UTILS_SplitPath(char *path, char *buf, int len);
 bool TEXT_UTILS_IsPathMatch(char *path, char *path_spec);
-void TEXT_UTILS_ListToString(char **items, int num_items, char *buf, int len);
+void TEXT_UTILS_ListToString(char **items, int num_items, char *buf, int len, char *separator);
 void TEXT_UTILS_SplitString(char *str, str_vector_t *sv, char *separator);
 void TEXT_UTILS_StrncpyLen(char *dst, int dst_len, char *src, int src_len);
 char *TEXT_UTILS_StrStr(char *haystack, char *needle);
@@ -97,6 +97,7 @@ char *TEXT_UTILS_StrDupWithTrailingDot(char *path);
 int TEXT_UTILS_KeyValueFromString(char *buf, char **key, char **value);
 char *TEXT_UTILS_SearchExpressionsToWildcards(char *src, char *dest, int len);
 void TEXT_UTILS_SchemaFormToPath(char *schema_path, char *buf, int len);
+int TEXT_UTILS_StringToFirstUnsigned(char *str, unsigned *value);
 
 #ifndef REMOVE_DEVICE_SECURITY
 int TEXT_UTILS_Base64StringToBinary(char *str, unsigned char *buf, int len, int *bytes_written);

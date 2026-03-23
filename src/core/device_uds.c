@@ -82,10 +82,10 @@ static uds_conn_params_t uds_conn_params[MAX_UDS_SERVERS];
 // Internal data structure reporesenting the Device.UnixDomainSockets.Authentication.{i} table
 typedef struct
 {
-    int instance;       // Instance number in Device.UxixDomainSockets.Authentication.{i} or INVALID if this slot is not used
-    bool enable;        // Device.UxixDomainSockets.Authentication.{i}.Enable
-    char *endpoint_id;  // Device.UxixDomainSockets.Authentication.{i}.EndpointID
-    char *password;     // Device.UxixDomainSockets.Authentication.{i}.Password
+    int instance;       // Instance number in Device.UnixDomainSockets.Authentication.{i} or INVALID if this slot is not used
+    bool enable;        // Device.UnixDomainSockets.Authentication.{i}.Enable
+    char *endpoint_id;  // Device.UnixDomainSockets.Authentication.{i}.EndpointID
+    char *password;     // Device.UnixDomainSockets.Authentication.{i}.Password
 } uds_auth_t;
 
 uds_auth_t *uds_auths = NULL;

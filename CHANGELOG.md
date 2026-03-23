@@ -1,5 +1,16 @@
 # OB-USP-AGENT Changelog
 
+## 2026-03-23 v11.0.1
+### Added
+- IPLayerCapacity() Speed Test command (which uses OB-UDP-ST). To enable, comment out REMOVE_IP_CAPACITY_DIAG in vendor_defs.h
+
+### Fixed
+- Multiple EndpointID or Password TLVs in UDS handshake frame should be handled as protocol error
+- USP Service is prevented from re-registering DM if it disconnects while the USP Broker is waiting for a response from it
+- Build failure in database.c on some platforms due to compiler type size issues
+
+
+
 ## 2026-02-20 v11.0.0
 ### Added
 - Authenticated UDS connections: USP Services must provide a passsword in the UDS Handshake frame if 

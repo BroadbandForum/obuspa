@@ -235,6 +235,10 @@ int DATA_MODEL_Init(void)
 
 
 
+#ifndef REMOVE_IP_CAPACITY_DIAG
+    err |= DEVICE_IPLCAP_Init();
+#endif
+
 
 #ifndef REMOVE_SELF_TEST_DIAG_EXAMPLE
     // Register data model parameters used by the Self Test Diagnostics example code

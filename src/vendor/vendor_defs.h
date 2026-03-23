@@ -109,6 +109,9 @@
 // NOTE: These certificates are not added to the agent's trust store
 #define SYSTEM_CERT_PATH                     ""      /* "/etc/ssl/certs" */
 
+// Location of OB-UDP-ST (speed test) executable
+#define UDPST_PATH "/opt/udpst"
+
 //-----------------------------------------------------------------------------------------
 // Definitions associated with grouped parameter get/set
 // Each group represents a software component that can set/get a list of data model parameters in a single operation via RPC/messaging
@@ -145,6 +148,7 @@
 //#define REMOVE_DEVICE_SECURITY           // Removes all certificate and TLS related code. Removes DM elements Device.Security, Device.LocalAgent.Certificate and ControllerTrust Challenge/Response mechanism
 //#define REMOVE_DEVICE_SECURITY_CERTIFICATE    // Removes Device.Security.Certificate and Device.Security from the core data model
 //#define REMOVE_SELF_TEST_DIAG_EXAMPLE    // Removes Self Test diagnostics example code
+#define REMOVE_IP_CAPACITY_DIAG          // Removes Device.IP.Diagnostics.IPLayerCapacity() from the core data model
 
 //#define DONT_SORT_GET_INSTANCES          // Disables the sorting of data model paths returned in a GetInstancesResponse. Useful for slow devices supporting large data models.
 

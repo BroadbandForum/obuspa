@@ -1011,7 +1011,7 @@ int USP_REGISTER_Object_UniqueKey(char *path, char **params, int num_params)
         if (match_count == num_params)
         {
             char buf[256];
-            TEXT_UTILS_ListToString(params, num_params, buf, sizeof(buf));
+            TEXT_UTILS_ListToString(params, num_params, buf, sizeof(buf), ", ");
             USP_LOG_Error("%s: Already registered a compound key containing keys (%s) for %s", __FUNCTION__, buf, node->path);
             return USP_ERR_INTERNAL_ERROR;
         }

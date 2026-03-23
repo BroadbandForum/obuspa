@@ -1826,6 +1826,7 @@ Usp__Msg *DM_EXEC_SendRequestAndWaitForResponseWithFds(char *endpoint_id, Usp__M
 
 #ifdef ENABLE_UDS
             // Exit if the USP Service has disconnected from the Broker's controller socket (since this function uses only that socket)
+            // NOTE: Disconnect message is forwarded to main message queue, for processing
             if (msg.type == kDmExecMsg_UdsDisconnected)
             {
                 uds_disconnected_msg_t *udm;
@@ -1833,6 +1834,13 @@ Usp__Msg *DM_EXEC_SendRequestAndWaitForResponseWithFds(char *endpoint_id, Usp__M
                 if ((strcmp(udm->endpoint_id, endpoint_id)==0) && (udm->path_type==kUdsPathType_BrokersController))
                 {
                     USP_ERR_SetMessage("%s: USP Service (%s) disconnected", __FUNCTION__, udm->endpoint_id);
+                    bytes_sent = send(main_mq_tx_socket, &msg, sizeof(msg), MSG_DONTWAIT);
+                    if (bytes_sent != sizeof(msg))
+                    {
+                        char buf[USP_ERR_MAXLEN];
+                        USP_LOG_Error("%s(%d): send of disconnected failed : (err=%d) %s", __FUNCTION__, __LINE__, errno, USP_ERR_ToString(errno, buf, sizeof(buf)) );
+                        FreeDmExecMessageArguments(&msg);
+                    }
                     return NULL;
                 }
             }

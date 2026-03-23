@@ -6717,7 +6717,7 @@ int GetUspService_DMPaths(dm_req_t *req, char *buf, int len)
     us = FindUspServiceByInstance(inst1);
     USP_ASSERT(us != NULL);
 
-    TEXT_UTILS_ListToString(us->registered_paths.vector, us->registered_paths.num_entries, buf, len);
+    TEXT_UTILS_ListToString(us->registered_paths.vector, us->registered_paths.num_entries, buf, len, ", ");
 
     return USP_ERR_OK;
 }

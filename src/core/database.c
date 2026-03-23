@@ -965,7 +965,7 @@ int OpenUspDatabase(char *db_file)
     #define SQLITE_MINIMUM_PAGE_SIZE 512
     if (st.st_size < SQLITE_MINIMUM_PAGE_SIZE)
     {
-        USP_LOG_Error("%s: USP database (%s) size (%ld) is less than the sqlite minimum page size (%d)", __FUNCTION__, db_file, st.st_size, SQLITE_MINIMUM_PAGE_SIZE);
+        USP_LOG_Error("%s: USP database (%s) size (%ld) is less than the sqlite minimum page size (%d)", __FUNCTION__, db_file, (long)st.st_size, SQLITE_MINIMUM_PAGE_SIZE);
         err = ReInitializeDatabase(db_file, true);
         goto exit;
     }
