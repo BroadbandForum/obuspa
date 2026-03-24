@@ -39,10 +39,10 @@
  * Disconnect type.
  *
  */
-#include "usp_record.h"
+#include <obuspa/core/usp_record.h>
 
-#include "msg_handler.h"  // For AGENT_CURRENT_PROTOCOL_VERSION
-#include "usp-record.pb-c.h"
+#include <obuspa/core/msg_handler.h>  // For AGENT_CURRENT_PROTOCOL_VERSION
+#include <obuspa/protobuf-c/usp-record.pb-c.h>
 
 /*********************************************************************//**
 **

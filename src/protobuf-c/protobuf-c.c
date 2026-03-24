@@ -49,7 +49,7 @@
 #include <stdlib.h>	/* for malloc, free */
 #include <string.h>	/* for strcmp, strlen, memcpy, memmove, memset */
 
-#include "protobuf-c.h"
+#include <obuspa/protobuf-c/protobuf-c.h>
 
 #define TRUE				1
 #define FALSE				0

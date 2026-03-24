@@ -45,31 +45,31 @@
 #include <sys/socket.h>
 #include <errno.h>
 
-#include "common_defs.h"
-#include "mtp_exec.h"
-#include "dm_exec.h"
-#include "os_utils.h"
-#include "msg_handler.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/mtp_exec.h>
+#include <obuspa/core/dm_exec.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/msg_handler.h>
 
 #ifndef DISABLE_STOMP
-#include "stomp.h"
+#include <obuspa/core/stomp.h>
 #endif
 
 #ifdef ENABLE_COAP
-#include "usp_coap.h"
+#include <obuspa/core/usp_coap.h>
 #endif
 
 #ifdef ENABLE_MQTT
-#include "mqtt.h"
+#include <obuspa/core/mqtt.h>
 #endif
 
 #ifdef ENABLE_WEBSOCKETS
-#include "wsclient.h"
-#include "wsserver.h"
+#include <obuspa/core/wsclient.h>
+#include <obuspa/core/wsserver.h>
 #endif
 
 #ifdef ENABLE_UDS
-#include "uds.h"
+#include <obuspa/core/uds.h>
 #endif
 
 //------------------------------------------------------------------------------

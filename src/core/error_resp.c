@@ -44,10 +44,10 @@
 #include <string.h>
 #include <protobuf-c/protobuf-c.h>
 
-#include "usp-msg.pb-c.h"
-#include "common_defs.h"
-#include "proto_trace.h"
-#include "msg_handler.h"
+#include <obuspa/protobuf-c/usp-msg.pb-c.h>
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/proto_trace.h>
+#include <obuspa/core/msg_handler.h>
 
 
 /*********************************************************************//**

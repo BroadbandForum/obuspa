@@ -46,15 +46,15 @@
 #include <errno.h>
 #include <sys/stat.h>
 
-#include "common_defs.h"
-#include "data_model.h"
-#include "database.h"
-#include "int_vector.h"
-#include "dm_inst_vector.h"
-#include "os_utils.h"
-#include "text_utils.h"
-#include "vendor_api.h"
-#include "plugin.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/database.h>
+#include <obuspa/core/int_vector.h>
+#include <obuspa/core/dm_inst_vector.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/vendor_api.h>
+#include <obuspa/core/plugin.h>
 
 //--------------------------------------------------------------------
 // Prepared SQL statements

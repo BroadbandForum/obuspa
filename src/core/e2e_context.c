@@ -40,18 +40,18 @@
  *
  */
 
-#include "vendor_defs.h"  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
+#include <obuspa/vendor_defs.h>  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include <inttypes.h>  // For PRIu64
 #include <math.h>
 
-#include "mtp_exec.h"
-#include "msg_handler.h"
-#include "e2e_context.h"
-#include "iso8601.h"
-#include "proto_trace.h"
-#include "text_utils.h"
+#include <obuspa/core/mtp_exec.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/e2e_context.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/proto_trace.h>
+#include <obuspa/core/text_utils.h>
 
 const enum_entry_t e2e_session_events[] = {
     { kE2EEvent_None,           "None"},

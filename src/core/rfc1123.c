@@ -44,8 +44,8 @@
 #include <string.h>
 #include <time.h>
 
-#include "common_defs.h"
-#include "rfc1123.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/rfc1123.h>
 
 // RFC1123 dates are specified independant of locale, hence we need to use the arrays here, rather than the
 // locale-respecting ones built into strftime()

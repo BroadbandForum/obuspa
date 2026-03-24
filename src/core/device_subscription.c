@@ -45,30 +45,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "common_defs.h"
-#include "device.h"
-#include "dm_trans.h"
-#include "usp_api.h"
-#include "dm_access.h"
-#include "iso8601.h"
-#include "subs_vector.h"
-#include "path_resolver.h"
-#include "msg_handler.h"
-#include "database.h"
-#include "sync_timer.h"
-#include "subs_retry.h"
-#include "text_utils.h"
-#include "expr_vector.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/subs_vector.h>
+#include <obuspa/core/path_resolver.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/database.h>
+#include <obuspa/core/sync_timer.h>
+#include <obuspa/core/subs_retry.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/expr_vector.h>
 #include "json.h"
-#include "group_get_vector.h"
-#include "dm_inst_vector.h"
+#include <obuspa/core/group_get_vector.h>
+#include <obuspa/core/dm_inst_vector.h>
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-#include "e2e_context.h"
+#include <obuspa/core/e2e_context.h>
 #endif
 
 #ifndef REMOVE_USP_BROKER
-#include "usp_broker.h"
+#include <obuspa/core/usp_broker.h>
 #endif
 
 #ifdef FD_PASSING_EXPERIMENTAL

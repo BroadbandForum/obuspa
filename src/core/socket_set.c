@@ -46,9 +46,9 @@
 #include <errno.h>
 #include <string.h>
 
-#include "usp_api.h"
-#include "common_defs.h"
-#include "socket_set.h"
+#include <obuspa/usp_api.h>
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/socket_set.h>
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them

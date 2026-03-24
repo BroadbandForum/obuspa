@@ -249,7 +249,7 @@ The /src directory contains the following subdirectories:
 
 
 ## OB-USP-AGENT APIs
-Two APIs are of interest to an integrator. They are declared in the `src/include` directory.
+Two APIs are of interest to an integrator. They are declared in the `include/obuspa` directory.
 
 * VENDOR API - An integrator must implement this API by modifying the stub functions in the `src/vendor` directory
 
@@ -260,7 +260,7 @@ where the function is defined (typically `src/core/usp_register.c` or `src/core/
 
 
 ## OB-USP-AGENT Build Defines
-The file src/vendor/vendor_defs.h contains feature switch defines and various other compile time defines.
+The file include/obuspa/vendor_defs.h contains feature switch defines and various other compile time defines.
 The following defines are most likely to need modifying:
 
 * `DEFAULT_WAN_IFNAME` - Name of the network interface to be used for USP communications.
@@ -316,7 +316,7 @@ int GetModelNumber(dm_req_t *req, char *buf, int len)
 This example registers the `Device.DeviceInfo.ModelNumber` parameter.
 The `Get_ModelNumber()` vendor hook function is called whenever OB-USP-AGENT core needs to get the value of the parameter.
 
-The error codes to return are defined in `src/include/usp_err_codes.h`.
+The error codes to return are defined in `include/obuspa/usp_err_codes.h`.
 If an error occurs, call `USP_ERR_SetMessage()` to set an error message that will be returned by the USP protocol.
 
 Vendor hook set handlers must check for uniqueness if their parameter forms part of a unique key for an object.
@@ -366,7 +366,7 @@ The example registers a callback to get the STOMP MTP password.
 Other vendor hook callbacks may be registered by setting the relevant callback in the
 core_callbacks structure, before calling `USP_REGISTER_CoreVendorHooks()`.
 
-The typedefs for each of the core vendor hook callbacks are declared in `src/include/usp_api.h`.
+The typedefs for each of the core vendor hook callbacks are declared in `include/obuspa/usp_api.h`.
 
 The following core vendor hooks are most likely to need overriding:
 * `reboot_cb` - called by OB-USP-AGENT core to reboot the device after receiving a Device.Reboot() command

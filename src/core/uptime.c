@@ -45,7 +45,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <string.h>
-#include "uptime.h"
+#include <obuspa/core/uptime.h>
 
 /*********************************************************************//**
 **

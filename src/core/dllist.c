@@ -40,8 +40,8 @@
  *
  */
 
-#include "common_defs.h"
-#include "dllist.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/dllist.h>
 
 // Uncomment the following define to perform checks on the integrity of the linked list, when inserting/removing items
 //#define PERFORM_INTEGRITY_CHECKS

@@ -55,16 +55,16 @@
 #include <openssl/x509v3.h>
 #include <mosquitto.h>
 
-#include "mqtt.h"
-#include "common_defs.h"
-#include "dllist.h"
-#include "device.h"
-#include "dm_exec.h"
-#include "os_utils.h"
-#include "retry_wait.h"
-#include "text_utils.h"
-#include "msg_handler.h"
-#include "iso8601.h"
+#include <obuspa/core/mqtt.h>
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/dllist.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/dm_exec.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/retry_wait.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/iso8601.h>
 
 // Defines for MQTT Property Values
 #define PUBLISH 0x30

@@ -44,14 +44,14 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "data_model.h"
-#include "device.h"
-#include "usp_api.h"
-#include "dm_access.h"
-#include "dm_trans.h"
-#include "dm_inst_vector.h"
-#include "msg_handler.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/device.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/core/dm_inst_vector.h>
+#include <obuspa/core/msg_handler.h>
 
 
 //------------------------------------------------------------------------------

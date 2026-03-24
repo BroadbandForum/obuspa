@@ -16,7 +16,7 @@ USP Services provide broadly two features:-
 
 ## Building support for USP Services
 
-USP Broker support is enabled by default. It can be explicitly disabled by defining "REMOVE_USP_BROKER" in /src/vendor/vendor_defs.h 
+USP Broker support is enabled by default. It can be explicitly disabled by defining "REMOVE_USP_BROKER" in /include/obuspa/vendor_defs.h 
 
 ## Running OBUSPA as a Broker
 
@@ -84,7 +84,7 @@ Src\vendor\vendor.c by default contains a skeleton vendor implementation that pr
 We only want to initialise this USP Service object for the Service instance of OBUSPA and not the Broker instance. As both processes will share the same executable binary,  we will use the RUNNING_AS_A_USP_SERVICE() macro to only register the data model parameters in the case where we are running as the Service :-
 
 ```
-#include "common_defs.h"
+#include <obuspa/core/common_defs.h>
 
 int NotifyChange_ServiceA_ParamA(dm_req_t *req, char *value)
 {
@@ -137,7 +137,7 @@ NotifyChange_ServiceA_ParamA enter : value obuspa_is_great
 ## Implementing a USP service "as a controller" vendor backend
 In the previous example we created a vendor backend that, as an Agent, registered its datamodel with the Broker allowing Controllers to manipulate that Service.  This section describes how a Service can also act as a Controller, thus allowing it to query and manipulate other USP Services via the Broker instance.  We must start by modifying vendor.c to include usp_service.h.  This header contains the API definitions required to issue Controller messages to the Broker.
 ```
-#include "usp_service.h"
+#include <obuspa/core/usp_service.h>
 ```
 The functions provided by this API allow your vendor specific application code to interact with the broker's data model, including data model paths registered by other USP services.  Each function will block until it recieves a response or times out after the specified number of seconds.  An error code is returned indicating the success or failure of the request.  A comprehensive description of each functions parameters can be found in the source code.
 ```
@@ -158,7 +158,7 @@ This section illustrates how to implement a vendor backend that takes control co
 
 Because the API functions will block the calling thread until they receive a response, we should create our own worker thread to perform this task.  In VENDOOR_Start() we can spawn a thread using ControllerThread as the entry point:-
 ```
-#include "os_utils.h"
+#include <obuspa/core/os_utils.h>
 
 int VENDOR_Start(void)
 {
@@ -179,9 +179,9 @@ int USP_SERVICE_Set(kv_vector_t *params, int timeout, char *err_msg, int err_msg
 ```
 In both cases "params" is a structure containing a list of key/value pairs.  Both Get and Set can take a list of one or more TR-181 datamodel paths (and in the case of "set" also the corresponding values of the keys to update).   For the purposes of the example we'll wrap these in some primitive string parsing code to extract the keys and values from the string returned from readline.  The full listing for our thread function is shown below (note that in the interest of brevity this source code does not handle error paths. It's intended to serve only as an example of how USP Service API can be used):-
 ````
-#include "usp_api.h"
-#include "kv_vector.h"
-#include "text_utils.h"
+#include <obuspa/usp_api.h>
+#include <obuspa/core/kv_vector.h>
+#include <obuspa/core/text_utils.h>
 #include <stdio.h>
 #include <readline/readline.h>
 #include <readline/history.h>

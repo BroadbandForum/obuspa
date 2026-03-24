@@ -42,11 +42,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "expr_vector.h"
-#include "kv_vector.h"
-#include "str_vector.h"
-#include "text_utils.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/expr_vector.h>
+#include <obuspa/core/kv_vector.h>
+#include <obuspa/core/str_vector.h>
+#include <obuspa/core/text_utils.h>
 
 //------------------------------------------------------------------------------
 // Array used to convert from an enumerated value to a string

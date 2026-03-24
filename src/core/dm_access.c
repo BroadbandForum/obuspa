@@ -44,14 +44,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "data_model.h"
-#include "dm_access.h"
-#include "str_vector.h"
-#include "iso8601.h"
-#include "text_utils.h"
-#include "expr_vector.h"
-#include "nu_ipaddr.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/str_vector.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/expr_vector.h>
+#include <obuspa/core/nu_ipaddr.h>
 
 /*********************************************************************//**
 **

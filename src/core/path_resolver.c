@@ -44,15 +44,15 @@
 #include <string.h>
 #include <errno.h>
 
-#include "common_defs.h"
-#include "data_model.h"
-#include "dm_inst_vector.h"
-#include "path_resolver.h"
-#include "dm_access.h"
-#include "kv_vector.h"
-#include "expr_vector.h"
-#include "text_utils.h"
-#include "group_get_vector.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/dm_inst_vector.h>
+#include <obuspa/core/path_resolver.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/kv_vector.h>
+#include <obuspa/core/expr_vector.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/group_get_vector.h>
 
 //-------------------------------------------------------------------------
 // State variable associated with the resolver. This is passed to all recursive resolver functions

@@ -42,12 +42,12 @@
 
 #include <string.h>
 
-#include "common_defs.h"
-#include "dllist.h"
-#include "data_model.h"
-#include "dm_access.h"
-#include "dm_inst_vector.h"
-#include "text_utils.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/dllist.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/dm_inst_vector.h>
+#include <obuspa/core/text_utils.h>
 
 //------------------------------------------------------------------------------
 // Structure containing vendor hook callback functions which are used by the core agent data model

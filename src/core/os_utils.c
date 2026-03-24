@@ -45,8 +45,8 @@
 #include <sys/types.h>
 #include <errno.h>
 
-#include "common_defs.h"
-#include "os_utils.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/os_utils.h>
 
 //-------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them

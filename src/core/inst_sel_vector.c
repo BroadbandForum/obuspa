@@ -42,10 +42,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "data_model.h"
-#include "inst_sel_vector.h"
-#include "se_cache.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/inst_sel_vector.h>
+#include <obuspa/core/se_cache.h>
 
 
 //------------------------------------------------------------------------------

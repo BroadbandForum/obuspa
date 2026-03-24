@@ -58,9 +58,9 @@
 #include <sqlite3.h>
 #include <signal.h>
 
-#include "common_defs.h"
-#include "usp_log.h"
-#include "os_utils.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/usp_log.h>
+#include <obuspa/core/os_utils.h>
 
 //------------------------------------------------------------------------------------
 // Buffer to hold error message

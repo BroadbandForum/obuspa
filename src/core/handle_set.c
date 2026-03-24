@@ -47,14 +47,14 @@
 #include <stdarg.h>
 #include <protobuf-c/protobuf-c.h>
 
-#include "usp-msg.pb-c.h"
-#include "common_defs.h"
-#include "msg_handler.h"
-#include "proto_trace.h"
-#include "dm_trans.h"
-#include "path_resolver.h"
-#include "device.h"
-#include "group_set_vector.h"
+#include <obuspa/protobuf-c/usp-msg.pb-c.h>
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/proto_trace.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/core/path_resolver.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/group_set_vector.h>
 
 //------------------------------------------------------------------------------
 // Structure used to marshall entries in set group vector for a path expression

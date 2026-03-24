@@ -56,10 +56,10 @@
 #include <execinfo.h>
 #endif
 
-#include "common_defs.h"
-#include "cli.h"
-#include "os_utils.h"
-#include "sync_timer.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/cli.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/sync_timer.h>
 
 //------------------------------------------------------------------------------------
 // Mutex used to protect access to the USP memory info sub-system.

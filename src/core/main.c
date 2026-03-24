@@ -51,36 +51,36 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include "common_defs.h"
-#include "mtp_exec.h"
-#include "dm_exec.h"
-#include "bdc_exec.h"
-#include "data_model.h"
-#include "dm_access.h"
-#include "device.h"
-#include "database.h"
-#include "sync_timer.h"
-#include "cli.h"
-#include "os_utils.h"
-#include "text_utils.h"
-#include "usp_coap.h"
-#include "stomp.h"
-#include "retry_wait.h"
-#include "nu_macaddr.h"
-#include "plugin.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/mtp_exec.h>
+#include <obuspa/core/dm_exec.h>
+#include <obuspa/core/bdc_exec.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/database.h>
+#include <obuspa/core/sync_timer.h>
+#include <obuspa/core/cli.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/usp_coap.h>
+#include <obuspa/core/stomp.h>
+#include <obuspa/core/retry_wait.h>
+#include <obuspa/core/nu_macaddr.h>
+#include <obuspa/core/plugin.h>
 
 
 #ifdef ENABLE_WEBSOCKETS
-#include "wsclient.h"
-#include "wsserver.h"
+#include <obuspa/core/wsclient.h>
+#include <obuspa/core/wsserver.h>
 #endif
 
 #ifndef REMOVE_USP_SERVICE
-#include "usp_service.h"
+#include <obuspa/core/usp_service.h>
 #endif
 
 #ifdef ENABLE_UDS
-#include "uds.h"
+#include <obuspa/core/uds.h>
 #endif
 
 //--------------------------------------------------------------------------------------

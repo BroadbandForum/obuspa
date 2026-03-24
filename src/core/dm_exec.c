@@ -52,44 +52,44 @@
 #include <signal.h>
 #include <stdatomic.h>
 
-#include "common_defs.h"
-#include "mtp_exec.h"
-#include "dm_exec.h"
-#include "data_model.h"
-#include "sync_timer.h"
-#include "cli.h"
-#include "data_model.h"
-#include "dm_access.h"
-#include "device.h"
-#include "msg_handler.h"
-#include "os_utils.h"
-#include "database.h"
-#include "dm_trans.h"
-#include "nu_ipaddr.h"
-#include "stomp.h"
-#include "dm_inst_vector.h"
-#include "usp-record.pb-c.h"
-#include "proto_trace.h"
-#include "uds.h"
-#include "usp_broker.h"
-#include "se_cache.h"
-#include "bdc_exec.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/mtp_exec.h>
+#include <obuspa/core/dm_exec.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/sync_timer.h>
+#include <obuspa/core/cli.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/database.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/core/nu_ipaddr.h>
+#include <obuspa/core/stomp.h>
+#include <obuspa/core/dm_inst_vector.h>
+#include <obuspa/protobuf-c/usp-record.pb-c.h>
+#include <obuspa/core/proto_trace.h>
+#include <obuspa/core/uds.h>
+#include <obuspa/core/usp_broker.h>
+#include <obuspa/core/se_cache.h>
+#include <obuspa/core/bdc_exec.h>
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-#include "e2e_context.h"
+#include <obuspa/core/e2e_context.h>
 #endif
 
 #ifdef ENABLE_COAP
-#include "usp_coap.h"
+#include <obuspa/core/usp_coap.h>
 #endif
 
 #ifdef ENABLE_WEBSOCKETS
-#include "wsclient.h"
-#include "wsserver.h"
+#include <obuspa/core/wsclient.h>
+#include <obuspa/core/wsserver.h>
 #endif
 
 #ifndef REMOVE_USP_SERVICE
-#include "usp_service.h"
+#include <obuspa/core/usp_service.h>
 #endif
 
 #ifdef FD_PASSING_EXPERIMENTAL

@@ -1,6 +1,6 @@
-AM_CPPFLAGS = -I$(top_srcdir)/../../src/include \
-              -I$(top_srcdir)/../../src/core \
-              -I$(top_srcdir)/../../src/vendor
+AM_CPPFLAGS = -I$(top_srcdir)/../../include \
+              -I$(top_srcdir)/../../include/obuspa \
+              -I$(top_srcdir)/../../include/obuspa/core
 AM_CFLAGS = -Wall -Wfatal-errors
 
 pkglib_LTLIBRARIES = plugin.la

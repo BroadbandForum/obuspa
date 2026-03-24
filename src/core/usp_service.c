@@ -43,17 +43,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "data_model.h"
-#include "msg_handler.h"
-#include "msg_utils.h"
-#include "text_utils.h"
-#include "iso8601.h"
-#include "usp_broker.h"
-#include "os_utils.h"
-#include "usp_api.h"
-#include "usp_service.h"
-#include "path_resolver.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/msg_utils.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/usp_broker.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/core/usp_service.h>
+#include <obuspa/core/path_resolver.h>
 
 #include <semaphore.h>
 

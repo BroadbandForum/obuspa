@@ -107,13 +107,9 @@ add_library(core
 
 target_include_directories(core
   PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/include
   PRIVATE
-    ${PROJECT_SOURCE_DIR}/src
-    ${PROJECT_SOURCE_DIR}/src/protobuf-c
-    ${PROJECT_SOURCE_DIR}/src/vendor
     ${PROJECT_SOURCE_DIR}/src/libjson
-    ${PROJECT_SOURCE_DIR}/src/include
     $<$<BOOL:${ENABLE_MQTT}>:${MQTT_INCLUDE_DIRS}>
     $<$<BOOL:${ENABLE_WEBSOCKETS}>:${WebSockets_INCLUDE_DIRS}>)
 

@@ -45,30 +45,30 @@
 
 #include <string.h>
 
-#include "common_defs.h"
-#include "data_model.h"
-#include "device.h"
-#include "iso8601.h"
-#include "proto_trace.h"
-#include "text_utils.h"
-#include "usp-record.pb-c.h"
-#include "stomp.h"
-#include "wsclient.h"
-#include "msg_handler.h"
-#include "usp_record.h"
-#include "dm_exec.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/proto_trace.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/protobuf-c/usp-record.pb-c.h>
+#include <obuspa/core/stomp.h>
+#include <obuspa/core/wsclient.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/usp_record.h>
+#include <obuspa/core/dm_exec.h>
 
 #ifndef REMOVE_USP_BROKER
-#include "usp_broker.h"
+#include <obuspa/core/usp_broker.h>
 #endif
 
 #ifndef REMOVE_USP_SERVICE
-#include "usp_service.h"
+#include <obuspa/core/usp_service.h>
 #endif
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include <inttypes.h>  // For PRIu64
-#include "e2e_context.h"
+#include <obuspa/core/e2e_context.h>
 #endif
 
 #ifdef FD_PASSING_EXPERIMENTAL

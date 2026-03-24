@@ -42,11 +42,11 @@
 
 #include <string.h>
 
-#include "common_defs.h"
-#include "group_add_vector.h"
-#include "group_set_vector.h"
-#include "data_model.h"
-#include "se_cache.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/group_add_vector.h>
+#include <obuspa/core/group_set_vector.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/se_cache.h>
 
 //------------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them

@@ -42,11 +42,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "subs_vector.h"
-#include "iso8601.h"
-#include "text_utils.h"
-#include "device.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/subs_vector.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/device.h>
 
 /*********************************************************************//**
 **

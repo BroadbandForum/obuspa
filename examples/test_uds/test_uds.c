@@ -50,19 +50,19 @@
 #include <errno.h>
 #include <unistd.h>
 
-#include "usp_err_codes.h"
-#include "vendor_defs.h"
-#include "common_defs.h"
-#include "vendor_api.h"
-#include "usp_api.h"
-#include "os_utils.h"
-#include "socket_set.h"
-#include "usp-msg.pb-c.h"
-#include "usp-record.pb-c.h"
-#include "text_utils.h"
-#include "msg_handler.h"
-#include "str_vector.h"
-#include "usp_service.h"
+#include <obuspa/usp_err_codes.h>
+#include <obuspa/vendor_defs.h>
+#include <obuspa/core/common_defs.h>
+#include <obuspa/vendor_api.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/socket_set.h>
+#include <obuspa/protobuf-c/usp-msg.pb-c.h>
+#include <obuspa/protobuf-c/usp-record.pb-c.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/str_vector.h>
+#include <obuspa/core/usp_service.h>
 
 //------------------------------------------------------------------------------
 // Misc Defines

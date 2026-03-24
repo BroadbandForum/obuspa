@@ -1,9 +1,8 @@
-AM_CPPFLAGS = -I$(top_srcdir)/src \
-              -I$(top_srcdir)/src/core \
-              -I$(top_srcdir)/src/protobuf-c \
-              -I$(top_srcdir)/src/vendor \
-              -I$(top_srcdir)/src/libjson/ccan/json \
-              -I$(top_srcdir)/src/include
+AM_CPPFLAGS = -I$(top_srcdir)/include \
+              -I$(top_srcdir)/include/obuspa \
+              -I$(top_srcdir)/include/obuspa/core \
+              -I$(top_srcdir)/include/obuspa/protobuf-c \
+              -I$(top_srcdir)/src/libjson/ccan/json
 
 # Enable warnings, treat warnings as errors, and stop compilation at
 # first error.
@@ -141,78 +140,78 @@ pkglib_LTLIBRARIES =
 include examples/test_uds/Makefile.am
 
 # Include files
-public_includedir = $(includedir)/obuspa/include
+public_includedir = $(includedir)/obuspa
 public_include_HEADERS = \
-    src/include/compiler.h \
-    src/include/usp_api.h \
-    src/include/usp_err_codes.h \
-    src/include/vendor_api.h \
-    src/vendor/vendor_defs.h
+    include/obuspa/compiler.h \
+    include/obuspa/usp_api.h \
+    include/obuspa/usp_err_codes.h \
+    include/obuspa/vendor_api.h \
+    include/obuspa/vendor_defs.h
 
 private_core_includedir = $(includedir)/obuspa/core
 private_core_include_HEADERS = \
-    src/core/bdc_exec.h \
-    src/core/cli.h \
-    src/core/common_defs.h \
-    src/core/data_model.h \
-    src/core/database.h \
-    src/core/device.h \
-    src/core/dllist.h \
-    src/core/dm_access.h \
-    src/core/dm_exec.h \
-    src/core/dm_inst_vector.h \
-    src/core/dm_trans.h \
-    src/core/e2e_context.h \
-    src/core/e2e_defs.h \
-    src/core/expr_vector.h \
-    src/core/group_add_vector.h \
-    src/core/group_del_vector.h \
-    src/core/group_get_vector.h \
-    src/core/group_set_vector.h \
-    src/core/inst_sel_vector.h \
-    src/core/int_vector.h \
-    src/core/iso8601.h \
-    src/core/kv_vector.h \
-    src/core/mqtt.h \
-    src/core/msg_handler.h \
-    src/core/msg_utils.h \
-    src/core/mtp_exec.h \
-    src/core/nu_ipaddr.h \
-    src/core/nu_macaddr.h \
-    src/core/os_utils.h \
-    src/core/path_resolver.h \
-    src/core/plugin.h \
-    src/core/proto_trace.h \
-    src/core/retry_wait.h \
-    src/core/rfc1123.h \
-    src/core/sar_vector.h \
-    src/core/se_cache.h \
-    src/core/socket_set.h \
-    src/core/stomp.h \
-    src/core/str_vector.h \
-    src/core/subs_retry.h \
-    src/core/subs_vector.h \
-    src/core/sync_timer.h \
-    src/core/text_utils.h \
-    src/core/uds.h \
-    src/core/uptime.h \
-    src/core/uri.h \
-    src/core/usp_broker.h \
-    src/core/usp_coap.h \
-    src/core/usp_err.h \
-    src/core/usp_log.h \
-    src/core/usp_mem.h \
-    src/core/usp_record.h \
-    src/core/usp_service.h \
-    src/core/version.h \
-    src/core/wsclient.h \
-    src/core/wsserver.h
+    include/obuspa/core/bdc_exec.h \
+    include/obuspa/core/cli.h \
+    include/obuspa/core/common_defs.h \
+    include/obuspa/core/data_model.h \
+    include/obuspa/core/database.h \
+    include/obuspa/core/device.h \
+    include/obuspa/core/dllist.h \
+    include/obuspa/core/dm_access.h \
+    include/obuspa/core/dm_exec.h \
+    include/obuspa/core/dm_inst_vector.h \
+    include/obuspa/core/dm_trans.h \
+    include/obuspa/core/e2e_context.h \
+    include/obuspa/core/e2e_defs.h \
+    include/obuspa/core/expr_vector.h \
+    include/obuspa/core/group_add_vector.h \
+    include/obuspa/core/group_del_vector.h \
+    include/obuspa/core/group_get_vector.h \
+    include/obuspa/core/group_set_vector.h \
+    include/obuspa/core/inst_sel_vector.h \
+    include/obuspa/core/int_vector.h \
+    include/obuspa/core/iso8601.h \
+    include/obuspa/core/kv_vector.h \
+    include/obuspa/core/mqtt.h \
+    include/obuspa/core/msg_handler.h \
+    include/obuspa/core/msg_utils.h \
+    include/obuspa/core/mtp_exec.h \
+    include/obuspa/core/nu_ipaddr.h \
+    include/obuspa/core/nu_macaddr.h \
+    include/obuspa/core/os_utils.h \
+    include/obuspa/core/path_resolver.h \
+    include/obuspa/core/plugin.h \
+    include/obuspa/core/proto_trace.h \
+    include/obuspa/core/retry_wait.h \
+    include/obuspa/core/rfc1123.h \
+    include/obuspa/core/sar_vector.h \
+    include/obuspa/core/se_cache.h \
+    include/obuspa/core/socket_set.h \
+    include/obuspa/core/stomp.h \
+    include/obuspa/core/str_vector.h \
+    include/obuspa/core/subs_retry.h \
+    include/obuspa/core/subs_vector.h \
+    include/obuspa/core/sync_timer.h \
+    include/obuspa/core/text_utils.h \
+    include/obuspa/core/uds.h \
+    include/obuspa/core/uptime.h \
+    include/obuspa/core/uri.h \
+    include/obuspa/core/usp_broker.h \
+    include/obuspa/core/usp_coap.h \
+    include/obuspa/core/usp_err.h \
+    include/obuspa/core/usp_log.h \
+    include/obuspa/core/usp_mem.h \
+    include/obuspa/core/usp_record.h \
+    include/obuspa/core/usp_service.h \
+    include/obuspa/core/version.h \
+    include/obuspa/core/wsclient.h \
+    include/obuspa/core/wsserver.h
 
 private_libjson_includedir = $(includedir)/obuspa/libjson
 private_libjson_include_HEADERS = src/libjson/ccan/json/json.h
 
 private_protobuf_includedir = $(includedir)/obuspa/protobuf-c
 private_protobuf_include_HEADERS = \
-    src/protobuf-c/protobuf-c.h \
-    src/protobuf-c/usp-msg.pb-c.h \
-    src/protobuf-c/usp-record.pb-c.h
+    include/obuspa/protobuf-c/protobuf-c.h \
+    include/obuspa/protobuf-c/usp-msg.pb-c.h \
+    include/obuspa/protobuf-c/usp-record.pb-c.h

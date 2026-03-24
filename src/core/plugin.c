@@ -41,9 +41,9 @@
  */
 #include <dlfcn.h>
 
-#include "common_defs.h"
-#include "dllist.h"
-#include "plugin.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/dllist.h>
+#include <obuspa/core/plugin.h>
 
 //--------------------------------------------------------------------
 // Structure representing a dynamically loaded plugin

@@ -49,14 +49,15 @@
 #include <fcntl.h>
 #include <sys/wait.h>
 
-#include "common_defs.h"
-#include "os_utils.h"
-#include "kv_vector.h"
-#include "dm_access.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/kv_vector.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/path_resolver.h>
+
 #include "json.h"
-#include "text_utils.h"
-#include "msg_handler.h"
-#include "path_resolver.h"
 
 #ifndef REMOVE_IP_CAPACITY_DIAG
 //------------------------------------------------------------------------------------

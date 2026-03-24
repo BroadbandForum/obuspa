@@ -45,34 +45,34 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "data_model.h"
-#include "device.h"
-#include "database.h"
-#include "int_vector.h"
-#include "dm_inst_vector.h"
-#include "dm_trans.h"
-#include "dm_access.h"
-#include "cli.h"
-#include "vendor_api.h"
-#include "text_utils.h"
-#include "iso8601.h"
-#include "group_get_vector.h"
-#include "inst_sel_vector.h"
-#include "plugin.h"
-#include "se_cache.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/database.h>
+#include <obuspa/core/int_vector.h>
+#include <obuspa/core/dm_inst_vector.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/cli.h>
+#include <obuspa/vendor_api.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/group_get_vector.h>
+#include <obuspa/core/inst_sel_vector.h>
+#include <obuspa/core/plugin.h>
+#include <obuspa/core/se_cache.h>
 
 #ifdef ENABLE_COAP
-#include "usp_coap.h"
+#include <obuspa/core/usp_coap.h>
 #endif
 
 #ifdef ENABLE_WEBSOCKETS
-#include "wsclient.h"
-#include "wsserver.h"
+#include <obuspa/core/wsclient.h>
+#include <obuspa/core/wsserver.h>
 #endif
 
 #ifdef ENABLE_UDS
-#include "uds.h"
+#include <obuspa/core/uds.h>
 #endif
 
 #ifdef FD_PASSING_EXPERIMENTAL
@@ -80,11 +80,11 @@
 #endif
 
 #ifndef REMOVE_USP_BROKER
-#include "usp_broker.h"
+#include <obuspa/core/usp_broker.h>
 #endif
 
 #ifndef REMOVE_USP_SERVICE
-#include "usp_service.h"
+#include <obuspa/core/usp_service.h>
 #endif
 
 //--------------------------------------------------------------------

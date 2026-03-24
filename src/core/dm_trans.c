@@ -46,14 +46,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "dm_trans.h"
-#include "database.h"
-#include "device.h"
-#include "dm_inst_vector.h"
-#include "vendor_api.h"
-#include "text_utils.h"
-#include "se_cache.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/core/database.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/dm_inst_vector.h>
+#include <obuspa/vendor_api.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/se_cache.h>
 
 
 

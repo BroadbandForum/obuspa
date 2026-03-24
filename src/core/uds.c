@@ -53,17 +53,17 @@
 #include <sys/stat.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "uds.h"
-#include "device.h"
-#include "dm_exec.h"
-#include "vendor_defs.h"
-#include "dllist.h"
-#include "msg_handler.h"
-#include "mtp_exec.h"
-#include "os_utils.h"
-#include "iso8601.h"
-#include "usp_service.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/uds.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/dm_exec.h>
+#include <obuspa/vendor_defs.h>
+#include <obuspa/core/dllist.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/mtp_exec.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/usp_service.h>
 
 #ifdef FD_PASSING_EXPERIMENTAL
 #include "fd_vector.h"

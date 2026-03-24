@@ -52,12 +52,12 @@
 #include <ifaddrs.h>
 #include <unistd.h>
 
-#include "common_defs.h"
-#include "nu_ipaddr.h"
-#include "usp_api.h"
-#include "data_model.h"
-#include "nu_macaddr.h"
-#include "device.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/nu_ipaddr.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/nu_macaddr.h>
+#include <obuspa/core/device.h>
 
 
 #ifndef EFAIL

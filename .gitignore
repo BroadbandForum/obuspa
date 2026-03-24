@@ -9,7 +9,8 @@ config.sub
 config.log
 config.status
 libtool
-obuspa
+/obuspa
+install/
 configure
 depcomp
 include/config.h.in~

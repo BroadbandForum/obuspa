@@ -63,21 +63,21 @@
 #include <openssl/x509v3.h>
 
 
-#include "common_defs.h"
-#include "stomp.h"
-#include "usp-msg.pb-c.h"
-#include "mtp_exec.h"
-#include "msg_handler.h"
-#include "proto_trace.h"
-#include "data_model.h"
-#include "iso8601.h"
-#include "text_utils.h"
-#include "device.h"
-#include "nu_ipaddr.h"
-#include "os_utils.h"
-#include "dm_exec.h"
-#include "nu_macaddr.h"
-#include "retry_wait.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/stomp.h>
+#include <obuspa/protobuf-c/usp-msg.pb-c.h>
+#include <obuspa/core/mtp_exec.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/proto_trace.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/nu_ipaddr.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/dm_exec.h>
+#include <obuspa/core/nu_macaddr.h>
+#include <obuspa/core/retry_wait.h>
 
 
 //------------------------------------------------------------------------------

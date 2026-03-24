@@ -43,10 +43,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "kv_vector.h"
-#include "text_utils.h"
-#include "iso8601.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/kv_vector.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/iso8601.h>
 
 
 //------------------------------------------------------------------------------

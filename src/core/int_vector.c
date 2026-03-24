@@ -42,8 +42,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "int_vector.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/int_vector.h>
 
 /*********************************************************************//**
 **

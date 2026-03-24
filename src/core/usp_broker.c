@@ -45,23 +45,23 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "common_defs.h"
-#include "msg_handler.h"
-#include "msg_utils.h"
-#include "device.h"
-#include "data_model.h"
-#include "dm_exec.h"
-#include "dm_inst_vector.h"
-#include "iso8601.h"
-#include "text_utils.h"
-#include "usp_broker.h"
-#include "proto_trace.h"
-#include "path_resolver.h"  // For FULL_DEPTH
-#include "expr_vector.h"
-#include "cli.h"
-#include "group_get_vector.h"
-#include "se_cache.h"
-#include "dm_access.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/msg_utils.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/dm_exec.h>
+#include <obuspa/core/dm_inst_vector.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/usp_broker.h>
+#include <obuspa/core/proto_trace.h>
+#include <obuspa/core/path_resolver.h>  // For FULL_DEPTH
+#include <obuspa/core/expr_vector.h>
+#include <obuspa/core/cli.h>
+#include <obuspa/core/group_get_vector.h>
+#include <obuspa/core/se_cache.h>
+#include <obuspa/core/dm_access.h>
 
 #ifdef FD_PASSING_EXPERIMENTAL
 #include "fd_vector.h"

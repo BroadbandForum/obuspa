@@ -46,16 +46,16 @@
 #include <math.h>
 #include <unistd.h>
 
-#include "common_defs.h"
-#include "msg_handler.h"
-#include "iso8601.h"
-#include "device.h"
-#include "sync_timer.h"
-#include "retry_wait.h"
-#include "subs_retry.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/sync_timer.h>
+#include <obuspa/core/retry_wait.h>
+#include <obuspa/core/subs_retry.h>
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-#include "e2e_context.h"
+#include <obuspa/core/e2e_context.h>
 #endif
 
 #ifdef FD_PASSING_EXPERIMENTAL

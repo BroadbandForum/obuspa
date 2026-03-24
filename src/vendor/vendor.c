@@ -44,10 +44,10 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-#include "usp_err_codes.h"
-#include "vendor_defs.h"
-#include "vendor_api.h"
-#include "usp_api.h"
+#include <obuspa/usp_err_codes.h>
+#include <obuspa/vendor_defs.h>
+#include <obuspa/vendor_api.h>
+#include <obuspa/usp_api.h>
 
 /*********************************************************************//**
 **

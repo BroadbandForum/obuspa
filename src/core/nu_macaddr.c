@@ -50,11 +50,11 @@
 #include <unistd.h>
 #include <errno.h>
 
-#include "common_defs.h"
-#include "nu_macaddr.h"
-#include "usp_api.h"
-#include "text_utils.h"
-#include "cli.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/nu_macaddr.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/cli.h>
 
 //------------------------------------------------------------------------------
 // String, set by '-i' command line option to specify the network interface to be used by USP communications

@@ -47,48 +47,48 @@
 #include <string.h>
 #include <limits.h>
 
-#include "common_defs.h"
-#include "device.h"
-#include "data_model.h"
-#include "usp_api.h"
-#include "dm_access.h"
-#include "dm_trans.h"
-#include "dm_exec.h"
-#include "mtp_exec.h"
-#include "msg_handler.h"
-#include "text_utils.h"
-#include "iso8601.h"
-#include "retry_wait.h"
-#include "usp_record.h"
-#include "subs_retry.h"
-#include "usp_broker.h"
-#include "os_utils.h"
-#include "se_cache.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/core/dm_exec.h>
+#include <obuspa/core/mtp_exec.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/retry_wait.h>
+#include <obuspa/core/usp_record.h>
+#include <obuspa/core/subs_retry.h>
+#include <obuspa/core/usp_broker.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/se_cache.h>
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
-#include "e2e_defs.h"
-#include "e2e_context.h"
+#include <obuspa/core/e2e_defs.h>
+#include <obuspa/core/e2e_context.h>
 #endif
 
 #ifndef DISABLE_STOMP
-#include "stomp.h"
+#include <obuspa/core/stomp.h>
 #endif
 
 #ifdef ENABLE_COAP
-#include "usp_coap.h"
+#include <obuspa/core/usp_coap.h>
 #endif
 
 #ifdef ENABLE_MQTT
-#include "mqtt.h"
+#include <obuspa/core/mqtt.h>
 #endif
 
 #ifdef ENABLE_WEBSOCKETS
-#include "wsclient.h"
-#include "wsserver.h"
+#include <obuspa/core/wsclient.h>
+#include <obuspa/core/wsserver.h>
 #endif
 
 #ifdef ENABLE_UDS
-#include "uds.h"
+#include <obuspa/core/uds.h>
 #endif
 
 //------------------------------------------------------------------------------

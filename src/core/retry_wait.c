@@ -54,11 +54,11 @@
 #include <sys/time.h>
 #include <string.h>
 
-#include "common_defs.h"
-#include "usp_log.h"
-#include "nu_macaddr.h"
-#include "retry_wait.h"
-#include "iso8601.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/usp_log.h>
+#include <obuspa/core/nu_macaddr.h>
+#include <obuspa/core/retry_wait.h>
+#include <obuspa/core/iso8601.h>
 
 //-----------------------------------------------------------------------
 // Random number generator seeds used by each thread

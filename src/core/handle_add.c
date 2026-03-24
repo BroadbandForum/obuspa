@@ -43,16 +43,16 @@
 #include <stdio.h>
 #include <protobuf-c/protobuf-c.h>
 
-#include "usp-msg.pb-c.h"
-#include "common_defs.h"
-#include "msg_handler.h"
-#include "dm_trans.h"
-#include "dm_access.h"
-#include "path_resolver.h"
-#include "device.h"
-#include "text_utils.h"
-#include "group_add_vector.h"
-#include "dm_inst_vector.h"
+#include <obuspa/protobuf-c/usp-msg.pb-c.h>
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/path_resolver.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/group_add_vector.h>
+#include <obuspa/core/dm_inst_vector.h>
 
 
 //------------------------------------------------------------------------------

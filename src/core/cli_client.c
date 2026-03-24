@@ -53,10 +53,10 @@
 #include <string.h>
 
 
-#include "common_defs.h"
-#include "cli.h"
-#include "data_model.h"
-#include "database.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/cli.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/database.h>
 
 
 //------------------------------------------------------------------------

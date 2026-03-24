@@ -6,7 +6,7 @@
 #define PROTOBUF_C__NO_DEPRECATED
 #endif
 
-#include "usp-msg.pb-c.h"
+#include <obuspa/protobuf-c/usp-msg.pb-c.h>
 void   usp__msg__init
                      (Usp__Msg         *message)
 {

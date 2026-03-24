@@ -56,20 +56,20 @@
 #include <openssl/rand.h>
 #include <openssl/opensslv.h>
 
-#include "common_defs.h"
-#include "usp_coap.h"
-#include "usp_api.h"
-#include "usp-msg.pb-c.h"
-#include "msg_handler.h"
-#include "os_utils.h"
-#include "dllist.h"
-#include "dm_exec.h"
-#include "retry_wait.h"
-#include "usp_coap.h"
-#include "text_utils.h"
-#include "nu_ipaddr.h"
-#include "iso8601.h"
-#include "usp-record.pb-c.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/usp_coap.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/protobuf-c/usp-msg.pb-c.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/dllist.h>
+#include <obuspa/core/dm_exec.h>
+#include <obuspa/core/retry_wait.h>
+#include <obuspa/core/usp_coap.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/nu_ipaddr.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/protobuf-c/usp-record.pb-c.h>
 
 //------------------------------------------------------------------------
 // Structure storing the last CoAP response PDU sent. Used to send the same response

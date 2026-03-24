@@ -40,11 +40,11 @@
  *
  */
 
-#include "common_defs.h"
-#include "msg_utils.h"
-#include "text_utils.h"
-#include "msg_handler.h"
-#include "path_resolver.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/msg_utils.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/path_resolver.h>
 
 #if !defined(REMOVE_USP_BROKER) || !defined(REMOVE_USP_SERVICE)
 //------------------------------------------------------------------------------

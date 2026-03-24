@@ -48,20 +48,20 @@
 #include <unistd.h>
 #include <sys/sysinfo.h>
 
-#include "common_defs.h"
-#include "usp_api.h"
-#include "dm_access.h"
-#include "data_model.h"
-#include "device.h"
-#include "version.h"
-#include "nu_macaddr.h"
-#include "nu_ipaddr.h"
-#include "text_utils.h"
-#include "uptime.h"
-#include "iso8601.h"
-#include "os_utils.h"
-#include "bdc_exec.h"
-#include "cli.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/version.h>
+#include <obuspa/core/nu_macaddr.h>
+#include <obuspa/core/nu_ipaddr.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/uptime.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/bdc_exec.h>
+#include <obuspa/core/cli.h>
 
 
 

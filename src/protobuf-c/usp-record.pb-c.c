@@ -6,7 +6,7 @@
 #define PROTOBUF_C__NO_DEPRECATED
 #endif
 
-#include "usp-record.pb-c.h"
+#include <obuspa/protobuf-c/usp-record.pb-c.h>
 void   usp_record__record__init
                      (UspRecord__Record         *message)
 {

@@ -47,16 +47,16 @@
 #include <stdarg.h>
 #include <protobuf-c/protobuf-c.h>
 
-#include "usp-msg.pb-c.h"
-#include "common_defs.h"
-#include "msg_handler.h"
-#include "proto_trace.h"
-#include "data_model.h"
-#include "subs_vector.h"
-#include "subs_retry.h"
-#include "iso8601.h"
-#include "text_utils.h"
-#include "device.h"
+#include <obuspa/protobuf-c/usp-msg.pb-c.h>
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/proto_trace.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/subs_vector.h>
+#include <obuspa/core/subs_retry.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/device.h>
 
 //------------------------------------------------------------------------------
 // Array containing count of number of messages of each type

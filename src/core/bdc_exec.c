@@ -47,13 +47,13 @@
 #include <curl/curl.h>
 #include <openssl/ssl.h>
 
-#include "common_defs.h"
-#include "bdc_exec.h"
-#include "dm_exec.h"
-#include "stomp.h"
-#include "os_utils.h"
-#include "device.h"
-#include "rfc1123.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/bdc_exec.h>
+#include <obuspa/core/dm_exec.h>
+#include <obuspa/core/stomp.h>
+#include <obuspa/core/os_utils.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/rfc1123.h>
 
 //------------------------------------------------------------------------------
 // Structure containing the connection details for the specified profile

@@ -40,7 +40,7 @@
  *
  */
 
-#include "vendor_defs.h"   // For REMOVE_DEVICE_SECURITY
+#include <obuspa/vendor_defs.h>   // For REMOVE_DEVICE_SECURITY
 
 #ifndef REMOVE_DEVICE_SECURITY
 #include <openssl/evp.h>
@@ -50,10 +50,10 @@
 #include <string.h>
 #include <strings.h>  // For strcasecmp
 
-#include "common_defs.h"
-#include "str_vector.h"
-#include "text_utils.h"
-#include "iso8601.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/str_vector.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/iso8601.h>
 
 //-------------------------------------------------------------------------
 // Forward declarations. Note these are not static, because we need them in the symbol table for USP_LOG_Callstack() to show them

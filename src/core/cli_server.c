@@ -66,30 +66,30 @@
 #include <mosquitto.h>
 #endif
 
-#include "common_defs.h"
-#include "cli.h"
-#include "data_model.h"
-#include "device.h"
-#include "database.h"
-#include "path_resolver.h"
-#include "dm_trans.h"
-#include "expr_vector.h"
-#include "text_utils.h"
-#include "version.h"
-#include "stomp.h"
-#include "group_get_vector.h"
-#include "bdc_exec.h"
-#include "se_cache.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/cli.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/database.h>
+#include <obuspa/core/path_resolver.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/core/expr_vector.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/version.h>
+#include <obuspa/core/stomp.h>
+#include <obuspa/core/group_get_vector.h>
+#include <obuspa/core/bdc_exec.h>
+#include <obuspa/core/se_cache.h>
 
 #ifndef REMOVE_USP_SERVICE
-#include "usp_service.h"
+#include <obuspa/core/usp_service.h>
 #ifdef ENABLE_UDS
-#include "uds.h"
+#include <obuspa/core/uds.h>
 #endif
 #endif
 
 #ifndef REMOVE_USP_BROKER
-#include "usp_broker.h"
+#include <obuspa/core/usp_broker.h>
 #endif
 
 #ifndef REMOVE_DEVICE_BULKDATA

@@ -44,16 +44,16 @@
 #include <string.h>
 #include <protobuf-c/protobuf-c.h>
 
-#include "common_defs.h"
-#include "usp-msg.pb-c.h"
-#include "msg_handler.h"
-#include "data_model.h"
-#include "dm_access.h"
-#include "path_resolver.h"
-#include "device.h"
-#include "text_utils.h"
-#include "group_get_vector.h"
-#include "usp_broker.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/protobuf-c/usp-msg.pb-c.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/path_resolver.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/group_get_vector.h>
+#include <obuspa/core/usp_broker.h>
 
 //------------------------------------------------------------------------------
 // Structure used to marshall entries in get group vector for a path expression

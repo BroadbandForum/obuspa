@@ -40,7 +40,7 @@
  *
  */
 
-#include "vendor_defs.h"  // for REMOVE_DEVICE_SECURITY
+#include <obuspa/vendor_defs.h>  // for REMOVE_DEVICE_SECURITY
 
 #include <time.h>
 #include <string.h>
@@ -54,21 +54,21 @@
 #include <openssl/safestack.h>
 #endif
 
-#include "common_defs.h"
-#include "msg_handler.h"
-#include "data_model.h"
-#include "usp_api.h"
-#include "device.h"
-#include "dm_access.h"
-#include "vendor_api.h"
-#include "iso8601.h"
-#include "text_utils.h"
-#include "dm_inst_vector.h"
-#include "inst_sel_vector.h"
-#include "database.h"
-#include "dm_trans.h"
-#include "expr_vector.h"
-#include "se_cache.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/msg_handler.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/vendor_api.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/dm_inst_vector.h>
+#include <obuspa/core/inst_sel_vector.h>
+#include <obuspa/core/database.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/core/expr_vector.h>
+#include <obuspa/core/se_cache.h>
 
 //------------------------------------------------------------------------------
 // Location of the controller trust tables within the data model

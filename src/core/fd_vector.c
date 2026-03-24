@@ -40,11 +40,11 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#include "usp_mem.h"
-#include "usp_err.h"
-#include "usp_log.h"
-#include "vendor_defs.h"
-#include "os_utils.h"
+#include <obuspa/core/usp_mem.h>
+#include <obuspa/core/usp_err.h>
+#include <obuspa/core/usp_log.h>
+#include <obuspa/vendor_defs.h>
+#include <obuspa/core/os_utils.h>
 
 #ifdef FD_PASSING_EXPERIMENTAL
 #include "fd_vector.h"

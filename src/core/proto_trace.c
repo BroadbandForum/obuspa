@@ -44,8 +44,8 @@
 #include <protobuf-c/protobuf-c.h>
 #include <inttypes.h>  // For PRIu64
 
-#include "common_defs.h"
-#include "proto_trace.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/proto_trace.h>
 
 // Number of spaces to use for each indentation block when printing messages in protobuf format
 #define INDENTATION 2

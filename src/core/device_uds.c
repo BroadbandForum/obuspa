@@ -49,19 +49,19 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#include "common_defs.h"
-#include "data_model.h"
-#include "usp_api.h"
-#include "dm_access.h"
-#include "dm_trans.h"
-#include "dm_access.h"
-#include "kv_vector.h"
-#include "mtp_exec.h"
-#include "device.h"
-#include "text_utils.h"
-#include "uds.h"
-#include "iso8601.h"
-#include "database.h"
+#include <obuspa/core/common_defs.h>
+#include <obuspa/core/data_model.h>
+#include <obuspa/usp_api.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/dm_trans.h>
+#include <obuspa/core/dm_access.h>
+#include <obuspa/core/kv_vector.h>
+#include <obuspa/core/mtp_exec.h>
+#include <obuspa/core/device.h>
+#include <obuspa/core/text_utils.h>
+#include <obuspa/core/uds.h>
+#include <obuspa/core/iso8601.h>
+#include <obuspa/core/database.h>
 
 //------------------------------------------------------------------------------
 // Location of the UDS connection table within the data model

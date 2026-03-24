@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.18...3.24)
 
 # Read the AGENT_SOFTWARE_VERSION from version.h file
 set(VERSION_REGEX "^#define AGENT_SOFTWARE_VERSION[ ]+\"([0-9.]+)\"$")
-file(STRINGS "src/core/version.h" VERSION_STRING REGEX ${VERSION_REGEX})
+file(STRINGS "include/obuspa/core/version.h" VERSION_STRING REGEX ${VERSION_REGEX})
 string(REGEX REPLACE ${VERSION_REGEX} "\\1" VERSION_STRING "${VERSION_STRING}")
 
 project(obuspa
@@ -28,11 +28,7 @@ add_executable(obuspa
 
 target_include_directories(obuspa
   PRIVATE
-    src
-    src/include
-    src/protobuf-c
-    src/core
-    src/vendor)
+    ${PROJECT_SOURCE_DIR}/include)
 
 # These definitions are needed because core/main.c requires these definitions.
 target_compile_definitions(obuspa
