@@ -62,6 +62,7 @@
 #include <obuspa/core/group_get_vector.h>
 #include <obuspa/core/se_cache.h>
 #include <obuspa/core/dm_access.h>
+#include <obuspa/vendor_options.h>  // For preprocessor defines
 
 #ifdef FD_PASSING_EXPERIMENTAL
 #include "fd_vector.h"

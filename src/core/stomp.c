@@ -40,6 +40,8 @@
  *
  */
 
+#include <obuspa/vendor_options.h>  // For preprocessor defines
+
 #ifndef DISABLE_STOMP
 #include <string.h>
 #include <stdio.h>

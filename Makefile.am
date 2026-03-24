@@ -23,8 +23,6 @@ AM_LDFLAGS += $(LDFLAGS_SANITIZER)
 
 bin_PROGRAMS = obuspa
 
-OBUSPA_LOCAL_STATE_DIR = "$(localstatedir)/obuspa"
-
 SOURCES = src/core/main.c \
                     src/core/mtp_exec.c \
                     src/core/dm_exec.c \
@@ -116,7 +114,6 @@ SOURCES = src/core/main.c \
 
 obuspa_SOURCES = $(SOURCES)
 obuspa_CPPFLAGS = $(openssl_CFLAGS) $(sqlite3_CFLAGS) $(libcurl_CFLAGS) $(zlib_CFLAGS) $(libmosquitto_CFLAGS) $(libwebsockets_CFLAGS)
-obuspa_CPPFLAGS += -DOBUSPA_LOCAL_STATE_DIR=\"$(OBUSPA_LOCAL_STATE_DIR)\"
 obuspa_CPPFLAGS +=  $(AM_CPPFLAGS) \
                       -Werror \
                       -Werror=unused-value \
@@ -146,7 +143,8 @@ public_include_HEADERS = \
     include/obuspa/usp_api.h \
     include/obuspa/usp_err_codes.h \
     include/obuspa/vendor_api.h \
-    include/obuspa/vendor_defs.h
+    include/obuspa/vendor_defs.h \
+    include/obuspa/vendor_options.h
 
 private_core_includedir = $(includedir)/obuspa/core
 private_core_include_HEADERS = \

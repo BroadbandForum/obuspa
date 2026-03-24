@@ -42,6 +42,8 @@
 #ifndef USP_COAP_H
 #define USP_COAP_H
 
+#include <obuspa/vendor_options.h>  // For preprocessor defines
+
 #ifdef ENABLE_COAP
 
 #include <obuspa/core/common_defs.h>

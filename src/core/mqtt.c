@@ -41,6 +41,8 @@
  * Called from the ProtocolHandler to implement the MQTT protocol
  *
  */
+#include <obuspa/vendor_options.h>  // For preprocessor defines
+
 #ifdef ENABLE_MQTT
 
 #include <stdio.h>

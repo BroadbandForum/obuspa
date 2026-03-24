@@ -45,6 +45,7 @@
 #define DEVICE_H
 
 #include <obuspa/vendor_defs.h>  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2 and REMOVE_DEVICE_SECURITY
+#include <obuspa/vendor_options.h> // For preprocessor defines
 
 #ifndef REMOVE_DEVICE_SECURITY
 #include <openssl/ssl.h>

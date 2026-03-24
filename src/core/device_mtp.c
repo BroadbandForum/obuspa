@@ -55,6 +55,7 @@
 #include <obuspa/core/text_utils.h>
 #include <obuspa/core/nu_macaddr.h>
 #include <obuspa/core/stomp.h>
+#include <obuspa/vendor_options.h>  // For preprocessor defines
 
 #ifdef ENABLE_COAP
 #include <obuspa/core/usp_coap.h>

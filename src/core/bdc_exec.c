@@ -40,6 +40,8 @@
  *
  */
 
+#include <obuspa/vendor_options.h>  // For preprocessor defines
+
 #ifndef REMOVE_DEVICE_BULKDATA
 #include <string.h>
 #include <sys/socket.h>

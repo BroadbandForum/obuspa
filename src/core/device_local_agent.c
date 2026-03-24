@@ -62,6 +62,7 @@
 #include <obuspa/core/os_utils.h>
 #include <obuspa/core/bdc_exec.h>
 #include <obuspa/core/cli.h>
+#include <obuspa/vendor_options.h>  // For preprocessor defines
 
 
 

@@ -40,6 +40,8 @@
  *
  */
 
+#include <obuspa/vendor_options.h>  // For preprocessor defines
+
 #ifdef ENABLE_UDS
 
 #include <fcntl.h>

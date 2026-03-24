@@ -50,6 +50,7 @@
 #include <obuspa/core/dm_exec.h>
 #include <obuspa/core/os_utils.h>
 #include <obuspa/core/msg_handler.h>
+#include <obuspa/vendor_options.h>  // For preprocessor defines
 
 #ifndef DISABLE_STOMP
 #include <obuspa/core/stomp.h>

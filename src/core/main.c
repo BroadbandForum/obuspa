@@ -68,6 +68,7 @@
 #include <obuspa/core/retry_wait.h>
 #include <obuspa/core/nu_macaddr.h>
 #include <obuspa/core/plugin.h>
+#include <obuspa/vendor_options.h>  // For preprocessor defines
 
 
 #ifdef ENABLE_WEBSOCKETS

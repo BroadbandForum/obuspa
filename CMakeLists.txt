@@ -26,20 +26,48 @@ message(STATUS "MTP to support: STOMP:${ENABLE_STOMP} MQTT:${ENABLE_MQTT} COAP:$
 add_executable(obuspa
     src/core/main.c)
 
+set(LOCAL_STATE_DIR_DEFINE_STR ${OBUSPA_LOCAL_STATE_DIR})
+set(DISABLE_STOMP_DEFINE "")
+set(ENABLE_COAP_DEFINE "")
+set(ENABLE_MQTT_DEFINE "")
+set(ENABLE_WEBSOCKETS_DEFINE "")
+set(ENABLE_UDS_DEFINE "")
+set(REMOVE_DEVICE_BULKDATA_DEFINE "")
+
+if(NOT ENABLE_STOMP)
+  set(DISABLE_STOMP_DEFINE "#define DISABLE_STOMP 1")
+endif()
+
+if(ENABLE_COAP)
+  set(ENABLE_COAP_DEFINE "#define ENABLE_COAP 1")
+endif()
+
+if(ENABLE_MQTT)
+  set(ENABLE_MQTT_DEFINE "#define ENABLE_MQTT 1")
+endif()
+
+if(ENABLE_WEBSOCKETS)
+  set(ENABLE_WEBSOCKETS_DEFINE "#define ENABLE_WEBSOCKETS 1")
+endif()
+
+if(ENABLE_UDS)
+  set(ENABLE_UDS_DEFINE "#define ENABLE_UDS 1")
+endif()
+
+if(REMOVE_DEVICE_BULKDATA)
+  set(REMOVE_DEVICE_BULKDATA_DEFINE "#define REMOVE_DEVICE_BULKDATA 1")
+endif()
+
+configure_file(
+  ${PROJECT_SOURCE_DIR}/include/obuspa/vendor_options.h.in
+  ${CMAKE_BINARY_DIR}/include/obuspa/vendor_options.h
+  @ONLY
+)
+
 target_include_directories(obuspa
   PRIVATE
-    ${PROJECT_SOURCE_DIR}/include)
-
-# These definitions are needed because core/main.c requires these definitions.
-target_compile_definitions(obuspa
-  PRIVATE
-    OBUSPA_LOCAL_STATE_DIR="${OBUSPA_LOCAL_STATE_DIR}"
-    $<IF:$<BOOL:${ENABLE_STOMP}>,ENABLE_STOMP,DISABLE_STOMP>  # DISABLE_STOMP is the define used in core
-    $<$<BOOL:${ENABLE_MQTT}>:ENABLE_MQTT>
-    $<$<BOOL:${ENABLE_COAP}>:ENABLE_COAP>
-    $<$<BOOL:${ENABLE_WEBSOCKETS}>:ENABLE_WEBSOCKETS>
-    $<$<BOOL:${ENABLE_UDS}>:ENABLE_UDS>
-    _GNU_SOURCE=1)
+    ${PROJECT_SOURCE_DIR}/include
+    ${CMAKE_BINARY_DIR}/include)
 
 target_link_libraries(obuspa
   PRIVATE

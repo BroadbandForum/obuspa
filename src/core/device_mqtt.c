@@ -38,6 +38,8 @@
  * Implements the Device.MQTT data model object
  *
  */
+#include <obuspa/vendor_options.h>  // For preprocessor defines
+
 #ifdef ENABLE_MQTT
 #include <time.h>
 #include <string.h>

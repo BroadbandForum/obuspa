@@ -57,6 +57,7 @@
 #include <obuspa/core/msg_handler.h>
 #include <obuspa/core/usp_record.h>
 #include <obuspa/core/dm_exec.h>
+#include <obuspa/vendor_options.h>  // For preprocessor defines
 
 #ifndef REMOVE_USP_BROKER
 #include <obuspa/core/usp_broker.h>

@@ -30,8 +30,17 @@ AC_ARG_ENABLE(tsan, [AS_HELP_STRING([--enable-tsan], [enable thread sanitizer])]
 PKG_CHECK_MODULES([sqlite3], [sqlite3])
 PKG_CHECK_MODULES([zlib], [zlib])
 
+AS_IF([test "x$prefix" = "xNONE"], [prefix="$ac_default_prefix"])
+LOCAL_STATE_DIR_DEFINE_STR="$prefix/var/obuspa"
+DISABLE_STOMP_DEFINE=""
+ENABLE_COAP_DEFINE=""
+ENABLE_MQTT_DEFINE=""
+ENABLE_WEBSOCKETS_DEFINE=""
+ENABLE_UDS_DEFINE=""
+REMOVE_DEVICE_BULKDATA_DEFINE=""
+
 AS_IF([test "x$enable_stomp" = "xno"], [
-	AC_DEFINE(DISABLE_STOMP)
+	DISABLE_STOMP_DEFINE="#define DISABLE_STOMP 1"
 ],
 # ELSE
 [
@@ -40,24 +49,24 @@ AS_IF([test "x$enable_stomp" = "xno"], [
 
 
 AS_IF([test "x$enable_coap" = "xyes"], [
-	AC_DEFINE(ENABLE_COAP)
+	ENABLE_COAP_DEFINE="#define ENABLE_COAP 1"
     PKG_CHECK_MODULES([openssl], [openssl])
 ])
 
 AS_IF([test "x$enable_mqtt" = "xyes"], [
 	PKG_CHECK_MODULES([libmosquitto], [libmosquitto])
-	AC_DEFINE(ENABLE_MQTT)
+	ENABLE_MQTT_DEFINE="#define ENABLE_MQTT 1"
     PKG_CHECK_MODULES([openssl], [openssl])
 ])
 
 AS_IF([test "x$enable_websockets" = "xyes"], [
     PKG_CHECK_MODULES([libwebsockets], [libwebsockets >= 4.2.0])
-	AC_DEFINE(ENABLE_WEBSOCKETS)
+	ENABLE_WEBSOCKETS_DEFINE="#define ENABLE_WEBSOCKETS 1"
     PKG_CHECK_MODULES([openssl], [openssl])
 ])
 
 AS_IF([test "x$enable_uds" = "xyes"], [
-	AC_DEFINE(ENABLE_UDS)
+	ENABLE_UDS_DEFINE="#define ENABLE_UDS 1"
 ])
 
 AS_IF([test "x$enable_bulkdata" = "xyes"], [
@@ -66,8 +75,16 @@ AS_IF([test "x$enable_bulkdata" = "xyes"], [
 ],
 # ELSE
 [
-	AC_DEFINE(REMOVE_DEVICE_BULKDATA)
+	REMOVE_DEVICE_BULKDATA_DEFINE="#define REMOVE_DEVICE_BULKDATA 1"
 ])
+
+AC_SUBST([LOCAL_STATE_DIR_DEFINE_STR])
+AC_SUBST([DISABLE_STOMP_DEFINE])
+AC_SUBST([ENABLE_COAP_DEFINE])
+AC_SUBST([ENABLE_MQTT_DEFINE])
+AC_SUBST([ENABLE_WEBSOCKETS_DEFINE])
+AC_SUBST([ENABLE_UDS_DEFINE])
+AC_SUBST([REMOVE_DEVICE_BULKDATA_DEFINE])
 
 AS_IF([test "x$enable_hardening" = "xyes"], [
     # Enable compiler hardening flags - do not touch CFLAGS or LDFLAGS directly
@@ -118,6 +135,9 @@ AC_CHECK_FUNCS([mallinfo2])
 
 # Generate Makefiles
 AC_CONFIG_FILES([Makefile])
+
+# Generate vendor_options.h
+AC_CONFIG_FILES([include/obuspa/vendor_options.h:include/obuspa/vendor_options.h.in])
 
 # Finally, generate top-level config.status.
 AC_OUTPUT

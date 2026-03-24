@@ -13,7 +13,7 @@ libtool
 install/
 configure
 depcomp
-include/config.h.in~
+include/obuspa/vendor_options.h
 install-sh
 ltmain.sh
 m4/

@@ -55,6 +55,7 @@
 #include <obuspa/core/dm_access.h>
 #include <obuspa/core/cli.h>
 #include <obuspa/vendor_api.h>
+#include <obuspa/vendor_options.h>  // For preprocessor defines
 #include <obuspa/core/text_utils.h>
 #include <obuspa/core/iso8601.h>
 #include <obuspa/core/group_get_vector.h>

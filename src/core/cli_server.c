@@ -57,6 +57,7 @@
 #include <sqlite3.h>
 #include <zlib.h>
 
+#include <obuspa/vendor_options.h>  // For preprocessor defines
 
 #ifdef ENABLE_WEBSOCKETS
 #include <libwebsockets.h>

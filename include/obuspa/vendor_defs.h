@@ -46,6 +46,8 @@
 #ifndef VENDOR_DEFS_H
 #define VENDOR_DEFS_H
 
+#include <obuspa/vendor_options.h>
+
 //------------------------------------------------------------------------------
 // Definitions used to size static arrays
 // You are unlikely to need to change these

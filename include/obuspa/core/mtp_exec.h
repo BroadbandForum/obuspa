@@ -48,6 +48,7 @@
 #include <stdbool.h>
 
 #include <obuspa/vendor_defs.h>    // for E2ESESSION_EXPERIMENTAL_USP_V_1_2
+#include <obuspa/vendor_options.h>   // For preprocessor defines
 #include <obuspa/protobuf-c/usp-msg.pb-c.h>
 
 //-----------------------------------------------------------------------------------------------

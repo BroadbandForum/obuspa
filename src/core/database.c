@@ -54,6 +54,7 @@
 #include <obuspa/core/os_utils.h>
 #include <obuspa/core/text_utils.h>
 #include <obuspa/vendor_api.h>
+#include <obuspa/vendor_options.h>  // For preprocessor defines
 #include <obuspa/core/plugin.h>
 
 //--------------------------------------------------------------------

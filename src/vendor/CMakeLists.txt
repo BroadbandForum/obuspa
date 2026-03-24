@@ -8,13 +8,5 @@ target_include_directories(vendor
   PRIVATE
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/include/obuspa
-    ${PROJECT_SOURCE_DIR}/include/obuspa/core)
-
-target_compile_definitions(vendor
-  PRIVATE
-    $<IF:$<BOOL:${ENABLE_STOMP}>,ENABLE_STOMP,DISABLE_STOMP>  # DISABLE_STOMP is the define used in core
-    $<$<BOOL:${ENABLE_MQTT}>:ENABLE_MQTT>
-    $<$<BOOL:${ENABLE_COAP}>:ENABLE_COAP>
-    $<$<BOOL:${ENABLE_WEBSOCKETS}>:ENABLE_WEBSOCKETS>
-    $<$<BOOL:${ENABLE_UDS}>:ENABLE_UDS>
-    _GNU_SOURCE=1)
+    ${PROJECT_SOURCE_DIR}/include/obuspa/core
+    ${CMAKE_BINARY_DIR}/include)

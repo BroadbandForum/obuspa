@@ -40,6 +40,8 @@
  *
  */
 
+#include <obuspa/vendor_options.h>  // For preprocessor defines
+
 #ifdef ENABLE_COAP  // NOTE: This isn't strictly necessary as this file is not included in the build if CoAP is disabled
 
 #include <stdlib.h>

@@ -5,4 +5,5 @@ add_library(protobuf-c
 
 target_include_directories(protobuf-c
   PUBLIC
-    ${PROJECT_SOURCE_DIR}/include)  # Because <protobuf-c/protobuf-c.h> is search from parent folder by USP pb files
+    ${PROJECT_SOURCE_DIR}/include
+    ${CMAKE_BINARY_DIR}/include)  # Because <protobuf-c/protobuf-c.h> is search from parent folder by USP pb files

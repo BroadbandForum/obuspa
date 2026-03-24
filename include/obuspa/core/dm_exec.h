@@ -45,6 +45,7 @@
 #define DM_EXEC_H
 
 #include <obuspa/vendor_defs.h>  // For E2ESESSION_EXPERIMENTAL_USP_V_1_2
+#include <obuspa/vendor_options.h> // For preprocessor defines
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include <obuspa/core/e2e_defs.h>

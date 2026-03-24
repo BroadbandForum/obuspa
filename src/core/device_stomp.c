@@ -39,6 +39,8 @@
  * Implements the Device.STOMP data model object
  *
  */
+#include <obuspa/vendor_options.h>  // For preprocessor defines
+
 #ifndef DISABLE_STOMP
 #include <time.h>
 #include <string.h>

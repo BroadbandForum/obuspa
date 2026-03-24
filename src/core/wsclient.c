@@ -40,6 +40,8 @@
  *
  */
 
+#include <obuspa/vendor_options.h>  // For preprocessor defines
+
 #ifdef ENABLE_WEBSOCKETS
 #include <libwebsockets.h>
 #include <unistd.h>

@@ -108,6 +108,7 @@ add_library(core
 target_include_directories(core
   PUBLIC
     ${PROJECT_SOURCE_DIR}/include
+    ${CMAKE_BINARY_DIR}/include
   PRIVATE
     ${PROJECT_SOURCE_DIR}/src/libjson
     $<$<BOOL:${ENABLE_MQTT}>:${MQTT_INCLUDE_DIRS}>
@@ -119,12 +120,6 @@ target_compile_definitions(core
     $<$<BOOL:${HAVE_MALLINFO}>:HAVE_MALLINFO>
     $<$<BOOL:${HAVE_MALLINFO2}>:HAVE_MALLINFO2>
     $<$<BOOL:${HAVE_EXECINFO_H}>:HAVE_EXECINFO_H>
-    OBUSPA_LOCAL_STATE_DIR="${OBUSPA_LOCAL_STATE_DIR}"
-    $<IF:$<BOOL:${ENABLE_STOMP}>,ENABLE_STOMP,DISABLE_STOMP>  # DISABLE_STOMP is the define used in core
-    $<$<BOOL:${ENABLE_MQTT}>:ENABLE_MQTT>
-    $<$<BOOL:${ENABLE_COAP}>:ENABLE_COAP>
-    $<$<BOOL:${ENABLE_WEBSOCKETS}>:ENABLE_WEBSOCKETS>
-    $<$<BOOL:${ENABLE_UDS}>:ENABLE_UDS>
     _GNU_SOURCE=1)
 
 target_link_libraries(core

@@ -74,6 +74,7 @@
 #include <obuspa/core/usp_broker.h>
 #include <obuspa/core/se_cache.h>
 #include <obuspa/core/bdc_exec.h>
+#include <obuspa/vendor_options.h>  // For preprocessor defines
 
 #if defined(E2ESESSION_EXPERIMENTAL_USP_V_1_2)
 #include <obuspa/core/e2e_context.h>
