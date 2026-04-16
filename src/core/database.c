@@ -1182,7 +1182,7 @@ int CopyFactoryResetDatabase(char *reset_file, char *db_file)
 
     // Exit if unable to open the target database file for writing
     dest = fopen(db_file, "w");
-    if (src == NULL)
+    if (dest == NULL)
     {
         USP_LOG_Error("%s: Failed to open destination database %s for writing: %s", __FUNCTION__, db_file, USP_ERR_ToString(errno, buf, sizeof(buf)) );
         err = USP_ERR_INTERNAL_ERROR;
