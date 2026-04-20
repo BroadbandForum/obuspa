@@ -349,7 +349,7 @@ int COAP_ReceivePdu(SSL *ssl, BIO *rbio, int socket_fd, unsigned char *buf, int 
         err = SSL_get_error(ssl, bytes_read);
 
         // Exit if CoAP peer has gracefully disconnected
-	    ssl_flags = SSL_get_shutdown(ssl);
+        ssl_flags = SSL_get_shutdown(ssl);
         if ((bytes_read==0) || (ssl_flags & SSL_RECEIVED_SHUTDOWN))
         {
             return -1;
@@ -456,7 +456,7 @@ int COAP_SendPdu(SSL *ssl, BIO *wbio, int socket_fd, unsigned char *buf, int len
         err = SSL_get_error(ssl, bytes_sent);
 
         // Exit if peer has disconnected
-	    ssl_flags = SSL_get_shutdown(ssl);
+        ssl_flags = SSL_get_shutdown(ssl);
         if ((bytes_sent==0) || (ssl_flags & SSL_RECEIVED_SHUTDOWN))
         {
             USP_PROTOCOL("%s: Peer has disconnected", __FUNCTION__);
@@ -468,7 +468,7 @@ int COAP_SendPdu(SSL *ssl, BIO *wbio, int socket_fd, unsigned char *buf, int len
 
         switch(err)
         {
-		    case SSL_ERROR_NONE:
+            case SSL_ERROR_NONE:
             case SSL_ERROR_WANT_READ:
                 // NOTE: I don't think these can occur. If they do and nothing was sent out, then the CoAP retry mechanism will fix it anyway.
                 return USP_ERR_OK;
@@ -478,7 +478,7 @@ int COAP_SendPdu(SSL *ssl, BIO *wbio, int socket_fd, unsigned char *buf, int len
                 // Wait a while, then perform the renegotiation
                 usleep(SSL_RETRY_SLEEP);
                 retry_count++;
-				break;
+                break;
 
             default:
             case SSL_ERROR_SYSCALL:

@@ -65,6 +65,7 @@ void DLLIST_LinkToHead(double_linked_list_t *list, void *item_to_add);
 void DLLIST_LinkToTail(double_linked_list_t *list, void *item_to_add);
 void DLLIST_Unlink(double_linked_list_t *list, void *item_to_remove);
 void DLLIST_InsertLinkBefore(void *insert_point, double_linked_list_t *list, void *item_to_add);
+void DLLIST_InsertLinkAfter(void *insert_point, double_linked_list_t *list, void *item_to_add);
 void DLLIST_MoveLink(double_linked_list_t *dest_list, double_linked_list_t *src_list, void *item_to_move);
 
 #endif // DLLIST_H

@@ -61,12 +61,12 @@
 uint32_t
 tu_uptime_msecs(void)
 {
-	time_t t;
-	struct timespec ts;
+    time_t t;
+    struct timespec ts;
 
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	t = ((time_t)(ts.tv_sec * 1000) + (time_t)(ts.tv_nsec / 1000000));
-	return (uint32_t)t;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    t = ((time_t)(ts.tv_sec * 1000) + (time_t)(ts.tv_nsec / 1000000));
+    return (uint32_t)t;
 }
 
 /*********************************************************************//**
@@ -83,11 +83,11 @@ tu_uptime_msecs(void)
 uint32_t
 tu_uptime_secs(void)
 {
-	time_t t;
-	struct timespec ts;
+    time_t t;
+    struct timespec ts;
 
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	t = (time_t)ts.tv_sec;
-	return (uint32_t)t;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    t = (time_t)ts.tv_sec;
+    return (uint32_t)t;
 }
 

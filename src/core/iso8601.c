@@ -91,7 +91,7 @@ char *iso8601_cur_time(char *buf, int len)
 **************************************************************************/
 char *iso8601_from_unix_time(time_t unix_time, char *buf, int len)
 {
-   	struct tm tm;
+    struct tm tm;
 
     // Exit if the time provided is the special case of the unknown time
     if (unix_time == UNKNOWN_TIME)
@@ -131,30 +131,30 @@ char *iso8601_from_unix_time(time_t unix_time, char *buf, int len)
 size_t
 iso8601_strftime(char *buf, size_t buflen, const struct tm *tm)
 {
-	size_t sz;
+    size_t sz;
 
-	if (!tm || !buf || (buflen == 0)) {
-		return 0;
-	}
-	if (tm->tm_gmtoff == 0) {
-		sz = strftime(buf, buflen, "%FT%TZ", tm);
-	} else {
-		sz = strftime(buf, buflen, "%FT%T", tm);
-		if (sz < buflen) {
-			long absoff;
+    if (!tm || !buf || (buflen == 0)) {
+        return 0;
+    }
+    if (tm->tm_gmtoff == 0) {
+        sz = strftime(buf, buflen, "%FT%TZ", tm);
+    } else {
+        sz = strftime(buf, buflen, "%FT%T", tm);
+        if (sz < buflen) {
+            long absoff;
 
-			if (tm->tm_gmtoff < 0) {
-				absoff = -tm->tm_gmtoff;
-			} else {
-				absoff = tm->tm_gmtoff;
-			}
-			sz += USP_SNPRINTF(&buf[sz], buflen - sz,
-					 "%c%02ld:%02ld",
-					 (tm->tm_gmtoff < 0) ? '-' : '+',
-					 absoff / 3600, (absoff % 3600) / 60);
-		}
-	}
-	return sz;
+            if (tm->tm_gmtoff < 0) {
+                absoff = -tm->tm_gmtoff;
+            } else {
+                absoff = tm->tm_gmtoff;
+            }
+            sz += USP_SNPRINTF(&buf[sz], buflen - sz,
+                     "%c%02ld:%02ld",
+                     (tm->tm_gmtoff < 0) ? '-' : '+',
+                     absoff / 3600, (absoff % 3600) / 60);
+        }
+    }
+    return sz;
 }
 
 /**
@@ -247,33 +247,33 @@ iso8601_to_unix_time(const char *date)
 size_t
 uptime_strftime(char *buf, size_t buflen, unsigned uptime)
 {
-	int years;
-	int months;
-	int days;
-	int hours;
-	int mins;
-	int secs;
-	int total_days;
+    int years;
+    int months;
+    int days;
+    int hours;
+    int mins;
+    int secs;
+    int total_days;
 
-	size_t sz;
+    size_t sz;
 
-	if (!buf || (buflen == 0)) {
-		return 0;
-	}
+    if (!buf || (buflen == 0)) {
+        return 0;
+    }
 
-	total_days = uptime / (24 * 3600);
-	years = total_days / (12 * 30);  /* 12mon * 30days/mon */
-	days = total_days % (12 * 30);
-	months = days / 30;
-	days = days % 30;
-	hours = uptime / 3600 - total_days * 24;
-	mins = uptime / 60 - total_days * 24 * 60 - hours * 60;
-	secs = uptime - total_days * 24 * 3600 - hours * 3600 - mins * 60;
+    total_days = uptime / (24 * 3600);
+    years = total_days / (12 * 30);  /* 12mon * 30days/mon */
+    days = total_days % (12 * 30);
+    months = days / 30;
+    days = days % 30;
+    hours = uptime / 3600 - total_days * 24;
+    mins = uptime / 60 - total_days * 24 * 60 - hours * 60;
+    secs = uptime - total_days * 24 * 3600 - hours * 3600 - mins * 60;
 
-	sz = USP_SNPRINTF(buf, buflen, "P%04d-%02d-%02dT%02d:%02d:%02d",
-			years, months, days, hours, mins, secs);
+    sz = USP_SNPRINTF(buf, buflen, "P%04d-%02d-%02dT%02d:%02d:%02d",
+            years, months, days, hours, mins, secs);
 
 
-	return sz;
+    return sz;
 }
 

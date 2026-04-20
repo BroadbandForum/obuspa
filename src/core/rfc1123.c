@@ -88,7 +88,7 @@ char *RFC1123_GetCurTime(char *buf, int len)
 **************************************************************************/
 char *RFC1123_FromUnixTime(time_t unix_time, char *buf, int len)
 {
-   	struct tm tm;
+    struct tm tm;
 
     gmtime_r(&unix_time, &tm);
 

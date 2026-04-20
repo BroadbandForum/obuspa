@@ -383,7 +383,7 @@ void WSCLIENT_Destroy(void)
 int WSCLIENT_Start(void)
 {
     struct lws_protocols *p;
-	struct lws_context_creation_info info;
+    struct lws_context_creation_info info;
 
     // Setup USP subprotocol to use
     #define WEBSOCKET_PROTOCOL_STR "v1.usp"
@@ -1467,7 +1467,7 @@ int HandleAllWscEvents(struct lws *handle, enum lws_callback_reasons event, void
         case LWS_CALLBACK_CLIENT_ESTABLISHED:
             tr_event("WS client: LWS_CALLBACK_CLIENT_ESTABLISHED");
             result = HandleWscEvent_Connected(handle);
-		    break;
+            break;
 
         case LWS_CALLBACK_CLIENT_CLOSED:
             tr_event("WS client: LWS_CALLBACK_CLIENT_CLOSED");

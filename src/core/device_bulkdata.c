@@ -2780,8 +2780,8 @@ void bulkdata_process_profile_mqtt(bulkdata_profile_t *bp)
     report = bulkdata_generate_json_report(bp, ctrl.report_timestamp);
     if (report == NULL)
     {
-	    USP_ERR_SetMessage("%s: bulkdata_generate_json_report failed", __FUNCTION__);
-	    return;
+        USP_ERR_SetMessage("%s: bulkdata_generate_json_report failed", __FUNCTION__);
+        return;
     }
 
     // Print out the JSON report, if debugging is enabled

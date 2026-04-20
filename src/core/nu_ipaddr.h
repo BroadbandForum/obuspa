@@ -61,17 +61,17 @@ typedef struct in_addr nu_ipaddr_t;
 #endif /* !IPV6_NUIPADDR */
 
 #if BYTE_ORDER == BIG_ENDIAN
-#define IP4NETADDR_PRINTF_FMT(_addr)					\
-	(unsigned int)(((_addr) >> 24) & 0xff),				\
-		(unsigned int)(((_addr) >> 16) & 0xff),			\
-		(unsigned int)(((_addr) >> 8) & 0xff),			\
-		(unsigned int)((_addr) & 0xff)
+#define IP4NETADDR_PRINTF_FMT(_addr)                    \
+    (unsigned int)(((_addr) >> 24) & 0xff),             \
+        (unsigned int)(((_addr) >> 16) & 0xff),         \
+        (unsigned int)(((_addr) >> 8) & 0xff),          \
+        (unsigned int)((_addr) & 0xff)
 #else
-#define IP4NETADDR_PRINTF_FMT(_addr)					\
-	(unsigned int)((_addr) & 0xff),					\
-		(unsigned int)(((_addr) >> 8) & 0xff),			\
-		(unsigned int)(((_addr) >> 16) & 0xff),			\
-		(unsigned int)(((_addr) >> 24) & 0xff)
+#define IP4NETADDR_PRINTF_FMT(_addr)                    \
+    (unsigned int)((_addr) & 0xff),                     \
+        (unsigned int)(((_addr) >> 8) & 0xff),          \
+        (unsigned int)(((_addr) >> 16) & 0xff),         \
+        (unsigned int)(((_addr) >> 24) & 0xff)
 #endif
 
 /* interface for converting nu_ipaddr_t to standard values */

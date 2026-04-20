@@ -57,8 +57,8 @@ typedef struct
 {
     uint64_t sess_id;  // session_id associated to this data
     uint64_t seq_id;  // sequence_id associated to this data
-	int	len;  // Number of bytes in the data field.
-	uint8_t	*data;  // Data bytes.
+    int len;  // Number of bytes in the data field.
+    uint8_t *data;  // Data bytes.
 } sar_payload_t;
 
 //------------------------------------------------------------------------------

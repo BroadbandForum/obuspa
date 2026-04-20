@@ -88,8 +88,8 @@ typedef struct
     nu_ipaddr_t  peer_addr;      // IP Address of USP controller that socket_fd is sending to
     uint16_t peer_port;          // Port on USP controller that socket_fd is connected to
     SSL *ssl;                    // SSL connection object used for this CoAP client
-	BIO *rbio;                   // SSL BIO used to read DTLS packets
-	BIO *wbio;                   // SSL BIO used to write DTLS packets
+    BIO *rbio;                   // SSL BIO used to read DTLS packets
+    BIO *wbio;                   // SSL BIO used to write DTLS packets
 
     unsigned message_id;         // Message ID - unique for the current block being sent
     unsigned char token[4];      // Token to identify the request being sent (same for all blocks encapsulating a single USP message)

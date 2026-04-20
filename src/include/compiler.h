@@ -54,29 +54,29 @@
   Compiler specific annotations for code analysis
  ************************************************/
 #if defined(__GNUC__) || __has_attribute(nonnull)
-	#define ARGINDEX_NONNULL(index) __attribute__ ((nonnull(index)))
-	#define ARGS_NONNULL __attribute__ ((nonnull))
+    #define ARGINDEX_NONNULL(index) __attribute__ ((nonnull(index)))
+    #define ARGS_NONNULL __attribute__ ((nonnull))
 #else
-	#define ARGINDEX_NONNULL(index)
-	#define ARGS_NONNULL
+    #define ARGINDEX_NONNULL(index)
+    #define ARGS_NONNULL
 #endif
 
 #if __has_attribute(returns_nonnull)
-	#define RETURNS_NONNULL __attribute__ ((returns_nonnull))
+    #define RETURNS_NONNULL __attribute__ ((returns_nonnull))
 #else
-	#define RETURNS_NONNULL
+    #define RETURNS_NONNULL
 #endif
 
 #if defined(__GNUC__) || __has_attribute(__format__)
-	#define ARGS_FORMAT_PRINTF(fmt,args) __attribute__((__format__ (__printf__, fmt, args)))
+    #define ARGS_FORMAT_PRINTF(fmt,args) __attribute__((__format__ (__printf__, fmt, args)))
 #else
-	#define ARGS_FORMAT_PRINTF(fmt,args)
+    #define ARGS_FORMAT_PRINTF(fmt,args)
 #endif
 
 #if defined(__GNUC__) || __has_attribute(malloc)
-	#define MALLOC __attribute__ ((malloc))
+    #define MALLOC __attribute__ ((malloc))
 #else
-	#define MALLOC
+    #define MALLOC
 #endif
 
 #endif /* COMPILER_H */

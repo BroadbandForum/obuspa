@@ -1947,7 +1947,7 @@ void ScheduleMQTTResubscribe(client_t *mqttclient, mqtt_subs_config_t *sub)
     }
     if ((mqttclient->conn_params.instance != INVALID) && (sub->instance != INVALID))
     {
-    	MQTT_ScheduleResubscription(mqttclient->conn_params.instance, sub);
+        MQTT_ScheduleResubscription(mqttclient->conn_params.instance, sub);
     }
 }
 

@@ -267,6 +267,47 @@ void DLLIST_InsertLinkBefore(void *insert_point, double_linked_list_t *list, voi
 
 /*********************************************************************//**
 **
+** DLLIST_InsertLinkAfter
+**
+** Inserts an element after the specified element in the list
+** NOTE: This function cannot be called to insert at the head of a list
+** NOTE: Both the insert point item and the item to add must contain the double_link_t structure at the start of itself
+**
+** \param   insert_point - pointer to the item, which we want to be before the item we're about to insert
+** \param   list - pointer to the list header structure to which the item is to be added
+** \param   item_to_remove - pointer to the item to add
+**
+** \return  None
+**
+**************************************************************************/
+void DLLIST_InsertLinkAfter(void *insert_point, double_linked_list_t *list, void *item_to_add)
+{
+    double_link_t *item_before = (double_link_t *)insert_point;
+    double_link_t *item = (double_link_t *)item_to_add;
+    double_link_t *item_after;
+
+#ifdef PERFORM_INTEGRITY_CHECKS
+    USP_ASSERT(DLLIST_IsItemInList(list, item_before)==true);
+#endif
+
+    item_after = item_before->next;
+
+    if (item_after != NULL)
+    {
+        item_after->prev = item;  // Insertion at middle of list
+    }
+    else
+    {
+        list->tail = item;        // Insertion at tail of List
+    }
+
+    item_before->next = item;
+    item->prev = item_before;
+    item->next = item_after;
+}
+
+/*********************************************************************//**
+**
 ** DLLIST_MoveLink
 **
 ** Moves an item from one doubly linked list to the tail of another

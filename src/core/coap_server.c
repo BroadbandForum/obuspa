@@ -245,10 +245,10 @@ int COAP_SERVER_InitStart(void)
     }
 
     // Set the DTLS cookie functions for the CoAP server (only the server uses these)
-	SSL_CTX_set_cookie_generate_cb(coap_server_ssl_ctx, CalcCoapServerCookie);
-	SSL_CTX_set_cookie_verify_cb(coap_server_ssl_ctx, VerifyCoapServerCookie);
+    SSL_CTX_set_cookie_generate_cb(coap_server_ssl_ctx, CalcCoapServerCookie);
+    SSL_CTX_set_cookie_verify_cb(coap_server_ssl_ctx, VerifyCoapServerCookie);
 
-	SSL_CTX_set_session_cache_mode(coap_server_ssl_ctx, SSL_SESS_CACHE_OFF);
+    SSL_CTX_set_session_cache_mode(coap_server_ssl_ctx, SSL_SESS_CACHE_OFF);
 
 
     return USP_ERR_OK;

@@ -4249,14 +4249,26 @@ void QueueUspConnectRecord_STOMP(stomp_connection_t *sc, mtp_send_item_t *msi, c
         cur_msg = next_msg;
     }
 
-    // Add the new connect record to the queue
+    // Create the item to put in the queue
     send_item = USP_MALLOC(sizeof(stomp_send_item_t));
     send_item->item = *msi;  // NOTE: Ownership of the payload buffer passes to the STOMP message queue
     send_item->controller_queue = USP_STRDUP(controller_queue);
     send_item->agent_queue = USP_STRDUP(agent_queue);
     send_item->expiry_time = expiry_time;
 
-    DLLIST_LinkToHead(&sc->usp_record_send_queue, send_item);
+    // Add the new connect record to the queue
+    if ((sc->txframe_contains_usp_record == false) || (sc->usp_record_send_queue.head==NULL))
+    {
+        // The item at the head of the send queue is not currently being transmitted (or there's no items in the queue)
+        // so we can add the connect record to the head of the queue
+        DLLIST_LinkToHead(&sc->usp_record_send_queue, send_item);
+    }
+    else
+    {
+        // The item at the head of the send queue is currently being transmitted,
+        // so we add the connect record after it in the queue
+        DLLIST_InsertLinkAfter(sc->usp_record_send_queue.head, &sc->usp_record_send_queue, send_item);
+    }
 }
 
 #endif // DISABLE_STOMP

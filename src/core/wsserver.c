@@ -1007,7 +1007,7 @@ int HandleAllWssEvents(struct lws *handle, enum lws_callback_reasons event, void
         case LWS_CALLBACK_SERVER_WRITEABLE:
             tr_event("WS server: LWS_CALLBACK_SERVER_WRITEABLE");
             result = HandleWssEvent_Transmit(handle);
-		    break;
+            break;
 
         case LWS_CALLBACK_WSI_DESTROY:
             tr_event("WS server: LWS_CALLBACK_WSI_DESTROY");

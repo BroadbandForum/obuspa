@@ -1807,7 +1807,7 @@ int USP_BROKER_DirectGetForCli(char *path, combined_role_t *combined_role)
 ** \param   group_ids - int vector to return the group id belonging to each entry in unresolved_params
 ** \param   resolved_params - key value vector to return the parameters and values obtained by this function from the USP Services
 ** \param   combined_role - role used to determine the permissions of the originating controller. If set to INTERNAL_ROLE, then permissions are ignored (used internally)
-** \param 	depth - provide results down to the given depth (or FULL_DEPTH to return all descendants of the given path).
+** \param   depth - provide results down to the given depth (or FULL_DEPTH to return all descendants of the given path).
 **
 ** \return  USP_ERR_OK if successful or an error code
 **

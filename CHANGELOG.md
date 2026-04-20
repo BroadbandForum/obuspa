@@ -1,5 +1,12 @@
 # OB-USP-AGENT Changelog
 
+## 2026-04-20 v11.0.2
+### Fixed
+- Race hazard that could cause two Boot! events to be sent on STOMP MTP
+- Failure to open factory reset database sqlite file (FACTORY_RESET_FILE) should be caught when opening, rather than when writing
+
+
+
 ## 2026-03-23 v11.0.1
 ### Added
 - IPLayerCapacity() Speed Test command (which uses OB-UDP-ST). To enable, comment out REMOVE_IP_CAPACITY_DIAG in vendor_defs.h

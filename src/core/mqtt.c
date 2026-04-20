@@ -2286,11 +2286,11 @@ void QueueUspConnectRecord_MQTT(mqtt_client_t *client, mtp_send_item_t *msi, cha
 
 /*********************************************************************//**
 **
-** QueueUspConnectRecord_MQTT
+** QueueUspRecord_MQTT
 **
-** Adds the USP connect record at the front of the queue, ensuring that there is only one connect record in the queue
+** Adds the specified USP record to the send queue
 **
-** \param   client - pointer to MQTT client to send the connect record on
+** \param   client - pointer to MQTT client to send the record to
 ** \param   msi - pointer to content to send
 **                NOTE: Ownership of the payload buffer passes to this function
 ** \param   controller_topic - topic to send the record to
