@@ -1,5 +1,15 @@
 # OB-USP-AGENT Changelog
 
+## 2026-05-07 v11.0.3
+### Added
+- Device.LocalAgent.ControllerTrust.UntrustedRole. The role is specified at compile time using ROLE_UNTRUSTED in vendor_defs.h.
+
+### Fixed
+- cmake based build system does not install headers for plugin development
+- compiler.h moved out of plugin API header directory
+
+
+
 ## 2026-04-20 v11.0.2
 ### Fixed
 - Race hazard that could cause two Boot! events to be sent on STOMP MTP

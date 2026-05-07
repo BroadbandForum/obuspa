@@ -143,7 +143,6 @@ include examples/test_uds/Makefile.am
 # Include files
 public_includedir = $(includedir)/obuspa/include
 public_include_HEADERS = \
-    src/include/compiler.h \
     src/include/usp_api.h \
     src/include/usp_err_codes.h \
     src/include/vendor_api.h \
@@ -151,6 +150,7 @@ public_include_HEADERS = \
 
 private_core_includedir = $(includedir)/obuspa/core
 private_core_include_HEADERS = \
+    src/core/compiler.h \
     src/core/bdc_exec.h \
     src/core/cli.h \
     src/core/common_defs.h \

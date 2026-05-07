@@ -368,6 +368,9 @@ int DEVICE_CTRUST_Init(void)
                         NULL, 0);
 #endif
 
+    // Parameters that reference roles
+    err |= USP_REGISTER_Param_Constant(DEVICE_CTRUST_ROOT ".UntrustedRole", "Device.LocalAgent.ControllerTrust.Role." TO_STR(ROLE_UNTRUSTED), DM_STRING);
+
     // Initialise search expression based permissions components
     SE_CACHE_Init();
 

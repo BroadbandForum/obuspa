@@ -58,6 +58,11 @@ $ sudo make install
 * `--disable-bulkdata` - Removes Bulk Data Collection
 
 #### Using CMake tool
+
+Please note that cmake is not the preferred build system for OBUSPA.
+The autotools based build system is better maintained and contains more features.
+
+
 ```
 $ cd obuspa
 $ cmake -B build_folder -S .

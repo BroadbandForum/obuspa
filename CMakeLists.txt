@@ -1,3 +1,8 @@
+#
+# Please note cmake is not the preferred build system for OBUSPA
+# The autotools based build system is better maintained and contains more features
+#
+
 cmake_minimum_required(VERSION 3.18...3.24)
 
 # Read the AGENT_SOFTWARE_VERSION from version.h file
@@ -58,6 +63,11 @@ add_subdirectory(src/core)
 # Install executable and create working directory.
 # This depends on your prefix setting (default CMAKE_INSTALL_PREFIX=/usr/local/)
 # - Default executable path: /usr/local/bin/obuspa
-# - Default database path: /usr/local/var/obuspa/usp.db
+# - Default include path: /usr/local/include/obuspa/include
 install(TARGETS obuspa RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(DIRECTORY DESTINATION ${OBUSPA_LOCAL_STATE_DIR})
+install(FILES
+  src/include/usp_api.h
+  src/include/usp_err_codes.h
+  src/include/vendor_api.h
+  src/vendor/vendor_defs.h
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/obuspa/include)
