@@ -820,6 +820,15 @@ int GetDefaultEndpointID(char *buf, int len, char *oui, char *serial_number)
     dm_vendor_get_agent_endpoint_id_cb_t   get_agent_endpoint_id_cb;
     char oui_encoded[MAX_DM_SHORT_VALUE_LEN];
     char serial_number_encoded[MAX_DM_SHORT_VALUE_LEN];
+    char *p;
+
+    // Exit if endpoint_id set by environment variable
+    p = getenv("USP_ENDPOINT_ID");
+    if ((p != NULL) && (*p != '\0'))
+    {
+        USP_STRNCPY(buf, p, len);
+        return USP_ERR_OK;
+    }
 
     // Exit if endpoint_id is determined by a vendor hook
     get_agent_endpoint_id_cb = vendor_hook_callbacks.get_agent_endpoint_id_cb;
