@@ -68,6 +68,7 @@
 #include "retry_wait.h"
 #include "nu_macaddr.h"
 #include "plugin.h"
+#include "version.h"
 
 
 #ifdef ENABLE_WEBSOCKETS
@@ -350,7 +351,7 @@ int main(int argc, char *argv[])
     }
 
     // Following debug is only logged when running as a daemon (not when running as CLI client).
-    syslog(LOG_INFO, "USP Agent starting...");
+    syslog(LOG_INFO, "USP Agent v%s starting...", AGENT_SOFTWARE_VERSION);
 
     // Sleep until other services which USP Agent uses (eg DNS) are running
     // (ideally USP Agent should be started when the services are running, rather than sleeping here. But sometimes, there is no easy way to ensure this).

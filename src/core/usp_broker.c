@@ -538,6 +538,9 @@ int USP_BROKER_AddUspService(char *endpoint_id, mtp_conn_t *mtpc)
         return USP_ERR_INTERNAL_ERROR;
     }
 
+    // Add an object life event, so that subscriptions can fire if setup
+    DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(path, kSubNotifyType_ObjectCreation);
+
 exit:
 #ifdef ENABLE_UDS
     // Mark the USP Service as having a controller, if it connected on the Broker's agent socket
@@ -685,6 +688,9 @@ void USP_BROKER_HandleRegister(Usp__Msg *usp, char *endpoint_id, mtp_conn_t *mtp
             resp = ERROR_RESP_CreateSingle(usp->header->msg_id, USP_ERR_REGISTER_FAILURE, resp);
             goto exit;
         }
+
+        // Add an object life event, so that subscriptions can fire if setup
+        DEVICE_SUBSCRIPTION_NotifyObjectLifeEvent(path, kSubNotifyType_ObjectCreation);
     }
 
     // Exit if we're still waiting for a GSDM response to a previous register request from this USP Service
@@ -2754,7 +2760,7 @@ int ProcessCliInitiatedResponse(cli_service_cmd_t cmd, char *path, Usp__Msg *res
 **
 ** AddUspService
 **
-** Called when a USP Service has connected and sent a register message
+** Called when a USP Service has connected
 **
 ** \param   endpoint_id - endpoint of USP service to register
 ** \param   mtpc - pointer to structure specifying which protocol (and MTP instance) the endpoint is using

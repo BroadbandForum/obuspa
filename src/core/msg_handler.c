@@ -349,11 +349,11 @@ void MSG_HANDLER_LogMessageToSend(mtp_send_item_t *msi,
 
     // Log the message
     USP_PROTOCOL("\n");
-    USP_LOG_Info("%s sending at time %s, to host %s over %s",
+    USP_LOG_Info("%s sending at time %s, to host %s over %s (%d bytes)",
                 MtpSendItemToString(msi),
                 iso8601_cur_time(buf, sizeof(buf)),
                 host,
-                DEVICE_MTP_EnumToString(protocol) );
+                DEVICE_MTP_EnumToString(protocol), msi->pbuf_len );
 
     // Print STOMP header (if message is being sent out on STOMP)
     if ((enable_protocol_trace) && (header != NULL))
@@ -913,7 +913,7 @@ bool MSG_HANDLER_ShouldDropFailedMessage(mtp_send_item_t *item, char *cause)
         return true;
     }
 
-    // Get a pointer to the payload wihin the input USP record
+    // Get a pointer to the payload within the input USP record
     USP_ASSERT(rec->no_session_context != NULL);
     payload = &rec->no_session_context->payload;
     USP_ASSERT(payload != NULL);

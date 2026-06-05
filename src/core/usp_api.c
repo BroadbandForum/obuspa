@@ -158,6 +158,8 @@ int USP_DM_DeleteInstance(char *path)
 ** Synchronously notifies USP Agent core that a vendor controlled object is present
 ** This function should only be called from the data model thread.
 ** Typically this function is called at startup from VENDOR_Start() to seed the data model with vendor object instances
+** This function does not initiate ObjectCreation notifications (because we don't want those to fire at startup
+** when populating the instantiated data model from a database)
 **
 ** \param   path - path of the object instance to delete
 **

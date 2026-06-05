@@ -1442,7 +1442,7 @@ int HandleWssEvent_Receive(struct lws *handle, unsigned char *chunk, int chunk_l
     // Log time at which message was received
     iso8601_cur_time(buf, sizeof(buf));
     USP_PROTOCOL("\n");
-    USP_LOG_Info("Websocket server received message at time %s, from %s", buf, wc->peer);
+    USP_LOG_Info("USP Record received at time %s, from %s (%d bytes)", buf, wc->peer, wc->rx_buf_len);
 
     // Send the USP Record to the data model thread for processing
     // NOTE: Ownership of receive buffer stays with this thread

@@ -1,5 +1,16 @@
 # OB-USP-AGENT Changelog
 
+## 2026-06-05 v11.0.4
+### Added
+- USP_ENDPOINT_ID environment variable to configure EndpointID for OBUSPA
+- Improved input argument validity checking for USP_SIGNAL_Reboot()
+- Log sizes of USP Records sent and received
+- Log version of OBUSPA at startup
+
+### Fixed
+- Object creation notifications do not fire for subscriptions on USP Service table
+
+
 ## 2026-05-07 v11.0.3
 ### Added
 - Device.LocalAgent.ControllerTrust.UntrustedRole. The role is specified at compile time using ROLE_UNTRUSTED in vendor_defs.h.

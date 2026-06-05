@@ -2989,7 +2989,7 @@ void HandleRxMsg_RunningState(stomp_connection_t *sc, int msg_size)
     // Log received message
     iso8601_cur_time(time_buf, sizeof(time_buf));
     USP_PROTOCOL("\n");
-    USP_LOG_Info("Message received at time %s, from host %s over STOMP", time_buf, sc->host);
+    USP_LOG_Info("USP Record received at time %s, from host %s over STOMP (%d bytes)", time_buf, sc->host, pbuf_len);
     USP_PROTOCOL("%s", &sc->rxframe[offset]);
 
     // Send the USP Record to the data model thread for processing

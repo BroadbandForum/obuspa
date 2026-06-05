@@ -2355,7 +2355,7 @@ void PopUdsSendItem(uds_connection_t *uc)
     switch (send_item->type)
     {
         case kUdsFrameType_UspRecord:
-            USP_LOG_Info("Sending USP RECORD to endpoint_id=%s on %s", EndpointIdForLog(uc), uc->socket_path);
+            USP_LOG_Info("Sending USP RECORD to endpoint_id=%s on %s (%d bytes)", EndpointIdForLog(uc), uc->socket_path, send_item->item.pbuf_len);
             WRITE_BYTE(p, kUdsFrameType_UspRecord);
             WRITE_4_BYTES(p, send_item->item.pbuf_len);
             WRITE_N_BYTES(p, send_item->item.pbuf, send_item->item.pbuf_len);
@@ -2363,7 +2363,7 @@ void PopUdsSendItem(uds_connection_t *uc)
             break;
 
         case kUdsFrameType_Error:
-            USP_LOG_Info("Sending UDS ERROR to endpoint_id=%s on %s", EndpointIdForLog(uc), uc->socket_path);
+            USP_LOG_Info("Sending UDS ERROR to endpoint_id=%s on %s (%d bytes)", EndpointIdForLog(uc), uc->socket_path, send_item->item.pbuf_len);
             WRITE_BYTE(p, kUdsFrameType_Error);
             WRITE_4_BYTES(p, send_item->item.pbuf_len);
             WRITE_N_BYTES(p, send_item->item.pbuf, send_item->item.pbuf_len);
@@ -2942,7 +2942,7 @@ void ProcessUdsTLV_UspRecord(uds_connection_t *uc, unsigned char *tlv_payload, u
     }
 
     iso8601_cur_time(time_buf, sizeof(time_buf));
-    USP_LOG_Info("USP Record received at time %s, from endpoint_id=%s over UDS (%s)", time_buf, EndpointIdForLog(uc), uc->socket_path);
+    USP_LOG_Info("USP Record received at time %s, from endpoint_id=%s over UDS (%s, %d bytes)", time_buf, EndpointIdForLog(uc), uc->socket_path, tlv_len);
 
     PopulateUdsMtpConnection(&mtp_conn, uc);
     role_instance = (uc->auth_required) ? ROLE_UDS_AUTH : ROLE_UDS;

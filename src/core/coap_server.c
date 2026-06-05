@@ -1251,7 +1251,7 @@ exit:
         char addr_buf[NU_IPADDRSTRLEN];
         iso8601_cur_time(time_buf, sizeof(time_buf));
         nu_ipaddr_to_str(&css->peer_addr, addr_buf, sizeof(addr_buf));
-        USP_LOG_Info("Message received at time %s, from host %s over CoAP", time_buf, addr_buf);
+        USP_LOG_Info("USP Record received at time %s, from host %s over CoAP", time_buf, addr_buf);
 
         // Post complete USP record to the data model thread (as long as the peer address in the 'reply-to' matches that of the received packet)
         if (IsReplyToValid(css, &pp))

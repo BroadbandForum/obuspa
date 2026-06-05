@@ -772,6 +772,13 @@ int USP_SIGNAL_Reboot(int request_instance, char *command_key, char *reboot_caus
         return USP_ERR_INTERNAL_ERROR;
     }
 
+    // Exit if reboot cause is not valid
+    if ((strcmp(reboot_cause, "LocalReboot") != 0) && (strcmp(reboot_cause, "RemoteReboot") != 0))
+    {
+        USP_LOG_Error("%s: Invalid reboot Cause argument (`%s`)", __FUNCTION__, reboot_cause);
+        return USP_ERR_INVALID_ARGUMENTS;
+    }
+
     // Exit if message queue is not setup yet
     if (main_mq_tx_socket == -1)
     {
@@ -2631,7 +2638,7 @@ Usp__Msg *IsMatchingMsgId(dm_exec_msg_t *msg, char *msg_id, char *responder, Usp
 
 #ifdef FD_PASSING_EXPERIMENTAL
     // If source of message is UDS protocol - extract file descriptors key
-    if (fd_key != NULL && fd_res_exceeded && pur->mtp_conn.protocol == kMtpProtocol_UDS)
+    if ((fd_key != NULL) && (fd_res_exceeded==true) && (pur->mtp_conn.protocol == kMtpProtocol_UDS))
     {
         (*fd_key) = pur->mtp_conn.uds.fd_key;
         (*fd_res_exceeded) = pur->mtp_conn.uds.fd_res_exceeded;

@@ -3288,7 +3288,7 @@ void SubscribeToAll(mqtt_client_t *client)
     // Subscribe to response topic. This will be either the topic from the Respose Information property in the CONNACK
     // or, if that isn't present, the value of the ResponseTopicConfigured parameter
     // NOTE: Subscribe to this first, as we don't want to allow this subscription being unsubscribed, if
-    // this subscription was duplcated in Device.MQTT.Client.{i}.Subscription.{i}, and the subscription was deleted from that table
+    // this subscription was duplicated in Device.MQTT.Client.{i}.Subscription.{i}, and the subscription was deleted from that table
     response_topic = client->response_subscription.topic;
     if ((response_topic != NULL) && (*response_topic != '\0'))
     {
@@ -4115,7 +4115,7 @@ void ReceiveMqttMessage(mqtt_client_t *client, const struct mosquitto_message *m
 
     iso8601_cur_time(time_buf, sizeof(time_buf));
     USP_PROTOCOL("\n");
-    USP_LOG_Info("Message received at time %s, from host %s over MQTT", time_buf, client->conn_params.host);
+    USP_LOG_Info("USP Record received at time %s, from host %s over MQTT (%d bytes)", time_buf, client->conn_params.host, message->payloadlen);
     USP_PROTOCOL("MESSAGE");
     USP_PROTOCOL("mid: %d", message->mid);
     USP_PROTOCOL("topic: %s", message->topic);
