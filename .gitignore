@@ -23,3 +23,6 @@ ylwrap
 *.m4
 .dirstamp
 *.swp
+build/
+vcpkg_installed/
+CMakeUserPresets.json

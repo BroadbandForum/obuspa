@@ -50,6 +50,10 @@ target_compile_definitions(obuspa
     $<$<BOOL:${ENABLE_UDS}>:ENABLE_UDS>
     _GNU_SOURCE=1)
 
+target_link_options(obuspa PRIVATE
+  $<$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>:-Wl,--strip-debug>
+)
+
 target_link_libraries(obuspa
   PRIVATE
     vendor

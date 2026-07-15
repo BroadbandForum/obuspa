@@ -4,16 +4,32 @@ include(CheckSymbolExists)
 include(CheckIncludeFiles)
 include(FindPkgConfig)
 
+set(USE_VCPKG OFF CACHE BOOL "using vcpkg" FORCE)
+if(DEFINED VCPKG_TARGET_TRIPLET)
+  set(USE_VCPKG ON)
+elseif(DEFINED CMAKE_TOOLCHAIN_FILE
+  AND CMAKE_TOOLCHAIN_FILE MATCHES "vcpkg.cmake$")
+  set(USE_VCPKG ON)
+endif()
+
 find_package(Threads REQUIRED)
 find_package(SQLite3 REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
 if (ENABLE_MQTT)
-  pkg_check_modules(MQTT REQUIRED libmosquitto)
+  if(USE_VCPKG)
+    find_package(unofficial-mosquitto CONFIG REQUIRED)
+  else()
+    pkg_check_modules(MQTT REQUIRED libmosquitto)
+  endif()
 endif ()
 if (ENABLE_WEBSOCKETS)
-  pkg_check_modules(WebSockets REQUIRED libwebsockets>=4.1.0)
+  if(USE_VCPKG)
+    find_package(libwebsockets CONFIG REQUIRED)
+  else()
+    pkg_check_modules(WebSockets REQUIRED libwebsockets>=4.1.0)
+  endif()
 endif ()
 
 check_include_files(execinfo.h HAVE_EXECINFO_H)
@@ -134,12 +150,12 @@ target_compile_definitions(core
 target_link_libraries(core
   PRIVATE
     Threads::Threads
-    SQLite::SQLite3
+    SQLite3::SQLite3
     ZLIB::ZLIB
     OpenSSL::SSL
     CURL::libcurl
-    $<$<BOOL:${ENABLE_MQTT}>:${MQTT_LIBRARIES}>
-    $<$<BOOL:${ENABLE_WEBSOCKETS}>:${WebSockets_LIBRARIES}>
+    $<$<BOOL:${ENABLE_MQTT}>:$<IF:$<BOOL:${USE_VCPKG}>,unofficial::mosquitto::mosquitto,${MQTT_LIBRARIES}>>
+    $<$<BOOL:${ENABLE_WEBSOCKETS}>:$<IF:$<BOOL:${USE_VCPKG}>,websockets,${WebSockets_LIBRARIES}>>
     m
     dl
     libjson
