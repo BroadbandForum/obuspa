@@ -13,7 +13,11 @@ elseif(DEFINED CMAKE_TOOLCHAIN_FILE
 endif()
 
 find_package(Threads REQUIRED)
-find_package(SQLite3 REQUIRED)
+if(USE_VCPKG)
+  find_package(unofficial-sqlite3 CONFIG REQUIRED)
+else()
+  find_package(SQLite3 REQUIRED)
+endif()
 find_package(ZLIB REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
@@ -150,7 +154,7 @@ target_compile_definitions(core
 target_link_libraries(core
   PRIVATE
     Threads::Threads
-    SQLite3::SQLite3
+    $<IF:$<BOOL:${USE_VCPKG}>,unofficial::sqlite3::sqlite3,SQLite::SQLite3>
     ZLIB::ZLIB
     OpenSSL::SSL
     CURL::libcurl
