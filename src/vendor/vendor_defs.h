@@ -151,6 +151,7 @@
 //#define REMOVE_DEVICE_SECURITY_CERTIFICATE    // Removes Device.Security.Certificate and Device.Security from the core data model
 //#define REMOVE_SELF_TEST_DIAG_EXAMPLE    // Removes Self Test diagnostics example code
 #define REMOVE_IP_CAPACITY_DIAG          // Removes Device.IP.Diagnostics.IPLayerCapacity() from the core data model
+//#define REMOVE_IPPING_DIAG               // Removes Device.IP.Diagnostics.IPPing() from the core data model
 
 //#define DONT_SORT_GET_INSTANCES          // Disables the sorting of data model paths returned in a GetInstancesResponse. Useful for slow devices supporting large data models.
 

@@ -346,6 +346,9 @@ void DEVICE_BULKDATA_AllowConnect(void);
 #ifndef REMOVE_IP_CAPACITY_DIAG
 int DEVICE_IPLCAP_Init(void);
 #endif
+#ifndef REMOVE_IPPING_DIAG
+int DEVICE_IPPING_Init(void);
+#endif
 #ifndef REMOVE_SELF_TEST_DIAG_EXAMPLE
 int DEVICE_SELF_TEST_Init(void);
 #endif
