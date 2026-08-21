@@ -239,6 +239,9 @@ int DATA_MODEL_Init(void)
     err |= DEVICE_IPLCAP_Init();
 #endif
 
+#ifndef REMOVE_IPPING_DIAG
+    err |= DEVICE_IPPING_Init();
+#endif
 
 #ifndef REMOVE_SELF_TEST_DIAG_EXAMPLE
     // Register data model parameters used by the Self Test Diagnostics example code

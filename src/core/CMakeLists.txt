@@ -58,6 +58,7 @@ add_library(core
     device_ctrust.c
     device_bulkdata.c
     device_selftest_example.c
+    device_ipping.c
     device_iplcap.c
     device_time.c
     uptime.c
